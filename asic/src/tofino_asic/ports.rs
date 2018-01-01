@@ -702,10 +702,7 @@ pub fn init(dev_id: i32) -> AsicResult<PortData> {
         map_to_asic_id.insert((connector, chan), asic_id);
         map_from_asic_id.insert(asic_id, (connector, chan));
 
-        fp = match x.get_next() {
-            Ok(x) => Some(x),
-            Err(_) => None,
-        }
+        fp = x.get_next().ok()
     }
 
     let _ = unsafe { bf_pm_port_delete_all(dev_id) };

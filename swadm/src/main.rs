@@ -170,7 +170,7 @@ pub fn parse_port_id(value: &str) -> Result<types::PortId, String> {
 }
 
 pub fn misc_err<T: std::fmt::Display>(msg: T) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, msg.to_string())
+    io::Error::other(msg.to_string())
 }
 
 async fn build_info(client: &Client) -> anyhow::Result<()> {

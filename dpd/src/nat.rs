@@ -271,7 +271,7 @@ pub fn set_ipv6_mapping(
     let mut nat = switch.nat.lock().unwrap();
     let (entries, idx) = match nat.ipv6_mappings.get_mut(&nat_ip) {
         Some(e) => {
-            if e.iter().any(|entry| *entry == new_entry) {
+            if e.contains(&new_entry) {
                 // entry already exists
                 return Ok(());
             }
@@ -434,7 +434,7 @@ pub fn set_ipv4_mapping(
     let mut nat = switch.nat.lock().unwrap();
     let (entries, idx) = match nat.ipv4_mappings.get_mut(&nat_ip) {
         Some(e) => {
-            if e.iter().any(|entry| *entry == new_entry) {
+            if e.contains(&new_entry) {
                 // entry already exists
                 return Ok(());
             }

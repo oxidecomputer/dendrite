@@ -1797,7 +1797,7 @@ impl Switch {
                         }
                         Err(e) => {
                             probes::sde__presence__mask__request__failed!(
-                                || (e.to_string())
+                                || e.to_string()
                             )
                         }
                     }
@@ -1812,9 +1812,9 @@ impl Switch {
                     )
                     .await;
                     match &response {
-                        Ok(r) => probes::sde__lpmode__request__done!(|| (r)),
+                        Ok(r) => probes::sde__lpmode__request__done!(|| r),
                         Err(e) => probes::sde__lpmode__request__failed!(
-                            || (e.to_string())
+                            || e.to_string()
                         ),
                     }
                     response
@@ -1829,7 +1829,7 @@ impl Switch {
                     match &response {
                         Ok(r) => probes::sde__interrupt__request__done!(|| r),
                         Err(e) => probes::sde__interrupt__request__failed!(
-                            || (e.to_string())
+                            || e.to_string()
                         ),
                     }
                     response
@@ -3834,7 +3834,7 @@ mod tests {
         let modules = ModuleId::all_sidecar();
         for i in 0..modules.selected_transceiver_count() {
             let i = i as u8;
-            let is_present = i % 2 == 0;
+            let is_present = i.is_multiple_of(2);
             let modules = ModuleId::single(i).unwrap();
             let data = if is_present {
                 vec![super::PRESENT_FOR_SDE]
