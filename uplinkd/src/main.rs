@@ -38,6 +38,7 @@ use std::time::Duration;
 use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
+use clap::Parser;
 use libc::c_int;
 use oxnet::IpNet;
 use oxnet::Ipv4Net;
@@ -49,7 +50,6 @@ use signal_hook::iterator::Signals;
 use slog::debug;
 use slog::error;
 use slog::info;
-use structopt::StructOpt;
 
 use common::illumos;
 
@@ -63,20 +63,23 @@ struct Global {
     current: BTreeMap<String, BTreeMap<String, IpNet>>,
 }
 
-#[derive(Debug, StructOpt)]
-#[structopt(name = "uplinkd", about = "uplink address management daemon")]
+/// uplink address management daemon
+#[derive(Debug, Parser)]
+#[clap(name = "uplinkd")]
 struct Opt {
-    #[structopt(long, short, about = "use ipadm to establish PtP links")]
+    /// use ipadm to establish PtP links
+    #[clap(long, short)]
     ipadm: bool,
 
-    #[structopt(long, about = "log file")]
+    /// log file
+    #[clap(long)]
     log_file: Option<String>,
 
-    #[structopt(
+    /// log format
+    #[clap(
         long,
-        short = "l",
+        short = 'l',
         default_value = "human",
-        about = "log format",
         help = "format logs for 'human' or 'json' consumption"
     )]
     log_format: common::logging::LogFormat,
@@ -569,7 +572,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn main_impl() -> anyhow::Result<()> {
-    let opts = Opt::from_args();
+    let opts = Opt::parse();
 
     let mut global = Global {
         log: common::logging::init("uplinkd", &opts.log_file, opts.log_format)?,

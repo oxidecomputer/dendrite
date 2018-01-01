@@ -10,10 +10,10 @@ use std::net::IpAddr;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
+use clap::Subcommand;
 use colored::*;
 use futures::stream::TryStreamExt;
 use oxnet::{IpNet, Ipv4Net, Ipv6Net};
-use structopt::*;
 use tabwriter::TabWriter;
 
 use dpd_client::types;
@@ -23,17 +23,18 @@ use dpd_client::ClientInfo;
 use crate::IpFamily;
 use crate::LinkPath;
 
-#[derive(Debug, StructOpt)]
-#[structopt(about = "manage the L3 routing table")]
+#[derive(Debug, Subcommand)]
+/// manage the L3 routing table
 pub enum Route {
-    #[structopt(about = "list all routes", visible_alias = "ls")]
+    /// list all routes
+    #[clap(alias = "ls")]
     List {
-        #[structopt(about = "IPv4 or IPv6")]
+        /// IPv4 or IPv6
         family: Option<IpFamily>,
     },
-    #[structopt(about = "get one route")]
+    /// get one route
     Get {
-        #[structopt(help = "route CIDR")]
+        /// route CIDR
         cidr: IpNet,
     },
     /// Add a route to a link.
@@ -45,7 +46,6 @@ pub enum Route {
         /// Routes are used to direct traffic for a subnet to a particular
         /// endpoint, a link within a switch port. This should be specified as
         /// `port_id/link_id`, e.g., `qsfp0/0`.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
         /// The gateway to which traffic should be sent.
         ///
@@ -54,15 +54,14 @@ pub enum Route {
         gw: IpAddr,
         /// If specified, this indicates the VLAN tag that will be applied to
         /// packets forwarded across this route.
-        #[structopt(alias = "vlan")]
+        #[clap(alias = "vlan")]
         vlan_id: Option<u16>,
     },
-    #[structopt(about = "delete one route")]
+    /// delete one route
     Del {
-        #[structopt(help = "route CIDR")]
+        /// route CIDR
         cidr: IpNet,
         /// Identify a specific target to delete
-        #[structopt(parse(try_from_str))]
         link_path: Option<LinkPath>,
         /// Identify a specific target to delete
         gw: Option<IpAddr>,

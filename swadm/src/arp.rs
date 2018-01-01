@@ -9,9 +9,9 @@ use std::net::IpAddr;
 
 use anyhow::Context;
 use chrono::prelude::*;
+use clap::Subcommand;
 use colored::*;
 use futures::stream::TryStreamExt;
-use structopt::*;
 use tabwriter::TabWriter;
 
 use common::network::MacAddr;
@@ -21,29 +21,29 @@ use dpd_client::ClientInfo;
 
 use crate::IpFamily;
 
-#[derive(Debug, StructOpt)]
-#[structopt(about = "manage the ARP or NDP tables")]
+#[derive(Debug, Subcommand)]
+/// manage the ARP or NDP tables
 pub enum Arp {
-    #[structopt(about = "list all ARP / NDP entries")]
+    /// list all ARP / NDP entries
     List {
-        #[structopt(about = "IPv4 or IPv6")]
+        /// IPv4 or IPv6
         family: Option<IpFamily>,
     },
-    #[structopt(about = "get one ARP / NDP table entry")]
+    /// get one ARP / NDP table entry
     Get {
-        #[structopt(help = "host IP address")]
+        /// host IP address
         ip: IpAddr,
     },
-    #[structopt(about = "add one ARP / NDP table entry")]
+    /// add one ARP / NDP table entry
     Add {
-        #[structopt(help = "host IP address")]
+        /// host IP address
         ip: IpAddr,
-        #[structopt(help = "MAC address")]
+        /// MAC address
         mac: MacAddr,
     },
-    #[structopt(about = "delete one ARP / NDP entry")]
+    /// delete one ARP / NDP entry
     Del {
-        #[structopt(help = "host IP address")]
+        /// host IP address
         ip: IpAddr,
     },
 }

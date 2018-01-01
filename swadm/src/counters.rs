@@ -9,31 +9,30 @@ use std::io::Write;
 
 use anyhow::anyhow;
 use anyhow::Context;
+use clap::Subcommand;
 use colored::*;
-use structopt::*;
 use tabwriter::TabWriter;
 
 use dpd_client::types;
 use dpd_client::Client;
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand)]
 /// Report counter data collected by the P4 program.  These counters are
 /// primarily intended to be used to debug the P4 code rather than diagnosing
 /// run-time issues with a connected sidecar.  For non-development debugging,
 /// you probably want "swadm link counters".
-#[structopt(verbatim_doc_comment)]
 pub enum P4Counters {
-    #[structopt(about = "list all available counters")]
+    /// list all available counters
     List,
-    #[structopt(about = "get data from the given counter")]
+    /// get data from the given counter
     Get {
-        #[structopt(short = "f")]
+        #[clap(short = 'f')]
         /// sync the counter data from the ASIC to memory even if the normal
         /// refresh timeout hasn't expired.
         force_sync: bool,
         name: String,
     },
-    #[structopt(about = "reset the data for a given counter")]
+    /// reset the data for a given counter
     Reset { name: String },
 }
 

@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 use std::io::stdout;
 use std::io::Write;
 
+use clap::Subcommand;
 use colored::Colorize;
-use structopt::*;
 use tabwriter::TabWriter;
 
 use dpd_client::types;
@@ -19,36 +19,35 @@ use dpd_client::Client;
 use crate::counters::get_counter_type;
 use crate::counters::CounterType;
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand)]
 /// Access the raw contents of the tables used by the P4 program.
-#[structopt(verbatim_doc_comment)]
 pub enum Table {
-    #[structopt(alias = "ls")]
+    #[clap(alias = "ls")]
     /// List the names of the dynamic p4 tables.
     List,
     /// Fetch the data programmed into the specified table.
     Dump {
-        #[structopt(short = "a")]
+        #[clap(short = 'a')]
         /// Display only those entries with the specified action.
         action: Option<String>,
-        #[structopt(short = "s")]
+        #[clap(short = 's')]
         /// Displays the schema rather than the table contents.  The order in
         /// which the names are the displayed match the order in which the
         /// actual data will be displayed as 'parseable' output.
         schema: bool,
-        #[structopt(short = "p")]
+        #[clap(short = 'p')]
         /// Display the data in a parseable format rather then user-friendly.
         parseable: bool,
         /// The name of the table to display.
         name: String,
     },
     /// Fetch any counter data associated with the specified table.
-    #[structopt(visible_alias = "ctrs")]
+    #[clap(alias = "ctrs")]
     Counters {
-        #[structopt(short = "p")]
+        #[clap(short = 'p')]
         /// Display the data in a parseable format rather then user-friendly.
         parseable: bool,
-        #[structopt(short = "f")]
+        #[clap(short = 'f')]
         /// sync the counter data from the ASIC to memory even if the normal
         /// refresh timeout hasn't expired.
         force_sync: bool,

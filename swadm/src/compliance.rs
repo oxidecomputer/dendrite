@@ -7,16 +7,16 @@
 use std::io::{stdout, Write};
 
 use anyhow::Context;
+use clap::Subcommand;
 use colored::*;
-use structopt::*;
 use tabwriter::TabWriter;
 
 use common::ports::{PortFec, PortSpeed};
 use dpd_client::types;
 use dpd_client::Client;
 
-#[derive(Debug, StructOpt)]
-#[structopt(about = "Commands for compliance testing")]
+#[derive(Debug, Subcommand)]
+/// Commands for compliance testing
 pub enum Compliance {
     /// View/Manage port and link state
     ///
@@ -53,40 +53,39 @@ pub enum Compliance {
     ///   swadm compliance ports power high qsfp0  # Set qsfp0 transceiver to high power
     ///   swadm compliance ports power low qsfp0   # Set qsfp0 transceiver to low power  
     ///   swadm compliance ports power off --force  # Power off all qsfp transceivers, deleting links
-    #[structopt(verbatim_doc_comment)]
     Ports {
-        #[structopt(subcommand)]
+        #[clap(subcommand)]
         action: PortAction,
     },
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand)]
 pub enum PortAction {
     /// List links with their enabled status and operational state
-    #[structopt(visible_alias = "ls")]
+    #[clap(alias = "ls")]
     List {
         /// Link pattern to match. Can be specific link like "rear0/0", or substring pattern
         pattern: Option<String>,
         /// Include all links (default: qsfp links only)
-        #[structopt(long)]
+        #[clap(long)]
         all: bool,
     },
     /// Enable links (bring them up)
-    #[structopt(visible_alias = "on")]
+    #[clap(alias = "on")]
     Up {
         /// Link pattern to match. Can be specific link like "rear0/0", or substring pattern
         pattern: Option<String>,
         /// Include all links (default: qsfp links only)
-        #[structopt(long)]
+        #[clap(long)]
         all: bool,
     },
     /// Disable links (bring them down)
-    #[structopt(visible_alias = "off")]
+    #[clap(alias = "off")]
     Down {
         /// Link pattern to match. Can be specific link like "rear0/0", or substring pattern
         pattern: Option<String>,
         /// Include all links (default: qsfp links only)
-        #[structopt(long)]
+        #[clap(long)]
         all: bool,
     },
     /// Create links on switch ports with default compliance settings
@@ -94,19 +93,19 @@ pub enum PortAction {
         /// Switch port pattern to match. Can be specific port like "qsfp0", or substring pattern
         pattern: Option<String>,
         /// The speed for the new links
-        #[structopt(short, long, parse(try_from_str), default_value = "200G")]
+        #[clap(short, long, default_value = "200G")]
         speed: PortSpeed,
         /// The error-correction scheme for the links (override server default)
-        #[structopt(short, long, parse(try_from_str))]
+        #[clap(short, long)]
         fec: Option<PortFec>,
         /// Enable autonegotiation on the links
-        #[structopt(short, long)]
+        #[clap(short, long)]
         autoneg: bool,
         /// Enable KR mode for the links
-        #[structopt(short, long)]
+        #[clap(short, long)]
         kr: bool,
         /// Create links on all switch ports (default: qsfp ports only)
-        #[structopt(long)]
+        #[clap(long)]
         all: bool,
     },
     /// Delete links from switch ports
@@ -114,7 +113,7 @@ pub enum PortAction {
         /// Link pattern to match. Can be specific link like "qsfp0/0", or substring pattern
         pattern: Option<String>,
         /// Include all links (default: qsfp links only)
-        #[structopt(long)]
+        #[clap(long)]
         all: bool,
     },
     /// Control transceiver power state
@@ -124,7 +123,7 @@ pub enum PortAction {
         /// Port pattern to match. Can be specific port like "qsfp0", or substring pattern
         pattern: Option<String>,
         /// Force power operation, deleting links if necessary
-        #[structopt(short, long)]
+        #[clap(short, long)]
         force: bool,
     },
 }

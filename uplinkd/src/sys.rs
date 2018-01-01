@@ -25,7 +25,6 @@ use signal_hook::iterator::Signals;
 use slog::debug;
 use slog::error;
 use slog::info;
-use structopt::StructOpt;
 
 use common::network::Cidr;
 use common::network::Ipv4Cidr;

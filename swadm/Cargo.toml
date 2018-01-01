@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
+clap.workspace = true
 colored.workspace = true
 common.workspace = true
 dpd-client.workspace = true
@@ -15,6 +16,5 @@ futures.workspace = true
 oxide-tokio-rt.workspace = true
 oxnet.workspace = true
 slog.workspace = true
-structopt.workspace = true
 tabwriter.workspace = true
 tokio.workspace = true

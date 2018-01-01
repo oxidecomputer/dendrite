@@ -15,5 +15,5 @@ oxnet.workspace = true
 signal-hook.workspace = true
 slog.workspace = true
 smf.workspace = true
-structopt.workspace = true
+clap.workspace = true
 tokio.workspace = true

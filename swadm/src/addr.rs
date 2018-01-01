@@ -8,9 +8,9 @@ use std::io::{stdout, Write};
 use std::net::IpAddr;
 
 use anyhow::Context;
+use clap::Subcommand;
 use colored::*;
 use futures::stream::TryStreamExt;
-use structopt::*;
 use tabwriter::TabWriter;
 
 use dpd_client::Client;
@@ -19,26 +19,27 @@ use crate::misc_err;
 use crate::LinkName;
 use crate::LinkPath;
 
-#[derive(Debug, StructOpt)]
-#[structopt(about = "address management")]
+#[derive(Debug, Subcommand)]
+/// address management
 pub enum Addr {
     /// List addresses assigned to a link.
-    #[structopt(visible_alias = "ls")]
+    #[clap(alias = "ls")]
     List {
-        #[structopt(about = "limit output to IPv4", short = "4")]
+        /// limit output to IPv4
+        #[clap(short = '4')]
         ipv4: bool,
-        #[structopt(about = "limit output to IPv6", short = "6")]
+        /// limit output to IPv6
+        #[clap(short = '6')]
         ipv6: bool,
-        #[structopt(help = "provide parseable output", short = "p")]
+        /// provide parseable output
+        #[clap(short = 'p')]
         parseable: bool,
         /// List addresses for a specific link
-        #[structopt(parse(try_from_str))]
         link: Option<LinkName>,
     },
     /// Add an address to a link.
     Add {
         /// The link on which to add the address.
-        #[structopt(parse(try_from_str))]
         link: LinkName,
         /// The IP address to add.
         addr: IpAddr,
@@ -46,7 +47,6 @@ pub enum Addr {
     /// Delete an IP address from a link.
     Del {
         /// The link from which to delete the address.
-        #[structopt(parse(try_from_str))]
         link: LinkName,
         /// The IP address to delete.
         addr: IpAddr,

@@ -16,6 +16,7 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 
 use anyhow::Context;
+use clap::{Parser, Subcommand};
 use dpd_api::LinkCreate;
 use dpd_types::link::LinkId;
 use dpd_types::oxstats::OximeterMetadata;
@@ -30,7 +31,6 @@ use signal_hook_tokio::Signals;
 use slog::debug;
 use slog::error;
 use slog::info;
-use structopt::StructOpt;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::time::sleep;
 use tokio::time::Duration;
@@ -80,8 +80,15 @@ mod transceivers;
 mod types;
 mod version;
 
-#[derive(Debug, StructOpt)]
-#[structopt(name = "dpd", about = "dataplane controller for oxide switch")]
+/// dataplane controller for oxide switch
+#[derive(Debug, Parser)]
+pub struct Cli {
+    #[command(subcommand)]
+    args: Args,
+}
+
+#[derive(Debug, Subcommand)]
+#[clap(name = "dpd")]
 pub(crate) enum Args {
     /// Run the Dendrite API server.
     Run(Opt),
@@ -89,101 +96,83 @@ pub(crate) enum Args {
     Openapi,
 }
 
-#[derive(Debug, Default, StructOpt)]
-#[structopt(name = "dpd", about = "dataplane controller for oxide switch")]
+/// dataplane controller for oxide switch
+#[derive(Debug, Default, Parser)]
+#[clap(name = "dpd")]
 pub(crate) struct Opt {
-    #[structopt(
-        long,
-        about = "send log data to the named file rather than stdout"
-    )]
+    /// send log data to the named file rather than stdout
+    #[clap(long)]
     log_file: Option<String>,
 
-    #[structopt(
-        long,
-        short = "l",
-        about = "log format",
-        help = "format logs for 'human' or 'json' consumption"
-    )]
+    /// log format
+    ///
+    /// format logs for 'human' or 'json' consumption
+    #[clap(long, short = 'l')]
     log_format: Option<common::logging::LogFormat>,
 
     // TODO-correctness: This argument may need to change or go away. The
     // control plane ultimately will set the addresses for each switch port
     // independently, but it's not clear whether that makes sense in the SoftNPU
     // and Intel simulator implementations.
-    #[structopt(
-        long,
-        help = "set the base mac address for the switch",
-        parse(try_from_str)
-    )]
+    /// set the base mac address for the switch
+    #[clap(long)]
     mac_base: Option<MacAddr>,
 
-    #[structopt(
-        long,
-        help = "file defining the ports to configure at startup"
-    )]
+    /// file defining the ports to configure at startup
+    #[clap(long)]
     port_config: Option<String>,
 
-    #[structopt(
-        long,
-        help = "file describing alternate settings for some transceivers"
-    )]
+    /// file describing alternate settings for some transceivers
+    #[clap(long)]
     xcvr_defaults: Option<String>,
 
     // TODO-completeness: This will ultimately go away in the product, or be
     // ignored, as the value will ideally be determined from the FRUID data in
     // the Sidecar itself.
+    /// Revision of the Sidecar which Dendrite will manage
     #[cfg_attr(not(feature = "tofino_asic"), allow(dead_code))]
-    #[structopt(
-        long,
-        help = "Revision of the Sidecar which Dendrite will manage",
-        parse(try_from_str)
-    )]
+    #[clap(long)]
     sidecar_revision: Option<SidecarRevision>,
 
-    #[structopt(
-        long,
-        help = "IP addresses and ports on which to expose the API server"
-    )]
+    /// IP addresses and ports on which to expose the API server
+    #[clap(long)]
     listen_addresses: Option<Vec<SocketAddr>>,
 
+    /// path to the tofino device
     #[cfg(feature = "tofino_asic")]
-    #[structopt(long, about = "path to the tofino device")]
+    #[clap(long)]
     device_path: Option<String>,
 
+    /// path to the the chaos testing configuration
     #[cfg(feature = "chaos")]
-    #[structopt(long, about = "path to the the chaos testing configuration")]
+    #[clap(long)]
     chaos_config: Option<String>,
 
     // NOTE: This should never be set to something other than the default
     // `sidecar0` in the product.
+    /// IP interface over which to communicate with
+    /// the Hubris transceivers task for controlling
+    /// QSFP modules
     #[cfg_attr(not(feature = "tofino_asic"), allow(dead_code))]
-    #[structopt(
-        long,
-        help = "\
-            IP interface over which to communicate with \
-            the Hubris transceivers task for controlling \
-            QSFP modules."
-    )]
+    #[clap(long)]
     transceiver_interface: Option<String>,
 
+    /// Mechanism for controlling SoftNPU emulated switch
     #[cfg(feature = "softnpu")]
-    #[structopt(
-        long,
-        about = "Mechanism for controlling SoftNPU emulated switch"
-    )]
+    #[clap(long)]
     softnpu_management: Option<asic::softnpu::mgmt::SoftnpuManagement>,
 
+    /// Path to UNIX domain socket to use for communicating with asic
     #[cfg(feature = "softnpu")]
-    #[structopt(
-        long,
-        about = "Path to UNIX domain socket to use for communicating with asic"
-    )]
+    #[clap(long)]
     uds_path: Option<String>,
 
-    #[structopt(long, about = "Enable RPW services.")]
+    /// Enable RPW services
+    #[clap(long)]
     enable_rpw: bool,
 
-    #[structopt(long, about = "IP address and port of nexus server.")]
+    /// IP address and port of nexus server
+    #[clap(long)]
     nexus_address: Option<SocketAddr>,
 }
 
@@ -799,9 +788,9 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = Args::from_args();
+    let cli = Cli::parse();
 
-    match args {
+    match cli.args {
         Args::Openapi => print_openapi(),
         Args::Run(opt) => oxide_tokio_rt::run(run_dpd(opt)),
     }
