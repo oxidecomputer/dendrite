@@ -7,7 +7,9 @@
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 
-use async_trait::async_trait;
+use ::common::network::MacAddr;
+use dpd_client::default_multicast_nat_ip;
+use dpd_client::types::MulticastRouteEntry;
 use futures::TryStreamExt;
 use oxnet::IpNet;
 use oxnet::Ipv4Net;
@@ -35,19 +37,23 @@ use dpd_client::ResponseValue;
 // This table has further shrunk to 4022 entries with the open source
 // compiler.  That is being tracked as issue #1092, which will presumably
 // subsume #1013.
-// update: with the move to 8192 entries we're now at 8124
-const IPV4_LPM_SIZE: usize = 8125; // ipv4 forwarding table
-const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
+// update: with the move to 8192 entries we're now at 8183
+const IPV4_LPM_SIZE: usize = 8183; // ipv4 forwarding table
+const IPV6_LPM_SIZE: usize = 1025; // ipv6 forwarding table
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports
 const IPV4_NAT_TABLE_SIZE: usize = 1024; // nat routing table
 const IPV6_NAT_TABLE_SIZE: usize = 1024; // nat routing table
 const IPV4_ARP_SIZE: usize = 512; // arp cache
 const IPV6_NEIGHBOR_SIZE: usize = 512; // ipv6 neighbor cache
+/// Multicast routing tables (ipv4 @ 1024 and ipv6 @ 1024),
+/// and we alternate between ipv4 and ipv6 for each entry.
+const MULTICAST_TABLE_SIZE: usize = 2048;
+const MCAST_TAG: &str = "mcast_table_test"; // multicast group tag
 
 // The result of a table insert or delete API operation.
-type OpResult =
-    Result<ResponseValue<()>, dpd_client::Error<dpd_client::types::Error>>;
+type OpResult<T> =
+    Result<ResponseValue<T>, dpd_client::Error<dpd_client::types::Error>>;
 
 fn gen_ipv4_addr(idx: usize) -> Ipv4Addr {
     let base_addr: u32 = Ipv4Addr::new(192, 168, 0, 0).into();
@@ -68,18 +74,32 @@ fn gen_ipv6_cidr(idx: usize) -> Ipv6Net {
     Ipv6Net::new(gen_ipv6_addr(idx), 128).unwrap()
 }
 
+fn gen_ipv4_multicast_addr(idx: usize) -> Ipv4Addr {
+    let base = 0xE0000000u32; // hex for 224.0.0.0
+    let addr = base + idx as u32;
+    addr.into()
+}
+
+fn gen_ipv6_multicast_addr(idx: usize) -> Ipv6Addr {
+    // FF00::/8 is the multicast prefix for IPv6
+    Ipv6Addr::new(0xFF00, 0, 0, 0, 0, 0, 0, idx as u16)
+}
+
 // For each table we want to test, we define functions to insert, delete, and
 // count entries.
-#[async_trait]
-trait TableTest {
-    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult;
-    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult;
+trait TableTest<I = (), D = ()> {
+    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<I>;
+    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<D>;
     async fn count_entries(switch: &Switch) -> usize;
 }
 
 // Verify that we can fill and empty a table, and that it has exactly the
 // capacity that we expect.
-async fn test_table_capacity<T: TableTest>(table_size: usize) -> TestResult {
+async fn test_table_capacity<T, I, D>(table_size: usize) -> TestResult
+where
+    T: TableTest<I, D>,
+    I: std::fmt::Debug,
+{
     let switch = &*get_switch().await;
 
     // Verify that the table is now empty
@@ -118,9 +138,8 @@ async fn test_table_capacity<T: TableTest>(table_size: usize) -> TestResult {
     Ok(())
 }
 
-#[async_trait]
 impl TableTest for types::Ipv4Entry {
-    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
         switch
             .client
@@ -132,7 +151,7 @@ impl TableTest for types::Ipv4Entry {
             .await
     }
 
-    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
         switch
             .client
@@ -158,12 +177,12 @@ async fn test_ipv4_full() -> TestResult {
     // The limit for the switch port addresses is half the size of the table
     // because each address consumes two table entries: one to "accept" on the
     // correct port and one to "drop" on all the other ports.
-    test_table_capacity::<types::Ipv4Entry>(SWITCH_IPV4_ADDRS_SIZE / 2).await
+    test_table_capacity::<types::Ipv4Entry, (), ()>(SWITCH_IPV4_ADDRS_SIZE / 2)
+        .await
 }
 
-#[async_trait]
 impl TableTest for types::Ipv6Entry {
-    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
         switch
             .client
@@ -175,7 +194,7 @@ impl TableTest for types::Ipv6Entry {
             .await
     }
 
-    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
         switch
             .client
@@ -201,25 +220,22 @@ async fn test_ipv6_full() -> TestResult {
     // The limit for the switch port addresses is half the size of the table
     // because each address consumes two table entries: one to "accept" on the
     // correct port and one to "drop" on all the other ports.
-    test_table_capacity::<types::Ipv6Entry>(SWITCH_IPV6_ADDRS_SIZE / 2).await
+    test_table_capacity::<types::Ipv6Entry, (), ()>(SWITCH_IPV6_ADDRS_SIZE / 2)
+        .await
 }
 
-#[async_trait]
 impl TableTest for types::ArpEntry {
-    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let entry = types::ArpEntry {
             ip: gen_ipv4_addr(idx).into(),
-            mac: common::network::MacAddr::new(
-                0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab,
-            )
-            .into(),
+            mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             tag: switch.client.inner().tag.clone(),
             update: String::new(),
         };
         switch.client.arp_create(&entry).await
     }
 
-    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         switch.client.arp_delete(&gen_ipv4_addr(idx)).await
     }
 
@@ -237,27 +253,23 @@ impl TableTest for types::ArpEntry {
 #[tokio::test]
 #[ignore]
 async fn test_arp_full() -> TestResult {
-    test_table_capacity::<types::ArpEntry>(IPV4_ARP_SIZE).await
+    test_table_capacity::<types::ArpEntry, (), ()>(IPV4_ARP_SIZE).await
 }
 
 struct NdpEntry {}
 
-#[async_trait]
 impl TableTest for NdpEntry {
-    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let entry = types::ArpEntry {
             ip: gen_ipv6_addr(idx).into(),
-            mac: common::network::MacAddr::new(
-                0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab,
-            )
-            .into(),
+            mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             tag: switch.client.inner().tag.clone(),
             update: String::new(),
         };
         switch.client.ndp_create(&entry).await
     }
 
-    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         switch.client.ndp_delete(&gen_ipv6_addr(idx)).await
     }
 
@@ -275,20 +287,16 @@ impl TableTest for NdpEntry {
 #[tokio::test]
 #[ignore]
 async fn test_ndp_full() -> TestResult {
-    test_table_capacity::<NdpEntry>(IPV6_NEIGHBOR_SIZE).await
+    test_table_capacity::<NdpEntry, (), ()>(IPV6_NEIGHBOR_SIZE).await
 }
 
-#[async_trait]
 impl TableTest for types::Ipv4Nat {
-    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let external_ip = Ipv4Addr::new(192, 168, 0, 1);
 
         let tgt = types::NatTarget {
-            internal_ip: "fd00:1122:7788:0101::4".parse::<Ipv6Addr>().unwrap(),
-            inner_mac: common::network::MacAddr::new(
-                0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab,
-            )
-            .into(),
+            internal_ip: ::common::DEFAULT_MULTICAST_NAT_IP,
+            inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             vni: 0.into(),
         };
         switch
@@ -297,7 +305,7 @@ impl TableTest for types::Ipv4Nat {
             .await
     }
 
-    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let external_ip = Ipv4Addr::new(192, 168, 0, 1);
         switch
             .client
@@ -320,20 +328,16 @@ impl TableTest for types::Ipv4Nat {
 #[tokio::test]
 #[ignore]
 async fn test_natv4_full() -> TestResult {
-    test_table_capacity::<types::Ipv4Nat>(IPV4_NAT_TABLE_SIZE).await
+    test_table_capacity::<types::Ipv4Nat, (), ()>(IPV4_NAT_TABLE_SIZE).await
 }
 
-#[async_trait]
 impl TableTest for types::Ipv6Nat {
-    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let external_ip = "fd00:1122:1122:0101::4".parse::<Ipv6Addr>().unwrap();
 
         let tgt = types::NatTarget {
             internal_ip: "fd00:1122:7788:0101::4".parse::<Ipv6Addr>().unwrap(),
-            inner_mac: common::network::MacAddr::new(
-                0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab,
-            )
-            .into(),
+            inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             vni: 0.into(),
         };
         switch
@@ -342,7 +346,7 @@ impl TableTest for types::Ipv6Nat {
             .await
     }
 
-    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let external_ip = "fd00:1122:1122:0101::4".parse::<Ipv6Addr>().unwrap();
         switch
             .client
@@ -365,14 +369,13 @@ impl TableTest for types::Ipv6Nat {
 #[tokio::test]
 #[ignore]
 async fn test_natv6_full() -> TestResult {
-    test_table_capacity::<types::Ipv6Nat>(IPV6_NAT_TABLE_SIZE).await
+    test_table_capacity::<types::Ipv6Nat, (), ()>(IPV6_NAT_TABLE_SIZE).await
 }
 
 struct RouteV4 {}
 
-#[async_trait]
 impl TableTest for RouteV4 {
-    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
         let route = types::RouteSet {
             cidr: IpNet::V4(gen_ipv4_cidr(idx)),
@@ -388,7 +391,7 @@ impl TableTest for RouteV4 {
         switch.client.route_ipv4_set(&route).await
     }
 
-    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let cidr = gen_ipv4_cidr(idx);
         switch.client.route_ipv4_delete(&cidr).await
     }
@@ -407,14 +410,13 @@ impl TableTest for RouteV4 {
 #[tokio::test]
 #[ignore]
 async fn test_routev4_full() -> TestResult {
-    test_table_capacity::<RouteV4>(IPV4_LPM_SIZE).await
+    test_table_capacity::<RouteV4, (), ()>(IPV4_LPM_SIZE).await
 }
 
 struct RouteV6 {}
 
-#[async_trait]
 impl TableTest for RouteV6 {
-    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
         let route = types::RouteSet {
             cidr: IpNet::V6(gen_ipv6_cidr(idx)),
@@ -433,7 +435,7 @@ impl TableTest for RouteV6 {
         switch.client.route_ipv6_set(&route).await
     }
 
-    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult {
+    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let cidr = gen_ipv6_cidr(idx);
         switch.client.route_ipv6_delete(&cidr).await
     }
@@ -452,5 +454,121 @@ impl TableTest for RouteV6 {
 #[tokio::test]
 #[ignore]
 async fn test_routev6_full() -> TestResult {
-    test_table_capacity::<RouteV6>(IPV6_LPM_SIZE).await
+    test_table_capacity::<RouteV6, (), ()>(IPV6_LPM_SIZE).await
+}
+
+impl TableTest<types::MulticastRouteResponse, ()> for MulticastRouteEntry {
+    async fn insert_entry(
+        switch: &Switch,
+        idx: usize,
+    ) -> OpResult<types::MulticastRouteResponse> {
+        let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
+
+        // Create a mcast group_id,
+        let group_id = 100 + idx as u16;
+
+        // with a possible a vlan_id,
+        // (if id < 2 || id > 4095)
+        let vlan_id = 2 + idx as u16;
+
+        // with a possible nat_target,
+        let nat_target = types::NatTarget {
+            internal_ip: default_multicast_nat_ip(),
+            inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
+            vni: (1024 + idx as u32).into(),
+        };
+
+        // and a tag.
+        let tag = MCAST_TAG.to_string();
+
+        // Alternate having a nat_target based on whether idx is even or odd
+        let nat_target = if idx % 2 == 0 { Some(nat_target) } else { None };
+
+        // Alternate having a vlan_id based on whether idx is even or odd
+        let vlan_id = if idx % 2 == 0 { Some(vlan_id) } else { None };
+
+        // Create the group members
+        let members = vec![types::MulticastGroupMember {
+            port_id,
+            link_id,
+            vlan_id,
+            nat_target,
+        }];
+
+        let req_body = types::MulticastGroupEntry {
+            group_id: Some(group_id),
+            tag: Some(tag.to_string()),
+            members,
+        };
+
+        // Use the mcast module to create the group
+        let grp_resp = switch
+            .client
+            .multicast_group_create(&req_body)
+            .await
+            .expect("Should create multicast group");
+
+        assert_eq!(grp_resp.status(), StatusCode::CREATED);
+        let grp = grp_resp.into_inner();
+        assert_eq!(grp.group_id, group_id);
+        assert_eq!(grp.tag.unwrap(), tag);
+
+        // Alternate between IPv4 and IPv6 based on whether idx is even or odd
+        let ip = if idx % 2 == 0 {
+            gen_ipv4_multicast_addr(idx).into()
+        } else {
+            gen_ipv6_multicast_addr(idx).into()
+        };
+
+        let req_body = types::MulticastRouteEntry {
+            ip,
+            group_id,
+            level1_excl_id: Some(0), // Use 0 as the level1_excl_id
+            level2_excl_id: Some(0), // Use 0 as the level2_excl_id
+        };
+
+        switch.client.multicast_route_create(&req_body).await
+    }
+
+    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
+        // Determine the IP address type based on the index
+        let ip = if idx % 2 == 0 {
+            gen_ipv4_multicast_addr(idx).into()
+        } else {
+            gen_ipv6_multicast_addr(idx).into()
+        };
+
+        // Delete the route entry
+        switch.client.multicast_route_delete(&ip).await.unwrap();
+
+        // Then delete the group
+        let group_id = 100 + idx as u16;
+        switch.client.multicast_group_delete(group_id).await
+    }
+
+    async fn count_entries(switch: &Switch) -> usize {
+        let resp = switch
+            .client
+            .multicast_groups_list_by_tag(MCAST_TAG)
+            .await
+            .unwrap();
+
+        let mut count = 0;
+        for group in resp.iter() {
+            count += group.routes.len();
+        }
+
+        count
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_mcast_full() -> TestResult {
+    test_table_capacity::<
+        types::MulticastRouteEntry,
+        types::MulticastRouteResponse,
+        (),
+    >(MULTICAST_TABLE_SIZE)
+    .await
 }

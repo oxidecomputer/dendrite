@@ -23,12 +23,30 @@ use ::common::network::MacAddr;
 use dpd_client::types::Ipv4Entry;
 use dpd_client::types::Ipv6Entry;
 
+#[allow(dead_code)]
+enum Direction {
+    Ingress,
+    Egress,
+}
+
+impl Direction {
+    fn as_str(&self) -> &str {
+        match self {
+            Direction::Ingress => "ingress",
+            Direction::Egress => "egress",
+        }
+    }
+}
 // Returns the number of packets dropped for the given reason.  If that
 // counter isn't in the set returned by dpd, we return an error to the caller.
-async fn get_counter(switch: &Switch, counter: &str) -> anyhow::Result<u64> {
+async fn get_counter(
+    switch: &Switch,
+    counter: &str,
+    direction: Direction,
+) -> anyhow::Result<u64> {
     switch
         .client
-        .counter_get("drop_reason", true)
+        .counter_get(&format!("{}_drop_reason", direction.as_str()), true)
         .await
         .map_err(|e| anyhow!("failed to fetch counters: {e:?}"))
         .and_then(|entries| {
@@ -56,7 +74,7 @@ async fn one_drop_test(
         port,
     };
 
-    let old = get_counter(switch, counter).await?;
+    let old = get_counter(switch, counter, Direction::Ingress).await?;
     switch.packet_test(vec![send], Vec::new())?;
 
     let mut new = 0;
@@ -67,7 +85,7 @@ async fn one_drop_test(
         // avoid a long pointless delay here, we try multiple times with a short
         // sleep rather than once with a long sleep.
         std::thread::sleep(std::time::Duration::from_millis(100));
-        new = get_counter(switch, counter).await?;
+        new = get_counter(switch, counter, Direction::Ingress).await?;
         if old + 1 == new {
             break;
         }

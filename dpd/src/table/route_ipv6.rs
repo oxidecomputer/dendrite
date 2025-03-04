@@ -17,7 +17,20 @@ use aal::MatchParse;
 use aal_macros::*;
 use oxnet::Ipv6Net;
 
-pub const TABLE_NAME: &str = "pipe.Ingress.l3_router.Router6.lookup.tbl";
+pub const TABLE_NAME_INGRESS: &str =
+    "pipe.Ingress.l3_router.Router6.lookup.tbl";
+pub const TABLE_NAME_EGRESS: &str =
+    "pipe.Egress.l3_router.MulticastRouter6.lookup.tbl";
+
+trait MulticastExt {
+    fn is_link_local_multicast(&self) -> bool;
+}
+
+impl MulticastExt for Ipv6Net {
+    fn is_link_local_multicast(&self) -> bool {
+        self.is_multicast() && self.addr().segments()[0] == 0xff02
+    }
+}
 
 #[derive(MatchParse, Hash)]
 struct MatchKey {
@@ -26,7 +39,7 @@ struct MatchKey {
 }
 
 #[derive(ActionParse)]
-enum Action {
+pub(crate) enum Action {
     #[action_xlate(name = "forward")]
     Forward { port: u16, nexthop: Ipv6Addr },
     #[action_xlate(name = "forward_vlan")]
@@ -57,7 +70,13 @@ pub fn add_route_entry(
         }
     };
 
-    match s.table_entry_add(TableType::RouteIpv6, &match_key, &action_data) {
+    let table = if cidr.is_multicast() && !cidr.is_link_local_multicast() {
+        TableType::RouteIpv6Mcast
+    } else {
+        TableType::RouteIpv6
+    };
+
+    match s.table_entry_add(table, &match_key, &action_data) {
         Ok(()) => {
             info!(s.log, "added ipv6 route entry";
 		    "route" => %cidr,
@@ -80,7 +99,13 @@ pub fn add_route_entry(
 pub fn delete_entry(s: &Switch, cidr: &Ipv6Net) -> DpdResult<()> {
     let match_key = MatchKey { dst_addr: *cidr };
 
-    s.table_entry_del(TableType::RouteIpv6, &match_key)
+    let table = if cidr.is_multicast() && !cidr.is_link_local_multicast() {
+        TableType::RouteIpv6Mcast
+    } else {
+        TableType::RouteIpv6
+    };
+
+    s.table_entry_del(table, &match_key)
         .map(|_| info!(s.log, "deleted ipv6 route entry"; "route" => %cidr))
         .map_err(|e| {
             error!(s.log, "failed to delete ipv6 route entry";
@@ -90,19 +115,35 @@ pub fn delete_entry(s: &Switch, cidr: &Ipv6Net) -> DpdResult<()> {
         })
 }
 
-pub fn table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<MatchKey, Action>(TableType::RouteIpv6)
+pub fn table_dump(s: &Switch, direction: Direction) -> DpdResult<views::Table> {
+    let table = match direction {
+        Direction::Ingress => TableType::RouteIpv6,
+        Direction::Egress => TableType::RouteIpv6Mcast,
+    };
+
+    s.table_dump::<MatchKey, Action>(table)
 }
 
 pub fn counter_fetch(
     s: &Switch,
     force_sync: bool,
+    direction: Direction,
 ) -> DpdResult<Vec<views::TableCounterEntry>> {
-    s.counter_fetch::<MatchKey>(force_sync, TableType::RouteIpv6)
+    let table = match direction {
+        Direction::Ingress => TableType::RouteIpv6,
+        Direction::Egress => TableType::RouteIpv6Mcast,
+    };
+
+    s.counter_fetch::<MatchKey>(force_sync, table)
 }
 
-pub fn reset(s: &Switch) -> DpdResult<()> {
-    s.table_clear(TableType::RouteIpv6)
+pub fn reset(s: &Switch, direction: Direction) -> DpdResult<()> {
+    let table = match direction {
+        Direction::Ingress => TableType::RouteIpv6,
+        Direction::Egress => TableType::RouteIpv6Mcast,
+    };
+
+    s.table_clear(table)
         .map(|_| info!(s.log, "cleared ipv6 route table"))
         .map_err(|e| {
             error!(s.log, "failed to clear ipv6 route table";

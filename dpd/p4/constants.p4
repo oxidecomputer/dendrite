@@ -1,24 +1,53 @@
 const bit<16> L2_ISOLATED_FLAG = 0x8000;
 #define IS_SERVICE(p) ((p) == USER_SPACE_SERVICE_PORT)
 
+// Includes the checksum for the original data, the geneve header, the
+// outer udp header, and the outer ipv6 pseudo-header.
+// NOTE: safe to include geneve ox_external_tag here as it is filled
+// on nat_ingress, and nat_checksum is only computer on nat_ingress.
+#define COMMON_FIELDS                \
+	meta.body_checksum,              \
+	hdr.inner_eth,                   \
+	hdr.geneve,                      \
+	hdr.geneve_opts.ox_external_tag, \
+	hdr.udp.src_port,                \
+	hdr.udp.dst_port,                \
+	hdr.udp.hdr_length,              \
+	(bit<16>)hdr.ipv6.next_hdr,	     \
+	hdr.ipv6.src_addr,               \
+	hdr.ipv6.dst_addr,               \
+	hdr.ipv6.payload_len
+
+// Includes the final bit of the inner ipv4 pseudo-header and the inner ipv4
+// header
+#define IPV4_FIELDS         \
+	meta.l4_length,         \
+	hdr.inner_ipv4
+
+// Includes the inner ipv6 header
+#define IPV6_FIELDS         \
+	hdr.inner_ipv6
+
 //TODO these all need to be bigger. Early experimentation is showing that this
 //is going to need to come either through ATCAM/ALPM or code restructuring.
 const int IPV4_NAT_TABLE_SIZE		= 1024; // nat routing table
 const int IPV6_NAT_TABLE_SIZE		= 1024; // nat routing table
 const int IPV4_LPM_SIZE			= 8192; // ipv4 forwarding table
 const int IPV6_LPM_SIZE			= 1024; // ipv6 forwarding table
-
-const int IPV4_ARP_SIZE			= 512;  // arp cache
+const int IPV4_ARP_SIZE             = 512;  // arp cache
 const int IPV6_NEIGHBOR_SIZE		= 512;  // ipv6 neighbor cache
 const int SWITCH_IPV4_ADDRS_SIZE	= 512;  // ipv4 addrs assigned to our ports
 const int SWITCH_IPV6_ADDRS_SIZE	= 512;  // ipv6 addrs assigned to our ports
 
-const bit<8> SC_FWD_FROM_USERSPACE	= 0x00;
-const bit<8> SC_FWD_TO_USERSPACE	= 0x01;
-const bit<8> SC_ICMP_NEEDED		= 0x02;
-const bit<8> SC_ARP_NEEDED		= 0x03;
-const bit<8> SC_NEIGHBOR_NEEDED		= 0x04;
-const bit<8> SC_INVALID			= 0xff;
+const int MULTICAST_TABLE_SIZE      = 1024; // multicast routing table(s) for ip4/ip6 separately
+const int MULTICAST_NAT_TABLE_SIZE  = 2048; // multicast NAT table (ipv4 + ipv6)
+
+const bit<8> SC_FWD_FROM_USERSPACE  = 0x00;
+const bit<8> SC_FWD_TO_USERSPACE    = 0x01;
+const bit<8> SC_ICMP_NEEDED         = 0x02;
+const bit<8> SC_ARP_NEEDED          = 0x03;
+const bit<8> SC_NEIGHBOR_NEEDED     = 0x04;
+const bit<8> SC_INVALID             = 0xff;
 
 /* flags used for per-packet-type counters */
 const bit<10> PKT_ETHER		= 0x200;
@@ -49,7 +78,7 @@ const bit<8> DROP_ARP_NULL			= 0x05;
 const bit<8> DROP_ARP_MISS			= 0x06;
 const bit<8> DROP_NDP_NULL			= 0x07;
 const bit<8> DROP_NDP_MISS			= 0x08;
-const bit<8> DROP_MULTICAST_TO_LOCAL_INTERFACE	= 0x09;
+const bit<8> DROP_MULTICAST_TO_LOCAL_INTERFACE  = 0x09;
 const bit<8> DROP_IPV4_CHECKSUM_ERR		= 0x0A;
 const bit<8> DROP_IPV4_TTL_INVALID		= 0x0B;
 const bit<8> DROP_IPV4_TTL_EXCEEDED		= 0x0C;
@@ -59,3 +88,9 @@ const bit<8> DROP_IPV4_UNROUTEABLE		= 0x0F;
 const bit<8> DROP_IPV6_UNROUTEABLE		= 0x10;
 const bit<8> DROP_NAT_INGRESS_MISS		= 0x11;
 const bit<32> DROP_REASON_MAX			= 0x12;
+const bit<8> DROP_MULTICAST_NO_GROUP    = 0x13;
+const bit<8> DROP_MULTICAST_INVALID_MAC = 0x14;
+const bit<8> DROP_MULTICAST_CPU_COPY = 0x15;
+
+/* Multicast-specific constants */
+const ipv6_addr_t MULTICAST_NAT_TARGET = 0xff050000000000000000000000000001; // ff05::1

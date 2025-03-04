@@ -17,6 +17,7 @@ use aal::MatchParse;
 use aal::TableOps;
 
 pub mod arp_ipv4;
+pub mod mcast;
 pub mod nat;
 pub mod neighbor_ipv6;
 pub mod port_ip;
@@ -25,10 +26,33 @@ pub mod port_nat;
 pub mod route_ipv4;
 pub mod route_ipv6;
 
-const NAME_TO_TYPE: [(&str, TableType); 11] = [
-    (route_ipv4::INDEX_TABLE_NAME, TableType::RouteIdxIpv4),
-    (route_ipv4::FORWARD_TABLE_NAME, TableType::RouteFwdIpv4),
-    (route_ipv6::TABLE_NAME, TableType::RouteIpv6),
+/// Ingress or egress direction, which determines which tables to use
+/// for a given operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Direction {
+    Ingress,
+    Egress,
+}
+
+const NAME_TO_TYPE: [(&str, TableType); 17] = [
+    (
+        route_ipv4::INDEX_TABLE_NAME_INGRESS,
+        TableType::RouteIdxIpv4,
+    ),
+    (
+        route_ipv4::FORWARD_TABLE_NAME_INGRESS,
+        TableType::RouteFwdIpv4,
+    ),
+    (
+        route_ipv4::INDEX_TABLE_NAME_EGRESS,
+        TableType::RouteIdxIpv4Mcast,
+    ),
+    (
+        route_ipv4::FORWARD_TABLE_NAME_EGRESS,
+        TableType::RouteFwdIpv4Mcast,
+    ),
+    (route_ipv6::TABLE_NAME_INGRESS, TableType::RouteIpv6),
+    (route_ipv6::TABLE_NAME_EGRESS, TableType::RouteIpv6Mcast),
     (arp_ipv4::TABLE_NAME, TableType::ArpIpv4),
     (neighbor_ipv6::TABLE_NAME, TableType::NeighborIpv6),
     (port_mac::TABLE_NAME, TableType::PortMac),
@@ -37,6 +61,9 @@ const NAME_TO_TYPE: [(&str, TableType); 11] = [
     (nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4),
     (nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6),
     (port_nat::TABLE_NAME, TableType::NatOnly),
+    (mcast::IPV4_TABLE_NAME, TableType::McastIpv4),
+    (mcast::IPV6_TABLE_NAME, TableType::McastIpv6),
+    (mcast::NAT_INGRESS_TABLE_NAME, TableType::NatIngressMcast),
 ];
 
 /// Basic statistics about p4 table usage
@@ -229,9 +256,24 @@ pub fn list(switch: &Switch) -> Vec<String> {
 /// entries stored in the ASIC.
 pub fn get_entries(switch: &Switch, name: String) -> DpdResult<views::Table> {
     match TableType::try_from(name.as_str())? {
-        TableType::RouteIdxIpv4 => route_ipv4::index_dump(switch),
-        TableType::RouteFwdIpv4 => route_ipv4::forward_dump(switch),
-        TableType::RouteIpv6 => route_ipv6::table_dump(switch),
+        TableType::RouteIdxIpv4 => {
+            route_ipv4::index_dump(switch, Direction::Ingress)
+        }
+        TableType::RouteFwdIpv4 => {
+            route_ipv4::forward_dump(switch, Direction::Ingress)
+        }
+        TableType::RouteIdxIpv4Mcast => {
+            route_ipv4::index_dump(switch, Direction::Egress)
+        }
+        TableType::RouteFwdIpv4Mcast => {
+            route_ipv4::forward_dump(switch, Direction::Egress)
+        }
+        TableType::RouteIpv6 => {
+            route_ipv6::table_dump(switch, Direction::Ingress)
+        }
+        TableType::RouteIpv6Mcast => {
+            route_ipv6::table_dump(switch, Direction::Egress)
+        }
         TableType::NeighborIpv6 => neighbor_ipv6::table_dump(switch),
         TableType::ArpIpv4 => arp_ipv4::table_dump(switch),
         TableType::NatIngressIpv4 => nat::ipv4_table_dump(switch),
@@ -240,6 +282,9 @@ pub fn get_entries(switch: &Switch, name: String) -> DpdResult<views::Table> {
         TableType::PortIpv6 => port_ip::ipv6_table_dump(switch),
         TableType::PortMac => port_mac::table_dump(switch),
         TableType::NatOnly => port_nat::table_dump(switch),
+        TableType::McastIpv4 => mcast::ipv4_table_dump(switch),
+        TableType::McastIpv6 => mcast::ipv6_table_dump(switch),
+        TableType::NatIngressMcast => mcast::nat_table_dump(switch),
     }
 }
 
@@ -251,13 +296,32 @@ pub fn get_counters(
     name: String,
 ) -> DpdResult<Vec<views::TableCounterEntry>> {
     match TableType::try_from(name.as_str())? {
-        TableType::RouteIdxIpv4 => {
-            route_ipv4::index_counter_fetch(switch, force_sync)
+        TableType::RouteIdxIpv4 => route_ipv4::index_counter_fetch(
+            switch,
+            force_sync,
+            Direction::Ingress,
+        ),
+        TableType::RouteFwdIpv4 => route_ipv4::forward_counter_fetch(
+            switch,
+            force_sync,
+            Direction::Ingress,
+        ),
+        TableType::RouteIdxIpv4Mcast => route_ipv4::index_counter_fetch(
+            switch,
+            force_sync,
+            Direction::Egress,
+        ),
+        TableType::RouteFwdIpv4Mcast => route_ipv4::forward_counter_fetch(
+            switch,
+            force_sync,
+            Direction::Egress,
+        ),
+        TableType::RouteIpv6 => {
+            route_ipv6::counter_fetch(switch, force_sync, Direction::Ingress)
         }
-        TableType::RouteFwdIpv4 => {
-            route_ipv4::forward_counter_fetch(switch, force_sync)
+        TableType::RouteIpv6Mcast => {
+            route_ipv6::counter_fetch(switch, force_sync, Direction::Egress)
         }
-        TableType::RouteIpv6 => route_ipv6::counter_fetch(switch, force_sync),
         TableType::NeighborIpv6 => {
             neighbor_ipv6::counter_fetch(switch, force_sync)
         }
@@ -271,6 +335,11 @@ pub fn get_counters(
         TableType::PortIpv4 => port_ip::ipv4_counter_fetch(switch, force_sync),
         TableType::PortIpv6 => port_ip::ipv6_counter_fetch(switch, force_sync),
         TableType::NatOnly => port_nat::counter_fetch(switch, force_sync),
+        TableType::McastIpv4 => mcast::ipv4_counter_fetch(switch, force_sync),
+        TableType::McastIpv6 => mcast::ipv6_counter_fetch(switch, force_sync),
+        TableType::NatIngressMcast => {
+            mcast::nat_counter_fetch(switch, force_sync)
+        }
         // There is no counter in the PortMac table, as it duplicates data
         // already available in the rmon egress counter.
         _ => Err(DpdError::NoSuchTable(name)),
@@ -281,7 +350,10 @@ pub fn get_counters(
 pub enum TableType {
     RouteIdxIpv4,
     RouteFwdIpv4,
+    RouteIdxIpv4Mcast,
+    RouteFwdIpv4Mcast,
     RouteIpv6,
+    RouteIpv6Mcast,
     ArpIpv4,
     NeighborIpv6,
     PortMac,
@@ -290,6 +362,9 @@ pub enum TableType {
     NatIngressIpv4,
     NatIngressIpv6,
     NatOnly,
+    McastIpv4,
+    McastIpv6,
+    NatIngressMcast,
 }
 
 impl TryFrom<&str> for TableType {

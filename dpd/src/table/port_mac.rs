@@ -14,7 +14,7 @@ use aal::{ActionParse, MatchParse};
 use aal_macros::*;
 use common::network::MacAddr;
 
-pub const TABLE_NAME: &str = "pipe.Ingress.mac_rewrite.mac_rewrite";
+pub const TABLE_NAME: &str = "pipe.Egress.mac_rewrite.mac_rewrite";
 
 #[derive(MatchParse, Debug, Hash)]
 struct MatchKey {

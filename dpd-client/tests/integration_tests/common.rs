@@ -833,6 +833,7 @@ pub fn gen_packet_routed(
 ) -> Packet {
     let mut recv = send.clone();
     if recv.hdrs.ipv4_hdr.is_some() {
+        println!("adjusting ttl");
         ipv4::Ipv4Hdr::adjust_ttl(&mut recv, -1);
     } else if recv.hdrs.ipv6_hdr.is_some() {
         ipv6::Ipv6Hdr::adjust_hlim(&mut recv, -1);

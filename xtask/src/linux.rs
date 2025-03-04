@@ -4,7 +4,6 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
