@@ -80,6 +80,19 @@ fn mgrp_destroy(
     Ok(())
 }
 
+fn mgrp_get_count(
+    mcast_hdl: &Handle,
+    dev_id: bf_dev_id_t,
+    mut count: u32,
+) -> AsicResult<usize> {
+    unsafe {
+        bf_mc_mgrp_get_count(mcast_hdl.bf_get().mcast_hdl, dev_id, &mut count)
+            .check_error("getting total count of multicast groups")?;
+    }
+
+    Ok(count as usize)
+}
+
 fn associate_node(
     mcast_hdl: bf_mc_session_hdl_t,
     dev_id: bf_dev_id_t,
@@ -166,6 +179,26 @@ fn cleanup_node(
     node_destroy(bf.mcast_hdl, bf.dev_id, port_state.node_hdl)
 }
 
+fn set_max_node_threshold(
+    mcast_hdl: bf_mc_session_hdl_t,
+    dev_id: bf_dev_id_t,
+    node_count: i32,
+    node_port_lag_count: i32,
+) -> AsicResult<()> {
+    unsafe {
+        bf_mc_set_max_node_threshold(
+            mcast_hdl,
+            dev_id,
+            node_count,
+            node_port_lag_count,
+        )
+        .check_error("setting max node threshold")?;
+    }
+
+    Ok(())
+}
+
+/// All multicast domains.
 pub fn domains(hdl: &Handle) -> Vec<u16> {
     let mut list = Vec::new();
     let domains = hdl.domains.lock().unwrap();
@@ -190,6 +223,7 @@ fn domain_ports(domain: &DomainState) -> Vec<u16> {
     list
 }
 
+/// Get the number of ports in a multicast domain.
 pub fn domain_port_count(hdl: &Handle, group_id: u16) -> AsicResult<usize> {
     let mut domains = hdl.domains.lock().unwrap();
     match domains.get_mut(&group_id) {
@@ -198,6 +232,7 @@ pub fn domain_port_count(hdl: &Handle, group_id: u16) -> AsicResult<usize> {
     }
 }
 
+/// Add a port to a multicast domain.
 pub fn domain_add_port(
     hdl: &Handle,
     group_id: u16,
@@ -259,6 +294,7 @@ pub fn domain_add_port(
     }
 }
 
+/// Remove a port from a multicast domain.
 pub fn domain_remove_port(
     hdl: &Handle,
     group_id: u16,
@@ -287,6 +323,7 @@ pub fn domain_remove_port(
     Ok(())
 }
 
+/// Create a multicast domain.
 pub fn domain_create(hdl: &Handle, group_id: u16) -> AsicResult<()> {
     info!(hdl.log, "creating multicast domain {}", group_id);
     let mut domains = hdl.domains.lock().unwrap();
@@ -308,6 +345,7 @@ pub fn domain_create(hdl: &Handle, group_id: u16) -> AsicResult<()> {
     Ok(())
 }
 
+/// Destroy a multicast domain.
 pub fn domain_destroy(hdl: &Handle, group_id: u16) -> AsicResult<()> {
     info!(hdl.log, "destroying multicast domain {}", group_id);
     let mut domains = hdl.domains.lock().unwrap();
@@ -332,4 +370,31 @@ pub fn domain_destroy(hdl: &Handle, group_id: u16) -> AsicResult<()> {
     }
 
     mgrp_destroy(bf.mcast_hdl, bf.dev_id, domain.mgrp_hdl)
+}
+
+/// Domain exists.
+pub fn domain_exists(hdl: &Handle, group_id: u16) -> bool {
+    let domains = hdl.domains.lock().unwrap();
+    domains.contains_key(&group_id)
+}
+
+/// Get the total number of multicast domains.
+pub fn domains_count(hdl: &Handle) -> AsicResult<usize> {
+    let bf = hdl.bf_get();
+    mgrp_get_count(hdl, bf.dev_id, 0)
+}
+
+/// Set the maximum number of multicast nodes.
+pub fn set_max_nodes(
+    hdl: &Handle,
+    node_count: u32,
+    node_port_lag_count: u32,
+) -> AsicResult<()> {
+    let bf = hdl.bf_get();
+    set_max_node_threshold(
+        bf.mcast_hdl,
+        bf.dev_id,
+        node_count as i32,
+        node_port_lag_count as i32,
+    )
 }

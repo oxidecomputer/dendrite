@@ -1,5 +1,5 @@
 const bit<16> ETHERTYPE_IPV4	= 0x0800;
-const bit<16> ETHERTYPE_ARP	= 0x0806;
+const bit<16> ETHERTYPE_ARP		= 0x0806;
 const bit<16> ETHERTYPE_VLAN	= 0x8100;
 const bit<16> ETHERTYPE_LLDP	= 0x88cc;
 const bit<16> ETHERTYPE_IPV6	= 0x86dd;
@@ -12,16 +12,16 @@ const bit<8> IPPROTO_UDP	= 17;
 const bit<8> IPPROTO_HOPOPTS	= 0;
 const bit<8> IPPROTO_ROUTING	= 43;
 const bit<8> IPPROTO_FRAGMENT	= 44;
-const bit<8> IPPROTO_ICMPV6	= 58;
+const bit<8> IPPROTO_ICMPV6		= 58;
 
 // ICMP message types
-const bit<8> ICMP_ECHOREPLY	= 0;
+const bit<8> ICMP_ECHOREPLY		= 0;
 const bit<8> ICMP_DEST_UNREACH	= 3;
-const bit<8> ICMP_ECHO		= 8;
+const bit<8> ICMP_ECHO			= 8;
 const bit<8> ICMP_TIME_EXCEEDED	= 11;
 
 // ICMP error codes
-const bit<8> ICMP_EXC_TTL		= 0;
+const bit<8> ICMP_EXC_TTL			= 0;
 const bit<8> ICMP_EXC_FRAGTIME		= 1;
 const bit<8> ICMP_DST_UNREACH_NET	= 0;
 const bit<8> ICMP_DST_UNREACH_HOST	= 1;
@@ -30,14 +30,14 @@ const bit<8> ICMP_DST_UNREACH_HOST	= 1;
 const bit<8> ICMP6_DST_UNREACH		= 1;
 const bit<8> ICMP6_PACKET_TOO_BIG	= 2;
 const bit<8> ICMP6_TIME_EXCEEDED	= 3;
-const bit<8> ICMP6_ECHO			= 128;
+const bit<8> ICMP6_ECHO				= 128;
 const bit<8> ICMP6_ECHOREPLY		= 129;
 
 // ICMPv6 error codes
 const bit<8> ICMP6_DST_UNREACH_NOROUTE		= 0;
 const bit<8> ICMP6_DST_UNREACH_ADMIN		= 1;
 const bit<8> ICMP6_DST_UNREACH_BEYONDSCOPE	= 2;
-const bit<8> ICMP6_DST_UNREACH_ADDR		= 3;
+const bit<8> ICMP6_DST_UNREACH_ADDR			= 3;
 const bit<8> ICMP6_DST_UNREACH_NOPORT		= 4;
 
 typedef bit<16> ether_type_t;
@@ -47,24 +47,24 @@ typedef bit<128> ipv6_addr_t;
 typedef bit<24> geneve_vni_t;
 
 header sidecar_h {
-	bit<8>		sc_code;
-	bit<8>		sc_pad;
-	bit<16>		sc_ingress;
-	bit<16>		sc_egress;
+	bit<8>			sc_code;
+	bit<8>			sc_pad;
+	bit<16>			sc_ingress;
+	bit<16>			sc_egress;
 	ether_type_t	sc_ether_type;
-	bit<128>	sc_payload;
+	bit<128>		sc_payload;
 }
 
 header ethernet_h {
-	mac_addr_t	dst_mac;
-	mac_addr_t	src_mac;
+	mac_addr_t		dst_mac;
+	mac_addr_t		src_mac;
 	ether_type_t	ether_type;
 }
 
 header dot1q_h {
-	bit<3>		pcp;
-	bit<1>		dei;
-	bit<12>		vlan_id;
+	bit<3>			pcp;
+	bit<1>			dei;
+	bit<12>			vlan_id;
 	ether_type_t	ether_type;
 }
 
@@ -181,37 +181,35 @@ struct sidecar_headers_t {
 	tcp_h		tcp;
 	udp_h		udp;
 
-	geneve_h	geneve;
+	geneve_h				geneve;
 	geneve_opt_headers_t	geneve_opts;
-	ethernet_h	inner_eth;
-	ipv4_h		inner_ipv4;
-	ipv6_h		inner_ipv6;
-	icmp_h		inner_icmp;
-	tcp_h		inner_tcp;
-	udp_h		inner_udp;
+	ethernet_h				inner_eth;
+	ipv4_h					inner_ipv4;
+	ipv6_h					inner_ipv6;
+	icmp_h					inner_icmp;
+	tcp_h					inner_tcp;
+	udp_h					inner_udp;
 }
 
 struct sidecar_ingress_meta_t {
-	PortId_t in_port;		// ingress port for this packet
-
-	bool ipv4_checksum_err;		// failed ipv4 checksum
-	bool routed;			// packet routed at layer 3
-	bool is_switch_address;		// destination IP was a switch port
-	bool multicast;			// packet was multicast
-	bool service_routed;		// routed to or from a service routine
-	bool nat_egress;		// NATed packet from guest -> uplink
-	bool nat_ingress;		// NATed packet from uplink -> guest
-	bool nat_ingress_port;		// This port accepts only NAT traffic
-	ipv4_addr_t nexthop_ipv4;	// ip address of next router
-	ipv6_addr_t nexthop_ipv6;	// ip address of next router
-	bit<10> pkt_type;
-	bit<8> drop_reason;		// reason a packet was dropped
-
-	bit<16> l4_src_port;		// tcp or udp destination port
-	bit<16> l4_dst_port;		// tcp or udp destination port
-	ipv6_addr_t nat_ingress_tgt;
-	mac_addr_t nat_inner_mac;
-	geneve_vni_t nat_geneve_vni;
+	bool ipv4_checksum_err;			// failed ipv4 checksum
+	bool is_switch_address;			// destination IP was a switch port
+	bool is_mcast;					// packet is a multicast packet
+	bool allow_source_mcast;		// allowed to be sent from a source address for SSM
+	bool is_link_local_mcast;		// packet is a IPv6 link-local multicast packet
+	bool service_routed;			// routed to or from a service routine
+	bool nat_egress_hit;			// NATed packet from guest -> uplink
+	bool nat_ingress_hit;			// NATed packet from uplink -> guest
+	bool nat_ingress_port;			// this port accepts only NAT traffic
+	ipv4_addr_t nexthop_ipv4;		// ip address of next router
+	ipv6_addr_t nexthop_ipv6;		// ip address of next router
+	bit<10> pkt_type;				// type of packet
+	bit<8> drop_reason;				// reason a packet was dropped
+	bit<16> l4_src_port;			// tcp or udp destination port
+	bit<16> l4_dst_port;			// tcp or udp destination port
+	ipv6_addr_t nat_ingress_tgt;	// target address for NAT ingress
+	mac_addr_t nat_inner_mac;		// inner mac address for NAT ingress
+	geneve_vni_t nat_geneve_vni;	// VNI for NAT ingress
 
 	// If we modify an ICMP header, we need to recalculate its checksum.
 	// To do the math, we need the original checksum.
@@ -220,12 +218,46 @@ struct sidecar_ingress_meta_t {
 
 	// Used when calculating outer UDP checksum for encapsulated NAT
 	// ingress packets
-	bit<16> body_checksum;		// residual csum for packet body
+	bit<16> body_checksum;			// residual csum for packet body
 	bit<16> l4_length;
 
 	// Used for responding to pings
-	mac_addr_t orig_src_mac;	// source mac address before rewriting
-	ipv4_addr_t orig_src_ipv4;	// original ipv4 source
+	mac_addr_t orig_src_mac;		// source mac address before rewriting
+	ipv4_addr_t orig_src_ipv4;		// original ipv4 source
+	ipv4_addr_t orig_dst_ipv4;		// original ipv4 target
+}
 
-	ipv4_addr_t orig_dst_ipv4;	// original ipv4 target
+struct sidecar_egress_meta_t {
+	bit<8> drop_reason;				// reason a packet was dropped
+}
+
+struct route4_result_t {
+	/*
+	 * The result of the multistage route selection process is an egress
+	 * port and a nexthop address
+	 */
+	ipv4_addr_t nexthop;
+	PortId_t port;
+
+	/* Did we successfully look up the route in the table? */
+	bool is_hit;
+
+	/*
+	 * A hash of the (address,port) fields, which is used to choose between
+	 * multiple potential routes.
+	 */
+	bit<8> hash;
+
+	/* Index into the target table of the first potential route */
+	bit<16> idx;
+	/* Number of consecutive slots containing potential routes */
+	bit<8> slots;
+	/* Which of those routes we should select, based the flow hash */
+	bit<16> slot;
+}
+
+struct route6_result_t {
+	ipv6_addr_t nexthop;
+	PortId_t port;
+	bool is_hit;
 }

@@ -22,11 +22,13 @@ bf_mc_create_session
 bf_mc_destroy_session
 bf_mc_mgrp_create
 bf_mc_mgrp_destroy
+bf_mc_mgrp_get_count
 bf_mc_node_create
 bf_mc_node_destroy
 bf_mc_node_update
 bf_mc_associate_node
 bf_mc_dissociate_node
+bf_mc_set_max_node_threshold
 
 # bf_rt calls
 bf_rt_table_from_name_get

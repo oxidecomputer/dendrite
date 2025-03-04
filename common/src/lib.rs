@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 use std::convert::TryFrom;
 use std::iter::FromIterator;
+use std::net::Ipv6Addr;
 use std::sync::Once;
 use std::time::Duration;
 use std::time::Instant;
@@ -25,6 +26,10 @@ pub use smf::{is_smf_active, SmfError, SmfResult};
 
 /// The default port on which the Dendrite API server listens.
 pub const DEFAULT_DPD_PORT: u16 = 12224;
+
+/// Default multicast nat target IP address.
+pub const DEFAULT_MULTICAST_NAT_IP: Ipv6Addr =
+    Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 1);
 
 /// The http error code used when a rollback failure occurs.
 pub const ROLLBACK_FAILURE_ERROR_CODE: &str = "rollback failure";

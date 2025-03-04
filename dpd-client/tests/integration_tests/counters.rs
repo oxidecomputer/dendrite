@@ -12,8 +12,6 @@
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 
-use anyhow::anyhow;
-
 use packet::Endpoint;
 
 use crate::integration_tests::common;
@@ -22,23 +20,6 @@ use crate::integration_tests::icmp_ipv4;
 use ::common::network::MacAddr;
 use dpd_client::types::Ipv4Entry;
 use dpd_client::types::Ipv6Entry;
-
-// Returns the number of packets dropped for the given reason.  If that
-// counter isn't in the set returned by dpd, we return an error to the caller.
-async fn get_counter(switch: &Switch, counter: &str) -> anyhow::Result<u64> {
-    switch
-        .client
-        .counter_get("drop_reason", true)
-        .await
-        .map_err(|e| anyhow!("failed to fetch counters: {e:?}"))
-        .and_then(|entries| {
-            entries
-                .iter()
-                .find(|e| e.keys.get("label").unwrap().as_str() == counter)
-                .map(|e| e.data.pkts.unwrap())
-                .ok_or(anyhow!("no such counter: {counter}"))
-        })
-}
 
 // Run a single drop test.  This sends a packet that we expect to be dropped,
 // and verifies that the expected drop counter is bumped by one.  If the test
@@ -56,7 +37,7 @@ async fn one_drop_test(
         port,
     };
 
-    let old = get_counter(switch, counter).await?;
+    let old = switch.get_counter(counter, None).await?;
     switch.packet_test(vec![send], Vec::new())?;
 
     let mut new = 0;
@@ -67,7 +48,7 @@ async fn one_drop_test(
         // avoid a long pointless delay here, we try multiple times with a short
         // sleep rather than once with a long sleep.
         std::thread::sleep(std::time::Duration::from_millis(100));
-        new = get_counter(switch, counter).await?;
+        new = switch.get_counter(counter, None).await?;
         if old + 1 == new {
             break;
         }

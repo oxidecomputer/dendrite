@@ -26,7 +26,7 @@ struct MatchKey {
 }
 
 #[derive(ActionParse)]
-enum Action {
+pub(crate) enum Action {
     #[action_xlate(name = "forward")]
     Forward { port: u16, nexthop: Ipv6Addr },
     #[action_xlate(name = "forward_vlan")]

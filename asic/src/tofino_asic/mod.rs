@@ -19,7 +19,7 @@ mod bf_wrapper;
 mod genpd;
 
 mod link_fsm;
-pub mod multicast;
+pub mod mcast;
 pub mod ports;
 pub mod qsfp;
 mod sde_log;
@@ -150,27 +150,43 @@ impl AsicOps for Handle {
     }
 
     fn mc_domains(&self) -> Vec<u16> {
-        multicast::domains(self)
+        mcast::domains(self)
     }
 
     fn mc_port_count(&self, group_id: u16) -> AsicResult<usize> {
-        multicast::domain_port_count(self, group_id)
+        mcast::domain_port_count(self, group_id)
     }
 
     fn mc_port_add(&self, group_id: u16, port: u16) -> AsicResult<()> {
-        multicast::domain_add_port(self, group_id, port)
+        mcast::domain_add_port(self, group_id, port)
     }
 
     fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
-        multicast::domain_remove_port(self, group_id, port)
+        mcast::domain_remove_port(self, group_id, port)
     }
 
     fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
-        multicast::domain_create(self, group_id)
+        mcast::domain_create(self, group_id)
     }
 
     fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()> {
-        multicast::domain_destroy(self, group_id)
+        mcast::domain_destroy(self, group_id)
+    }
+
+    fn mc_group_exists(&self, group_id: u16) -> bool {
+        mcast::domain_exists(self, group_id)
+    }
+
+    fn mc_groups_count(&self) -> AsicResult<usize> {
+        mcast::domains_count(self)
+    }
+
+    fn mc_set_max_nodes(
+        &self,
+        max_nodes: u32,
+        max_link_aggregated_nodes: u32,
+    ) -> AsicResult<()> {
+        mcast::set_max_nodes(self, max_nodes, max_link_aggregated_nodes)
     }
 
     // Ideally we would get some sort of sidecar-level ID from the FRUID.
@@ -238,7 +254,7 @@ pub struct Handle {
     rt: tofino_common::BfRt,
     log: slog::Logger,
     phys_ports: Mutex<ports::PortData>,
-    domains: Mutex<HashMap<u16, multicast::DomainState>>,
+    domains: Mutex<HashMap<u16, mcast::DomainState>>,
     eth_connector_id: Option<u32>,
 }
 
@@ -322,7 +338,7 @@ impl Handle {
 
         // Note: we assume that bf_mc_init() has been called as part of the
         // bf_switch_init() operation.
-        bf.mcast_hdl = multicast::create_session()?;
+        bf.mcast_hdl = mcast::create_session()?;
 
         Ok(Handle {
             dev_id,

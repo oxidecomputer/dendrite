@@ -25,6 +25,10 @@ pub const SWITCH_IPV4_ADDR: &str = "pipe.Ingress.filter.switch_ipv4_addr";
 pub const SWITCH_IPV6_ADDR: &str = "pipe.Ingress.filter.switch_ipv6_addr";
 pub const NAT_INGRESS_IPV4: &str = "pipe.Ingress.nat_ingress.ingress_ipv4";
 pub const NAT_INGRESS_IPV6: &str = "pipe.Ingress.nat_ingress.ingress_ipv6";
+pub const MCAST_IPV4_TABLE_NAME: &str =
+    "pipe.Ingress.multicast.mcast_route_ipv4";
+pub const MCAST_IPV6_TABLE_NAME: &str =
+    "pipe.Ingress.multicast.mcast_route_ipv6";
 
 pub struct Table {
     name: String,

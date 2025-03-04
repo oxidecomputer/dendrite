@@ -22,7 +22,7 @@ pub use crate::faux_fsm::FsmState;
 pub use crate::faux_fsm::FsmType;
 pub use crate::faux_fsm::PortFsmState;
 
-pub mod multicast;
+pub mod mcast;
 pub mod ports;
 pub mod table;
 
@@ -196,6 +196,27 @@ impl AsicOps for StubHandle {
         mc_data.domain_destroy(group_id)
     }
 
+    fn mc_groups_count(&self) -> AsicResult<usize> {
+        info!(self.log, "number of multicast groups");
+        let mc_data = self.mc_data.lock().unwrap();
+        Ok(mc_data.domains().len())
+    }
+
+    fn mc_set_max_nodes(
+        &self,
+        max_nodes: u32,
+        max_link_aggregated_nodes: u32,
+    ) -> AsicResult<()> {
+        info!(
+            self.log,
+            "setting max nodes to {} and max link aggregated nodes to {}",
+            max_nodes,
+            max_link_aggregated_nodes
+        );
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.set_max_nodes(max_nodes, max_link_aggregated_nodes)
+    }
+
     fn get_sidecar_identifiers(&self) -> AsicResult<impl SidecarIdentifiers> {
         Ok(Identifiers {
             id: uuid::Uuid::parse_str(SIDECAR_UUID).unwrap(),
@@ -222,8 +243,7 @@ pub struct StubHandle {
     log: slog::Logger,
     phys_ports: Mutex<ports::PortData>,
     port_state: Mutex<BTreeMap<PortHdl, ports::StubPort>>,
-    mc_data: Mutex<multicast::McGroupData>,
-
+    mc_data: Mutex<mcast::McGroupData>,
     update_tx: Mutex<Option<mpsc::UnboundedSender<PortUpdate>>>,
 }
 
@@ -233,7 +253,7 @@ impl StubHandle {
         let rt = BfRt::init(&p4_dir)?;
         let phys_ports = Mutex::new(ports::init()?);
         let port_state = Mutex::new(BTreeMap::new());
-        let mc_data = Mutex::new(multicast::init());
+        let mc_data = Mutex::new(mcast::init());
         let log = log.new(o!());
 
         Ok(StubHandle {

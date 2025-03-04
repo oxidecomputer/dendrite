@@ -8,6 +8,7 @@ mod common;
 mod counters;
 mod icmp_ipv4;
 mod loopback;
+mod mcast;
 mod nat;
 mod port_api;
 mod route_ipv4;

@@ -365,6 +365,18 @@ impl AsicOps for Handle {
         Ok(())
     }
 
+    fn mc_groups_count(&self) -> AsicResult<usize> {
+        Ok(self.ports.lock().unwrap().len())
+    }
+
+    fn mc_set_max_nodes(
+        &self,
+        _max_nodes: u32,
+        _max_link_aggregated_nodes: u32,
+    ) -> AsicResult<()> {
+        Ok(())
+    }
+
     fn get_sidecar_identifiers(&self) -> AsicResult<impl SidecarIdentifiers> {
         Ok(Identifiers {
             id: Uuid::new_v4(),
