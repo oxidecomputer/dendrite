@@ -1,0 +1,21 @@
+[alias]
+xtask = "run --package xtask --"
+
+[net]
+git-fetch-with-cli = true
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+# We'd like to set this only if the `tokio-console` feature is enabled, but it
+# is not recommended to match on a `cfg` directive that includes features.
+# See https://doc.rust-lang.org/cargo/reference/config.html#target.
+[build]
+rustflags = ["--cfg", "tokio_unstable"]
+
+# https://github.com/rust-lang/cargo/issues/3946#issuecomment-973132993
+[env]
+CARGO_WORKSPACE_DIR = { value = "", relative = true }

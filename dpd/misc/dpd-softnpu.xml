@@ -1,0 +1,76 @@
+<?xml version='1.0'?>
+
+<!--
+ This Source Code Form is subject to the terms of the Mozilla Public
+ License, v. 2.0. If a copy of the MPL was not distributed with this
+ file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+ Copyright 2025 Oxide Computer Company
+-->
+
+<!DOCTYPE service_bundle SYSTEM '/usr/share/lib/xml/dtd/service_bundle.dtd.1'>
+
+<service_bundle type='manifest' name='oxide-dendrite-dpd'>
+
+    <service name='oxide/dendrite' type='service' version='1'>
+    <create_default_instance enabled='true'/>
+    <single_instance/>
+
+    <dependency name='fs-minimal' grouping='require_all' restart_on='none' type='service'>
+      <service_fmri value='svc:/system/filesystem/minimal'/>
+    </dependency>
+
+    <dependency name='net-physical' grouping='require_all' restart_on='none' type='service'>
+      <service_fmri value='svc:/network/physical'/>
+    </dependency>
+
+   <dependency name='zone_network_setup' grouping='require_all' restart_on='none' type='service'>
+      <service_fmri value='svc:/oxide/zone-network-setup:default' />
+    </dependency>
+
+    <exec_method name='start'
+	    type='method'
+	    exec='/opt/oxide/dendrite/bin/svc-dpd'
+	    timeout_seconds='0'/>
+
+    <exec_method type='method' name='refresh' exec=':kill -USR1' timeout_seconds='0' />
+
+    <exec_method name='stop'
+	    type='method'
+	    exec=':kill'
+	    timeout_seconds='5'/>
+
+  <property_group name='config' type='application'>
+    <propval name='log_file' type='astring' value='unknown' />
+    <propval name='log_format' type='astring' value='unknown' />
+    <propval name='address' type='astring' value='unknown' />
+    <propval name='dns_server' type='astring' value='unknown' />
+    <propval name='rack_id' type='astring' value='unknown' />
+    <propval name='sled_id' type='astring' value='unknown' />
+    <propval name='sled_model' type='astring' value='unknown' />
+    <propval name='sled_revision' type='astring' value='unknown' />
+    <propval name='sled_serial' type='astring' value='unknown' />
+    <propval name='mac_base' type='astring' value='unknown' />
+    <propval name='port_config' type='astring' value='unknown' />
+    <propval name='mgmt' type='astring' value='unknown' />
+    <propval name='uds_path' type='astring' value='unknown' />
+    <propval name='front_ports' type='astring' value='unknown' />
+    <propval name='rear_ports' type='astring' value='unknown' />
+    <propval name='enable_rpw' type='astring' value='true' />
+    <propval name='nexus_address' type='astring' value='unknown' />
+    <propval name='xcvr_defaults' type='astring' value='/opt/oxide/dendrite/misc/xcvr_defaults.csv' />
+  </property_group>
+
+    <property_group name='startd' type='framework'>
+      <propval name='ignore_error' type='astring' value='core,signal'/>
+    </property_group>
+
+    <stability value='Unstable'/>
+
+    <template>
+      <common_name>
+        <loctext xml:lang='C'>Sidecar Dataplane Daemon</loctext>
+      </common_name>
+    </template>
+  </service>
+</service_bundle>

@@ -1,0 +1,197 @@
+[int0]
+fec = "None"
+speed = "Speed10G"
+autoneg = true
+kr = true
+
+[rear0]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear1]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear2]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear3]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear4]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear5]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear6]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear7]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear8]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear9]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear10]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear11]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear12]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear13]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear14]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear15]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear16]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear17]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear18]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear19]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear20]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear21]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear22]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear23]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear24]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear25]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear26]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear27]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear28]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear29]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear30]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true
+
+[rear31]
+fec = "RS"
+speed = "Speed100G"
+autoneg = true
+kr = true

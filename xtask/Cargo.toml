@@ -1,0 +1,17 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+search_path = "0.1.4"
+
+camino.workspace = true
+chrono.workspace = true
+structopt.workspace = true
+anyhow.workspace = true
+curl.workspace = true
+omicron-zone-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

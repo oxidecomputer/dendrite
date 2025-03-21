@@ -1,0 +1,49 @@
+# This data comes from Table 3 in RFD 144.
+#
+# The "port #" refers to the port number on the VSC7448 switch.  The VLAN ID is
+# calculated by adding 0x100 to that number.
+#
+# "Link Partner" identifies the entity which is connected to this port.
+#
+# The "vlan name" is the name assigned to the vlan link when it is created.
+#
+# port#, vlan name
+0,Cubby 24,gimlet24
+1,Cubby 26,gimlet26
+2,Cubby 30,gimlet30
+3,Cubby 28,gimlet28
+4,Cubby 16,gimlet16
+5,Cubby 18,gimlet18
+6,Cubby 22,gimlet22
+7,Cubby 20,gimlet20
+8,Cubby 14,gimlet14
+9,Cubby 12,gimlet12
+10,Cubby 8,gimlet8
+11,Cubby 10,gimlet10
+12,Cubby 6,gimlet6
+13,Cubby 4,gimlet4
+14,Cubby 0,gimlet0
+15,Cubby 2,gimlet2
+16,Cubby 25,gimlet25
+17,Cubby 27,gimlet27
+18,Cubby 31,gimlet31
+19,Cubby 29,gimlet29
+20,Cubby 17,gimlet17
+21,Cubby 19,gimlet19
+24,Cubby 15,gimlet15
+25,Cubby 13,gimlet13
+26,Cubby 9,gimlet9
+27,Cubby 11,gimlet11
+28,Cubby 7,gimlet7
+29,Cubby 5,gimlet5
+30,Cubby 1,gimlet1
+31,Cubby 3,gimlet3
+40,PSC 0,psc0
+41,PSC 1,psc1
+42,Peer SP,sidecar1
+44,Technician 0,techport0
+45,Technician 1,techport1
+48,Local SP,sidecar0
+49,Tofino 2,tofino0
+51,Cubby 23,gimlet23
+52,Cubby 21,gimlet21

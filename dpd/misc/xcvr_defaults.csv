@@ -1,0 +1,11 @@
+# transceiver MPN, fec default, pre2, pre1, main, post1, post2
+OXIDESOFTNPU,RS,0,0,0,0,0
+FTLC9558REPM,,0,0,26,0,0
+SPTSMP3CLCDF,RS,,,,,
+FTCC1112E2PCL,None,,,,,
+FTCC8612E2PCM,RS,,,,,
+FTL410QE4C-1Y,None,,,,,
+FTLC9152RGPL,RS,,,,,
+FTLC4353RJPL,None,,,,,
+FTLC1159RGPL,RS,,,,,
+CAB-Q-Q-5M,None,,,,,

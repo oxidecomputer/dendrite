@@ -1,0 +1,17 @@
+[package]
+name = "packet"
+version = "0.1.0"
+authors = ["Nils Nieuwejaar <nils@oxide.computer>"]
+edition = "2021"
+
+[dependencies]
+common.workspace = true
+bytes.workspace = true
+rand.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+hex-literal = "0.4"

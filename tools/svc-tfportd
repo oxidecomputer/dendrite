@@ -1,0 +1,14 @@
+#!/sbin/sh
+
+. /lib/svc/share/smf_include.sh
+
+ROOT=/opt/oxide/dendrite
+
+if /usr/bin/pgrep -x -u 0 tportd >/dev/null 2>&1; then
+	echo "$0: tportd is already running"
+	exit $SMF_EXIT_ERR_NOSMF
+fi
+
+${ROOT}/bin/tfportd &
+
+exit $SMF_EXIT_OK

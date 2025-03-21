@@ -1,0 +1,43 @@
+[package]
+name = "dpd-client"
+version = "0.1.0"
+edition = "2021"
+description = "Client library for the Dendrite data plane daemon"
+
+[features]
+chaos = ["asic/chaos"]
+tofino_asic = ["asic/tofino_asic"]
+
+[dependencies]
+async-trait = "0.1.87"
+chrono.workspace = true
+crc8 = "0.1.1"
+futures.workspace = true
+http.workspace = true
+oxnet.workspace = true
+regress.workspace = true
+reqwest.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+slog.workspace = true
+tokio = { workspace = true, features = [ "full" ] }
+transceiver-controller = { workspace = true, features = [ "api-traits" ] }
+uuid.workspace = true
+
+common.workspace = true
+progenitor.workspace = true
+
+[dev-dependencies]
+packet = { path = "../packet" }
+pcap = { path = "../pcap" }
+asic = { path = "../asic" }
+anyhow.workspace = true
+lazy_static.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+slog.workspace = true
+slog-async.workspace = true
+slog-term.workspace = true
+toml.workspace = true
+pretty_assertions.workspace = true

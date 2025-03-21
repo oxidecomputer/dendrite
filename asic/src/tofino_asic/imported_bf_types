@@ -1,0 +1,6 @@
+bf_rmon_counter_t
+bf_rmon_counter_array_t
+bf_pm_fsm_st
+pm_intf_fsm_states_t
+qsfp_fsm_state_t
+qsfp_fsm_ch_en_state_t
