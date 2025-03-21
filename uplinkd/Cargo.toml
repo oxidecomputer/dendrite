@@ -1,0 +1,18 @@
+[package]
+name = "uplinkd"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+common.workspace = true
+
+anyhow.workspace = true
+libc.workspace = true
+oxnet.workspace = true
+signal-hook.workspace = true
+slog.workspace = true
+smf.workspace = true
+structopt.workspace = true
+tokio.workspace = true

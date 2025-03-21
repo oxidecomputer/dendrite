@@ -1,0 +1,22 @@
+*.sw*
+target/
+genpd.rs
+bf_drivers.log*
+pcap/src/ffi.rs
+*.pcap
+*.log
+*.rej
+*.orig
+zlog-cfg-cur
+*.p5p
+dpd/src/version.rs
+*.deb
+out/*
+p4_artifacts*
+
+# Editor config
+.vscode
+.dir-locals.el
+
+# OS artifacts
+.DS_Store

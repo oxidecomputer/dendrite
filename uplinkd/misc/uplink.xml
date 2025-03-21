@@ -1,0 +1,56 @@
+<?xml version='1.0'?>
+
+<!--
+ This Source Code Form is subject to the terms of the Mozilla Public
+ License, v. 2.0. If a copy of the MPL was not distributed with this
+ file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+ Copyright 2025 Oxide Computer Company
+-->
+
+<!DOCTYPE service_bundle SYSTEM '/usr/share/lib/xml/dtd/service_bundle.dtd.1'>
+
+<service_bundle type='manifest' name='oxide-dendrite-uplink'>
+
+    <service name='oxide/uplink' type='service' version='1'>
+    <create_default_instance enabled='true'/>
+    <single_instance/>
+
+    <dependency name='fs-minimal' grouping='require_all' restart_on='restart' type='service'>
+      <service_fmri value='svc:/system/filesystem/minimal'/>
+    </dependency>
+
+    <dependency name='net-physical' grouping='require_all' restart_on='none' type='service'>
+      <service_fmri value='svc:/network/physical'/>
+    </dependency>
+
+    <exec_method name='start'
+	    type='method'
+	    exec='/opt/oxide/dendrite/bin/svc-uplinkd'
+	    timeout_seconds='0'/>
+
+    <exec_method name='refresh'
+	    type='method' 
+	    exec=':kill -USR1'
+	    timeout_seconds='0' />
+
+    <exec_method name='stop'
+	    type='method'
+	    exec=':kill'
+	    timeout_seconds='10'/>
+
+    <property_group name='uplinks' type='application'/>
+
+    <property_group name='startd' type='framework'>
+      <propval name='ignore_error' type='astring' value='core,signal'/>
+    </property_group>
+
+    <stability value='Unstable'/>
+
+    <template>
+      <common_name>
+        <loctext xml:lang='C'>Sidecar Uplink Sync Daemon</loctext>
+      </common_name>
+    </template>
+  </service>
+</service_bundle>

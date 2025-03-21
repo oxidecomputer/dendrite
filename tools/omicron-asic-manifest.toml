@@ -1,0 +1,28 @@
+[package.dendrite]
+service_name = "dendrite"
+source.type = "local"
+source.paths = [
+  {from = "target/proto/opt/oxide/dendrite/bin/dpd" , to = "/opt/oxide/dendrite/bin/dpd"},
+  {from = "target/proto/opt/oxide/dendrite/bin/svc-dpd" , to = "/opt/oxide/dendrite/bin/svc-dpd"},
+  {from = "target/proto/opt/oxide/dendrite/bin/svc-tfportd" , to = "/opt/oxide/dendrite/bin/svc-tfportd"},
+  {from = "target/proto/opt/oxide/dendrite/bin/svc-uplinkd" , to = "/opt/oxide/dendrite/bin/svc-uplinkd"},
+  {from = "target/proto/opt/oxide/dendrite/bin/swadm" , to = "/opt/oxide/dendrite/bin/swadm"},
+  {from = "target/proto/opt/oxide/dendrite/bin/tfportd" , to = "/opt/oxide/dendrite/bin/tfportd"},
+  {from = "target/proto/opt/oxide/dendrite/bin/uplinkd" , to = "/opt/oxide/dendrite/bin/uplinkd"},
+  {from = "target/proto/opt/oxide/dendrite/misc" , to = "/opt/oxide/dendrite/misc"},
+  {from = "target/proto/opt/oxide/dendrite/sidecar" , to = "/opt/oxide/dendrite/sidecar"},
+  {from = "target/proto/opt/oxide/tofino_sde/share" , to = "/opt/oxide/tofino_sde/share/"},
+  {from = "target/proto/lib/svc/manifest/system/dpd.xml" , to = "/var/svc/manifest/site/dendrite/manifest.xml"},
+  {from = "target/proto/lib/svc/manifest/system/tfport.xml" , to = "/var/svc/manifest/site/tfport/manifest.xml"},
+  {from = "target/proto/lib/svc/manifest/system/uplink.xml" , to = "/var/svc/manifest/site/uplink/manifest.xml"},
+  {from = "target/proto/opt/oxide/tofino_sde/lib/bfshell_plugin_clish.so" , to = "/opt/oxide/tofino_sde/lib/bfshell_plugin_clish.so"},
+  {from = "target/proto/opt/oxide/tofino_sde/lib/bfshell_plugin_pipemgr.so" , to = "/opt/oxide/tofino_sde/lib/bfshell_plugin_pipemgr.so"},
+  {from = "target/proto/opt/oxide/tofino_sde/lib/libdriver.so" , to = "/opt/oxide/tofino_sde/lib/libdriver.so"},
+  {from = "target/proto/opt/oxide/tofino_sde/lib/libbfutils.so" , to = "/opt/oxide/tofino_sde/lib/libbfutils.so"},
+  {from = "target/proto/opt/oxide/tofino_sde/lib/libtarget_sys.so" , to = "/opt/oxide/tofino_sde/lib/libtarget_sys.so"},
+  {from = "target/proto/opt/oxide/tofino_sde/lib/libtarget_utils.so" , to = "/opt/oxide/tofino_sde/lib/libtarget_utils.so"},
+  {from = "target/proto/opt/oxide/tofino_sde/lib/libclish.so" , to = "/opt/oxide/tofino_sde/lib/libclish.so"},
+  {from = "target/proto/opt/oxide/dendrite/sidecar/share/platforms/board-maps/oxide/" , to = "/opt/oxide/dendrite/sidecar/share/platforms/board-maps/oxide/"},
+  {from = "target/proto/opt/oxide/tofino_sde/share/cli/xml" , to = "/opt/oxide/tofino_sde/share/cli/xml"}
+]
+output.type = "zone"

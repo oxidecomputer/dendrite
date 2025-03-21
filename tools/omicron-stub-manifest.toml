@@ -1,0 +1,13 @@
+[package.dendrite]
+service_name = "dendrite"
+source.type = "local"
+source.paths = [
+  {from = "target/proto/opt/oxide/dendrite/bin/dpd" , to = "/opt/oxide/dendrite/bin/dpd"},
+  {from = "target/proto/opt/oxide/dendrite/bin/svc-dpd" , to = "/opt/oxide/dendrite/bin/svc-dpd"},
+  {from = "target/proto/opt/oxide/dendrite/bin/swadm" , to = "/opt/oxide/dendrite/bin/swadm"},
+  {from = "target/proto/opt/oxide/dendrite/misc" , to = "/opt/oxide/dendrite/misc"},
+  {from = "target/proto/opt/oxide/dendrite/sidecar" , to = "/opt/oxide/dendrite/sidecar"},
+  {from = "target/proto/opt/oxide/tofino_sde/share" , to = "/opt/oxide/tofino_sde/share/"},
+  {from = "target/proto/lib/svc/manifest/system/dpd.xml" , to = "/var/svc/manifest/site/dendrite/manifest.xml"},
+]
+output.type = "zone"

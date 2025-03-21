@@ -1,0 +1,22 @@
+#!/sbin/sh
+
+. /lib/svc/share/smf_include.sh
+
+CHIP_ARCH=tofino2
+ROOT=/opt/oxide/dendrite
+SDE=/opt/oxide/tofino_sde
+
+if /usr/bin/pgrep -x -u 0 dpd >/dev/null 2>&1; then
+	echo "$0: dpd is already running"
+	exit $SMF_EXIT_ERR_NOSMF
+fi
+
+echo "Using SDE runtime support at: ${SDE}"
+
+mkdir -p /var/dendrite
+cd /var/dendrite
+cp ${ROOT}/misc/zlog-cfg zlog-cfg-cur
+
+env LD_LIBRARY_PATH=$SDE/lib ${ROOT}/bin/dpd run &
+
+exit $SMF_EXIT_OK

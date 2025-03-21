@@ -1,0 +1,74 @@
+[package]
+name = "dpd"
+version = "0.2.0"
+authors = ["nils <nils@oxide.computer>"]
+edition = "2021"
+
+[features]
+tofino_asic = ["asic/tofino_asic"]
+tofino_stub = ["asic/tofino_stub"]
+softnpu = ["asic/softnpu"]
+chaos = ["asic/chaos"]
+transceiver-chaos = ["dep:rand"]
+tokio-console = ["dep:console-subscriber", "tokio/tracing"]
+
+[build-dependencies]
+anyhow = "1.0"
+
+[build-dependencies.vergen]
+version = "8.3"
+features = [ "cargo", "git", "git2", "rustc" ]
+
+[dependencies]
+aal.workspace = true
+aal_macros.workspace = true
+asic.workspace = true
+common.workspace = true
+
+anyhow.workspace = true
+cfg-if.workspace = true
+chrono.workspace = true
+console-subscriber = { version = "0.4.1", optional = true }
+csv.workspace = true
+display-error-chain.workspace = true
+futures.workspace = true
+libc.workspace = true
+openssl.workspace = true
+oxnet.workspace = true
+rand = { workspace = true, optional = true }
+regex.workspace = true
+schemars.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+signal-hook.workspace = true
+signal-hook-tokio.workspace = true
+slog.workspace = true
+structopt.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["full"] }
+toml.workspace = true
+usdt.workspace = true
+uuid.workspace = true
+reqwest.workspace = true
+
+dropshot = { workspace = true, features = [ "usdt-probes" ] }
+gateway-client.workspace = true
+internal-dns-resolver.workspace = true
+internal-dns-types.workspace = true
+nexus-client.workspace = true
+omicron-common.workspace = true
+oximeter.workspace = true
+oximeter-producer.workspace = true
+smf.workspace = true
+transceiver-controller = { workspace = true, features = [ "api-traits" ] }
+
+[dev-dependencies]
+expectorate.workspace = true
+regress.workspace = true
+mockall.workspace = true
+slog-term.workspace = true
+dpd-client.workspace = true
+slog-async.workspace = true
+futures.workspace = true

@@ -1,0 +1,17 @@
+[package.dendrite]
+service_name = "dendrite"
+source.type = "local"
+source.paths = [
+  {from = "target/proto/opt/oxide/dendrite/bin/dpd" , to = "/opt/oxide/dendrite/bin/dpd"},
+  {from = "target/proto/opt/oxide/dendrite/bin/svc-dpd-softnpu" , to = "/opt/oxide/dendrite/bin/svc-dpd"},
+  {from = "target/proto/opt/oxide/dendrite/bin/svc-tfportd" , to = "/opt/oxide/dendrite/bin/svc-tfportd"},
+  {from = "target/proto/opt/oxide/dendrite/bin/svc-uplinkd" , to = "/opt/oxide/dendrite/bin/svc-uplinkd"},
+  {from = "target/proto/opt/oxide/dendrite/bin/swadm" , to = "/opt/oxide/dendrite/bin/swadm"},
+  {from = "target/proto/opt/oxide/dendrite/bin/tfportd" , to = "/opt/oxide/dendrite/bin/tfportd"},
+  {from = "target/proto/opt/oxide/dendrite/bin/uplinkd" , to = "/opt/oxide/dendrite/bin/uplinkd"},
+  {from = "target/proto/opt/oxide/dendrite/misc" , to = "/opt/oxide/dendrite/misc"},
+  {from = "target/proto/lib/svc/manifest/system/dpd-softnpu.xml" , to = "/var/svc/manifest/site/dendrite/manifest.xml"},
+  {from = "target/proto/lib/svc/manifest/system/tfport-softnpu-standalone.xml" , to = "/var/svc/manifest/site/tfport/manifest.xml"},
+  {from = "target/proto/lib/svc/manifest/system/uplink.xml" , to = "/var/svc/manifest/site/uplink/manifest.xml"},
+]
+output.type = "zone"

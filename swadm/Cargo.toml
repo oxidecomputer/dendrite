@@ -1,0 +1,19 @@
+[package]
+name = "swadm"
+description = "Management CLI for the Oxide switch"
+version = "0.1.0"
+authors = ["nils <nils@oxide.computer>"]
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+colored.workspace = true
+common.workspace = true
+dpd-client.workspace = true
+futures.workspace = true
+oxnet.workspace = true
+slog.workspace = true
+structopt.workspace = true
+tabwriter.workspace = true
+tokio.workspace = true

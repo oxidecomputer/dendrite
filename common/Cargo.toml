@@ -1,0 +1,23 @@
+[package]
+name = "common"
+version = "0.1.0"
+authors = ["Nils Nieuwejaar <nils@oxide.computer>"]
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+oxnet.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+slog.workspace = true
+slog-bunyan.workspace = true
+slog-term.workspace = true
+slog-async.workspace = true
+smf.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+oximeter.workspace = true

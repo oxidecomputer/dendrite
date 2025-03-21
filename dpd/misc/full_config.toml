@@ -1,0 +1,325 @@
+["CPU"]
+fec = "None"
+speed = "Speed10G"
+autoneg = true
+kr = true
+["1:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["2:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["3:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["4:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["5:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["6:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["7:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["8:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["9:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["10:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["11:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["12:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["13:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["14:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["15:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["16:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["17:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["18:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["19:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["20:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["21:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["22:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["23:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["24:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["25:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["26:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["27:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["28:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["29:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["30:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["31:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["32:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["33:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["34:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["35:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["36:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["37:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["38:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["39:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["40:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["41:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["42:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["43:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["44:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["45:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["46:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["47:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["48:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["49:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["50:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["51:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["52:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["53:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["54:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["55:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["56:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["57:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["58:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["59:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["60:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["61:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["62:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["63:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
+["64:0"]
+fec = "None"
+speed = "Speed100G"
+autoneg = true
+kr = true
