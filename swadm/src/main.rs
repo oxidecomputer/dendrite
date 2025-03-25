@@ -9,6 +9,7 @@ use std::io;
 use std::str::FromStr;
 
 use anyhow::Context;
+use common::ports::QsfpPort;
 use structopt::*;
 
 use common::ports::PortId;
@@ -126,6 +127,12 @@ impl FromStr for IpFamily {
             _ => Err("invalid family".to_string()),
         }
     }
+}
+
+pub fn parse_qsfp_port_id(value: &str) -> Result<QsfpPort, String> {
+    value.parse().map_err(|_| {
+        format!("'{}' is invalid; QSFP ports are named qsfp<0-31>", value)
+    })
 }
 
 pub fn parse_port_id(value: &str) -> Result<PortId, String> {

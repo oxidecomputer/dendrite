@@ -1094,13 +1094,10 @@ impl Switch {
 
                 // If the module is now absent or faulted, let's reflect that in
                 // the switch port's transceiver object.
-                //
-                // TODO-correctness: This overrides whether a switch port has
-                // been disabled. Is that the correct thing to do? It might be
-                // better to only do that if the module is now absent.
                 if absent.is_set(index).unwrap() {
-                    port.set_management_mode(ManagementMode::Automatic)
-                        .unwrap();
+                    // NOTE: Do not modify the management mode itself, see
+                    // https://github.com/oxidecomputer/dendrite/issues/1106 for
+                    // context.
                     port.as_qsfp_mut().unwrap().transceiver = None;
                 } else if timeout_fault.is_set(index).unwrap() {
                     port.as_qsfp_mut().unwrap().transceiver =

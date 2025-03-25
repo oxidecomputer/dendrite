@@ -15,14 +15,14 @@ use colored::*;
 use structopt::*;
 use tabwriter::TabWriter;
 
-use common::ports::PortId;
+use common::ports::{PortId, QsfpPort};
 use dpd_client::types::{
     self, CmisDatapath, CmisLaneStatus, Sff8636Datapath, SffComplianceCode,
 };
 use dpd_client::Client;
 
-use crate::parse_port_id;
 use crate::LinkPath;
+use crate::{parse_port_id, parse_qsfp_port_id};
 
 // Newtype needed to convince `structopt` to parse a list of fields.
 #[derive(Clone, Debug)]
@@ -164,6 +164,37 @@ pub enum SwitchPort {
     Transceiver(Transceiver),
     /// Manage the attention LEDs on the Sidecar QSFP switch ports.
     Led(Led),
+    /// Get the management mode for a switch port's transceiver.
+    ///
+    /// In most situations, QSFP switch ports are managed automatically, meaning
+    /// their power is controlled autonomously. The modules will remain in low
+    /// power until a link is created on them. Modules will also be turned off
+    /// if they cannot be supported.
+    ///
+    /// Modules may be turned to manual management mode, which allows the
+    /// operator to explicitly control their power. The software will not change
+    /// the power of such a module automatically.
+    #[structopt(visible_aliases = &["mgmt", "mode"])]
+    ManagementMode {
+        /// The QSFP port to operate on.
+        #[structopt(parse(try_from_str = parse_qsfp_port_id))]
+        port_id: QsfpPort,
+    },
+    /// Set the management mode for a switch port's transceiver.
+    ///
+    /// See the help for `management-mode` for details.
+    #[structopt(visible_aliases = &["set-mgmt", "set-mode"])]
+    SetManagementMode {
+        /// The QSFP port to operate on.
+        #[structopt(parse(try_from_str = parse_qsfp_port_id))]
+        port_id: QsfpPort,
+        /// The management mode to set the port to.
+        #[structopt(
+            possible_values = &["automatic", "auto", "manual"],
+            parse(try_from_str = parse_management_mode)
+        )]
+        mode: types::ManagementMode,
+    },
     /// Return the backplane map.
     BackplaneMap {
         /// If true, provide parseable ouptut, separated by a `,`.
@@ -221,37 +252,6 @@ pub enum Transceiver {
         /// The QSFP port to fetch the transceiver datapath from.
         #[structopt(parse(try_from_str = parse_port_id))]
         port_id: PortId,
-    },
-    /// Get the management mode for the transceiver.
-    ///
-    /// In most situations, QSFP switch ports are managed automatically, meaning
-    /// their power is controlled autonomously. The modules will remain in low
-    /// power until a link is created on them. Modules will also be turned off
-    /// if they cannot be supported.
-    ///
-    /// Modules may be turned to manual management mode, which allows the
-    /// operator to explicitly control their power. The software will not change
-    /// the power of such a module automatically.
-    #[structopt(visible_alias = "mgmt")]
-    ManagementMode {
-        /// The QSFP port to operate on.
-        #[structopt(parse(try_from_str = parse_port_id))]
-        port_id: PortId,
-    },
-    /// Set the management mode for the transceiver.
-    ///
-    /// See the help for `management-mode` for details.
-    #[structopt(visible_alias = "set-mgmt")]
-    SetManagementMode {
-        /// The QSFP port to operate on.
-        #[structopt(parse(try_from_str = parse_port_id))]
-        port_id: PortId,
-        /// The management mode to set the port to.
-        #[structopt(
-            possible_values = &["automatic", "auto", "manual"],
-            parse(try_from_str = parse_management_mode)
-        )]
-        mode: types::ManagementMode,
     },
 }
 
@@ -614,13 +614,6 @@ async fn transceivers_cmd(
                 println!("{:>WIDTH$}: {UNSUPPORTED}", "Aux 3");
             }
         }
-        Transceiver::ManagementMode { port_id } => {
-            let mode = client.management_mode_get(&port_id).await?.into_inner();
-            println!("{mode:?}");
-        }
-        Transceiver::SetManagementMode { port_id, mode } => {
-            client.management_mode_set(&port_id, mode).await?;
-        }
         Transceiver::Datapath { port_id } => {
             let datapath = client
                 .transceiver_datapath_get(&port_id)
@@ -932,6 +925,18 @@ pub async fn switch_cmd(
             }
         }
         SwitchPort::Transceiver(xcvr) => transceivers_cmd(client, xcvr).await?,
+        SwitchPort::ManagementMode { port_id } => {
+            let mode = client
+                .management_mode_get(&PortId::Qsfp(port_id))
+                .await?
+                .into_inner();
+            println!("{mode:?}");
+        }
+        SwitchPort::SetManagementMode { port_id, mode } => {
+            client
+                .management_mode_set(&PortId::Qsfp(port_id), mode)
+                .await?;
+        }
         SwitchPort::Led(led) => led_cmd(client, led).await?,
         SwitchPort::BackplaneMap {
             parseable,
