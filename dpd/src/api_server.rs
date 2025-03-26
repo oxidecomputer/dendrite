@@ -1210,7 +1210,7 @@ async fn transceivers_list(
 async fn transceiver_get(
     rqctx: RequestContext<Arc<Switch>>,
     path: Path<PortIdPathParams>,
-) -> Result<HttpResponseOk<Option<Transceiver>>, HttpError> {
+) -> Result<HttpResponseOk<Transceiver>, HttpError> {
     let switch = rqctx.context();
     let port_id = path.into_inner().port_id;
     match switch.switch_ports.ports.get(&port_id).as_ref() {
@@ -1219,7 +1219,19 @@ async fn transceiver_get(
             let switch_port = sp.lock().await;
             match &switch_port.fixed_side {
                 FixedSideDevice::Qsfp { device, .. } => {
-                    Ok(HttpResponseOk(device.transceiver.clone()))
+                    match device.transceiver.as_ref().cloned() {
+                        Some(tr) => Ok(HttpResponseOk(tr)),
+                        None => {
+                            let PortId::Qsfp(qsfp_port) = port_id else {
+                                let msg = format!(
+                                    "Expected port {port_id} to be a QSFP port!"
+                                );
+                                return Err(HttpError::for_internal_error(msg));
+                            };
+                            Err(DpdError::MissingTransceiver { qsfp_port }
+                                .into())
+                        }
+                    }
                 }
                 _ => Err(DpdError::NotAQsfpPort { port_id }.into()),
             }
