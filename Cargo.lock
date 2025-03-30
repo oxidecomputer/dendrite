@@ -1329,7 +1329,7 @@ dependencies = [
  "oxnet",
  "rand",
  "regex",
- "regress 0.10.1",
+ "regress 0.10.3",
  "reqwest",
  "schemars",
  "semver 1.0.25",
@@ -1372,7 +1372,7 @@ dependencies = [
  "pretty_assertions",
  "progenitor 0.9.1",
  "rand",
- "regress 0.10.1",
+ "regress 0.10.3",
  "reqwest",
  "schemars",
  "serde",
@@ -1607,6 +1607,12 @@ name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+
+[[package]]
+name = "foldhash"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "foreign-types"
@@ -1915,6 +1921,11 @@ name = "hashbrown"
 version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a9bfc1af68b1726ea47d3d5109de126281def866b33970e10fbab11b5dafab3"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash",
+]
 
 [[package]]
 name = "hdrhistogram"
@@ -4571,11 +4582,11 @@ dependencies = [
 
 [[package]]
 name = "regress"
-version = "0.10.1"
+version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1541daf4e4ed43a0922b7969bdc2170178bcacc5dabf7e39bc508a9fa3953a7a"
+checksum = "78ef7fa9ed0256d64a688a3747d0fef7a88851c18a5e1d57f115f38ec2e09366"
 dependencies = [
- "hashbrown 0.14.5",
+ "hashbrown 0.15.1",
  "memchr",
 ]
 
@@ -6245,7 +6256,7 @@ dependencies = [
  "log",
  "proc-macro2",
  "quote",
- "regress 0.10.1",
+ "regress 0.10.3",
  "schemars",
  "semver 1.0.25",
  "serde",
@@ -6265,7 +6276,7 @@ dependencies = [
  "log",
  "proc-macro2",
  "quote",
- "regress 0.10.1",
+ "regress 0.10.3",
  "schemars",
  "semver 1.0.25",
  "serde",
