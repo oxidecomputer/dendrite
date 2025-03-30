@@ -205,7 +205,7 @@ dependencies = [
  "propolis",
  "rand",
  "schemars",
- "semver 1.0.25",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "slog",
@@ -592,7 +592,7 @@ checksum = "2d886547e41f740c616ae73108f6eb70afe6d940c7bc697cb30f13daec073037"
 dependencies = [
  "camino",
  "cargo-platform",
- "semver 1.0.25",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -1332,7 +1332,7 @@ dependencies = [
  "regress 0.10.1",
  "reqwest",
  "schemars",
- "semver 1.0.25",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "signal-hook",
@@ -1416,7 +1416,7 @@ dependencies = [
  "rustls-pemfile",
  "schemars",
  "scopeguard",
- "semver 1.0.25",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "serde_path_to_error",
@@ -1446,7 +1446,7 @@ dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
- "semver 1.0.25",
+ "semver 1.0.26",
  "serde",
  "serde_tokenstream 0.2.2",
  "syn 2.0.98",
@@ -3395,7 +3395,7 @@ dependencies = [
  "regress 0.9.1",
  "reqwest",
  "schemars",
- "semver 1.0.25",
+ "semver 1.0.26",
  "serde",
  "serde_human_bytes",
  "serde_json",
@@ -3457,7 +3457,7 @@ dependencies = [
  "futures-util",
  "hex",
  "reqwest",
- "semver 1.0.25",
+ "semver 1.0.26",
  "serde",
  "serde_derive",
  "serde_json",
@@ -4705,7 +4705,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
- "semver 1.0.25",
+ "semver 1.0.26",
 ]
 
 [[package]]
@@ -4916,9 +4916,9 @@ checksum = "d4f410fedcf71af0345d7607d246e7ad15faaadd49d240ee3b24e5dc21a820ac"
 
 [[package]]
 name = "semver"
-version = "1.0.25"
+version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f79dfe2d285b0488816f30e700a7438c5a73d816b5b7d3ac72fbc48b0d185e03"
+checksum = "56e6fa9c48d24d85fb3de5ad847117517440f6beceb7798af16b4a87d616b8d0"
 dependencies = [
  "serde",
 ]
@@ -6247,7 +6247,7 @@ dependencies = [
  "quote",
  "regress 0.10.1",
  "schemars",
- "semver 1.0.25",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "syn 2.0.98",
@@ -6267,7 +6267,7 @@ dependencies = [
  "quote",
  "regress 0.10.1",
  "schemars",
- "semver 1.0.25",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "syn 2.0.98",
@@ -6284,7 +6284,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "schemars",
- "semver 1.0.25",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "serde_tokenstream 0.2.2",
@@ -6301,7 +6301,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "schemars",
- "semver 1.0.25",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "serde_tokenstream 0.2.2",
