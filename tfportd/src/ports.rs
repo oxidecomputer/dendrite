@@ -53,7 +53,7 @@ pub struct LinkInfo {
     /// The name of the link.
     pub name: String,
     /// The switch port ID for this link.
-    pub port_id: common::ports::PortId,
+    pub port_id: types::PortId,
     /// The link ID for this link.
     pub link_id: types::LinkId,
     /// The low-level Tofino ID used to refer to this link.
@@ -83,7 +83,7 @@ impl From<&types::TfportData> for LinkInfo {
     fn from(t: &types::TfportData) -> Self {
         LinkInfo {
             name: t.to_string(),
-            port_id: t.port_id,
+            port_id: t.port_id.clone(),
             link_id: t.link_id,
             asic_id: t.asic_id,
             mac: t.mac.clone().into(),

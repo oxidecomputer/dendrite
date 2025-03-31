@@ -18,7 +18,6 @@ use tabwriter::TabWriter;
 use common::counters::RMonCounters;
 use common::network::MacAddr;
 use common::ports::PortFec;
-use common::ports::PortId;
 use common::ports::PortMedia;
 use common::ports::PortPrbsMode;
 use common::ports::PortSpeed;
@@ -294,7 +293,7 @@ pub enum Link {
     List {
         /// The port whose links should be listed.
         #[structopt(parse(try_from_str = parse_port_id))]
-        port_id: PortId,
+        port_id: types::PortId,
         /// Provide machine-parseable output.
         #[structopt(short, long, requires("fields"))]
         parseable: bool,
@@ -402,7 +401,7 @@ pub enum Link {
 pub struct LinkCreate {
     /// The ID of the switch port on which to create the link.
     #[structopt(parse(try_from_str = parse_port_id))]
-    port_id: PortId,
+    port_id: types::PortId,
 
     /// The first lane of the port to use for this link
     #[structopt(long, parse(try_from_str))]

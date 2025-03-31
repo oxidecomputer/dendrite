@@ -11,9 +11,8 @@ use super::harness::{
 use super::util::{link_list_ipv4, link_list_ipv6};
 use asic::chaos::{table, AsicConfig, Chaos, TableChaos};
 use asic::table_chaos;
-use common::ports::PortId;
 use dpd_client::types::{
-    LinkCreate, LinkId, LinkSettings, PortFec, PortSettings, PortSpeed,
+    LinkCreate, LinkId, LinkSettings, PortFec, PortId, PortSettings, PortSpeed,
 };
 use dpd_client::{Client, ROLLBACK_FAILURE_ERROR_CODE};
 use http::status::StatusCode;
