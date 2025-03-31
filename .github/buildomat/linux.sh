@@ -12,7 +12,7 @@ if [ $SDE_CALC != $SDE_DEB_SHA256 ]; then
 	echo "downloaded tofino_sde has a bad checksum"
 	exit 1
 fi
-pfexec dpkg -i $PKG
+sudo dpkg -i $PKG
 
 export SDE=/opt/oxide/tofino_sde
 export LD_LIBRARY_PATH="$SDE/lib:$LD_LIBRARY_PATH"

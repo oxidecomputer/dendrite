@@ -35,8 +35,8 @@ use dpd_client::ResponseValue;
 // This table has further shrunk to 4022 entries with the open source
 // compiler.  That is being tracked as issue #1092, which will presumably
 // subsume #1013.
-// update: we're back to an expected size?
-const IPV4_LPM_SIZE: usize = 8191; // ipv4 forwarding table
+// update: with the move to 8192 entries we're now at 8124
+const IPV4_LPM_SIZE: usize = 8125; // ipv4 forwarding table
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports
