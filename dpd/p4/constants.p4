@@ -5,7 +5,7 @@ const bit<16> L2_ISOLATED_FLAG = 0x8000;
 //is going to need to come either through ATCAM/ALPM or code restructuring.
 const int IPV4_NAT_TABLE_SIZE		= 1024; // nat routing table
 const int IPV6_NAT_TABLE_SIZE		= 1024; // nat routing table
-const int IPV4_LPM_SIZE			= 4096; // ipv4 forwarding table
+const int IPV4_LPM_SIZE			= 8192; // ipv4 forwarding table
 const int IPV6_LPM_SIZE			= 1024; // ipv6 forwarding table
 
 const int IPV4_ARP_SIZE			= 512;  // arp cache

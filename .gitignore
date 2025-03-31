@@ -20,3 +20,4 @@ p4_artifacts*
 
 # OS artifacts
 .DS_Store
+!.github

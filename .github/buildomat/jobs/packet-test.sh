@@ -22,6 +22,8 @@
 ####
 #### <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
+export RUST_BACKTRACE=1
+
 set -o errexit
 set -o pipefail
 set -o xtrace
