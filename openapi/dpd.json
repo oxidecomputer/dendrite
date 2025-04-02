@@ -1084,6 +1084,494 @@
         }
       }
     },
+    "/multicast/groups": {
+      "get": {
+        "summary": "List all multicast groups.",
+        "operationId": "multicast_groups_list",
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Array_of_MulticastGroupResponse",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MulticastGroupResponse"
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a multicast group configuration.",
+        "description": "If no group ID is provided, one will be uniquely assigned.",
+        "operationId": "multicast_group_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MulticastGroupEntry"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "successful creation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MulticastGroupResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete all multicast groups (and associated routes).",
+        "operationId": "multicast_reset",
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/multicast/groups/{group_id}": {
+      "get": {
+        "summary": "Get the multicast group configuration for a given group ID.",
+        "operationId": "multicast_group_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MulticastGroupResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update a multicast group configuration.",
+        "operationId": "multicast_group_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MulticastGroupEntry"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MulticastGroupResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a multicast group configuration.",
+        "operationId": "multicast_group_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/multicast/routes": {
+      "post": {
+        "summary": "Create a multicast route that maps an IP address to a specific multicast",
+        "description": "group ID.",
+        "operationId": "multicast_route_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MulticastRouteEntry"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "successful creation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MulticastRouteResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/multicast/routes/{ip}": {
+      "get": {
+        "summary": "Get the multicast route for a given IP address.",
+        "operationId": "multicast_route_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ip",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "ip"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Array_of_MulticastRouteResponse",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MulticastRouteResponse"
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update a multicast route configuration across all multicast groups.",
+        "operationId": "multicast_route_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ip",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "ip"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MulticastRouteEntry"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MulticastRouteResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a multicast route across all multicast groups.",
+        "operationId": "multicast_route_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ip",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "ip"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/multicast/routes/{ip}/groups/{group_id}": {
+      "get": {
+        "summary": "Get the multicast route for a given IP address and group ID.",
+        "operationId": "multicast_route_get_by_group",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0
+            }
+          },
+          {
+            "in": "path",
+            "name": "ip",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "ip"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MulticastRouteResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a multicast route with a specific group ID.",
+        "description": "IPs can be in multiple groups, so this will only delete the route for the given group.",
+        "operationId": "multicast_route_delete_by_group",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0
+            }
+          },
+          {
+            "in": "path",
+            "name": "ip",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "ip"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/multicast/tags/{tag}": {
+      "get": {
+        "summary": "List all multicast groups with a given tag.",
+        "operationId": "multicast_groups_list_by_tag",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Array_of_MulticastGroupResponse",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MulticastGroupResponse"
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete all multicast groups (and associated routes) with a given tag.",
+        "operationId": "multicast_reset_by_tag",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/multicast/untagged": {
+      "delete": {
+        "summary": "Delete all multicast groups (and associated routes) without a tag.",
+        "operationId": "multicast_reset_untagged",
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/nat/ipv4": {
       "get": {
         "summary": "Get all of the external addresses in use for IPv4 NAT mappings.",
@@ -6957,6 +7445,154 @@
             }
           }
         }
+      },
+      "MulticastGroupEntry": {
+        "description": "A multicast group configuration for POST requests.",
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "nullable": true,
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MulticastGroupMember"
+            }
+          },
+          "tag": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "members"
+        ]
+      },
+      "MulticastGroupMember": {
+        "description": "Represents a member of a multicast group.",
+        "type": "object",
+        "properties": {
+          "link_id": {
+            "$ref": "#/components/schemas/LinkId"
+          },
+          "nat_target": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/NatTarget"
+              }
+            ]
+          },
+          "port_id": {
+            "$ref": "#/components/schemas/PortId"
+          },
+          "vlan_id": {
+            "nullable": true,
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "link_id",
+          "port_id"
+        ]
+      },
+      "MulticastGroupResponse": {
+        "description": "A multicast group configuration response.",
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MulticastGroupMember"
+            }
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "ip"
+            }
+          },
+          "tag": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "members",
+          "routes"
+        ]
+      },
+      "MulticastRouteEntry": {
+        "description": "A multicast group entry for POST requests.",
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "ip": {
+            "type": "string",
+            "format": "ip"
+          },
+          "level1_excl_id": {
+            "nullable": true,
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "level2_excl_id": {
+            "nullable": true,
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "group_id",
+          "ip"
+        ]
+      },
+      "MulticastRouteResponse": {
+        "description": "A multicast route response.",
+        "type": "object",
+        "properties": {
+          "group": {
+            "$ref": "#/components/schemas/MulticastGroupResponse"
+          },
+          "ip": {
+            "type": "string",
+            "format": "ip"
+          },
+          "level1_excl_id": {
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "level2_excl_id": {
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "group",
+          "ip",
+          "level1_excl_id",
+          "level2_excl_id"
+        ]
       },
       "NatTarget": {
         "description": "represents an internal NAT target",

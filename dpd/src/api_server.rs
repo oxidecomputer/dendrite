@@ -39,6 +39,7 @@ use crate::fault::Fault;
 use crate::link::LinkFsmCounters;
 use crate::link::LinkId;
 use crate::link::LinkUpCounter;
+use crate::mcast;
 use crate::oxstats;
 use crate::port_map::BackplaneLink;
 use crate::route::Ipv4Route;
@@ -49,6 +50,7 @@ use crate::switch_port::FixedSideDevice;
 use crate::switch_port::Led;
 use crate::switch_port::LedState;
 use crate::switch_port::ManagementMode;
+use crate::table;
 use crate::transceivers::PowerState;
 use crate::transceivers::Transceiver;
 use crate::types::DpdError;
@@ -2535,7 +2537,11 @@ async fn reset_all(
         error!(switch.log, "failed to reset ipv6 arp table: {:?}", e);
         err = Some(e);
     }
-    if let Err(e) = route::reset(switch).await {
+    if let Err(e) = route::reset(switch, table::Direction::Ingress).await {
+        error!(switch.log, "failed to reset route data: {:?}", e);
+        err = Some(e);
+    }
+    if let Err(e) = route::reset(switch, table::Direction::Egress).await {
         error!(switch.log, "failed to reset route data: {:?}", e);
         err = Some(e);
     }
@@ -2549,6 +2555,10 @@ async fn reset_all(
     }
     if let Err(e) = nat::reset_ipv6(switch) {
         error!(switch.log, "failed to reset ipv6 nat table: {:?}", e);
+        err = Some(e);
+    }
+    if let Err(e) = mcast::reset(switch).await {
+        error!(switch.log, "failed to reset multicast state: {:?}", e);
         err = Some(e);
     }
 
@@ -3061,6 +3071,483 @@ async fn counter_get(
         .map_err(HttpError::from)
 }
 
+/// A multicast group configuration for POST requests.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MulticastGroupEntry {
+    group_id: Option<mcast::MulticastGroupId>,
+    tag: Option<String>,
+    members: Vec<mcast::MulticastGroupMember>,
+}
+
+/// A multicast group configuration response.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MulticastGroupResponse {
+    group_id: mcast::MulticastGroupId,
+    tag: Option<String>,
+    members: Vec<mcast::MulticastGroupMember>,
+    routes: Vec<IpAddr>,
+}
+
+/// A multicast group entry for POST requests.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MulticastRouteEntry {
+    ip: IpAddr,
+    group_id: mcast::MulticastGroupId,
+    level1_excl_id: Option<u16>,
+    level2_excl_id: Option<u16>,
+}
+
+/// A multicast route response.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MulticastRouteResponse {
+    ip: IpAddr,
+    group: MulticastGroupResponse,
+    level1_excl_id: u16,
+    level2_excl_id: u16,
+}
+
+/// A path parameter for a multicast group ID.
+#[derive(Deserialize, Serialize, JsonSchema)]
+struct MulticastGroupIdParam {
+    group_id: mcast::MulticastGroupId,
+}
+
+/// A path parameter for a multicast route IP.
+#[derive(Deserialize, Serialize, JsonSchema)]
+struct MulticastRouteIpParam {
+    ip: IpAddr,
+}
+
+/// A path parameter for a multicast route IP.
+#[derive(Deserialize, Serialize, JsonSchema)]
+struct MulticastRouteIpGroupParam {
+    ip: IpAddr,
+    group_id: mcast::MulticastGroupId,
+}
+
+/**
+ * Create a multicast group configuration.
+ *
+ * If no group ID is provided, one will be uniquely assigned.
+ */
+#[endpoint {
+    method = POST,
+    path = "/multicast/groups",
+}]
+async fn multicast_group_create(
+    rqctx: RequestContext<Arc<Switch>>,
+    group: TypedBody<MulticastGroupEntry>,
+) -> Result<HttpResponseCreated<MulticastGroupResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let entry = group.into_inner();
+
+    let group_id = match entry.group_id {
+        Some(id) => id,
+        None => switch.mcast.lock().await.generate_group_id()?,
+    };
+
+    mcast::add_group(switch, group_id, entry.tag.clone(), entry.members.clone())
+        .await
+        .map(|_| {
+            HttpResponseCreated(MulticastGroupResponse {
+                group_id,
+                tag: entry.tag,
+                members: entry.members,
+                routes: vec![],
+            })
+        })
+        .map_err(HttpError::from)
+}
+
+/**
+ * Delete all multicast groups (and associated routes).
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/groups"
+}]
+async fn multicast_reset(
+    rqctx: RequestContext<Arc<Switch>>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+
+    mcast::reset(switch)
+        .await
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+
+/**
+ * Delete a multicast group configuration.
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/groups/{group_id}",
+}]
+async fn multicast_group_delete(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastGroupIdParam>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let group_id = path.into_inner().group_id;
+
+    mcast::del_group(switch, group_id)
+        .await
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+
+/**
+ * Get the multicast group configuration for a given group ID.
+ */
+#[endpoint {
+    method = GET,
+    path = "/multicast/groups/{group_id}",
+}]
+async fn multicast_group_get(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastGroupIdParam>,
+) -> Result<HttpResponseOk<MulticastGroupResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let group_id = path.into_inner().group_id;
+
+    // Get the multicast group
+    mcast::get_group(switch, group_id)
+        .await
+        .map(|(group, routes)| {
+            HttpResponseOk(MulticastGroupResponse {
+                group_id,
+                tag: group.tag,
+                members: group.members,
+                routes,
+            })
+        })
+        .map_err(HttpError::from)
+}
+
+/**
+ * Update a multicast group configuration.
+*/
+#[endpoint {
+    method = PUT,
+    path = "/multicast/groups/{group_id}",
+}]
+async fn multicast_group_update(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastGroupIdParam>,
+    group: TypedBody<MulticastGroupEntry>,
+) -> Result<HttpResponseOk<MulticastGroupResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let group_id = path.into_inner().group_id;
+    let entry = group.into_inner();
+
+    mcast::modify_group(
+        switch,
+        group_id,
+        entry.tag.clone(),
+        entry.members.clone(),
+    )
+    .await
+    .map(|(group, routes)| {
+        HttpResponseOk(MulticastGroupResponse {
+            group_id,
+            tag: group.tag,
+            members: group.members,
+            routes,
+        })
+    })
+    .map_err(HttpError::from)
+}
+
+/**
+ * List all multicast groups.
+ */
+#[endpoint {
+    method = GET,
+    path = "/multicast/groups",
+}]
+async fn multicast_groups_list(
+    rqctx: RequestContext<Arc<Switch>>,
+) -> Result<HttpResponseOk<Vec<MulticastGroupResponse>>, HttpError> {
+    let switch: &Switch = rqctx.context();
+
+    let entries = mcast::list_groups(switch, None)
+        .await
+        .into_iter()
+        .map(|(id, group, routes)| MulticastGroupResponse {
+            group_id: id,
+            tag: group.tag,
+            members: group.members,
+            routes,
+        })
+        .collect();
+
+    Ok(HttpResponseOk(entries))
+}
+
+/**
+ * List all multicast groups with a given tag.
+ */
+#[endpoint {
+    method = GET,
+    path = "/multicast/tags/{tag}",
+}]
+async fn multicast_groups_list_by_tag(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<TagPath>,
+) -> Result<HttpResponseOk<Vec<MulticastGroupResponse>>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let tag = path.into_inner().tag;
+
+    let entries = mcast::list_groups(switch, Some(&tag))
+        .await
+        .into_iter()
+        .map(|(id, group, routes)| MulticastGroupResponse {
+            group_id: id,
+            tag: group.tag.clone(),
+            members: group.members,
+            routes,
+        })
+        .collect();
+
+    Ok(HttpResponseOk(entries))
+}
+
+/**
+ * Delete all multicast groups (and associated routes) with a given tag.
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/tags/{tag}",
+}]
+async fn multicast_reset_by_tag(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<TagPath>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let tag = path.into_inner().tag;
+
+    mcast::reset_tag(switch, &tag)
+        .await
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+
+/**
+ * Delete all multicast groups (and associated routes) without a tag.
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/untagged",
+}]
+async fn multicast_reset_untagged(
+    rqctx: RequestContext<Arc<Switch>>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+
+    mcast::reset_untagged(switch)
+        .await
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+/**
+ * Create a multicast route that maps an IP address to a specific multicast
+ * group ID.
+ */
+#[endpoint {
+    method = POST,
+    path = "/multicast/routes",
+}]
+async fn multicast_route_create(
+    rqctx: RequestContext<Arc<Switch>>,
+    entry: TypedBody<MulticastRouteEntry>,
+) -> Result<HttpResponseCreated<MulticastRouteResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let entry = entry.into_inner();
+
+    let route = mcast::add_route(
+        switch,
+        entry.ip,
+        entry.group_id,
+        entry.level1_excl_id,
+        entry.level2_excl_id,
+    )
+    .await
+    .map_err(HttpError::from)?;
+
+    let (group, routes) = route.group_info;
+
+    Ok(HttpResponseCreated(MulticastRouteResponse {
+        group: MulticastGroupResponse {
+            group_id: route.group_id,
+            tag: group.tag,
+            members: group.members,
+            routes,
+        },
+        ip: route.ip,
+        level1_excl_id: route.level1_excl_id,
+        level2_excl_id: route.level2_excl_id,
+    }))
+}
+
+/**
+ * Delete a multicast route across all multicast groups.
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/routes/{ip}",
+}]
+async fn multicast_route_delete(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastRouteIpParam>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let entry = path.into_inner();
+
+    mcast::del_route(switch, entry.ip, None)
+        .await
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+
+/**
+ * Delete a multicast route with a specific group ID.
+ *
+ * IPs can be in multiple groups, so this will only delete the route for the
+ * given group.
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/routes/{ip}/groups/{group_id}",
+}]
+async fn multicast_route_delete_by_group(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastRouteIpGroupParam>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let entry = path.into_inner();
+
+    mcast::del_route(switch, entry.ip, Some(entry.group_id))
+        .await
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+
+/**
+ * Update a multicast route configuration across all multicast groups.
+ */
+#[endpoint {
+    method = PUT,
+    path = "/multicast/routes/{ip}",
+}]
+async fn multicast_route_update(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastRouteIpParam>,
+    entry: TypedBody<MulticastRouteEntry>,
+) -> Result<HttpResponseOk<MulticastRouteResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let entry = entry.into_inner();
+    let ip = path.into_inner().ip;
+
+    let route = mcast::modify_route(
+        switch,
+        ip,
+        entry.group_id,
+        entry.level1_excl_id,
+        entry.level2_excl_id,
+    )
+    .await?;
+
+    let (group, routes) = route.group_info;
+
+    Ok(HttpResponseOk(MulticastRouteResponse {
+        group: MulticastGroupResponse {
+            group_id: route.group_id,
+            tag: group.tag,
+            members: group.members,
+            routes,
+        },
+        ip: route.ip,
+        level1_excl_id: route.level1_excl_id,
+        level2_excl_id: route.level2_excl_id,
+    }))
+}
+
+/**
+ * Get the multicast route for a given IP address.
+ */
+#[endpoint {
+    method = GET,
+    path = "/multicast/routes/{ip}",
+}]
+async fn multicast_route_get(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastRouteIpParam>,
+) -> Result<HttpResponseOk<Vec<MulticastRouteResponse>>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let entry = path.into_inner();
+
+    match mcast::get_route_info(switch, entry.ip, None).await? {
+        mcast::RouteInfo::Results(routes) => {
+            let entries = routes
+                .into_iter()
+                .map(|route| {
+                    let (group, routes) = route.group_info;
+
+                    MulticastRouteResponse {
+                        ip: route.ip,
+                        group: MulticastGroupResponse {
+                            group_id: route.group_id,
+                            tag: group.tag,
+                            members: group.members,
+                            routes,
+                        },
+                        level1_excl_id: route.level1_excl_id,
+                        level2_excl_id: route.level2_excl_id,
+                    }
+                })
+                .collect();
+
+            Ok(HttpResponseOk(entries))
+        }
+        _ => unreachable!(),
+    }
+}
+
+/**
+ * Get the multicast route for a given IP address and group ID.
+ */
+#[endpoint {
+    method = GET,
+    path = "/multicast/routes/{ip}/groups/{group_id}",
+}]
+async fn multicast_route_get_by_group(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastRouteIpGroupParam>,
+) -> Result<HttpResponseOk<MulticastRouteResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let entry = path.into_inner();
+
+    match mcast::get_route_info(switch, entry.ip, Some(entry.group_id)).await? {
+        mcast::RouteInfo::Result(route) => {
+            let (group, routes) = route.group_info;
+
+            Ok(HttpResponseOk(MulticastRouteResponse {
+                ip: route.ip,
+                group: MulticastGroupResponse {
+                    group_id: route.group_id,
+                    tag: group.tag,
+                    members: group.members,
+                    routes,
+                },
+                level1_excl_id: route.level1_excl_id,
+                level2_excl_id: route.level2_excl_id,
+            }))
+        }
+        _ => unreachable!(),
+    }
+}
+
 pub fn http_api() -> dropshot::ApiDescription<Arc<Switch>> {
     let mut api = dropshot::ApiDescription::new();
     api.register(build_info).unwrap();
@@ -3188,6 +3675,22 @@ pub fn http_api() -> dropshot::ApiDescription<Arc<Switch>> {
 
     api.register(ipv4_nat_generation).unwrap();
     api.register(ipv4_nat_trigger_update).unwrap();
+
+    api.register(multicast_group_create).unwrap();
+    api.register(multicast_reset).unwrap();
+    api.register(multicast_group_delete).unwrap();
+    api.register(multicast_group_update).unwrap();
+    api.register(multicast_group_get).unwrap();
+    api.register(multicast_groups_list).unwrap();
+    api.register(multicast_groups_list_by_tag).unwrap();
+    api.register(multicast_reset_by_tag).unwrap();
+    api.register(multicast_reset_untagged).unwrap();
+    api.register(multicast_route_create).unwrap();
+    api.register(multicast_route_update).unwrap();
+    api.register(multicast_route_delete).unwrap();
+    api.register(multicast_route_get).unwrap();
+    api.register(multicast_route_get_by_group).unwrap();
+    api.register(multicast_route_delete_by_group).unwrap();
 
     #[cfg(feature = "tofino_asic")]
     crate::tofino_api_server::init(&mut api);

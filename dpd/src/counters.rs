@@ -52,6 +52,8 @@ enum CounterId {
     Service,
     Ingress,
     Egress,
+    Ucast,
+    Mcast,
     Packet,
     DropPort,
     DropReason,
@@ -77,7 +79,7 @@ struct CounterDescription {
     p4_name: &'static str,
 }
 
-const COUNTERS: [CounterDescription; 6] = [
+const COUNTERS: [CounterDescription; 10] = [
     CounterDescription {
         id: CounterId::Service,
         client_name: "Service",
@@ -89,24 +91,44 @@ const COUNTERS: [CounterDescription; 6] = [
         p4_name: "pipe.Ingress.ingress_ctr",
     },
     CounterDescription {
-        id: CounterId::Egress,
-        client_name: "Egress",
-        p4_name: "pipe.Ingress.egress_ctr",
-    },
-    CounterDescription {
         id: CounterId::Packet,
         client_name: "Packet",
         p4_name: "pipe.Ingress.packet_ctr",
     },
     CounterDescription {
         id: CounterId::DropPort,
-        client_name: "Drop_Port",
+        client_name: "Ingress_Drop_Port",
         p4_name: "pipe.Ingress.drop_port_ctr",
     },
     CounterDescription {
         id: CounterId::DropReason,
-        client_name: "Drop_Reason",
+        client_name: "Ingress_Drop_Reason",
         p4_name: "pipe.Ingress.drop_reason_ctr",
+    },
+    CounterDescription {
+        id: CounterId::DropPort,
+        client_name: "Egress_Drop_Port",
+        p4_name: "pipe.Egress.drop_port_ctr",
+    },
+    CounterDescription {
+        id: CounterId::DropReason,
+        client_name: "Egress_Drop_Reason",
+        p4_name: "pipe.Egress.drop_reason_ctr",
+    },
+    CounterDescription {
+        id: CounterId::Egress,
+        client_name: "Egress",
+        p4_name: "pipe.Egress.egress_ctr",
+    },
+    CounterDescription {
+        id: CounterId::Ucast,
+        client_name: "Ucast",
+        p4_name: "pipe.Egress.ucast_ctr",
+    },
+    CounterDescription {
+        id: CounterId::Mcast,
+        client_name: "Mcast",
+        p4_name: "pipe.Egress.mcast_ctr",
     },
 ];
 
@@ -332,9 +354,11 @@ pub async fn get_values(
         let key = match counter_id {
             CounterId::Packet => packet_label(idx.idx),
             CounterId::Service => service_label(idx.idx as u8),
-            CounterId::Ingress | CounterId::Egress | CounterId::DropPort => {
-                port_label(switch, idx.idx).await
-            }
+            CounterId::Ingress
+            | CounterId::Egress
+            | CounterId::DropPort
+            | CounterId::Ucast
+            | CounterId::Mcast => port_label(switch, idx.idx).await,
             CounterId::DropReason => reason_label(idx.idx as u8)?,
         };
 

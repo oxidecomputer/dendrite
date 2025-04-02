@@ -86,6 +86,7 @@
 //                                         6        (1, 172.17.10.1, 1)
 //                                         7        (5, 172.17.14.1, 0)
 //
+//
 // Still todo:
 //    - Implement this multipath support for IPv6.  This should be a simple
 //      copy-and-paste of the IPv4 implementation.  This is currently blocked on
@@ -153,7 +154,18 @@ impl<T: Clone> RouteEntry<T> {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone)]
+/// A Vlan identifier, made up of a port, link, and vlan tag.
+#[derive(
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Clone,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+)]
 struct VlanId {
     // The switch port out which routed traffic is sent.
     port_id: PortId,
@@ -164,11 +176,7 @@ struct VlanId {
 }
 
 impl VlanId {
-    pub fn new(
-        port_id: PortId,
-        link_id: LinkId,
-        vlan_id: u16,
-    ) -> DpdResult<Self> {
+    fn new(port_id: PortId, link_id: LinkId, vlan_id: u16) -> DpdResult<Self> {
         if vlan_id > 0 {
             common::network::validate_vlan(vlan_id)?;
         }
@@ -349,6 +357,7 @@ fn cleanup_route_ipv4(
     route_data: &mut RouteData,
     subnet: Option<Ipv4Net>,
     entry: RouteEntry<Ipv4Route>,
+    direction: table::Direction,
 ) -> DpdResult<()> {
     // Remove the subnet -> index mapping first, so nobody can reach the
     // entries we delete below.
@@ -364,6 +373,7 @@ fn cleanup_route_ipv4(
             table::route_ipv4::delete_route_target(
                 switch,
                 entry.index + idx as u16,
+                direction,
             )
         })
         .all(|rval| rval.is_ok());
@@ -397,7 +407,14 @@ fn finalize_route_ipv4(
                 route_data.v4.insert(subnet, entry);
                 Ok(())
             }
-            Err(_) => cleanup_route_ipv4(switch, route_data, None, entry),
+            Err(_) => {
+                let direction = if subnet.is_multicast() {
+                    table::Direction::Egress
+                } else {
+                    table::Direction::Ingress
+                };
+                cleanup_route_ipv4(switch, route_data, None, entry, direction)
+            }
         }
     } else {
         Ok(())
@@ -419,6 +436,14 @@ fn replace_route_targets_ipv4(
     subnet: Ipv4Net,
     targets: Vec<NextHop<Ipv4Route>>,
 ) -> DpdResult<()> {
+    // Determine the direction of the route based on whether it is a multicast
+    // route or not.
+    let direction = if subnet.is_multicast() {
+        table::Direction::Egress
+    } else {
+        table::Direction::Ingress
+    };
+
     // Remove the old entry from our in-core and on-chip indexes, but don't free
     // the data yet.
     let old_entry = route_data.v4.remove(&subnet);
@@ -433,7 +458,9 @@ fn replace_route_targets_ipv4(
     // is no new data to insert in either table.
     if targets.is_empty() {
         if let Some(entry) = old_entry {
-            return cleanup_route_ipv4(switch, route_data, None, entry);
+            return cleanup_route_ipv4(
+                switch, route_data, None, entry, direction,
+            );
         }
         return Ok(());
     }
@@ -454,6 +481,7 @@ fn replace_route_targets_ipv4(
 
     // Insert all the entries into the table
     let mut idx = new_entry.index;
+
     for target in targets {
         if let Err(e) = table::route_ipv4::add_route_target(
             switch,
@@ -461,8 +489,11 @@ fn replace_route_targets_ipv4(
             target.asic_port_id,
             target.route.tgt_ip,
             target.route.vlan_id,
+            direction,
         ) {
-            let _ = cleanup_route_ipv4(switch, route_data, None, new_entry);
+            let _ = cleanup_route_ipv4(
+                switch, route_data, None, new_entry, direction,
+            );
             let _ = finalize_route_ipv4(switch, route_data, subnet, old_entry);
             return Err(e);
         }
@@ -481,7 +512,9 @@ fn replace_route_targets_ipv4(
             // Finally free all of the table space for the original set of
             // targets
             if let Some(entry) = old_entry {
-                let _ = cleanup_route_ipv4(switch, route_data, None, entry);
+                let _ = cleanup_route_ipv4(
+                    switch, route_data, None, entry, direction,
+                );
             }
             Ok(())
         }
@@ -489,7 +522,9 @@ fn replace_route_targets_ipv4(
             // We failed to point at the new set of targets.  Free all of the
             // new data and update the route_index table to point at the
             // original set of targets.
-            let _ = cleanup_route_ipv4(switch, route_data, None, new_entry);
+            let _ = cleanup_route_ipv4(
+                switch, route_data, None, new_entry, direction,
+            );
             let _ = finalize_route_ipv4(switch, route_data, subnet, old_entry);
             Err(e)
         }
@@ -503,12 +538,21 @@ pub fn add_route_ipv4_locked(
     route: Ipv4Route,
     asic_port_id: u16,
 ) -> DpdResult<()> {
-    info!(switch.log, "adding route {subnet} -> {:?}", route.tgt_ip);
+    let table = if subnet.is_multicast() {
+        info!(
+            switch.log,
+            "adding multicast route {subnet} -> {:?}", route.tgt_ip
+        );
+        table::TableType::RouteIdxIpv4Mcast
+    } else {
+        info!(switch.log, "adding route {subnet} -> {:?}", route.tgt_ip);
+        table::TableType::RouteIdxIpv4
+    };
 
     // Verify that the slot freelist has been initialized
     route_data
         .v4_freemap
-        .maybe_init(switch.table_size(table::TableType::RouteFwdIpv4)? as u16);
+        .maybe_init(switch.table_size(table)? as u16);
 
     // Get the old set of targets that we'll be adding to
     let mut targets = route_data
@@ -742,7 +786,14 @@ pub fn delete_route_ipv4_locked(
         .v4
         .remove(&subnet)
         .ok_or(DpdError::Missing("no such route".into()))?;
-    cleanup_route_ipv4(switch, route_data, Some(subnet), entry)
+
+    let direction = if subnet.is_multicast() {
+        table::Direction::Egress
+    } else {
+        table::Direction::Ingress
+    };
+
+    cleanup_route_ipv4(switch, route_data, Some(subnet), entry, direction)
 }
 
 // Delete a route and all of its targets
@@ -930,15 +981,18 @@ pub async fn reset_ipv6_tag(switch: &Switch, tag: &str) {
     }
 }
 
-pub async fn reset(switch: &Switch) -> DpdResult<()> {
+pub async fn reset(
+    switch: &Switch,
+    direction: table::Direction,
+) -> DpdResult<()> {
     let mut route_data = switch.routes.lock().await;
     route_data.v4 = BTreeMap::new();
     route_data.v4_freemap.reset();
-    table::route_ipv4::reset(switch)?;
+    table::route_ipv4::reset(switch, direction)?;
 
     route_data.v6 = BTreeMap::new();
     route_data.v6_freemap.reset();
-    table::route_ipv6::reset(switch)?;
+    table::route_ipv6::reset(switch, direction)?;
 
     Ok(())
 }
