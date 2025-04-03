@@ -9,10 +9,7 @@ use std::io;
 use std::str::FromStr;
 
 use anyhow::Context;
-use common::ports::QsfpPort;
 use structopt::*;
-
-use common::ports::PortId;
 
 use dpd_client::default_port;
 use dpd_client::types;
@@ -90,7 +87,7 @@ impl FromStr for LinkName {
 // A "path" to a link, structured as `port_id/link_id`.
 #[derive(Clone, Debug, StructOpt)]
 pub struct LinkPath {
-    port_id: PortId,
+    port_id: types::PortId,
     link_id: types::LinkId,
 }
 
@@ -101,7 +98,7 @@ impl FromStr for LinkPath {
         let Some((port_id, link_id)) = s.split_once('/') else {
             anyhow::bail!("Invalid switch port or link ID: {s}");
         };
-        let Ok(port_id) = PortId::try_from(port_id) else {
+        let Ok(port_id) = types::PortId::try_from(port_id) else {
             anyhow::bail!("Invalid switch port: {port_id}");
         };
         Ok(Self {
@@ -129,13 +126,18 @@ impl FromStr for IpFamily {
     }
 }
 
-pub fn parse_qsfp_port_id(value: &str) -> Result<QsfpPort, String> {
-    value.parse().map_err(|_| {
-        format!("'{}' is invalid; QSFP ports are named qsfp<0-31>", value)
-    })
+/// Attempt to interpret a string as a qsfp port ID, and return a PortId enum
+/// suitable for passing to the dpd OpenAPI interface.
+pub fn parse_qsfp_port_id(value: &str) -> Result<types::PortId, String> {
+    value
+        .parse::<types::Qsfp>()
+        .map_err(|_| {
+            format!("'{}' is invalid; QSFP ports are named qsfp<0-31>", value)
+        })
+        .map(types::PortId::Qsfp)
 }
 
-pub fn parse_port_id(value: &str) -> Result<PortId, String> {
+pub fn parse_port_id(value: &str) -> Result<types::PortId, String> {
     value.parse().map_err(|_| {
         format!("'{}' is invalid; valid port-ids include qsfp<0-31>, rear<0-31>, or int0", value)
     })

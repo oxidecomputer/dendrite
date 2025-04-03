@@ -15,9 +15,9 @@ use colored::*;
 use structopt::*;
 use tabwriter::TabWriter;
 
-use common::ports::{PortId, QsfpPort};
 use dpd_client::types::{
-    self, CmisDatapath, CmisLaneStatus, Sff8636Datapath, SffComplianceCode,
+    self, CmisDatapath, CmisLaneStatus, PortId, Sff8636Datapath,
+    SffComplianceCode,
 };
 use dpd_client::Client;
 
@@ -178,7 +178,7 @@ pub enum SwitchPort {
     ManagementMode {
         /// The QSFP port to operate on.
         #[structopt(parse(try_from_str = parse_qsfp_port_id))]
-        port_id: QsfpPort,
+        port_id: types::PortId,
     },
     /// Set the management mode for a switch port's transceiver.
     ///
@@ -187,7 +187,7 @@ pub enum SwitchPort {
     SetManagementMode {
         /// The QSFP port to operate on.
         #[structopt(parse(try_from_str = parse_qsfp_port_id))]
-        port_id: QsfpPort,
+        port_id: types::PortId,
         /// The management mode to set the port to.
         #[structopt(
             possible_values = &["automatic", "auto", "manual"],
@@ -926,16 +926,11 @@ pub async fn switch_cmd(
         }
         SwitchPort::Transceiver(xcvr) => transceivers_cmd(client, xcvr).await?,
         SwitchPort::ManagementMode { port_id } => {
-            let mode = client
-                .management_mode_get(&PortId::Qsfp(port_id))
-                .await?
-                .into_inner();
+            let mode = client.management_mode_get(&port_id).await?.into_inner();
             println!("{mode:?}");
         }
         SwitchPort::SetManagementMode { port_id, mode } => {
-            client
-                .management_mode_set(&PortId::Qsfp(port_id), mode)
-                .await?;
+            client.management_mode_set(&port_id, mode).await?;
         }
         SwitchPort::Led(led) => led_cmd(client, led).await?,
         SwitchPort::BackplaneMap {

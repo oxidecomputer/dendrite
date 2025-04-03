@@ -14,9 +14,9 @@ use reqwest::StatusCode;
 
 use ::common::ports::Ipv4Entry;
 use ::common::ports::Ipv6Entry;
-use ::common::ports::PortId;
 use dpd_client::types;
 use dpd_client::Error;
+use types::PortId;
 
 use crate::integration_tests::common::prelude::*;
 
