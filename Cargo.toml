@@ -91,7 +91,7 @@ strum = { version = "0.26.3", features = [ "derive" ] }
 syn = { version = "2.0", features = ["extra-traits"]}
 tabwriter = { version = "1", features = ["ansi_formatting"] }
 thiserror = "1.0"
-tokio = "1.37"
+tokio = "1.44"
 toml = "0.8"
 usdt = "0.5"
 uuid = { version = "1.10", features = [ "v4", "serde" ] }
