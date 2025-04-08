@@ -2317,6 +2317,50 @@
         }
       }
     },
+    "/ports/{port_id}/links/{link_id}/ber": {
+      "get": {
+        "summary": "Return the estimated bit-error rate (BER) for a link.",
+        "operationId": "link_ber_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "description": "The link in the switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LinkId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ber"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/ports/{port_id}/links/{link_id}/enabled": {
       "get": {
         "summary": "Return whether the link is enabled.",
@@ -5091,6 +5135,39 @@
           "sidecar_connector",
           "sidecar_leg",
           "tofino_connector"
+        ]
+      },
+      "Ber": {
+        "description": "Reports the bit-error rate (BER) for a link.",
+        "type": "object",
+        "properties": {
+          "ber": {
+            "description": "Estimated BER per-lane.",
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          "symbol_errors": {
+            "description": "Counters of symbol errors per-lane.",
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "total_ber": {
+            "description": "Aggregate BER on the link.",
+            "type": "number",
+            "format": "float"
+          }
+        },
+        "required": [
+          "ber",
+          "symbol_errors",
+          "total_ber"
         ]
       },
       "BuildInfo": {

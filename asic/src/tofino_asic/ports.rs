@@ -41,6 +41,7 @@ use std::fmt;
 use slog::debug;
 
 use aal::AsicId;
+use aal::Ber;
 use aal::Connector;
 use aal::PortHdl;
 
@@ -189,7 +190,7 @@ impl fmt::Debug for FrontPortHandle {
     }
 }
 
-fn speed_to_bf(speed: PortSpeed) -> bf_port_speed_t {
+fn port_speed_to_bf_speed(speed: PortSpeed) -> bf_port_speed_t {
     match speed {
         PortSpeed::Speed0G => bf_port_speed_e_BF_SPEED_NONE,
         PortSpeed::Speed1G => bf_port_speed_e_BF_SPEED_1G,
@@ -200,6 +201,21 @@ fn speed_to_bf(speed: PortSpeed) -> bf_port_speed_t {
         PortSpeed::Speed100G => bf_port_speed_e_BF_SPEED_100G,
         PortSpeed::Speed200G => bf_port_speed_e_BF_SPEED_200G,
         PortSpeed::Speed400G => bf_port_speed_e_BF_SPEED_400G,
+    }
+}
+
+fn bf_speed_to_port_speed(speed: bf_port_speed_t) -> PortSpeed {
+    match speed {
+        bf_port_speed_e_BF_SPEED_NONE => PortSpeed::Speed0G,
+        bf_port_speed_e_BF_SPEED_1G => PortSpeed::Speed1G,
+        bf_port_speed_e_BF_SPEED_10G => PortSpeed::Speed10G,
+        bf_port_speed_e_BF_SPEED_25G => PortSpeed::Speed25G,
+        bf_port_speed_e_BF_SPEED_40G => PortSpeed::Speed40G,
+        bf_port_speed_e_BF_SPEED_50G => PortSpeed::Speed50G,
+        bf_port_speed_e_BF_SPEED_100G => PortSpeed::Speed100G,
+        bf_port_speed_e_BF_SPEED_200G => PortSpeed::Speed200G,
+        bf_port_speed_e_BF_SPEED_400G => PortSpeed::Speed400G,
+        _ => unreachable!("Impossible bf_port_speed_t"),
     }
 }
 
@@ -412,6 +428,118 @@ pub fn set_prbs(
     Ok(())
 }
 
+const MAX_N_LANES: usize = 16;
+
+const fn empty_ber() -> bf_port_ber_t {
+    bf_port_ber_t {
+        ber: bf_port_ber_t_ber_union_ {
+            tof2: bf_tof2_ber_t {
+                ber_aggr: 0.0,
+                ber_per_lane: [0.0; MAX_N_LANES],
+                sym_err_ctrs: [0; MAX_N_LANES],
+            },
+        },
+    }
+}
+
+// Helper struct to return the lanes in the `bf_tof2_ber_t` array fields that
+// are expected to be non-zero. This is based entirely on the speed of the link.
+// See
+// https://github.com/oxidecomputer/tofino-sde/blob/0e4cfe10c92db223a953923d77f09a299b82157b/pkgsrc/bf-drivers/src/bf_pm/pm.c#L2120-L2140
+// for the logic.
+struct BerLanes {
+    start: usize,
+    end: usize,
+}
+
+impl BerLanes {
+    const fn all() -> Self {
+        Self {
+            start: 0,
+            end: MAX_N_LANES - 1,
+        }
+    }
+
+    // Return the lanes used for BER counters for the provided speed.
+    //
+    // Use all the counters if we can't reliably determine which ones to read.
+    fn new(hdl: PortHdl, speed: PortSpeed) -> Self {
+        // This magic logic appears in `pm_port_tof2_ber_get()`, where it
+        // appears to be used to determine the right counters to read from the
+        // serdes firmware.
+        const MASK: u64 = 0x07;
+        const FACTOR: u64 = 2;
+        let Ok(start) = usize::try_from((u64::from(hdl) & MASK) * FACTOR)
+        else {
+            return Self::all();
+        };
+        match speed {
+            PortSpeed::Speed0G
+            | PortSpeed::Speed1G
+            | PortSpeed::Speed10G
+            | PortSpeed::Speed25G
+            | PortSpeed::Speed40G => Self::all(),
+            PortSpeed::Speed50G => Self {
+                start,
+                end: start + 2,
+            },
+            PortSpeed::Speed100G => Self {
+                start,
+                end: start + 4,
+            },
+            PortSpeed::Speed200G => Self {
+                start,
+                end: start + 8,
+            },
+            PortSpeed::Speed400G => Self::all(),
+        }
+    }
+}
+
+/// Return the bit-error for a port.
+pub fn get_ber(hdl: &Handle, port_hdl: PortHdl) -> AsicResult<Ber> {
+    // Extract the BER and symbol error counts themselves.
+    let dev = hdl.dev_id;
+    let mut fp = FrontPortHandle::from_port_hdl(hdl, port_hdl)?;
+    let mut ber = empty_ber();
+    let ber = match unsafe {
+        bf_pm_port_ber_get(dev, fp.ptr(), &mut ber as *mut _)
+    } {
+        BF_SUCCESS => {
+            // Safety: We're using the `empty_ber()` function above to
+            // initialize this, so we know this field exists and is the active
+            // union field. It's also the only one.
+            unsafe { ber.ber.tof2 }
+        }
+        e => {
+            slog::error!(hdl.log, "failed to get port BER"; "error" => %e);
+            return Err(sde_error("getting port BER", e));
+        }
+    };
+
+    // Fetch the port speed, which is needed to determine which counters from
+    // the above call to `bf_pm_port_ber_get` are valid for this port.
+    let bf_speed = bf_port_speed_e_BF_SPEED_NONE;
+    let dev_port = fp.get_dev_port()?.into();
+    let res =
+        unsafe { bf_port_speed_get(dev, dev_port, &bf_speed as *const _ as _) };
+    if res != BF_SUCCESS {
+        slog::error!(
+            hdl.log,
+            "failed to get port speed while querying BER";
+            "error" => %res
+        );
+        return Err(sde_error("getting port BER", res));
+    }
+    let speed = bf_speed_to_port_speed(bf_speed);
+    let BerLanes { start, end } = BerLanes::new(port_hdl, speed);
+    Ok(Ber {
+        symbol_errors: ber.sym_err_ctrs[start..end].to_vec(),
+        ber: ber.ber_per_lane[start..end].to_vec(),
+        total_ber: ber.ber_aggr,
+    })
+}
+
 /// Look up the port_hdl -> asic_id mapping
 pub fn to_asic_id(hdl: &Handle, port_hdl: PortHdl) -> AsicResult<AsicId> {
     hdl.phys_ports.lock().unwrap().to_asic_id(port_hdl)
@@ -477,7 +605,7 @@ pub fn add_port(
     let dev = hdl.dev_id;
 
     // Convert to SDE-internal representations of speed and FEC.
-    let bf_speed = speed_to_bf(speed);
+    let bf_speed = port_speed_to_bf_speed(speed);
     let bf_fec = fec_to_bf(fec);
 
     // Verify with the SDE that the requested channels / speed / FEC are valid.

@@ -124,6 +124,10 @@ impl AsicOps for Handle {
         ports::set_prbs(self, port_hdl, mode)
     }
 
+    fn port_ber_get(&self, port_hdl: PortHdl) -> AsicResult<aal::Ber> {
+        ports::get_ber(self, port_hdl)
+    }
+
     fn port_add(
         &self,
         connector: Connector,

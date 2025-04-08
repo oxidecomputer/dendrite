@@ -414,6 +414,25 @@ async fn link_an_lt_get(
         .map_err(|e| HttpError::from(DpdError::from(e)))
 }
 
+/// Return the estimated bit-error rate (BER) for a link.
+#[endpoint {
+    method = GET,
+    path = "/ports/{port_id}/links/{link_id}/ber",
+}]
+async fn link_ber_get(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<LinkPath>,
+) -> Result<HttpResponseOk<crate::link::Ber>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let path = path.into_inner();
+    let port_id = path.port_id;
+    let link_id = path.link_id;
+    switch
+        .link_ber(port_id, link_id)
+        .map(HttpResponseOk)
+        .map_err(|e| e.into())
+}
+
 pub fn init(api: &mut dropshot::ApiDescription<Arc<Switch>>) {
     api.register(pcs_counters_list).unwrap();
     api.register(pcs_counters_get).unwrap();
@@ -429,4 +448,5 @@ pub fn init(api: &mut dropshot::ApiDescription<Arc<Switch>>) {
     api.register(link_eye_get).unwrap();
     api.register(link_enc_speed_get).unwrap();
     api.register(link_an_lt_get).unwrap();
+    api.register(link_ber_get).unwrap();
 }
