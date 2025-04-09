@@ -204,21 +204,6 @@ fn port_speed_to_bf_speed(speed: PortSpeed) -> bf_port_speed_t {
     }
 }
 
-fn bf_speed_to_port_speed(speed: bf_port_speed_t) -> PortSpeed {
-    match speed {
-        bf_port_speed_e_BF_SPEED_NONE => PortSpeed::Speed0G,
-        bf_port_speed_e_BF_SPEED_1G => PortSpeed::Speed1G,
-        bf_port_speed_e_BF_SPEED_10G => PortSpeed::Speed10G,
-        bf_port_speed_e_BF_SPEED_25G => PortSpeed::Speed25G,
-        bf_port_speed_e_BF_SPEED_40G => PortSpeed::Speed40G,
-        bf_port_speed_e_BF_SPEED_50G => PortSpeed::Speed50G,
-        bf_port_speed_e_BF_SPEED_100G => PortSpeed::Speed100G,
-        bf_port_speed_e_BF_SPEED_200G => PortSpeed::Speed200G,
-        bf_port_speed_e_BF_SPEED_400G => PortSpeed::Speed400G,
-        _ => unreachable!("Impossible bf_port_speed_t"),
-    }
-}
-
 fn media_from_bf(media: bf_media_type_t) -> PortMedia {
     match media {
         bf_media_type_e_BF_MEDIA_TYPE_COPPER => PortMedia::Copper,
@@ -460,10 +445,10 @@ impl BerLanes {
         }
     }
 
-    // Return the lanes used for BER counters for the provided speed.
+    // Return the BER counters used for the provided number of lanes.
     //
     // Use all the counters if we can't reliably determine which ones to read.
-    fn new(hdl: PortHdl, speed: PortSpeed) -> Self {
+    fn new(hdl: PortHdl, n_lanes: u32) -> Self {
         // This magic logic appears in `pm_port_tof2_ber_get()`, where it
         // appears to be used to determine the right counters to read from the
         // serdes firmware.
@@ -473,26 +458,17 @@ impl BerLanes {
         else {
             return Self::all();
         };
-        match speed {
-            PortSpeed::Speed0G
-            | PortSpeed::Speed1G
-            | PortSpeed::Speed10G
-            | PortSpeed::Speed25G
-            | PortSpeed::Speed40G => Self::all(),
-            PortSpeed::Speed50G => Self {
-                start,
-                end: start + 2,
-            },
-            PortSpeed::Speed100G => Self {
-                start,
-                end: start + 4,
-            },
-            PortSpeed::Speed200G => Self {
-                start,
-                end: start + 8,
-            },
-            PortSpeed::Speed400G => Self::all(),
-        }
+
+        // Add the number of lanes, being very conservative. We'll always return
+        // all the counters, rather than overflow anything.
+        let n_lanes = usize::try_from(n_lanes).unwrap_or(MAX_N_LANES - 1);
+        let Some(end) = start
+            .checked_add(n_lanes)
+            .map(|end| end.min(MAX_N_LANES - 1))
+        else {
+            return Self::all();
+        };
+        Self { start, end }
     }
 }
 
@@ -517,22 +493,10 @@ pub fn get_ber(hdl: &Handle, port_hdl: PortHdl) -> AsicResult<Ber> {
         }
     };
 
-    // Fetch the port speed, which is needed to determine which counters from
-    // the above call to `bf_pm_port_ber_get` are valid for this port.
-    let bf_speed = bf_port_speed_e_BF_SPEED_NONE;
-    let dev_port = fp.get_dev_port()?.into();
-    let res =
-        unsafe { bf_port_speed_get(dev, dev_port, &bf_speed as *const _ as _) };
-    if res != BF_SUCCESS {
-        slog::error!(
-            hdl.log,
-            "failed to get port speed while querying BER";
-            "error" => %res
-        );
-        return Err(sde_error("getting port BER", res));
-    }
-    let speed = bf_speed_to_port_speed(bf_speed);
-    let BerLanes { start, end } = BerLanes::new(port_hdl, speed);
+    // Fetch the number of lanes, which we need to correctly determine which
+    // counters are relevant.
+    let n_lanes = crate::tofino_asic::serdes::lane_count(hdl, port_hdl)?;
+    let BerLanes { start, end } = BerLanes::new(port_hdl, n_lanes);
     Ok(Ber {
         symbol_errors: ber.sym_err_ctrs[start..end].to_vec(),
         ber: ber.ber_per_lane[start..end].to_vec(),

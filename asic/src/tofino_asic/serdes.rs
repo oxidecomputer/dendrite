@@ -56,8 +56,8 @@ fn port_encoding_mode(dev_id: i32, port_id: u16) -> AsicResult<LaneEncoding> {
     LaneEncoding::try_from(enc_mode)
 }
 
-// Get the number of lanes configured for this port
-fn lane_count(hdl: &Handle, port: PortHdl) -> AsicResult<u32> {
+/// Get the number of lanes configured for this port
+pub(crate) fn lane_count(hdl: &Handle, port: PortHdl) -> AsicResult<u32> {
     match hdl
         .phys_ports
         .lock()
