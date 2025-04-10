@@ -94,6 +94,7 @@ bf_pm_port_kr_mode_get
 bf_pm_port_autoneg_set
 bf_pm_port_autoneg_get
 bf_pm_port_prbs_mode_set
+bf_pm_port_ber_get
 
 bf_eth_cpu_port_get
 bf_port_oper_state_get
@@ -102,6 +103,7 @@ bf_port_mac_stats_hw_sync_get
 bf_port_pcs_counters_get
 bf_port_rs_fec_status_and_counters_get
 bf_port_encoding_mode_get
+bf_port_speed_get
 
 bf_pm_port_media_type_get
 bf_pm_port_front_panel_port_get_first

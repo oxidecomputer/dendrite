@@ -391,7 +391,7 @@ pub extern "C" fn bf_pltfm_detect_qsfp(module: c_uint) -> bool {
     let Some(tx) = &*TRANSCEIVER_REQUEST_TX.read().unwrap() else {
         debug!(
             log,
-            "transceiver softsate not initialized, failing SDE request"
+            "transceiver softstate not initialized, failing SDE request"
         );
         return false;
     };
@@ -506,7 +506,7 @@ pub unsafe extern "C" fn write_qsfp_module(
     let Some(tx) = &*TRANSCEIVER_REQUEST_TX.read().unwrap() else {
         debug!(
             log,
-            "transceiver softsate not initialized, failing SDE request"
+            "transceiver softstate not initialized, failing SDE request"
         );
         return -1;
     };
@@ -601,7 +601,7 @@ pub unsafe extern "C" fn read_qsfp_module(
     let Some(tx) = &*TRANSCEIVER_REQUEST_TX.read().unwrap() else {
         debug!(
             log,
-            "transceiver softsate not initialized, failing SDE request"
+            "transceiver softstate not initialized, failing SDE request"
         );
         return -1;
     };

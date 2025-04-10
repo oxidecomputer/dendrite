@@ -110,6 +110,12 @@ pub enum LinkCounters {
         /// The link to fetch counters for.
         link: LinkPath,
     },
+
+    /// Fetch the estimated bit-error rate (BER) for a link.
+    Ber {
+        /// The link to fetch the BER for.
+        link: LinkPath,
+    },
 }
 
 /// Manage faults on ethernet links
@@ -673,6 +679,34 @@ async fn link_up_counters(
     for c in counters {
         writeln!(tw, "{}\t{}\t{}", c.link_path, c.current, c.total)?;
     }
+    tw.flush().map_err(|e| e.into())
+}
+
+async fn link_ber(client: &Client, link: LinkPath) -> anyhow::Result<()> {
+    let ber = client
+        .link_ber_get(&link.port_id, &link.link_id)
+        .await
+        .map(|r| r.into_inner())
+        .context("failed to get link BER")?;
+    let mut tw = TabWriter::new(stdout());
+    let mut total_symbol_errors: u64 = 0;
+    writeln!(
+        tw,
+        "{}\t{}\t{}",
+        "Lane".underline(),
+        "BER".underline(),
+        "Symbol errors".underline(),
+    )?;
+    for lane in 0..ber.ber.len() {
+        writeln!(
+            tw,
+            "{}\t{:0.3e}\t{}",
+            lane, ber.ber[lane], ber.symbol_errors[lane],
+        )?;
+        total_symbol_errors =
+            total_symbol_errors.saturating_add(ber.symbol_errors[lane]);
+    }
+    writeln!(tw, "Total\t{:0.3e}\t{}", ber.total_ber, total_symbol_errors,)?;
     tw.flush().map_err(|e| e.into())
 }
 
@@ -1834,6 +1868,9 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                     .await
                     .context("failed to fetch fsm state counters")?;
             }
+            LinkCounters::Ber { link } => link_ber(client, link)
+                .await
+                .context("failed to fetch link BER")?,
         },
         Link::Serdes(serdes) => match serdes {
             Serdes::Get(get) => match get {
