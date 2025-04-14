@@ -8,10 +8,10 @@
 
 use std::sync::Arc;
 
-use display_error_chain::DisplayErrorChain;
 use schemars::JsonSchema;
 use serde::Serialize;
 use slog::{debug, error, info, o};
+use slog_error_chain::InlineErrorChain;
 use uuid::Uuid;
 
 use crate::DpdResult;
@@ -74,10 +74,7 @@ pub(crate) async fn fetch_switch_identifiers_loop(
     debug!(log, "fetched Sidecar ID"; "sidecar_id" => %sidecar_id);
 
     // We first need to ask MGS for the local switch's slot, and then use
-    // that to fetch the identifiers for the switch in that slot. It
-    // might be simpler to query Dendrite directly, but it does not have
-    // this information right now. It could also get that from its local
-    // MGS, or we might find a way to populate it more directly.
+    // that to fetch the identifiers for the switch in that slot.
     //
     // Note that we do _not_ use internal DNS to resolve this address --
     // we care about our _local_ MGS only.
@@ -89,7 +86,7 @@ pub(crate) async fn fetch_switch_identifiers_loop(
             .sp_local_switch_id()
             .await
             .map_err(|e| {
-                BackoffError::transient(DisplayErrorChain::new(&e).to_string())
+                BackoffError::transient(InlineErrorChain::new(&e).to_string())
             })?
             .into_inner();
         if type_ != gateway_client::types::SpType::Switch {
@@ -101,7 +98,7 @@ pub(crate) async fn fetch_switch_identifiers_loop(
             .sp_get(type_, slot)
             .await
             .map_err(|e| {
-                BackoffError::transient(DisplayErrorChain::new(&e).to_string())
+                BackoffError::transient(InlineErrorChain::new(&e).to_string())
             })?
             .into_inner();
         Ok(SwitchIdentifiers {

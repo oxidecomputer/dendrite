@@ -39,11 +39,11 @@ use crate::fault::Fault;
 use crate::link::LinkFsmCounters;
 use crate::link::LinkId;
 use crate::link::LinkUpCounter;
-use crate::oxstats;
+use crate::nexus::oximeter;
 use crate::port_map::BackplaneLink;
 use crate::route::Ipv4Route;
 use crate::route::Ipv6Route;
-use crate::rpw::Task;
+use crate::nexus::rpw::Task;
 use crate::switch_identifiers::SwitchIdentifiers;
 use crate::switch_port::FixedSideDevice;
 use crate::switch_port::Led;
@@ -2696,9 +2696,9 @@ async fn dpd_uptime(
 }]
 async fn oximeter_collect_meta_endpoint(
     rqctx: RequestContext<Arc<Switch>>,
-) -> Result<HttpResponseOk<Option<oxstats::OximeterMetadata>>, HttpError> {
+) -> Result<HttpResponseOk<Option<oximeter::OximeterMetadata>>, HttpError> {
     let switch: &Switch = rqctx.context();
-    Ok(HttpResponseOk(oxstats::oximeter_meta(switch)))
+    Ok(HttpResponseOk(oximeter::oximeter_meta(switch)))
 }
 
 /// A port settings transaction object. When posted to the

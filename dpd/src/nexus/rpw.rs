@@ -23,7 +23,7 @@ use tokio::{
     time::{sleep, Duration, Instant},
 };
 
-use crate::{nat, oxstats::is_localhost, types::DpdError::Exists, Switch};
+use crate::{nat, nexus::is_localhost, types::DpdError::Exists, Switch};
 use nexus_client::types::Ipv4NatEntryView;
 use nexus_client::Client as NexusClient;
 

@@ -35,7 +35,7 @@ use tokio::time::Duration;
 use crate::api_server::LinkCreate;
 use crate::macaddrs::BaseMac;
 use crate::port_map::SidecarRevision;
-use crate::rpw::WorkflowServer;
+use crate::nexus::rpw::WorkflowServer;
 use crate::switch_identifiers::SwitchIdentifiers;
 use crate::switch_port::SwitchPorts;
 use aal::{ActionParse, AsicError, MatchParse};
@@ -60,12 +60,11 @@ mod link;
 mod loopback;
 mod macaddrs;
 mod nat;
-mod oxstats;
+mod nexus;
 mod port_map;
 mod port_settings;
 mod ports;
 mod route;
-mod rpw;
 #[cfg(feature = "softnpu")]
 mod softnpu_api_server;
 mod switch_identifiers;
@@ -201,7 +200,7 @@ pub struct Switch {
     pub loopback: Mutex<loopback::LoopbackData>,
     pub identifiers: Mutex<Option<SwitchIdentifiers>>,
     pub oximeter_producer: Mutex<Option<oximeter_producer::Server>>,
-    pub oximeter_meta: Mutex<Option<oxstats::OximeterMetadata>>,
+    pub oximeter_meta: Mutex<Option<nexus::oximeter::OximeterMetadata>>,
 
     pub reconciler: link::LinkReconciler,
 
@@ -292,7 +291,7 @@ impl Switch {
         let mac_mgmt = Mutex::new(macaddrs::MacManagement::new(&log));
 
         let ws_log = log.new(slog::o!("unit" => "workflow_server"));
-        let workflow_server = rpw::WorkflowServer::new(ws_log);
+        let workflow_server = nexus::rpw::WorkflowServer::new(ws_log);
 
         Ok(Switch {
             start_time,
@@ -410,11 +409,13 @@ impl Switch {
             size: t.usage.size as usize,
             entries: t
                 .get_entries::<M, A>(&self.asic_hdl)
-                .map_err(|e| {
-                    error!(self.log, "failed to get table contents";
-	            "table" => t.name.to_string(),
-		    "error" => %e);
-                    e
+                .inspect_err(|e| {
+                    error!(
+                        self.log,
+                        "failed to get table contents";
+                        "table" => t.name.to_string(),
+                        "error" => %e,
+                    );
                 })
                 .map(|vec| {
                     vec.into_iter()
@@ -435,11 +436,13 @@ impl Switch {
         let t = self.table_get(t)?;
 
         t.get_counters::<M>(&self.asic_hdl, force_sync)
-            .map_err(|e| {
-                error!(self.log, "failed to get counter data";
-	            "table" => t.name.to_string(),
-		    "error" => %e);
-                e
+            .inspect_err(|e| {
+                error!(
+                    self.log,
+                    "failed to get counter data";
+                    "table" => t.name.to_string(),
+                    "error" => %e
+                );
             })
             .map(|vec| {
                 vec.into_iter()
@@ -676,16 +679,18 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
 
     info!(
         switch.log,
-        "spawning fetching of switch identifiers from MGS"
+        "spawning task to fetch switch identifiers from MGS"
     );
-
     tokio::task::spawn(update_switch_identifiers(switch.clone()));
 
-    info!(switch.log, "spawning oximeter register");
-    tokio::task::spawn(oxstats::oximeter_register(
+    info!(switch.log, "spawning task to register as oximeter metric producer");
+    tokio::task::spawn(nexus::oximeter::register_as_producer(
         switch.clone(),
         smf_rx.clone(),
     ));
+
+    info!(switch.log, "spawning task to notify Nexus about this switch");
+    tokio::task::spawn(nexus::notify_nexus_about_self(switch.clone()));
 
     // Initialize the task watching for changes in link state from the SDE.
     link::init_update_handler(&switch)

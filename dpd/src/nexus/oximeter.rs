@@ -4,8 +4,10 @@
 //
 // Copyright 2025 Oxide Computer Company
 
+//! Interactions with the oximeter metric subystem.
+
 use std::collections::BTreeMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -14,13 +16,14 @@ use common::ports::PortId;
 use schemars::JsonSchema;
 use serde::Serialize;
 use slog::{debug, error, info, o, warn};
+use slog_error_chain::InlineErrorChain;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use omicron_common::api::internal::nexus::{ProducerEndpoint, ProducerKind};
 use omicron_common::api::internal::shared::SledIdentifiers;
 use omicron_common::backoff::{
-    retry_notify, retry_policy_internal_service_aggressive, BackoffError,
+    retry_notify_ext, retry_policy_internal_service_aggressive, BackoffError,
 };
 use oximeter::types::{ProducerRegistry, Sample};
 use oximeter::{MetricsError, Producer};
@@ -61,13 +64,13 @@ const LINK_MODEL_TYPE: &str = "TF2";
 pub struct OximeterMetadata {
     /// Configuration of the server and our timeseries.
     #[serde(flatten)]
-    config: OximeterConfig,
+    pub config: OximeterConfig,
     /// When we registered with nexus
     //
     // NOTE: This is really the time we created the producer server, not when we
     // registered with Nexus. Registration happens in the background and
     // continually renews.
-    registered_at: Option<DateTime<Utc>>,
+    pub registered_at: Option<DateTime<Utc>>,
 }
 
 /// Statistics collected for a single link
@@ -491,20 +494,13 @@ pub fn oximeter_meta(switch: &Switch) -> Option<OximeterMetadata> {
 
 /// Configuration for the oximeter producer server and our timeseries.
 #[derive(Clone, Debug, JsonSchema, Serialize)]
-struct OximeterConfig {
+pub struct OximeterConfig {
     /// IP address of the producer server.
-    listen_address: Ipv6Addr,
+    pub listen_address: Ipv6Addr,
     /// Identifiers for the Scrimlet we're running on.
-    sled_identifiers: SledIdentifiers,
+    pub sled_identifiers: SledIdentifiers,
     /// Identifiers for the Sidecar we're managing.
-    switch_identifiers: SwitchIdentifiers,
-}
-
-pub fn is_localhost(addr: &SocketAddr) -> bool {
-    match addr.ip() {
-        IpAddr::V4(ipv4) => ipv4 == Ipv4Addr::LOCALHOST,
-        IpAddr::V6(ipv6) => ipv6 == Ipv6Addr::LOCALHOST,
-    }
+    pub switch_identifiers: SwitchIdentifiers,
 }
 
 // Spin until the switch config is populated with all the information we need
@@ -632,10 +628,10 @@ async fn fetch_sled_identifiers(
     }
 }
 
-/// Wait for unique switch identifying information from Switch structure
-/// to be populated.
+/// Wait indefinitely for unique identifying information for this switch.
 ///
-/// This waits indefinitely until the information is populated.
+/// This information is extracted from Dendrite SMF properties, usually set by
+/// the local sled agent.
 async fn wait_for_switch_identifiers(
     switch: &Switch,
     log: &slog::Logger,
@@ -664,7 +660,11 @@ async fn wait_for_switch_identifiers(
                 );
                 return Ok(idents);
             } else {
-                info!(log, "missing switch identifiers from configuration, will continue to poll");
+                info!(
+                    log,
+                    "missing switch identifiers from configuration, \
+                    will continue to poll"
+                );
             }
         }
 
@@ -674,8 +674,8 @@ async fn wait_for_switch_identifiers(
     }
 }
 
-// Register with Nexus as an oximeter metric producer.
-pub async fn oximeter_register(
+/// Register with Nexus as an oximeter metric producer.
+pub async fn register_as_producer(
     switch: Arc<Switch>,
     smf_rx: tokio::sync::watch::Receiver<()>,
 ) -> DpdResult<()> {
@@ -774,15 +774,16 @@ pub async fn oximeter_register(
             },
         }
     };
-    let notify = |err: oximeter_producer::Error, delay| {
+    let notify = |err: oximeter_producer::Error, count, delay| {
         warn!(
             log,
             "failed to create oximeter producer server";
-            "error" => ?err,
+            "error" => InlineErrorChain::new(&err),
+            "call_count" => %count,
             "retry_after" => ?delay,
         );
     };
-    match retry_notify(
+    match retry_notify_ext(
         retry_policy_internal_service_aggressive(),
         create_producer,
         notify,
@@ -797,7 +798,7 @@ pub async fn oximeter_register(
             log,
             "permanent error registering as metric producer, \
             no metrics will be produced";
-            "error" => ?e,
+            "error" => InlineErrorChain::new(&e),
         ),
     }
     Ok(())

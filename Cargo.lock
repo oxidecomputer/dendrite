@@ -1217,12 +1217,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "display-error-chain"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bc2146e86bc19f52f4c064a64782f05f139ca464ed72937301631e73f8d6cf5"
-
-[[package]]
 name = "displaydoc"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1311,7 +1305,6 @@ dependencies = [
  "common 0.1.0",
  "console-subscriber",
  "csv",
- "display-error-chain",
  "dpd-client",
  "dropshot",
  "expectorate",
@@ -1339,6 +1332,7 @@ dependencies = [
  "signal-hook-tokio",
  "slog",
  "slog-async",
+ "slog-error-chain",
  "slog-term",
  "smf 0.10.0",
  "structopt",
