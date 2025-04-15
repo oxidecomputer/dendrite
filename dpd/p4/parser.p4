@@ -1,48 +1,48 @@
 parser IngressParser(
     packet_in pkt,
-	out sidecar_headers_t hdr,
-	out sidecar_ingress_meta_t meta,
-	out ingress_intrinsic_metadata_t ig_intr_md
+    out sidecar_headers_t hdr,
+    out sidecar_ingress_meta_t meta,
+    out ingress_intrinsic_metadata_t ig_intr_md
 ) {
-	Checksum() ipv4_checksum;
-	Checksum() icmp_checksum;
-	Checksum() nat_checksum;
+    Checksum() ipv4_checksum;
+    Checksum() icmp_checksum;
+    Checksum() nat_checksum;
 
-	/* tofino-required state */
-	state start {
-		pkt.extract(ig_intr_md);
-		transition meta_init;
-	}
+    /* tofino-required state */
+    state start {
+        pkt.extract(ig_intr_md);
+        transition meta_init;
+    }
 
-	state meta_init {
-		meta.ipv4_checksum_err = false;
-		meta.is_switch_address = false;
-		meta.is_mcast = false;
+    state meta_init {
+        meta.ipv4_checksum_err = false;
+        meta.is_switch_address = false;
+        meta.is_mcast = false;
         meta.allow_source_mcast = false;
-		meta.is_link_local_mcast = false;
-		meta.service_routed = false;
-		meta.nat_egress_hit = false;
-		meta.nat_ingress_hit = false;
-		meta.nat_ingress_port = false;
-		meta.nat_ingress_tgt = 0;
-		meta.nat_inner_mac = 0;
-		meta.nat_geneve_vni = 0;
-		meta.icmp_recalc = false;
-		meta.icmp_csum = 0;
-		meta.l4_length = 0;
+        meta.is_link_local_mcast = false;
+        meta.service_routed = false;
+        meta.nat_egress_hit = false;
+        meta.nat_ingress_hit = false;
+        meta.nat_ingress_port = false;
+        meta.nat_ingress_tgt = 0;
+        meta.nat_inner_mac = 0;
+        meta.nat_geneve_vni = 0;
+        meta.icmp_recalc = false;
+        meta.icmp_csum = 0;
+        meta.l4_length = 0;
         meta.l4_src_port = 0;
         meta.l4_dst_port = 0;
-		meta.body_checksum = 0;
-		meta.nexthop_ipv4 = 0;
-		meta.nexthop_ipv6 = 0;
-		meta.orig_src_mac = 0;
-		meta.orig_src_ipv4 = 0;
-		meta.orig_dst_ipv4 = 0;
-		meta.pkt_type = 0;
-		meta.drop_reason = 0;
+        meta.body_checksum = 0;
+        meta.nexthop_ipv4 = 0;
+        meta.nexthop_ipv6 = 0;
+        meta.orig_src_mac = 0;
+        meta.orig_src_ipv4 = 0;
+        meta.orig_dst_ipv4 = 0;
+        meta.pkt_type = 0;
+        meta.drop_reason = 0;
 
-		transition port_metadata;
-	}
+        transition port_metadata;
+    }
 
     state port_metadata {
         pkt.advance(PORT_METADATA_SIZE);
@@ -121,8 +121,8 @@ parser IngressParser(
         nat_checksum.subtract({
             hdr.ipv4.src_addr,
             hdr.ipv4.dst_addr,
-			8w0,
-			hdr.ipv4.protocol
+            8w0,
+            hdr.ipv4.protocol
         });
 
         transition select(hdr.ipv4.protocol) {
@@ -140,9 +140,9 @@ parser IngressParser(
         nat_checksum.subtract({
             hdr.ipv6.src_addr,
             hdr.ipv6.dst_addr,
-			8w0,
-			hdr.ipv6.next_hdr,
-	 		hdr.ipv6.payload_len
+            8w0,
+            hdr.ipv6.next_hdr,
+            hdr.ipv6.payload_len
         });
 
         transition select(hdr.ipv6.next_hdr) {
@@ -300,14 +300,14 @@ parser IngressParser(
 }
 
 parser EgressParser(packet_in pkt,
-	out sidecar_headers_t hdr,
-	out sidecar_egress_meta_t meta,
-	out egress_intrinsic_metadata_t eg_intr_md
+    out sidecar_headers_t hdr,
+    out sidecar_egress_meta_t meta,
+    out egress_intrinsic_metadata_t eg_intr_md
 ) {
 
-	state start {
-		transition meta_init;
-	}
+    state start {
+        transition meta_init;
+    }
 
     state meta_init {
         meta.drop_reason = 0;
