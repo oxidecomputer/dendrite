@@ -101,11 +101,11 @@ pfexec chown "$UID" /out
 
 banner "P4 Codegen"
 # Add gcc-12 so the p4 compiler can find cpp
-# The tofino2 has 20 stages, but the current sidecar.p4 will fit into 14.  We
+# The tofino2 has 20 stages, but the current sidecar.p4 will fit into 19.  We
 # add the "--stages 14" here to detect if/when the program grows beyond that
 # limit.  It's not necessarily a problem if we grow, but given the limited space
 # on the ASIC, we want to grow deliberatately and thoughtfully.
-PATH=/opt/gcc-12/bin:$PATH cargo xtask codegen --stages 14
+PATH=/opt/gcc-12/bin:$PATH cargo xtask codegen --stages 19
 
 # Preserve all the diagnostics spit out by the compiler
 mkdir -p /out/p4c-diags
