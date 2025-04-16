@@ -1673,7 +1673,7 @@ control Egress(
 		if (eg_intr_md.egress_rid > 0 ||
 			(hdr.ipv6.isValid() && (bit<16>)hdr.ipv6.dst_addr[127:112] != 16w0xff02)) {
 			mcast_ctr.count(eg_intr_md.egress_port);
-        } else if (eg_intr_md.egress_rid == 0 && eg_intr_md.egress_rid_first == 1) {
+		} else if (eg_intr_md.egress_rid == 0 && eg_intr_md.egress_rid_first == 1) {
 			// Drop CPU copies (RID=0) to prevent unwanted packets on port 0
 			eg_dprsr_md.drop_ctl = 1;
 			meta.drop_reason = DROP_MULTICAST_CPU_COPY;
