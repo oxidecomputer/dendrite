@@ -571,6 +571,19 @@ impl Switch {
         }
     }
 
+    /// Return the port label for the given physical port, useful for
+    /// counter information.
+    pub fn port_label(&self, phys_port: PhysPort) -> Option<String> {
+        let idx: usize = phys_port.into();
+        if phys_port == NO_PORT {
+            None
+        } else if let Some(port) = &self.ports[idx] {
+            format!("{}/{}", port.port_id, port.link_id).parse().ok()
+        } else {
+            panic!("request for missing port: {phys_port}");
+        }
+    }
+
     /// Return an iterator over all links.
     pub fn iter_links(
         &self,
@@ -779,6 +792,39 @@ impl Switch {
                 .collect::<Vec<String>>()
                 .join(", "))),
         }
+    }
+
+    /// If no client_name is given, this returns the number of packets dropped
+    /// for a given reason.
+    ///
+    /// If a client_name is given, we look up the counter for that client
+    /// name and the given counter name.
+    ///
+    /// If that counter isn't in the set returned by dpd, we return
+    /// an error to the caller.
+    pub async fn get_counter(
+        &self,
+        counter: &str,
+        client_name: Option<&str>,
+    ) -> anyhow::Result<u64> {
+        let client_name = if let Some(client_name) = client_name {
+            client_name.to_string()
+        } else {
+            "ingress_drop_reason".to_string()
+        };
+
+        self.client
+            .counter_get(&client_name, true)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to fetch counters: {e:?}"))
+            .and_then(|entries| {
+                println!("entries: {entries:?}");
+                entries
+                    .iter()
+                    .find(|e| e.keys.get("label").unwrap().as_str() == counter)
+                    .map(|e| e.data.pkts.unwrap())
+                    .ok_or(anyhow::anyhow!("no such counter: {counter}"))
+            })
     }
 }
 

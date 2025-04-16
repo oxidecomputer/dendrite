@@ -94,7 +94,15 @@ impl TableChaos {
             (table::SWITCH_IPV4_ADDR, v),
             (table::SWITCH_IPV6_ADDR, v),
             (table::NAT_INGRESS_IPV4, v),
-            (table::NAT_INGRESS_IPV6, v)
+            (table::NAT_INGRESS_IPV6, v),
+            (table::MCAST_NAT_INGRESS_IPV4, v),
+            (table::MCAST_NAT_INGRESS_IPV6, v),
+            (table::MCAST_REPLICATION_IPV4, v),
+            (table::MCAST_REPLICATION_IPV6, v),
+            (table::MCAST_SRC_FILTER_IPV4, v),
+            (table::MCAST_SRC_FILTER_IPV6, v),
+            (table::MCAST_ROUTE_IPV4, v),
+            (table::MCAST_ROUTE_IPV6, v)
         )
     }
 
@@ -141,6 +149,8 @@ pub struct AsicConfig {
     pub mc_port_remove: Chaos,
     pub mc_group_create: Chaos,
     pub mc_group_destroy: Chaos,
+    pub mc_groups_count: Chaos,
+    pub mc_set_max_nodes: Chaos,
     pub get_sidecar_identifiers: Chaos,
     pub table_new: TableChaos,
     pub table_clear: TableChaos,
@@ -177,6 +187,8 @@ impl AsicConfig {
             mc_port_remove: Chaos::new(v),
             mc_group_create: Chaos::new(v),
             mc_group_destroy: Chaos::new(v),
+            mc_groups_count: Chaos::new(v),
+            mc_set_max_nodes: Chaos::new(v),
             get_sidecar_identifiers: Chaos::new(v),
             table_new: TableChaos::uniform(v),
             table_clear: TableChaos::uniform(v),
@@ -203,6 +215,7 @@ impl AsicConfig {
             port_enable_get: Chaos::new(v),
             connector_avail_channels: Chaos::new(v),
             mc_port_count: Chaos::new(v),
+            mc_groups_count: Chaos::new(v),
             get_sidecar_identifiers: Chaos::new(v),
             ..Default::default()
         }
@@ -224,6 +237,7 @@ impl AsicConfig {
             mc_port_remove: Chaos::new(v),
             mc_group_create: Chaos::new(v),
             mc_group_destroy: Chaos::new(v),
+            mc_set_max_nodes: Chaos::new(v),
             // TODO this can cause dpd to fail to start
             //table_clear: TableChaos::uniform(v),
             table_default_set: TableChaos::uniform(v),
@@ -493,6 +507,20 @@ impl AsicOps for Handle {
 
     fn mc_group_destroy(&self, _group_id: u16) -> AsicResult<()> {
         unfurl!(self, mc_group_destroy);
+        Ok(())
+    }
+
+    fn mc_groups_count(&self) -> AsicResult<usize> {
+        unfurl!(self, mc_groups_count);
+        Ok(self.ports.lock().unwrap().len())
+    }
+
+    fn mc_set_max_nodes(
+        &self,
+        _max_nodes: u32,
+        _max_link_aggregated_nodes: u32,
+    ) -> AsicResult<()> {
+        unfurl!(self, mc_set_max_nodes);
         Ok(())
     }
 

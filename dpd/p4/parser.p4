@@ -2,8 +2,8 @@ parser IngressParser(
     packet_in pkt,
 	out sidecar_headers_t hdr,
 	out sidecar_ingress_meta_t meta,
-	out ingress_intrinsic_metadata_t ig_intr_md)
-{
+	out ingress_intrinsic_metadata_t ig_intr_md
+) {
 	Checksum() ipv4_checksum;
 	Checksum() icmp_checksum;
 	Checksum() nat_checksum;
@@ -15,15 +15,14 @@ parser IngressParser(
 	}
 
 	state meta_init {
-		meta.in_port = ig_intr_md.ingress_port;
-
 		meta.ipv4_checksum_err = false;
-		meta.routed = false;
-		meta.multicast = false;
-		meta.service_routed = false;
 		meta.is_switch_address = false;
-		meta.nat_egress = false;
-		meta.nat_ingress = false;
+		meta.is_mcast = false;
+        meta.allow_source_mcast = false;
+        meta.is_link_local_mcast = false;
+		meta.service_routed = false;
+		meta.nat_egress_hit = false;
+		meta.nat_ingress_hit = false;
 		meta.nat_ingress_port = false;
 		meta.nat_ingress_tgt = 0;
 		meta.nat_inner_mac = 0;
@@ -295,4 +294,20 @@ parser IngressParser(
 		pkt.extract(hdr.inner_icmp);
 		transition accept;
 	}
+}
+
+parser EgressParser(packet_in pkt,
+	out sidecar_headers_t hdr,
+	out sidecar_egress_meta_t meta,
+	out egress_intrinsic_metadata_t eg_intr_md
+) {
+
+    state start {
+        transition meta_init;
+    }
+
+    state meta_init {
+        meta.drop_reason = 0;
+        transition accept;
+    }
 }

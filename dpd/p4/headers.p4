@@ -192,15 +192,14 @@ struct sidecar_headers_t {
 }
 
 struct sidecar_ingress_meta_t {
-	PortId_t in_port;		// ingress port for this packet
-
 	bool ipv4_checksum_err;		// failed ipv4 checksum
-	bool routed;			// packet routed at layer 3
 	bool is_switch_address;		// destination IP was a switch port
-	bool multicast;			// packet was multicast
+	bool is_mcast;			// packet is multicast
+	bool allow_source_mcast;	// allowed to be sent from a source address for SSM
+	bool is_link_local_mcast;	// packet is a IPv6 link-local multicast packet
 	bool service_routed;		// routed to or from a service routine
-	bool nat_egress;		// NATed packet from guest -> uplink
-	bool nat_ingress;		// NATed packet from uplink -> guest
+	bool nat_egress_hit;		// NATed packet from guest -> uplink
+	bool nat_ingress_hit;		// NATed packet from uplink -> guest
 	bool nat_ingress_port;		// This port accepts only NAT traffic
 	ipv4_addr_t nexthop_ipv4;	// ip address of next router
 	ipv6_addr_t nexthop_ipv6;	// ip address of next router
@@ -209,9 +208,9 @@ struct sidecar_ingress_meta_t {
 
 	bit<16> l4_src_port;		// tcp or udp destination port
 	bit<16> l4_dst_port;		// tcp or udp destination port
-	ipv6_addr_t nat_ingress_tgt;
-	mac_addr_t nat_inner_mac;
-	geneve_vni_t nat_geneve_vni;
+	ipv6_addr_t nat_ingress_tgt; // target address for NAT ingress
+	mac_addr_t nat_inner_mac; // inner mac address for NAT ingress
+	geneve_vni_t nat_geneve_vni; // VNI for NAT ingress
 
 	// If we modify an ICMP header, we need to recalculate its checksum.
 	// To do the math, we need the original checksum.
@@ -226,6 +225,40 @@ struct sidecar_ingress_meta_t {
 	// Used for responding to pings
 	mac_addr_t orig_src_mac;	// source mac address before rewriting
 	ipv4_addr_t orig_src_ipv4;	// original ipv4 source
-
 	ipv4_addr_t orig_dst_ipv4;	// original ipv4 target
+}
+
+struct sidecar_egress_meta_t {
+	bit<8> drop_reason;  // reason a packet was dropped
+}
+
+struct route4_result_t {
+	/*
+	 * The result of the multistage route selection process is an egress
+	 * port and a nexthop address
+	 */
+	ipv4_addr_t nexthop;
+	PortId_t port;
+
+	/* Did we successfully look up the route in the table? */
+	bool is_hit;
+
+	/*
+	 * A hash of the (address,port) fields, which is used to choose between
+	 * multiple potential routes.
+	 */
+	bit<8> hash;
+
+	/* Index into the target table of the first potential route */
+	bit<16> idx;
+	/* Number of consecutive slots containing potential routes */
+	bit<8> slots;
+	/* Which of those routes we should select, based the flow hash */
+	bit<16> slot;
+}
+
+struct route6_result_t {
+	ipv6_addr_t nexthop;
+	PortId_t port;
+	bool is_hit;
 }

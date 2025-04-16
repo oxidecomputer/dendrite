@@ -39,6 +39,7 @@ use crate::fault::Fault;
 use crate::link::LinkFsmCounters;
 use crate::link::LinkId;
 use crate::link::LinkUpCounter;
+use crate::mcast;
 use crate::oxstats;
 use crate::port_map::BackplaneLink;
 use crate::route::Ipv4Route;
@@ -2539,6 +2540,10 @@ async fn reset_all(
         error!(switch.log, "failed to reset route data: {:?}", e);
         err = Some(e);
     }
+    if let Err(e) = route::reset(switch).await {
+        error!(switch.log, "failed to reset route data: {:?}", e);
+        err = Some(e);
+    }
     if let Err(e) = switch.clear_link_state() {
         error!(switch.log, "failed to clear all link state: {:?}", e);
         err = Some(e);
@@ -2549,6 +2554,10 @@ async fn reset_all(
     }
     if let Err(e) = nat::reset_ipv6(switch) {
         error!(switch.log, "failed to reset ipv6 nat table: {:?}", e);
+        err = Some(e);
+    }
+    if let Err(e) = mcast::reset(switch) {
+        error!(switch.log, "failed to reset multicast state: {:?}", e);
         err = Some(e);
     }
 
@@ -3061,6 +3070,200 @@ async fn counter_get(
         .map_err(HttpError::from)
 }
 
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MulticastGroupIdParam {
+    pub group_id: String,
+}
+
+// Implement conversion to mcast::Identifier
+impl MulticastGroupIdParam {
+    pub fn to_identifier(&self) -> Result<mcast::Identifier, HttpError> {
+        // First try to parse as IP address
+        if let Ok(ip) = self.group_id.parse::<IpAddr>() {
+            return Ok(mcast::Identifier::Ip(ip));
+        }
+
+        // Then try to parse as group ID (u16)
+        match self.group_id.parse::<u16>() {
+            Ok(id) => Ok(mcast::Identifier::GroupId(id)),
+            Err(_) => Err(HttpError::for_bad_request(
+                None,
+                format!(
+                    "'{}' is neither a valid IP address nor a valid group ID",
+                    self.group_id
+                ),
+            )),
+        }
+    }
+}
+
+/**
+ * Create a multicast group configuration.
+ *
+ * If no group ID is provided, one will be uniquely assigned.
+ */
+#[endpoint {
+    method = POST,
+    path = "/multicast/groups",
+}]
+async fn multicast_group_create(
+    rqctx: RequestContext<Arc<Switch>>,
+    group: TypedBody<mcast::MulticastGroupCreateEntry>,
+) -> Result<HttpResponseCreated<mcast::MulticastGroupResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let entry = group.into_inner();
+
+    mcast::add_group(switch, entry)
+        .map(HttpResponseCreated)
+        .map_err(HttpError::from)
+}
+
+/**
+ * Delete all multicast groups (and associated routes).
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/groups"
+}]
+async fn multicast_reset(
+    rqctx: RequestContext<Arc<Switch>>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+
+    mcast::reset(switch)
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+
+/**
+ * Delete a multicast group configuration by IP address.
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/groups/{group_id}",
+}]
+async fn multicast_group_delete(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastGroupIdParam>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let ident = path.into_inner().to_identifier()?;
+
+    mcast::del_group(switch, ident)
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+
+/**
+ * Get the multicast group configuration for a given group ID.
+ */
+#[endpoint {
+    method = GET,
+    path = "/multicast/groups/{group_id}",
+}]
+async fn multicast_group_get(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastGroupIdParam>,
+) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let ident = path.into_inner().to_identifier()?;
+
+    // Get the multicast group
+    mcast::get_group(switch, ident)
+        .map(HttpResponseOk)
+        .map_err(HttpError::from)
+}
+
+/**
+ * Update a multicast group configuration.
+*/
+#[endpoint {
+    method = PUT,
+    path = "/multicast/groups/{group_id}",
+}]
+async fn multicast_group_update(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastGroupIdParam>,
+    group_info: TypedBody<mcast::MulticastGroupUpdateEntry>,
+) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let ident = path.into_inner().to_identifier()?;
+
+    mcast::modify_group(switch, ident, group_info.into_inner())
+        .map(HttpResponseOk)
+        .map_err(HttpError::from)
+}
+
+/**
+ * List all multicast groups.
+ */
+#[endpoint {
+    method = GET,
+    path = "/multicast/groups",
+}]
+async fn multicast_groups_list(
+    rqctx: RequestContext<Arc<Switch>>,
+) -> Result<HttpResponseOk<Vec<mcast::MulticastGroupResponse>>, HttpError> {
+    let switch: &Switch = rqctx.context();
+
+    let entries = mcast::list_groups(switch, None);
+    Ok(HttpResponseOk(entries))
+}
+
+/**
+ * List all multicast groups with a given tag.
+ */
+#[endpoint {
+    method = GET,
+    path = "/multicast/tags/{tag}",
+}]
+async fn multicast_groups_list_by_tag(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<TagPath>,
+) -> Result<HttpResponseOk<Vec<mcast::MulticastGroupResponse>>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let tag = path.into_inner().tag;
+
+    let entries = mcast::list_groups(switch, Some(&tag));
+    Ok(HttpResponseOk(entries))
+}
+
+/**
+ * Delete all multicast groups (and associated routes) with a given tag.
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/tags/{tag}",
+}]
+async fn multicast_reset_by_tag(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<TagPath>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let tag = path.into_inner().tag;
+
+    mcast::reset_tag(switch, &tag)
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+
+/**
+ * Delete all multicast groups (and associated routes) without a tag.
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/untagged",
+}]
+async fn multicast_reset_untagged(
+    rqctx: RequestContext<Arc<Switch>>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+
+    mcast::reset_untagged(switch)
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+
 pub fn http_api() -> dropshot::ApiDescription<Arc<Switch>> {
     let mut api = dropshot::ApiDescription::new();
     api.register(build_info).unwrap();
@@ -3188,6 +3391,16 @@ pub fn http_api() -> dropshot::ApiDescription<Arc<Switch>> {
 
     api.register(ipv4_nat_generation).unwrap();
     api.register(ipv4_nat_trigger_update).unwrap();
+
+    api.register(multicast_group_create).unwrap();
+    api.register(multicast_reset).unwrap();
+    api.register(multicast_group_delete).unwrap();
+    api.register(multicast_group_update).unwrap();
+    api.register(multicast_group_get).unwrap();
+    api.register(multicast_groups_list).unwrap();
+    api.register(multicast_groups_list_by_tag).unwrap();
+    api.register(multicast_reset_by_tag).unwrap();
+    api.register(multicast_reset_untagged).unwrap();
 
     #[cfg(feature = "tofino_asic")]
     crate::tofino_api_server::init(&mut api);
