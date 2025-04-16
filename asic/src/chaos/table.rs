@@ -25,10 +25,22 @@ pub const SWITCH_IPV4_ADDR: &str = "pipe.Ingress.filter.switch_ipv4_addr";
 pub const SWITCH_IPV6_ADDR: &str = "pipe.Ingress.filter.switch_ipv6_addr";
 pub const NAT_INGRESS_IPV4: &str = "pipe.Ingress.nat_ingress.ingress_ipv4";
 pub const NAT_INGRESS_IPV6: &str = "pipe.Ingress.nat_ingress.ingress_ipv6";
-pub const MCAST_IPV4_TABLE_NAME: &str =
-    "pipe.Ingress.multicast.mcast_route_ipv4";
-pub const MCAST_IPV6_TABLE_NAME: &str =
-    "pipe.Ingress.multicast.mcast_route_ipv6";
+pub(crate) const MCAST_NAT_INGRESS_IPV4: &str =
+    "pipe.Ingress.nat_ingress.ingress_ipv4_mcast";
+pub(crate) const MCAST_NAT_INGRESS_IPV6: &str =
+    "pipe.Ingress.nat_ingress.ingress_ipv6_mcast";
+pub(crate) const MCAST_REPLICATION_IPV4: &str =
+    "pipe.Ingress.mcast_ingress.mcast_replication_ipv4";
+pub(crate) const MCAST_REPLICATION_IPV6: &str =
+    "pipe.Ingress.mcast_ingress.mcast_replication_ipv6";
+pub(crate) const MCAST_SRC_FILTER_IPV4: &str =
+    "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4";
+pub(crate) const MCAST_SRC_FILTER_IPV6: &str =
+    "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv6";
+pub(crate) const MCAST_ROUTE_IPV4: &str =
+    "pipe.Ingress.l3_router.MulticastRouter4.tbl";
+pub(crate) const MCAST_ROUTE_IPV6: &str =
+    "pipe.Ingress.l3_router.MulticastRouter6.tbl";
 
 pub struct Table {
     name: String,

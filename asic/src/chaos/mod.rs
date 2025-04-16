@@ -95,8 +95,14 @@ impl TableChaos {
             (table::SWITCH_IPV6_ADDR, v),
             (table::NAT_INGRESS_IPV4, v),
             (table::NAT_INGRESS_IPV6, v),
-            (table::MCAST_IPV4_TABLE_NAME, v),
-            (table::MCAST_IPV6_TABLE_NAME, v)
+            (table::MCAST_NAT_INGRESS_IPV4, v),
+            (table::MCAST_NAT_INGRESS_IPV6, v),
+            (table::MCAST_REPLICATION_IPV4, v),
+            (table::MCAST_REPLICATION_IPV6, v),
+            (table::MCAST_SRC_FILTER_IPV4, v),
+            (table::MCAST_SRC_FILTER_IPV6, v),
+            (table::MCAST_ROUTE_IPV4, v),
+            (table::MCAST_ROUTE_IPV6, v)
         )
     }
 

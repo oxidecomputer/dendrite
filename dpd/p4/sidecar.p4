@@ -154,8 +154,7 @@ control Filter(
 			// Check if this is an IPv4 multicast address
 			bit<16> mcast_scope_v4 = (bit<16>)hdr.ipv4.dst_addr[31:28];
 			if (mcast_scope_v4 == 16w0xe) {
-				bool is_valid = validate_ipv4_mcast_mac(hdr.ethernet.dst_mac,
-														hdr.ipv4.dst_addr);
+				bool is_valid = validate_ipv4_mcast_mac(hdr.ethernet.dst_mac, hdr.ipv4.dst_addr);
 				if (is_valid) {
 					meta.is_mcast = true;
 				} else {
@@ -173,8 +172,7 @@ control Filter(
 				drop_mcast_ctr.count(ig_intr_md.ingress_port);
 				drop_reason_ctr.count(meta.drop_reason);
 			} else if (hdr.ipv6.dst_addr[127:120] == 8w0xff) {
-				bool is_valid = validate_ipv6_mcast_mac(hdr.ethernet.dst_mac,
-														hdr.ipv6.dst_addr);
+				bool is_valid = validate_ipv6_mcast_mac(hdr.ethernet.dst_mac, hdr.ipv6.dst_addr);
 				if (is_valid) {
 					if (mcast_scope_v6 == 16w0xff02) {
 						// IPv6 Link-local multicast
@@ -1316,11 +1314,10 @@ control MulticastIngress (
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv4_ssm_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv6_ssm_ctr;
 
-    Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv4_level1;
-    Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv4_level2;
+	Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv4_level1;
+	Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv4_level2;
 	Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv6_level1;
-    Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv6_level2;
-
+	Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv6_level2;
 
 	// Drop action for IPv4 multicast packets with no group
 	action drop_mcastv4_no_group() {
@@ -1337,11 +1334,11 @@ control MulticastIngress (
 	}
 
 	// Drop action for IPv4 multicast packets with no source-specific multicast group
-    action drop_mcastv4_filtered_source() {
-        ig_dprsr_md.drop_ctl = 1;
-        meta.drop_reason = DROP_MULTICAST_SOURCE_FILTERED;
-        mcast_ipv4_ssm_ctr.count();
-    }
+	action drop_mcastv4_filtered_source() {
+		ig_dprsr_md.drop_ctl = 1;
+		meta.drop_reason = DROP_MULTICAST_SOURCE_FILTERED;
+		mcast_ipv4_ssm_ctr.count();
+	}
 
 	// Drop action for IPv6 ulticast packets with no source-specific multicast group
 	action drop_mcastv6_filtered_source() {
@@ -1673,10 +1670,10 @@ control Egress(
 
 	apply {
 		// Check multicast egress packets by enforcing replication_id usage
-		if (eg_intr_md.egress_rid > 0 || (hdr.ipv6.isValid() && (bit<16>)hdr.ipv6.dst_addr[127:112] != 16w0xff02)) {
+		if (eg_intr_md.egress_rid > 0 ||
+			(hdr.ipv6.isValid() && (bit<16>)hdr.ipv6.dst_addr[127:112] != 16w0xff02)) {
 			mcast_ctr.count(eg_intr_md.egress_port);
-        } else if (eg_intr_md.egress_rid == 0 &&
-				   eg_intr_md.egress_rid_first == 1) {
+        } else if (eg_intr_md.egress_rid == 0 && eg_intr_md.egress_rid_first == 1) {
 			// Drop CPU copies (RID=0) to prevent unwanted packets on port 0
 			eg_dprsr_md.drop_ctl = 1;
 			meta.drop_reason = DROP_MULTICAST_CPU_COPY;
