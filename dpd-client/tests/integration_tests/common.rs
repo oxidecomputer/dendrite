@@ -19,7 +19,6 @@ use oxnet::Ipv6Net;
 use slog::Drain;
 
 use ::common::network::MacAddr;
-use ::common::ports::PortId;
 use dpd_client::types;
 use dpd_client::Client;
 use dpd_client::ClientState;
@@ -31,6 +30,7 @@ use packet::ipv6;
 use packet::sidecar;
 use packet::Endpoint;
 use packet::Packet;
+use types::PortId;
 
 const SHOW_VERBOSE: u8 = 0x01;
 const SHOW_HEX: u8 = 0x02;

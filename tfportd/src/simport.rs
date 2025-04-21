@@ -107,7 +107,7 @@ async fn simnet_process(g: &Global) -> anyhow::Result<()> {
 
         // breakouts not a thing yet, just assume the 0th link
         let link_id = types::LinkId(0);
-        let port_id = match common::ports::PortId::from_str(port_name) {
+        let port_id = match types::PortId::from_str(port_name) {
             Ok(name) => name,
             Err(e) => {
                 error!(g.log, "failed to parse port name {port_name}: {e}");

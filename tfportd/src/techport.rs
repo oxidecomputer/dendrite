@@ -5,6 +5,7 @@
 // Copyright 2025 Oxide Computer Company
 
 use std::net::{Ipv6Addr, SocketAddrV6};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,8 +18,6 @@ use tokio::time::sleep;
 use crate::netsupport;
 use crate::Global;
 use common::illumos;
-use common::ports::InternalPort;
-use common::ports::PortId;
 use dpd_client::types;
 
 const ICMP6_RA_TYPE: u8 = 134;
@@ -130,7 +129,9 @@ async fn address_ensure_dpd(g: &Arc<Global>, pfx0: Ipv6Addr, pfx1: Ipv6Addr) {
         let addr1 = Ipv6Addr::from(u128::from(pfx1) | 1);
 
         // Techports are the internal port from an ASIC perspective.
-        let port = PortId::Internal(InternalPort::try_from(0).unwrap());
+        let port = types::PortId::from(
+            dpd_client::types::Internal::from_str("int0").unwrap(),
+        );
         let link = &types::LinkId(0);
 
         // Use the tfportd tag for making dpd entries.

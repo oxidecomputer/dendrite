@@ -45,12 +45,12 @@ progenitor::generate_api!(
         slog::trace!(state.log, "client response"; "result" => ?result);
     }),
     derives = [ PartialEq ],
+    patch = {
+        PortId = {derives = [PartialOrd, Ord, PartialEq, Eq, Hash, Clone] },
+    },
     crates = {
         "oxnet" = "0.1.0",
     },
-    replace = {
-        PortId = common::ports::PortId,
-    }
 );
 
 impl Client {

@@ -571,6 +571,27 @@ pub struct LinkFsmCounters {
     pub counters: Vec<LinkFsmCounter>,
 }
 
+/// Reports the bit-error rate (BER) for a link.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
+pub struct Ber {
+    /// Counters of symbol errors per-lane.
+    pub symbol_errors: Vec<u64>,
+    /// Estimated BER per-lane.
+    pub ber: Vec<f32>,
+    /// Aggregate BER on the link.
+    pub total_ber: f32,
+}
+
+impl From<aal::Ber> for Ber {
+    fn from(value: aal::Ber) -> Self {
+        Self {
+            symbol_errors: value.symbol_errors,
+            ber: value.ber,
+            total_ber: value.total_ber,
+        }
+    }
+}
+
 // Methods on the `dpd::Switch` for operating on links.
 impl Switch {
     /// Given an ASIC layer ID, return the (PortId, LinkId) tuple for the
@@ -1348,6 +1369,23 @@ impl Switch {
             self.reconciler.trigger(port_id, link_id);
             Ok(())
         })
+    }
+
+    /// Return the estimated bit-error rate (BER) for a link.
+    pub fn link_ber(&self, port_id: PortId, link_id: LinkId) -> DpdResult<Ber> {
+        self.link_fetch(port_id, link_id, |link| {
+            // BER can only be computed for links with RS FEC enabled, see the
+            // implementation of `pm_port_tof2_ber_get()`.
+            if link.plumbed.fec != PortFec::RS {
+                return Err(DpdError::Invalid(String::from(
+                    "BER can only be computed for links with RS FEC enabled",
+                )));
+            }
+            self.asic_hdl
+                .port_ber_get(link.port_hdl)
+                .map(Ber::from)
+                .map_err(DpdError::from)
+        })?
     }
 
     /// Return whether a link is enabled.

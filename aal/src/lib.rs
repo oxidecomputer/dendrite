@@ -26,6 +26,17 @@ pub type AsicId = u16;
 /// A specialized Result type for ASIC operations
 pub type AsicResult<T> = Result<T, AsicError>;
 
+/// Bit-error rates for a port.
+#[derive(Clone, Debug)]
+pub struct Ber {
+    /// FEC symbol error counters, per-lane.
+    pub symbol_errors: Vec<u64>,
+    /// Estimated BER, per-lane.
+    pub ber: Vec<f32>,
+    /// Aggregate BER on the port.
+    pub total_ber: f32,
+}
+
 /// Trait-bound for use by ASIC implementations to provide a set of identifiers.
 pub trait SidecarIdentifiers {
     fn id(&self) -> uuid::Uuid;
@@ -39,7 +50,7 @@ pub trait SidecarIdentifiers {
 /// Error type conveying additional information about ASIC errors
 #[derive(Error, Debug)]
 pub enum AsicError {
-    /// Error reported by the ASIC IDE.  This will report both the location
+    /// Error reported by the ASIC SDE.  This will report both the location
     /// in the ASIC layer that detected the error, as well as the detailed
     /// error message from the SDE.
     #[error("SDE error at {ctx}: {err}")]
@@ -139,6 +150,11 @@ pub trait AsicOps {
 
     /// Update a port's autonegotiation setting
     fn port_autoneg_set(&self, port_hdl: PortHdl, val: bool) -> AsicResult<()>;
+
+    /// Get the bit-error rate for a port.
+    fn port_ber_get(&self, _: PortHdl) -> AsicResult<Ber> {
+        Err(AsicError::OperationUnsupported)
+    }
 
     /// Set a port's PRBS mode
     fn port_prbs_set(

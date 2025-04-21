@@ -18,7 +18,6 @@ use tabwriter::TabWriter;
 use common::counters::RMonCounters;
 use common::network::MacAddr;
 use common::ports::PortFec;
-use common::ports::PortId;
 use common::ports::PortMedia;
 use common::ports::PortPrbsMode;
 use common::ports::PortSpeed;
@@ -109,6 +108,12 @@ pub enum LinkCounters {
     #[structopt(verbatim_doc_comment)]
     Fsm {
         /// The link to fetch counters for.
+        link: LinkPath,
+    },
+
+    /// Fetch the estimated bit-error rate (BER) for a link.
+    Ber {
+        /// The link to fetch the BER for.
         link: LinkPath,
     },
 }
@@ -294,7 +299,7 @@ pub enum Link {
     List {
         /// The port whose links should be listed.
         #[structopt(parse(try_from_str = parse_port_id))]
-        port_id: PortId,
+        port_id: types::PortId,
         /// Provide machine-parseable output.
         #[structopt(short, long, requires("fields"))]
         parseable: bool,
@@ -402,7 +407,7 @@ pub enum Link {
 pub struct LinkCreate {
     /// The ID of the switch port on which to create the link.
     #[structopt(parse(try_from_str = parse_port_id))]
-    port_id: PortId,
+    port_id: types::PortId,
 
     /// The first lane of the port to use for this link
     #[structopt(long, parse(try_from_str))]
@@ -674,6 +679,34 @@ async fn link_up_counters(
     for c in counters {
         writeln!(tw, "{}\t{}\t{}", c.link_path, c.current, c.total)?;
     }
+    tw.flush().map_err(|e| e.into())
+}
+
+async fn link_ber(client: &Client, link: LinkPath) -> anyhow::Result<()> {
+    let ber = client
+        .link_ber_get(&link.port_id, &link.link_id)
+        .await
+        .map(|r| r.into_inner())
+        .context("failed to get link BER")?;
+    let mut tw = TabWriter::new(stdout());
+    let mut total_symbol_errors: u64 = 0;
+    writeln!(
+        tw,
+        "{}\t{}\t{}",
+        "Lane".underline(),
+        "BER".underline(),
+        "Symbol errors".underline(),
+    )?;
+    for lane in 0..ber.ber.len() {
+        writeln!(
+            tw,
+            "{}\t{:0.3e}\t{}",
+            lane, ber.ber[lane], ber.symbol_errors[lane],
+        )?;
+        total_symbol_errors =
+            total_symbol_errors.saturating_add(ber.symbol_errors[lane]);
+    }
+    writeln!(tw, "Total\t{:0.3e}\t{}", ber.total_ber, total_symbol_errors,)?;
     tw.flush().map_err(|e| e.into())
 }
 
@@ -1835,6 +1868,9 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                     .await
                     .context("failed to fetch fsm state counters")?;
             }
+            LinkCounters::Ber { link } => link_ber(client, link)
+                .await
+                .context("failed to fetch link BER")?,
         },
         Link::Serdes(serdes) => match serdes {
             Serdes::Get(get) => match get {

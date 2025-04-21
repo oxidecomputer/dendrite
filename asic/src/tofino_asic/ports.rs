@@ -41,6 +41,7 @@ use std::fmt;
 use slog::debug;
 
 use aal::AsicId;
+use aal::Ber;
 use aal::Connector;
 use aal::PortHdl;
 
@@ -189,7 +190,7 @@ impl fmt::Debug for FrontPortHandle {
     }
 }
 
-fn speed_to_bf(speed: PortSpeed) -> bf_port_speed_t {
+fn port_speed_to_bf_speed(speed: PortSpeed) -> bf_port_speed_t {
     match speed {
         PortSpeed::Speed0G => bf_port_speed_e_BF_SPEED_NONE,
         PortSpeed::Speed1G => bf_port_speed_e_BF_SPEED_1G,
@@ -412,6 +413,97 @@ pub fn set_prbs(
     Ok(())
 }
 
+const MAX_N_LANES: usize = 16;
+
+const fn empty_ber() -> bf_port_ber_t {
+    bf_port_ber_t {
+        ber: bf_port_ber_t_ber_union_ {
+            tof2: bf_tof2_ber_t {
+                ber_aggr: 0.0,
+                ber_per_lane: [0.0; MAX_N_LANES],
+                sym_err_ctrs: [0; MAX_N_LANES],
+            },
+        },
+    }
+}
+
+// Helper struct to return the lanes in the `bf_tof2_ber_t` array fields that
+// are expected to be non-zero. This is based entirely on the speed of the link.
+// See
+// https://github.com/oxidecomputer/tofino-sde/blob/0e4cfe10c92db223a953923d77f09a299b82157b/pkgsrc/bf-drivers/src/bf_pm/pm.c#L2120-L2140
+// for the logic.
+struct BerLanes {
+    start: usize,
+    end: usize,
+}
+
+impl BerLanes {
+    const fn all() -> Self {
+        Self {
+            start: 0,
+            end: MAX_N_LANES - 1,
+        }
+    }
+
+    // Return the BER counters used for the provided number of lanes.
+    //
+    // Use all the counters if we can't reliably determine which ones to read.
+    fn new(hdl: PortHdl, n_lanes: u32) -> Self {
+        // This magic logic appears in `pm_port_tof2_ber_get()`, where it
+        // appears to be used to determine the right counters to read from the
+        // serdes firmware.
+        const MASK: u64 = 0x07;
+        const FACTOR: u64 = 2;
+        let Ok(start) = usize::try_from((u64::from(hdl) & MASK) * FACTOR)
+        else {
+            return Self::all();
+        };
+
+        // Add the number of lanes, being very conservative. We'll always return
+        // all the counters, rather than overflow anything.
+        let n_lanes = usize::try_from(n_lanes).unwrap_or(MAX_N_LANES - 1);
+        let Some(end) = start
+            .checked_add(n_lanes)
+            .map(|end| end.min(MAX_N_LANES - 1))
+        else {
+            return Self::all();
+        };
+        Self { start, end }
+    }
+}
+
+/// Return the bit-error for a port.
+pub fn get_ber(hdl: &Handle, port_hdl: PortHdl) -> AsicResult<Ber> {
+    // Extract the BER and symbol error counts themselves.
+    let dev = hdl.dev_id;
+    let mut fp = FrontPortHandle::from_port_hdl(hdl, port_hdl)?;
+    let mut ber = empty_ber();
+    let ber = match unsafe {
+        bf_pm_port_ber_get(dev, fp.ptr(), &mut ber as *mut _)
+    } {
+        BF_SUCCESS => {
+            // Safety: We're using the `empty_ber()` function above to
+            // initialize this, so we know this field exists and is the active
+            // union field. It's also the only one.
+            unsafe { ber.ber.tof2 }
+        }
+        e => {
+            slog::error!(hdl.log, "failed to get port BER"; "error" => %e);
+            return Err(sde_error("getting port BER", e));
+        }
+    };
+
+    // Fetch the number of lanes, which we need to correctly determine which
+    // counters are relevant.
+    let n_lanes = crate::tofino_asic::serdes::lane_count(hdl, port_hdl)?;
+    let BerLanes { start, end } = BerLanes::new(port_hdl, n_lanes);
+    Ok(Ber {
+        symbol_errors: ber.sym_err_ctrs[start..end].to_vec(),
+        ber: ber.ber_per_lane[start..end].to_vec(),
+        total_ber: ber.ber_aggr,
+    })
+}
+
 /// Look up the port_hdl -> asic_id mapping
 pub fn to_asic_id(hdl: &Handle, port_hdl: PortHdl) -> AsicResult<AsicId> {
     hdl.phys_ports.lock().unwrap().to_asic_id(port_hdl)
@@ -477,7 +569,7 @@ pub fn add_port(
     let dev = hdl.dev_id;
 
     // Convert to SDE-internal representations of speed and FEC.
-    let bf_speed = speed_to_bf(speed);
+    let bf_speed = port_speed_to_bf_speed(speed);
     let bf_fec = fec_to_bf(fec);
 
     // Verify with the SDE that the requested channels / speed / FEC are valid.
