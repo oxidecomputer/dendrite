@@ -818,7 +818,6 @@ impl Switch {
             .await
             .map_err(|e| anyhow::anyhow!("failed to fetch counters: {e:?}"))
             .and_then(|entries| {
-                println!("entries: {entries:?}");
                 entries
                     .iter()
                     .find(|e| e.keys.get("label").unwrap().as_str() == counter)

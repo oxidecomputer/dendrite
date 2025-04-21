@@ -14,6 +14,7 @@ use crate::integration_tests::common::{self, get_switch, prelude::*};
 use ::common::network::MacAddr;
 use anyhow::anyhow;
 use dpd_client::{default_multicast_nat_ip, types, Error};
+use futures::TryStreamExt;
 use oxnet::Ipv4Net;
 use packet::{eth::EthQHdr, ipv4, ipv6, Endpoint};
 
@@ -59,7 +60,7 @@ async fn check_counter_incremented(
 fn create_nat_target() -> types::NatTarget {
     types::NatTarget {
         internal_ip: default_multicast_nat_ip(),
-        inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
+        inner_mac: MacAddr::new(0xe1, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
         vni: 100.into(),
     }
 }
@@ -107,10 +108,7 @@ async fn create_test_multicast_group(
 
 /// Clean up a test group.
 async fn cleanup_test_group(switch: &Switch, group_id: u16) {
-    let _ = switch
-        .client
-        .multicast_group_delete(&group_id.to_string())
-        .await;
+    let _ = switch.client.multicast_reset(Some(group_id)).await;
 }
 
 /// Create an IPv4 multicast packet for testing.
@@ -217,7 +215,8 @@ async fn test_nonexisting_group() {
     let group_id = 100;
     let res = switch
         .client
-        .multicast_group_get(&group_id.to_string())
+        .multicast_groups_list_stream(Some(group_id), None)
+        .try_collect::<Vec<_>>()
         .await
         .expect_err("Should not be able to get non-existent group by ID");
 
@@ -229,10 +228,10 @@ async fn test_nonexisting_group() {
     }
 
     // Test retrieving by IP address
-    let group_ip = MULTICAST_TEST_IPV4;
+    let group_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
     let res = switch
         .client
-        .multicast_group_get(&group_ip.to_string())
+        .multicast_group_get(&group_ip)
         .await
         .expect_err("Should not be able to get non-existent group by IP");
 
@@ -327,7 +326,7 @@ async fn test_group_creation_with_validation() {
 
     switch
         .client
-        .multicast_group_delete(&created.group_id.to_string())
+        .multicast_group_delete(&created.group_ip)
         .await
         .expect("Failed to delete test group");
 }
@@ -341,11 +340,11 @@ async fn test_group_api_lifecycle() {
     let vlan_id = 10;
     let nat_target = create_nat_target();
 
-    let group_ip = MULTICAST_TEST_IPV4;
+    let group_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
 
     // 1. Create a multicast group
     let group_create = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V4(group_ip),
+        group_ip,
         tag: Some("test_lifecycle".to_string()),
         nat_target: Some(nat_target.clone()),
         vlan_id: Some(vlan_id),
@@ -366,9 +365,8 @@ async fn test_group_api_lifecycle() {
         .into_inner();
 
     let group_id = created.group_id;
-    let group_id_str = group_id.to_string();
 
-    assert_eq!(created.group_ip, group_ip);
+    assert_eq!(created.group_ip, MULTICAST_TEST_IPV4);
     assert_eq!(created.tag, Some("test_lifecycle".to_string()));
     assert_eq!(created.int_fwding.nat_target, Some(nat_target.clone()));
     assert_eq!(created.ext_fwding.vlan_id, Some(vlan_id));
@@ -379,7 +377,8 @@ async fn test_group_api_lifecycle() {
     // 2. Get all groups and verify our group is included
     let groups = switch
         .client
-        .multicast_groups_list()
+        .multicast_groups_list_stream(None, None)
+        .try_collect::<Vec<_>>()
         .await
         .expect("Should be able to list groups");
 
@@ -389,7 +388,8 @@ async fn test_group_api_lifecycle() {
     // 3. Get groups by tag
     let tagged_groups = switch
         .client
-        .multicast_groups_list_by_tag("test_lifecycle")
+        .multicast_groups_list_by_tag_stream("test_lifecycle", None)
+        .try_collect::<Vec<_>>()
         .await
         .expect("Should be able to get groups by tag");
 
@@ -403,17 +403,18 @@ async fn test_group_api_lifecycle() {
     // 4. Get the specific group
     let group = switch
         .client
-        .multicast_group_get(&group_id_str)
+        .multicast_groups_list_stream(Some(group_id), None)
+        .try_collect::<Vec<_>>()
         .await
         .expect("Should be able to get group by ID");
 
-    assert_eq!(group.group_id, group_id);
-    assert_eq!(group.tag, Some("test_lifecycle".to_string()));
+    assert_eq!(group[0].group_id, group_id);
+    assert_eq!(group[0].tag, Some("test_lifecycle".to_string()));
 
     // Also test getting by IP address
     let group_by_ip = switch
         .client
-        .multicast_group_get(&group_ip.to_string())
+        .multicast_group_get(&group_ip)
         .await
         .expect("Should be able to get group by IP");
 
@@ -450,7 +451,7 @@ async fn test_group_api_lifecycle() {
 
     let updated = switch
         .client
-        .multicast_group_update(&group_id_str, &update_entry)
+        .multicast_group_update(&group_ip, &update_entry)
         .await
         .expect("Should be able to update group")
         .into_inner();
@@ -479,14 +480,14 @@ async fn test_group_api_lifecycle() {
     // 6. Delete the group
     switch
         .client
-        .multicast_group_delete(&group_id_str)
+        .multicast_group_delete(&group_ip)
         .await
         .expect("Should be able to delete group");
 
     // 7. Verify group was deleted
     let result = switch
         .client
-        .multicast_group_get(&group_id_str)
+        .multicast_group_get(&group_ip)
         .await
         .expect_err("Should not be able to get deleted group");
 
@@ -504,7 +505,8 @@ async fn test_group_api_lifecycle() {
     // 8. Verify group no longer appears in the list
     let groups_after_delete = switch
         .client
-        .multicast_groups_list()
+        .multicast_groups_list_stream(None, None)
+        .try_collect::<Vec<_>>()
         .await
         .expect("Should be able to list groups");
 
@@ -523,11 +525,11 @@ async fn test_multicast_tagged_groups_management() {
     let tag = "test_tag_management";
     let nat_target = create_nat_target();
 
-    let group_ip = MULTICAST_TEST_IPV4;
+    let group_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
 
     // Create first group
     let group1 = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V4(group_ip),
+        group_ip,
         tag: Some(tag.to_string()),
         nat_target: Some(nat_target.clone()),
         vlan_id: Some(10),
@@ -594,7 +596,8 @@ async fn test_multicast_tagged_groups_management() {
     // List groups by tag
     let tagged_groups = switch
         .client
-        .multicast_groups_list_by_tag(tag)
+        .multicast_groups_list_by_tag_stream(tag, None)
+        .try_collect::<Vec<_>>()
         .await
         .expect("Should list groups by tag");
 
@@ -616,7 +619,8 @@ async fn test_multicast_tagged_groups_management() {
     // Verify the groups with the tag are gone
     let remaining_groups = switch
         .client
-        .multicast_groups_list()
+        .multicast_groups_list_stream(None, None)
+        .try_collect::<Vec<_>>()
         .await
         .expect("Should list remaining groups");
 
@@ -629,7 +633,7 @@ async fn test_multicast_tagged_groups_management() {
     // Clean up the remaining group
     switch
         .client
-        .multicast_group_delete(&created3.group_id.to_string())
+        .multicast_group_delete(&created3.group_ip)
         .await
         .expect("Should delete the remaining group");
 }
@@ -642,10 +646,10 @@ async fn test_multicast_untagged_groups() {
     // Create a group without a tag
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
-    let group_ip = MULTICAST_TEST_IPV4;
+    let group_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
 
     let untagged_group = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V4(group_ip),
+        group_ip,
         tag: None, // No tag
         nat_target: None,
         vlan_id: Some(10),
@@ -697,7 +701,8 @@ async fn test_multicast_untagged_groups() {
     // Verify only the untagged group is gone
     let remaining_groups = switch
         .client
-        .multicast_groups_list()
+        .multicast_groups_list_stream(None, None)
+        .try_collect::<Vec<_>>()
         .await
         .expect("Should list remaining groups");
 
@@ -709,7 +714,7 @@ async fn test_multicast_untagged_groups() {
     // Clean up the remaining tagged group
     switch
         .client
-        .multicast_group_delete(&created_tagged.group_id.to_string())
+        .multicast_group_delete(&created_tagged.group_ip)
         .await
         .expect("Should delete remaining tagged group");
 }
@@ -1530,7 +1535,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
     let allowed_pkt1 = create_ipv6_multicast_packet(
         ipv6_addr,
         src_mac1,
-        "2001:db8::1", // First allowed source
+        &allowed_src_ip1.to_string(),
         3333,
         4444,
     );
@@ -1538,7 +1543,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
     let allowed_pkt2 = create_ipv6_multicast_packet(
         ipv6_addr,
         src_mac2,
-        "2001:db8::2", // Second allowed source
+        &allowed_src_ip2.to_string(),
         3333,
         4444,
     );
@@ -1711,10 +1716,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
 
     let updated = switch
         .client
-        .multicast_group_update(
-            &created_group.group_id.to_string(),
-            &update_entry,
-        )
+        .multicast_group_update(&created_group.group_ip, &update_entry)
         .await
         .expect("Should be able to update group");
 
@@ -2229,7 +2231,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     // Perform full reset
     switch
         .client
-        .multicast_reset()
+        .multicast_reset(None)
         .await
         .expect("Should be able to reset all multicast groups");
 
@@ -2326,7 +2328,8 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     // Verify that all groups no longer exist
     let groups_after = switch
         .client
-        .multicast_groups_list()
+        .multicast_groups_list_stream(None, None)
+        .try_collect::<Vec<_>>()
         .await
         .expect("Should be able to list groups");
 
@@ -2336,21 +2339,18 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     );
 
     // Try to get each group specifically
-    for group_id in [
-        created_group1.group_id,
-        created_group2.group_id,
-        created_group3.group_id,
-        created_group4.group_id,
+    for group_ip in [
+        created_group1.group_ip,
+        created_group2.group_ip,
+        created_group3.group_ip,
+        created_group4.group_ip,
     ] {
-        let result = switch
-            .client
-            .multicast_group_get(&group_id.to_string())
-            .await;
+        let result = switch.client.multicast_group_get(&group_ip).await;
 
         assert!(
             result.is_err(),
             "Group {} should be deleted after reset",
-            group_id
+            group_ip
         );
     }
     Ok(())

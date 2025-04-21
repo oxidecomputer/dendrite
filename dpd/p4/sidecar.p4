@@ -1,3 +1,9 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/
+//
+// Copyright 2025 Oxide Computer Company
+
 #if __TARGET_TOFINO__ == 2
 #include <t2na.p4>
 const bit<9> USER_SPACE_SERVICE_PORT = 0;
@@ -7,76 +13,58 @@ const bit<9> USER_SPACE_SERVICE_PORT = 192;
 #endif
 
 #include <headers.p4>
+#include <meta.p4>
 #include <constants.p4>
 #include <parser.p4>
 
-// Top-level function to validate IPv4 multicast MAC addresses.
+// This control handles the calculation of Layer 4 payload length
+// by subtracting the IPv4 header length from the total packet length.
 //
-// Validate the IPv4 multicast MAC address format (RFC 1112, RFC 7042).
-// IPv4 multicast addresses (224.0.0.0/4 or 0xE0000000/4) must
-// use MAC addresses that follow the IANA-assigned OUI format
-// 01:00:5e + 0 as first bit of the second byte,
-// followed by 23 bits derived from the IPv4 address.
-bool validate_ipv4_mcast_mac(
-    in mac_addr_t mac_addr,
-    in ipv4_addr_t ipv4_addr
+// This is accomplished using a table-based approach due to P4/Tofino limitations:
+// 1. We can't directly subtract a variable value (the IPv4 header length)
+// 2. Instead, we use a table with IHL (IP Header Length) as the key
+// 3. For each IHL value, we add a negative constant that achieves the subtraction
+//    (e.g., adding 0xffec, which is -20 in two's complement, subtracts 20 bytes)
+control CalculateIPv4Len(
+	inout sidecar_headers_t hdr,
+	inout sidecar_ingress_meta_t meta
 ) {
-	// First byte should be 0x01
-	bit<8> mac_validate1 = mac_addr[47:40];
-	// Second byte should be 0x00
-	bit<8> mac_validate2 = mac_addr[39:32];
-	// Third byte should be 0x5e
-	bit<8> mac_validate3 = mac_addr[31:24];
-	// Fourth byte should match IP[23:16] & 0x7f
-	bit<8> mac_validate4 = mac_addr[23:16];
-	// Extract just the lower 7 bits from the second octet
-	bit<7> ipv4_lower7 = ipv4_addr[22:16];
+	// Action to add (or effectively subtract) a value from IPv4 total length
+	action add(bit<16> a) {
+		meta.l4_length = hdr.ipv4.total_len + a;
+	}
 
-	// This validation covers the most critical part of the
-	// multicast MAC format, restricting to the range
-	// 01-00-5E-00-00-00 through 01-00-5E-7F-FF-FF, which are the
-	// 2^23 addresses assigned for IPv4 multicast as specified in
-	// RFC 7042.
-	//
-	// We are limited to 4 conditional checks, so we can't check
-	// the full 23 bits of the IPv4 address.
-	return (mac_validate1 == 8w0x01 &&
-			mac_validate2 == 8w0x00 &&
-			mac_validate3 == 8w0x5e &&
-			mac_validate4 == (bit<8>)ipv4_lower7);
-}
+	action invert() {
+		meta.l4_length = ~meta.l4_length;
+	}
 
-// Top-level function to validate IPv6 multicast MAC addresses.
-//
-// Validate the IPv6 multicast MAC address format (RFC 2464, RFC 7042).
-// IPv6 multicast addresses (ff00::/8) must use MAC addresses
-// that follow the format 33:33:xxxx:xxxx where the last 32 bits
-// are taken directly from the last 32 bits of the IPv6 address.
-bool validate_ipv6_mcast_mac(
-    in mac_addr_t mac_addr,
-    in ipv6_addr_t ipv6_addr
-) {
-    // First byte should be 0x33
-    bit<8> mac_validate1 = mac_addr[47:40];
-    // Second byte should be 0x33
-    bit<8> mac_validate2 = mac_addr[39:32];
-    // Third byte should match IPv6[31:24]
-    bit<8> mac_validate3 = mac_addr[31:24];
-    // Fourth byte should match IPv6[23:16]
-    bit<8> mac_validate4 = mac_addr[23:16];
+	// Table maps IPv4 header length (IHL) to the appropriate "add" action
+	// with the correct negative constant
+	table ipv4_set_len {
+		key = { hdr.ipv4.ihl : exact; }
+		actions = { add; }
 
-    // Extract the last 32 bits of IPv6 address for comparison
-    bit<8> ipv6_byte4 = ipv6_addr[31:24];
-    bit<8> ipv6_byte5 = ipv6_addr[23:16];
+		const entries = {
+			(5) : add(0xffec);  // Subtract 20 bytes (standard header)
+			(6) : add(0xffe8);  // Subtract 24 bytes
+			(7) : add(0xffe4);  // Subtract 28 bytes
+			(8) : add(0xffe0);  // Subtract 32 bytes
+			(9) : add(0xffdc);  // Subtract 36 bytes
+			(10): add(0xffd8);  // Subtract 40 bytes
+			(11): add(0xffd4);  // Subtract 44 bytes
+			(12): add(0xffd0);  // Subtract 48 bytes
+			(13): add(0xffcc);  // Subtract 52 bytes
+			(14): add(0xffc8);  // Subtract 56 bytes
+			(15): add(0xffc4);  // Subtract 60 bytes
+		}
 
-    // The IPv6 multicast MAC address uses the fixed prefix 33:33
-    // followed by the last 32 bits of the IPv6 address. This
-    // mapping is defined in RFC 2464 section 7 and confirmed in
-    // RFC 7042 section 2.3.1.
-    return (mac_validate1 == 8w0x33 &&
-            mac_validate2 == 8w0x33 &&
-            mac_validate3 == ipv6_byte4 &&
-            mac_validate4 == ipv6_byte5);
+		const size = 16;
+	}
+
+	apply {
+		ipv4_set_len.apply();
+		invert();
+	}
 }
 
 control Filter(
@@ -103,6 +91,19 @@ control Filter(
 		ipv6_ctr.count();
 	}
 
+	action drop_mcast_with_reason(bit<8> reason) {
+		meta.is_mcast = false;
+		meta.is_link_local_mcast = false;
+		ig_dprsr_md.drop_ctl = 1;
+		meta.drop_reason = reason;
+	}
+
+	action drop_mcast() {
+		meta.is_mcast = true;
+		meta.is_link_local_mcast = false;
+		ig_dprsr_md.drop_ctl = 1;
+	}
+
 	action claimv4() {
 		meta.is_switch_address = true;
 		ipv4_ctr.count();
@@ -111,16 +112,6 @@ control Filter(
 	action claimv6() {
 		meta.is_switch_address = true;
 		ipv6_ctr.count();
-	}
-
-	action drop_mcast_local_interface() {
-		ig_dprsr_md.drop_ctl = 1;
-		meta.drop_reason = DROP_MULTICAST_TO_LOCAL_INTERFACE;
-	}
-
-	action drop_invalid_mcast_mac() {
-		ig_dprsr_md.drop_ctl = 1;
-		meta.drop_reason = DROP_MULTICAST_INVALID_MAC;
 	}
 
 	// Table of the IPv4 addresses assigned to ports on the switch.
@@ -151,41 +142,58 @@ control Filter(
 		if (hdr.arp.isValid()) {
 			switch_ipv4_addr.apply();
 		} else if (hdr.ipv4.isValid()) {
-			// Check if this is an IPv4 multicast address
-			bit<16> mcast_scope_v4 = (bit<16>)hdr.ipv4.dst_addr[31:28];
-			if (mcast_scope_v4 == 16w0xe) {
-				bool is_valid = validate_ipv4_mcast_mac(hdr.ethernet.dst_mac, hdr.ipv4.dst_addr);
-				if (is_valid) {
-					meta.is_mcast = true;
-				} else {
-					drop_invalid_mcast_mac();
-					drop_mcast_ctr.count(ig_intr_md.ingress_port);
-					drop_reason_ctr.count(meta.drop_reason);
-				}
-			}
-			switch_ipv4_addr.apply();
-		} else if (hdr.ipv6.isValid()) {
-			bit<16> mcast_scope_v6 = (bit<16>)hdr.ipv6.dst_addr[127:112];
-			if (mcast_scope_v6 == 16w0xff01) {
-				// Interface-local multicast
-				drop_mcast_local_interface();
+			if (meta.drop_reason == DROP_MULTICAST_INVALID_MAC) {
+				drop_mcast();
 				drop_mcast_ctr.count(ig_intr_md.ingress_port);
 				drop_reason_ctr.count(meta.drop_reason);
-			} else if (hdr.ipv6.dst_addr[127:120] == 8w0xff) {
-				bool is_valid = validate_ipv6_mcast_mac(hdr.ethernet.dst_mac, hdr.ipv6.dst_addr);
-				if (is_valid) {
-					if (mcast_scope_v6 == 16w0xff02) {
-						// IPv6 Link-local multicast
-						meta.is_link_local_mcast = true;
-					}
-					meta.is_mcast = true;
-				} else {
-					drop_invalid_mcast_mac();
+			} else if (meta.is_mcast) {
+				// Check the 3rd byte of the MAC address here because the parser
+				// stops parsing early in our transition state machine.
+				bit<8> mac_byte3 = hdr.ethernet.dst_mac[31:24]; // Third byte must be 0x5e
+				// Check that 4th byte of the MAC address is
+				// the lower 7 bits of the IPv4 address
+				//
+				// This cannot be checked by the parser statically
+				bit<8> mac_byte4 = hdr.ethernet.dst_mac[23:16];
+				bit<7> ipv4_lower7 = hdr.ipv4.dst_addr[22:16];
+				if (mac_byte3 != 8w0x5e || mac_byte4 != (bit<8>)ipv4_lower7) {
+					drop_mcast_with_reason(DROP_MULTICAST_INVALID_MAC);
+					drop_mcast_ctr.count(ig_intr_md.ingress_port);
+					drop_reason_ctr.count(meta.drop_reason);
+				}
+			} else {
+				switch_ipv4_addr.apply();
+			}
+		} else if (hdr.ipv6.isValid()) {
+			if (meta.drop_reason == DROP_MULTICAST_TO_LOCAL_INTERFACE) {
+				drop_mcast();
+				drop_mcast_ctr.count(ig_intr_md.ingress_port);
+				drop_reason_ctr.count(meta.drop_reason);
+			} else if (meta.is_mcast) {
+				// Validate the IPv6 multicast MAC address format (RFC 2464,
+				// RFC 7042).
+				//
+				// IPv6 multicast addresses (ff00::/8) must use MAC addresses
+				// that follow the format 33:33:xxxx:xxxx where the last 32 bits
+				// are taken directly from the last 32 bits of the IPv6 address.
+				//
+				// The last two conditions cannot be checked by the parser
+				// statically, and, sadly, the first two conditions cannot
+				// be checked properly by the parser (parsing stops early).
+				// So, we have to do this in the control stage.
+				if (hdr.ethernet.dst_mac[47:40] != 8w0x33 ||
+					hdr.ethernet.dst_mac[39:32] != 8w0x33 ||
+					hdr.ethernet.dst_mac[31:24] != hdr.ipv6.dst_addr[31:24] ||
+					hdr.ethernet.dst_mac[23:16] != hdr.ipv6.dst_addr[23:16]) {
+					drop_mcast_with_reason(DROP_MULTICAST_INVALID_MAC);
 					drop_mcast_ctr.count(ig_intr_md.ingress_port);
 					drop_reason_ctr.count(meta.drop_reason);
 				}
 			}
-			switch_ipv6_addr.apply();
+
+			if (!meta.is_mcast || meta.is_link_local_mcast) {
+				switch_ipv6_addr.apply();
+			}
 		}
 	}
 }
@@ -279,7 +287,7 @@ control Services(
 	// In our implementation, there can be only two nodes on a link:
 	// the switch and whatever is connected directly to it.  This
 	// simple model allows us to implement link-local "multicast"
-	// essentially like unicast.  In particular, for these, we don't need to */
+	// essentially like unicast.  In particular, for these, we don't need to
 	// engage the Tofino packet replication mechanism.  "Inbound" multicast
 	// packets always go to the service port.  "Outbound" multicast
 	// packets always go to the port indicated by the sidecar header.
@@ -321,7 +329,6 @@ control Services(
 			forward_from_userspace;
 			forward_to_userspace;
 			mcast_inbound_link_local;
-			NoAction;
 		}
 
 		const entries = {
@@ -341,7 +348,6 @@ control Services(
 			( 0, false, true, true, _, _, _, _, _, _, _, _, _ ) : mcast_inbound_link_local;
 		}
 
-		default_action = NoAction;
 		const size = 16;
 	}
 
@@ -432,11 +438,11 @@ control NatIngress (
 		// and Geneve headers (plus external geneve TLV).
 		bit<16> payload_len = hdr.ipv4.total_len + 14 + 8 + 8 + 4;
 
-	 	hdr.inner_ipv4 = hdr.ipv4;
-	 	hdr.inner_ipv4.setValid();
-	 	hdr.ipv4.setInvalid();
+		hdr.inner_ipv4 = hdr.ipv4;
+		hdr.inner_ipv4.setValid();
+		hdr.ipv4.setInvalid();
 
-	 	add_encap_headers(payload_len);
+		add_encap_headers(payload_len);
 	}
 
 	action encap_ipv6() {
@@ -450,7 +456,6 @@ control NatIngress (
 
 		add_encap_headers(payload_len);
 	}
-
 
 	action forward_ipv4_to(ipv6_addr_t target, mac_addr_t inner_mac, geneve_vni_t vni) {
 		meta.nat_ingress_hit = true;
@@ -492,13 +497,6 @@ control NatIngress (
 		const size = IPV6_NAT_TABLE_SIZE;
 		counters = ipv6_ingress_ctr;
 	}
-
-	/* Invert the source and destination addresses.
-
-	*
-	 * This is a separate file for reusability.
-	 */
-	#include <ipv4_set_len.p4>
 
 	action nat_only_port() {
 		meta.nat_ingress_port = true;
@@ -554,21 +552,84 @@ control NatIngress (
 		counters = mcast_ipv6_ingress_ctr;
 	}
 
-	apply {
-		// TODO ideally we would do this during parsing, but the Intel compiler
-		// throws a fit.
-		if (hdr.icmp.isValid()) {
-			if( hdr.icmp.type == ICMP_ECHO || hdr.icmp.type == ICMP_ECHOREPLY ||
-				hdr.icmp.type == ICMP6_ECHO || hdr.icmp.type == ICMP6_ECHOREPLY
-			) {
-				meta.l4_dst_port = hdr.icmp.data[31:16];
-			}
+	action set_icmp_dst_port() {
+		meta.l4_dst_port = hdr.icmp.data[31:16];
+	}
+
+	table icmp_dst_port {
+		key = {
+			hdr.icmp.isValid(): ternary;
+			hdr.icmp.type: ternary;
 		}
 
+		actions = {
+			set_icmp_dst_port;
+		}
+
+		const entries = {
+			( true, ICMP_ECHO ) : set_icmp_dst_port;
+			( true, ICMP_ECHOREPLY ) : set_icmp_dst_port;
+			( true, ICMP6_ECHO ) : set_icmp_dst_port;
+			( true, ICMP6_ECHOREPLY ) : set_icmp_dst_port;
+		}
+
+		const size = 4;
+	}
+
+
+	action set_inner_tcp() {
+		hdr.inner_tcp = hdr.tcp;
+		hdr.inner_tcp.setValid();
+		hdr.tcp.setInvalid();
+	}
+
+	action set_inner_udp() {
+		hdr.inner_udp = hdr.udp;
+		hdr.inner_udp.setValid();
+		hdr.udp.setInvalid();
+	}
+
+	action set_inner_icmp() {
+		hdr.inner_icmp = hdr.icmp;
+		hdr.inner_icmp.setValid();
+		hdr.icmp.setInvalid();
+	}
+
+	table ingress_hit {
+		key = {
+			meta.nat_ingress_hit: exact;
+			meta.nat_egress_hit: ternary;
+			meta.is_mcast: ternary;
+			meta.is_link_local_mcast: ternary;
+			hdr.tcp.isValid(): ternary;
+			hdr.udp.isValid(): ternary;
+			hdr.icmp.isValid(): ternary;
+		}
+		actions = {
+			set_inner_tcp;
+			set_inner_udp;
+			set_inner_icmp;
+			NoAction;
+		}
+
+		const entries = {
+			( true, _, _, _, true, false, false ) : set_inner_tcp;
+			( true, _, _, _, false, true, false  ) : set_inner_udp;
+			( true, _, _, _, false, false, true ) : set_inner_icmp;
+			( true, _, _, _, _, _, _ ) : NoAction;
+		}
+
+		const size = 8;
+	}
+
+
+	apply {
+		icmp_dst_port.apply();
+
+		// Note: This whole conditional could be simpler as a set of */
+		// `const entries`, but apply (on tables) cannot be called from actions
 		if (hdr.ipv4.isValid()) {
-			if (meta.is_mcast && !meta.is_link_local_mcast)  {
-				// If this is a multicast packet and not a link-local multicast,
-				// we need to check the multicast table
+			if (meta.is_mcast)  {
 				ingress_ipv4_mcast.apply();
 			} else {
 				ingress_ipv4.apply();
@@ -583,39 +644,30 @@ control NatIngress (
 			}
 		}
 
-		if (meta.nat_ingress_hit) {
-			if (hdr.tcp.isValid()) {
-				hdr.inner_tcp = hdr.tcp;
-				hdr.inner_tcp.setValid();
-				hdr.tcp.setInvalid();
-			} else if (hdr.udp.isValid()) {
-				hdr.inner_udp = hdr.udp;
-				hdr.inner_udp.setValid();
-				hdr.udp.setInvalid();
-			} else if (hdr.icmp.isValid()) {
-				hdr.inner_icmp = hdr.icmp;
-				hdr.inner_icmp.setValid();
-				hdr.icmp.setInvalid();
-			}
-
+		if (ingress_hit.apply().hit) {
 			if (hdr.ipv4.isValid()) {
-				ipv4_set_len.apply();
-				invert();
+				CalculateIPv4Len.apply(hdr, meta);
 				encap_ipv4();
 			} else if (hdr.ipv6.isValid()) {
 				encap_ipv6();
 			}
+
 			if (hdr.vlan.isValid()) {
 				// When setting up the inner headers above, we
 				// copied the ether type from the outer to
 				// the inner.  If this is a vlan packet, we
-				// actually want the ethertype of the payload.
+				// actually want the ethertype of the payload
 				hdr.inner_eth.ether_type = hdr.vlan.ether_type;
 				hdr.vlan.setInvalid();
 			}
 
 			// Multicast packts should be decapped without
-			// a service routing check.
+			// a service routing check, as we skip the `Services`
+			// control for multicast packets
+			//
+			// This can't be part of the `ingress_hit` table
+			// because the geneve header is not valid until
+			// after the `encap_ipv4` or `encap_ipv6` actions
 			if (meta.is_mcast && !meta.is_link_local_mcast
 				&& !meta.nat_egress_hit && hdr.geneve.isValid()
 				&& hdr.geneve.vni != 0) {
@@ -1551,7 +1603,10 @@ control Ingress(
 		}
 
 		nat_ingress.apply(hdr, meta, ig_intr_md);
-		services.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
+
+		if (!meta.is_mcast || meta.is_link_local_mcast) {
+			services.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
+		}
 
 		if (!meta.service_routed && ig_dprsr_md.drop_ctl == 0) {
 			nat_egress.apply(hdr, meta, ig_dprsr_md);
@@ -1673,7 +1728,7 @@ control Egress(
 		if (eg_intr_md.egress_rid > 0 ||
 			(hdr.ipv6.isValid() && (bit<16>)hdr.ipv6.dst_addr[127:112] != 16w0xff02)) {
 			mcast_ctr.count(eg_intr_md.egress_port);
-		} else if (eg_intr_md.egress_rid == 0 && eg_intr_md.egress_rid_first == 1) {
+        } else if (eg_intr_md.egress_rid == 0 && eg_intr_md.egress_rid_first == 1) {
 			// Drop CPU copies (RID=0) to prevent unwanted packets on port 0
 			eg_dprsr_md.drop_ctl = 1;
 			meta.drop_reason = DROP_MULTICAST_CPU_COPY;

@@ -10,9 +10,10 @@
 //! modifying, and deleting groups.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     fmt,
     net::IpAddr,
+    ops::Bound,
     sync::atomic::{AtomicU16, Ordering},
 };
 
@@ -30,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use slog::{debug, error};
 
 mod validate;
-use validate::{is_ssm, validate_multicast_address};
+use validate::{is_ssm, validate_multicast_address, validate_nat_target};
 
 /// Type alias for multicast group IDs.
 pub(crate) type MulticastGroupId = u16;
@@ -126,8 +127,9 @@ pub(crate) struct MulticastGroupUpdateEntry {
     members: Vec<MulticastGroupMember>,
 }
 
+/// Response structure for multicast group operations.
 #[derive(Deserialize, Serialize, JsonSchema)]
-pub(crate) struct MulticastGroupResponse {
+pub struct MulticastGroupResponse {
     group_ip: IpAddr,
     group_id: MulticastGroupId,
     tag: Option<String>,
@@ -160,8 +162,14 @@ impl MulticastGroupResponse {
             members: group.members.clone(),
         }
     }
+
+    pub(crate) fn ip(&self) -> IpAddr {
+        self.group_ip
+    }
 }
 
+/// Identifier for multicast groups, either by IP address or group ID.
+#[derive(Clone, Debug)]
 pub(crate) enum Identifier {
     Ip(IpAddr),
     GroupId(MulticastGroupId),
@@ -171,7 +179,7 @@ pub(crate) enum Identifier {
 #[derive(Debug)]
 pub struct MulticastGroupData {
     /// Multicast group configurations keyed by group ID.
-    groups: HashMap<IpAddr, MulticastGroup>,
+    groups: BTreeMap<IpAddr, MulticastGroup>,
     /// Set of in-use group IDs for fast lookup
     used_group_ids: HashSet<MulticastGroupId>,
     /// Atomic counter for generating unique multicast group IDs.
@@ -183,7 +191,7 @@ impl MulticastGroupData {
 
     pub(crate) fn new() -> Self {
         Self {
-            groups: HashMap::new(),
+            groups: BTreeMap::new(),
             used_group_ids: HashSet::new(),
             // Start at a threshold to avoid early allocations
             id_generator: AtomicU16::new(Self::GENERATOR_START),
@@ -234,6 +242,11 @@ pub(crate) fn add_group(
 
     // Validate if the requested multicast address is allowed
     validate_multicast_address(group_ip, group_info.sources.as_deref())?;
+
+    // Validate the NAT target if provided
+    if let Some(nat_target) = group_info.nat_target {
+        validate_nat_target(nat_target)?;
+    }
 
     debug!(s.log, "creating multicast group for IP {}", group_ip);
 
@@ -790,18 +803,39 @@ pub(crate) fn modify_group(
     Ok(MulticastGroupResponse::new(group_ip, &updated_group))
 }
 
-/// List all multicast groups.
-pub(crate) fn list_groups(
+/// List all multicast groups over a range.
+pub(crate) fn get_range(
     s: &Switch,
+    last: Option<IpAddr>,
+    limit: usize,
     tag: Option<&str>,
 ) -> Vec<MulticastGroupResponse> {
     let mcast = s.mcast.lock().unwrap();
 
-    mcast
+    let groups_btree: BTreeMap<IpAddr, &MulticastGroup> = mcast
         .groups
         .iter()
-        .filter(|(_, group)| tag.is_none() || group.tag.as_deref() == tag)
-        .map(|(ip, group)| MulticastGroupResponse::new(*ip, group))
+        .map(|(ip, group)| (*ip, group))
+        .collect();
+
+    // Define the range bounds
+    let lower_bound = match last {
+        None => Bound::Unbounded,
+        Some(last_ip) => Bound::Excluded(last_ip),
+    };
+
+    groups_btree
+        .range((lower_bound, Bound::Unbounded))
+        .filter_map(|(ip, group)| {
+            if let Some(tag_filter) = tag {
+                if group.tag.as_deref() != Some(tag_filter) {
+                    return None;
+                }
+            }
+
+            Some(MulticastGroupResponse::new(*ip, group))
+        })
+        .take(limit)
         .collect()
 }
 

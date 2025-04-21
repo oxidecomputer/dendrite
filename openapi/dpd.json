@@ -1088,17 +1088,45 @@
       "get": {
         "summary": "List all multicast groups.",
         "operationId": "multicast_groups_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "group_id",
+            "schema": {
+              "nullable": true,
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "description": "Maximum number of items returned by a single call",
+            "schema": {
+              "nullable": true,
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "description": "Token returned by previous call to retrieve the subsequent page",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "successful operation",
             "content": {
               "application/json": {
                 "schema": {
-                  "title": "Array_of_MulticastGroupResponse",
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MulticastGroupResponse"
-                  }
+                  "$ref": "#/components/schemas/MulticastGroupResponseResultsPage"
                 }
               }
             }
@@ -1109,6 +1137,9 @@
           "5XX": {
             "$ref": "#/components/responses/Error"
           }
+        },
+        "x-dropshot-pagination": {
+          "required": []
         }
       },
       "post": {
@@ -1145,8 +1176,21 @@
         }
       },
       "delete": {
-        "summary": "Delete all multicast groups (and associated routes).",
+        "summary": "Delete a multicast group configuration by ID if provided.",
+        "description": "If no group ID is provided, all multicast groups will be deleted.",
         "operationId": "multicast_reset",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "group_id",
+            "schema": {
+              "nullable": true,
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "204": {
             "description": "successful deletion"
@@ -1160,17 +1204,18 @@
         }
       }
     },
-    "/multicast/groups/{group_id}": {
+    "/multicast/groups/{group_ip}": {
       "get": {
-        "summary": "Get the multicast group configuration for a given group ID.",
+        "summary": "Get the multicast group configuration for a given group IP address.",
         "operationId": "multicast_group_get",
         "parameters": [
           {
             "in": "path",
-            "name": "group_id",
+            "name": "group_ip",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "format": "ip"
             }
           }
         ],
@@ -1194,15 +1239,16 @@
         }
       },
       "put": {
-        "summary": "Update a multicast group configuration.",
+        "summary": "Update a multicast group configuration for a given group IP address.",
         "operationId": "multicast_group_update",
         "parameters": [
           {
             "in": "path",
-            "name": "group_id",
+            "name": "group_ip",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "format": "ip"
             }
           }
         ],
@@ -1241,10 +1287,11 @@
         "parameters": [
           {
             "in": "path",
-            "name": "group_id",
+            "name": "group_ip",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "format": "ip"
             }
           }
         ],
@@ -1273,6 +1320,26 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "description": "Maximum number of items returned by a single call",
+            "schema": {
+              "nullable": true,
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "description": "Token returned by previous call to retrieve the subsequent page",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1281,11 +1348,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "title": "Array_of_MulticastGroupResponse",
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MulticastGroupResponse"
-                  }
+                  "$ref": "#/components/schemas/MulticastGroupResponseResultsPage"
                 }
               }
             }
@@ -1296,6 +1359,9 @@
           "5XX": {
             "$ref": "#/components/responses/Error"
           }
+        },
+        "x-dropshot-pagination": {
+          "required": []
         }
       },
       "delete": {
@@ -7414,6 +7480,7 @@
         ]
       },
       "MulticastGroupResponse": {
+        "description": "Response structure for multicast group operations.",
         "type": "object",
         "properties": {
           "ext_fwding": {
@@ -7459,6 +7526,27 @@
           "int_fwding",
           "members",
           "replication_info"
+        ]
+      },
+      "MulticastGroupResponseResultsPage": {
+        "description": "A single page of results",
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "list of items on this page of results",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MulticastGroupResponse"
+            }
+          },
+          "next_page": {
+            "nullable": true,
+            "description": "token used to fetch the next page of results (if any)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
         ]
       },
       "MulticastGroupUpdateEntry": {

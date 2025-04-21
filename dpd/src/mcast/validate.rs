@@ -6,6 +6,8 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+use common::nat::NatTarget;
+
 use super::IpSrc;
 use crate::types::{DpdError, DpdResult};
 
@@ -20,6 +22,17 @@ pub(crate) fn validate_multicast_address(
         IpAddr::V4(ipv4) => validate_ipv4_multicast(ipv4, sources),
         IpAddr::V6(ipv6) => validate_ipv6_multicast(ipv6, sources),
     }
+}
+
+/// Validates the NAT target inner MAC address.
+pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
+    if !nat_target.inner_mac.is_multicast() {
+        return Err(DpdError::Invalid(format!(
+            "NAT target inner MAC address {} is not a multicast MAC address",
+            nat_target.inner_mac
+        )));
+    }
+    Ok(())
 }
 
 /// Check if an IP address is a Source-Specific Multicast (SSM) address.
@@ -206,6 +219,7 @@ fn validate_ipv6_multicast(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::{nat::Vni, network::MacAddr};
     use oxnet::Ipv4Net;
 
     use std::str::FromStr;
@@ -469,5 +483,26 @@ mod tests {
             Some(&ip6_sources)
         )
         .is_err());
+    }
+
+    #[test]
+    fn test_validate_nat_target() {
+        let ucast_nat_target = NatTarget {
+            internal_ip: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
+            // Not a multicast MAC
+            inner_mac: MacAddr::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x01),
+            vni: Vni::new(100).unwrap(),
+        };
+
+        assert!(validate_nat_target(ucast_nat_target).is_err());
+
+        let mcast_nat_target = NatTarget {
+            internal_ip: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
+            // Multicast MAC
+            inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x00, 0x00, 0x01),
+            vni: Vni::new(100).unwrap(),
+        };
+
+        assert!(validate_nat_target(mcast_nat_target).is_ok());
     }
 }

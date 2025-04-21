@@ -36,8 +36,8 @@ use dpd_client::ResponseValue;
 // This table has further shrunk to 4022 entries with the open source
 // compiler.  That is being tracked as issue #1092, which will presumably
 // subsume #1013.
-// update: with the move to 8192 entries we're now at 8187
-const IPV4_LPM_SIZE: usize = 8187; // ipv4 forwarding table
+// update: with the move to 8192 entries we're now at 8191 entries.
+const IPV4_LPM_SIZE: usize = 8191; // ipv4 forwarding table
 const IPV6_LPM_SIZE: usize = 1025; // ipv6 forwarding table
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports
@@ -73,13 +73,20 @@ fn gen_ipv6_cidr(idx: usize) -> Ipv6Net {
     Ipv6Net::new(gen_ipv6_addr(idx), 128).unwrap()
 }
 
-/// Generates valid IPv4 multicast addresses that avoid reserved ranges
+/// Generates valid IPv4 multicast addresses that avoid special-purpose ranges
 fn gen_ipv4_multicast_addr(idx: usize) -> Ipv4Addr {
-    // Start with 224.1.0.0 to avoid the reserved 224.0.0.0/24 range
+    // Start with 224.1.0.0 to avoid the 224.0.0.0/24 range
+    // (which contains link-local multicast)
+    // 224.0.0.0/24 is reserved for local network control use
     let base: u32 = 0xE0010000u32; // hex for 224.1.0.0
 
-    // Avoid other reserved ranges (232.0.0.0/8, 233.0.0.0/8, 239.0.0.0/8)
-    let addr: u32 = base + (idx as u32 % 0x00FFFFFF); // Keep within 224.1.0.0 - 231.255.255.255
+    // Avoid special-purpose ranges:
+    // - 232.0.0.0/8 (Source-Specific Multicast)
+    // - 233.0.0.0/8 (GLOP addressing)
+    // - 239.0.0.0/8 (Administratively Scoped)
+    //
+    // Keep within 224.1.0.0 - 231.255.255.255
+    let addr: u32 = base + (idx as u32 % 0x00FFFFFF);
 
     // Convert to Ipv4Addr
     addr.into()
@@ -483,7 +490,7 @@ impl TableTest<types::MulticastGroupResponse, ()>
         // Create a NAT target
         let nat_target = types::NatTarget {
             internal_ip: dpd_client::default_multicast_nat_ip(),
-            inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
+            inner_mac: MacAddr::new(0xe1, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             vni: (100 + idx as u32).into(),
         };
 
@@ -521,18 +528,18 @@ impl TableTest<types::MulticastGroupResponse, ()>
         };
 
         // Delete the route entry
-        switch.client.multicast_group_delete(&ip.to_string()).await
+        switch.client.multicast_group_delete(&ip).await
     }
 
     async fn count_entries(switch: &Switch) -> usize {
         // Count all groups with our test tag
-        let groups = switch
+        switch
             .client
-            .multicast_groups_list_by_tag(MCAST_TAG)
+            .multicast_groups_list_by_tag_stream(MCAST_TAG, None)
+            .try_collect::<Vec<_>>()
             .await
-            .expect("Should be able to list groups by tag");
-
-        groups.len()
+            .expect("Should be able to list groups by tag paginated")
+            .len()
     }
 }
 

@@ -1,3 +1,9 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/
+//
+// Copyright 2025 Oxide Computer Company
+
 parser IngressParser(
     packet_in pkt,
 	out sidecar_headers_t hdr,
@@ -18,8 +24,8 @@ parser IngressParser(
 		meta.ipv4_checksum_err = false;
 		meta.is_switch_address = false;
 		meta.is_mcast = false;
-        meta.allow_source_mcast = false;
-        meta.is_link_local_mcast = false;
+		meta.allow_source_mcast = false;
+		meta.is_link_local_mcast = false;
 		meta.service_routed = false;
 		meta.nat_egress_hit = false;
 		meta.nat_ingress_hit = false;
@@ -121,9 +127,45 @@ parser IngressParser(
 		nat_checksum.subtract({
 			hdr.ipv4.src_addr,
 			hdr.ipv4.dst_addr,
-			(bit<16>)hdr.ipv4.protocol
+			8w0,
+			hdr.ipv4.protocol,
 		});
 
+		transition select(hdr.ipv4.dst_addr[31:28]) {
+			4w0xe: validate_ipv4_mcast1_2;
+			default: goto_proto_ipv4;
+		}
+	}
+
+	// Validate the IPv4 multicast MAC address format (RFC 1112, RFC 7042).
+	// IPv4 multicast addresses (224.0.0.0/4 or 0xE0000000/4) must
+	// use MAC addresses that follow the IANA-assigned OUI format
+	// 01:00:5e + 0 as first bit of the second byte,
+	// followed by 23 bits derived from the IPv4 address.
+	state validate_ipv4_mcast1_2 {
+		// Extract the first byte of the MAC address
+		bit<8> mac_byte1 = hdr.ethernet.dst_mac[47:40]; // First byte must be 0x01
+		// Extract the second byte of the MAC address
+		bit<8> mac_byte2 = hdr.ethernet.dst_mac[39:32]; // Second byte must be 0x00
+
+		transition select(mac_byte1, mac_byte2) {
+			(8w0x01, 8w0x00): set_mcast_ipv4;
+			default: invalidate_ipv4_mcast;
+		}
+	}
+
+	state set_mcast_ipv4 {
+		meta.is_mcast = true;
+		transition goto_proto_ipv4;
+	}
+
+	state invalidate_ipv4_mcast {
+		meta.drop_reason = DROP_MULTICAST_INVALID_MAC;
+		// We don't reject here because we want to update our stats and reason
+		transition accept;
+	}
+
+	state goto_proto_ipv4 {
 		transition select(hdr.ipv4.protocol) {
 			IPPROTO_ICMP: parse_icmp;
 			IPPROTO_TCP: parse_tcp;
@@ -139,15 +181,48 @@ parser IngressParser(
 		nat_checksum.subtract({
 			hdr.ipv6.src_addr,
 			hdr.ipv6.dst_addr,
-			hdr.ipv6.payload_len,
-			(bit<16>)hdr.ipv6.next_hdr
+			8w0,
+			hdr.ipv6.next_hdr,
+			hdr.ipv6.payload_len
 		});
 
+		transition select(hdr.ipv6.dst_addr[127:112]) {
+			16w0xff01: drop_interface_local_mcast;
+			16w0xff02: set_link_local_mcast;
+			default: check_ipv6_mcast;
+		}
+	}
+
+	state drop_interface_local_mcast {
+		meta.drop_reason = DROP_MULTICAST_TO_LOCAL_INTERFACE;
+		// We don't reject here because we want to update our stats and reason
+		transition accept;
+	}
+
+	state set_link_local_mcast {
+		meta.is_link_local_mcast = true;
+		transition set_mcast_ipv6;
+	}
+
+	state check_ipv6_mcast {
+		// Check if the destination address is a multicast address
+		// (ff00::/8) and if the MAC address is in the correct format.
+		transition select(hdr.ipv6.dst_addr[127:120]) {
+			8w0xff: set_mcast_ipv6;
+			default: goto_proto_ipv6;
+		}
+	}
+
+	state set_mcast_ipv6 {
+		meta.is_mcast = true;
+		transition goto_proto_ipv6;
+	}
+
+	state goto_proto_ipv6 {
 		transition select(hdr.ipv6.next_hdr) {
 			IPPROTO_ICMPV6: parse_icmp;
 			IPPROTO_TCP: parse_tcp;
 			IPPROTO_UDP: parse_udp;
-
 			default: accept;
 		}
 	}
