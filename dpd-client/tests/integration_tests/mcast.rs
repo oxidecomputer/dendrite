@@ -78,7 +78,10 @@ async fn create_test_multicast_group(
         .iter()
         .map(|port| {
             let (port_id, link_id) = switch.link_id(*port).unwrap();
-            types::MulticastGroupMember { port_id, link_id }
+            types::MulticastGroupMember {
+                port_id: port_id.clone(),
+                link_id,
+            }
         })
         .collect();
 
@@ -263,7 +266,10 @@ async fn test_group_creation_with_validation() {
             level1_excl_id: Some(10),
             level2_excl_id: Some(20),
         },
-        members: vec![types::MulticastGroupMember { port_id, link_id }],
+        members: vec![types::MulticastGroupMember {
+            port_id: port_id.clone(),
+            link_id,
+        }],
     };
 
     let res = switch
@@ -297,7 +303,10 @@ async fn test_group_creation_with_validation() {
             level1_excl_id: Some(10),
             level2_excl_id: Some(20),
         },
-        members: vec![types::MulticastGroupMember { port_id, link_id }],
+        members: vec![types::MulticastGroupMember {
+            port_id: port_id.clone(),
+            link_id,
+        }],
     };
 
     let created = switch
@@ -354,7 +363,10 @@ async fn test_group_api_lifecycle() {
             level1_excl_id: None,
             level2_excl_id: None,
         },
-        members: vec![types::MulticastGroupMember { port_id, link_id }],
+        members: vec![types::MulticastGroupMember {
+            port_id: port_id.clone(),
+            link_id,
+        }],
     };
 
     let created = switch
@@ -441,9 +453,12 @@ async fn test_group_api_lifecycle() {
             level2_excl_id: Some(25),
         },
         members: vec![
-            types::MulticastGroupMember { port_id, link_id },
             types::MulticastGroupMember {
-                port_id: port_id2,
+                port_id: port_id.clone(),
+                link_id,
+            },
+            types::MulticastGroupMember {
+                port_id: port_id2.clone(),
                 link_id: link_id2,
             },
         ],
@@ -473,7 +488,7 @@ async fn test_group_api_lifecycle() {
 
     // Verify members were updated correctly
     let member_port_ids: HashSet<_> =
-        updated.members.iter().map(|m| m.port_id).collect();
+        updated.members.iter().map(|m| m.port_id.clone()).collect();
     assert!(member_port_ids.contains(&port_id));
     assert!(member_port_ids.contains(&port_id2));
 
@@ -539,7 +554,10 @@ async fn test_multicast_tagged_groups_management() {
             level1_excl_id: None,
             level2_excl_id: None,
         },
-        members: vec![types::MulticastGroupMember { port_id, link_id }],
+        members: vec![types::MulticastGroupMember {
+            port_id: port_id.clone(),
+            link_id,
+        }],
     };
 
     let created1 = switch
@@ -561,7 +579,10 @@ async fn test_multicast_tagged_groups_management() {
             level1_excl_id: None,
             level2_excl_id: None,
         },
-        members: vec![types::MulticastGroupMember { port_id, link_id }],
+        members: vec![types::MulticastGroupMember {
+            port_id: port_id.clone(),
+            link_id,
+        }],
     };
 
     let created2 = switch
@@ -659,7 +680,10 @@ async fn test_multicast_untagged_groups() {
             level1_excl_id: None,
             level2_excl_id: None,
         },
-        members: vec![types::MulticastGroupMember { port_id, link_id }],
+        members: vec![types::MulticastGroupMember {
+            port_id: port_id.clone(),
+            link_id,
+        }],
     };
 
     let created_untagged = switch

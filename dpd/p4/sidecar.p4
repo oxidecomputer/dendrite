@@ -13,7 +13,7 @@ const bit<9> USER_SPACE_SERVICE_PORT = 192;
 #endif
 
 #include <headers.p4>
-#include <meta.p4>
+#include <metadata.p4>
 #include <constants.p4>
 #include <parser.p4>
 
@@ -169,6 +169,7 @@ control Filter(
 				drop_mcast();
 				drop_mcast_ctr.count(ig_intr_md.ingress_port);
 				drop_reason_ctr.count(meta.drop_reason);
+				return;
 			} else if (meta.is_mcast) {
 				// Validate the IPv6 multicast MAC address format (RFC 2464,
 				// RFC 7042).
@@ -176,7 +177,8 @@ control Filter(
 				// IPv6 multicast addresses (ff00::/8) must use MAC addresses
 				// that follow the format 33:33:xxxx:xxxx where the last 32 bits
 				// are taken directly from the last 32 bits of the IPv6 address.
-				//
+
+					//
 				// The last two conditions cannot be checked by the parser
 				// statically, and, sadly, the first two conditions cannot
 				// be checked properly by the parser (parsing stops early).
@@ -188,6 +190,7 @@ control Filter(
 					drop_mcast_with_reason(DROP_MULTICAST_INVALID_MAC);
 					drop_mcast_ctr.count(ig_intr_md.ingress_port);
 					drop_reason_ctr.count(meta.drop_reason);
+					return;
 				}
 			}
 

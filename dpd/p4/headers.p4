@@ -196,34 +196,3 @@ struct sidecar_headers_t {
 	tcp_h		inner_tcp;
 	udp_h		inner_udp;
 }
-
-struct route4_result_t {
-	/*
-	 * The result of the multistage route selection process is an egress
-	 * port and a nexthop address
-	 */
-	ipv4_addr_t nexthop;
-	PortId_t port;
-
-	/* Did we successfully look up the route in the table? */
-	bool is_hit;
-
-	/*
-	 * A hash of the (address,port) fields, which is used to choose between
-	 * multiple potential routes.
-	 */
-	bit<8> hash;
-
-	/* Index into the target table of the first potential route */
-	bit<16> idx;
-	/* Number of consecutive slots containing potential routes */
-	bit<8> slots;
-	/* Which of those routes we should select, based the flow hash */
-	bit<16> slot;
-}
-
-struct route6_result_t {
-	ipv6_addr_t nexthop;
-	PortId_t port;
-	bool is_hit;
-}
