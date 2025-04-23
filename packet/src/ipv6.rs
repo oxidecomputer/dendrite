@@ -62,9 +62,9 @@ impl Ipv6Hdr {
         v
     }
 
-    pub fn adjust_hlim(pkt: &mut Packet, delta: i8) {
-        let hdr = pkt.hdrs.ipv6_hdr.as_mut().unwrap();
-        hdr.ipv6_hop_lim = (hdr.ipv6_hop_lim as i8 + delta) as u8;
+    pub fn adjust_hlim(pkt: &mut Packet, delta: i16) {
+        let hdr: &mut Ipv6Hdr = pkt.hdrs.ipv6_hdr.as_mut().unwrap();
+        hdr.ipv6_hop_lim = (hdr.ipv6_hop_lim as i16 + delta) as u8;
     }
 }
 
@@ -224,11 +224,11 @@ fn test_ipv6_parse() {
         "
         3333 0000 00fb c869
         cd3c 6917 86dd 6008
-        0d00 0010 11ff fe80 
+        0d00 0010 11ff fe80
         0000 0000 0000 0491
-        3609 ccb9 7632 ff02 
+        3609 ccb9 7632 ff02
         0000 0000 0000 0000
-        0000 0000 00fb 14e9 
+        0000 0000 00fb 14e9
         14e9 0000 e21a 0000
     "
     );

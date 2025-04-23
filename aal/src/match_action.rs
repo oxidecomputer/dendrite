@@ -72,7 +72,7 @@ impl MatchData {
 /// The MatchParse trait defines the behavior needed to convert a high-level
 /// Match field into our intermediate representation.
 pub trait MatchParse {
-    /// Return all the name sand values of the key fields as strings
+    /// Return all the names and values of the key fields as strings
     fn key_values(&self) -> BTreeMap<String, String>;
     /// Convert the key Struct to a MatchData struct
     fn key_to_ir(&self) -> AsicResult<MatchData>;

@@ -52,6 +52,7 @@ enum CounterId {
     Service,
     Ingress,
     Egress,
+    Multicast,
     Packet,
     DropPort,
     DropReason,
@@ -77,7 +78,7 @@ struct CounterDescription {
     p4_name: &'static str,
 }
 
-const COUNTERS: [CounterDescription; 6] = [
+const COUNTERS: [CounterDescription; 10] = [
     CounterDescription {
         id: CounterId::Service,
         client_name: "Service",
@@ -89,24 +90,44 @@ const COUNTERS: [CounterDescription; 6] = [
         p4_name: "pipe.Ingress.ingress_ctr",
     },
     CounterDescription {
-        id: CounterId::Egress,
-        client_name: "Egress",
-        p4_name: "pipe.Ingress.egress_ctr",
-    },
-    CounterDescription {
         id: CounterId::Packet,
         client_name: "Packet",
         p4_name: "pipe.Ingress.packet_ctr",
     },
     CounterDescription {
+        id: CounterId::Egress,
+        client_name: "Ingress_Egress",
+        p4_name: "pipe.Ingress.egress_ctr",
+    },
+    CounterDescription {
         id: CounterId::DropPort,
-        client_name: "Drop_Port",
+        client_name: "Ingress_Drop_Port",
         p4_name: "pipe.Ingress.drop_port_ctr",
     },
     CounterDescription {
         id: CounterId::DropReason,
-        client_name: "Drop_Reason",
+        client_name: "Ingress_Drop_Reason",
         p4_name: "pipe.Ingress.drop_reason_ctr",
+    },
+    CounterDescription {
+        id: CounterId::DropPort,
+        client_name: "Egress_Drop_Port",
+        p4_name: "pipe.Egress.drop_port_ctr",
+    },
+    CounterDescription {
+        id: CounterId::DropReason,
+        client_name: "Egress_Drop_Reason",
+        p4_name: "pipe.Egress.drop_reason_ctr",
+    },
+    CounterDescription {
+        id: CounterId::Egress,
+        client_name: "Egress",
+        p4_name: "pipe.Egress.egress_ctr",
+    },
+    CounterDescription {
+        id: CounterId::Multicast,
+        client_name: "Multicast",
+        p4_name: "pipe.Egress.mcast_ctr",
     },
 ];
 
@@ -226,6 +247,10 @@ enum DropReason {
     Ipv4Unrouteable,
     Ipv6Unrouteable,
     NatIngressMiss,
+    MulticastNoGroup,
+    MulticastInvalidMac,
+    MulticastCpuCopy,
+    MulticastSrcFiltered,
 }
 
 impl TryFrom<u8> for DropReason {
@@ -251,6 +276,10 @@ impl TryFrom<u8> for DropReason {
             15 => Ok(DropReason::Ipv4Unrouteable),
             16 => Ok(DropReason::Ipv6Unrouteable),
             17 => Ok(DropReason::NatIngressMiss),
+            18 => Ok(DropReason::MulticastNoGroup),
+            19 => Ok(DropReason::MulticastInvalidMac),
+            20 => Ok(DropReason::MulticastCpuCopy),
+            21 => Ok(DropReason::MulticastSrcFiltered),
             x => Err(format!("Unrecognized drop reason: {x}")),
         }
     }
@@ -280,6 +309,12 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
         DropReason::Ipv4Unrouteable => "ipv6_unrouteable".to_string(),
         DropReason::Ipv6Unrouteable => "ipv4_unrouteable".to_string(),
         DropReason::NatIngressMiss => "nat_ingress_miss".to_string(),
+        DropReason::MulticastNoGroup => "multicast_no_group".to_string(),
+        DropReason::MulticastInvalidMac => "multicast_invalid_mac".to_string(),
+        DropReason::MulticastCpuCopy => "multicast_cpu_copy".to_string(),
+        DropReason::MulticastSrcFiltered => {
+            "multicast_src_filtered".to_string()
+        }
     };
     Ok(Some(label))
 }
@@ -332,9 +367,10 @@ pub async fn get_values(
         let key = match counter_id {
             CounterId::Packet => packet_label(idx.idx),
             CounterId::Service => service_label(idx.idx as u8),
-            CounterId::Ingress | CounterId::Egress | CounterId::DropPort => {
-                port_label(switch, idx.idx).await
-            }
+            CounterId::Ingress
+            | CounterId::Egress
+            | CounterId::DropPort
+            | CounterId::Multicast => port_label(switch, idx.idx).await,
             CounterId::DropReason => reason_label(idx.idx as u8)?,
         };
 
