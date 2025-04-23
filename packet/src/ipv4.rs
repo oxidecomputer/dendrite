@@ -104,19 +104,6 @@ impl Ipv4Hdr {
         hdr.ipv4_ttl = ttl as u8;
         Ipv4Hdr::update_checksum(pkt);
     }
-
-    pub fn set_identification(pkt: &mut Packet, id: u16) {
-        let hdr = pkt.hdrs.ipv4_hdr.as_mut().unwrap();
-        hdr.ipv4_id = id;
-        Ipv4Hdr::update_checksum(pkt);
-    }
-
-    pub fn set_diffserv(pkt: &mut Packet, dscp: u8, ecn: u8) {
-        let hdr = pkt.hdrs.ipv4_hdr.as_mut().unwrap();
-        hdr.ipv4_dscp = dscp;
-        hdr.ipv4_ecn = ecn;
-        Ipv4Hdr::update_checksum(pkt);
-    }
 }
 
 impl Protocol for Ipv4Hdr {

@@ -3114,16 +3114,15 @@ async fn multicast_group_delete(
     path: Path<MulticastGroupIpParam>,
 ) -> Result<HttpResponseDeleted, HttpError> {
     let switch: &Switch = rqctx.context();
-    let ident = mcast::Identifier::Ip(path.into_inner().group_ip);
+    let ip = path.into_inner().group_ip;
 
-    mcast::del_group(switch, ident)
+    mcast::del_group(switch, ip)
         .map(|_| HttpResponseDeleted())
         .map_err(HttpError::from)
 }
 
 /**
- * Delete a multicast group configuration by ID if provided.
- * If no group ID is provided, all multicast groups will be deleted.
+ * Reset all multicast group configurations.
  */
 #[endpoint {
     method = DELETE,
@@ -3131,20 +3130,12 @@ async fn multicast_group_delete(
 }]
 async fn multicast_reset(
     rqctx: RequestContext<Arc<Switch>>,
-    query: Query<MulticastGroupIdParam>,
 ) -> Result<HttpResponseDeleted, HttpError> {
     let switch: &Switch = rqctx.context();
 
-    if let Some(group_id) = query.into_inner().group_id {
-        let ident = mcast::Identifier::GroupId(group_id);
-        mcast::del_group(switch, ident)
-            .map(|_| HttpResponseDeleted())
-            .map_err(HttpError::from)
-    } else {
-        mcast::reset(switch)
-            .map(|_| HttpResponseDeleted())
-            .map_err(HttpError::from)
-    }
+    mcast::reset(switch)
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
 }
 
 /**
@@ -3159,10 +3150,10 @@ async fn multicast_group_get(
     path: Path<MulticastGroupIpParam>,
 ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError> {
     let switch: &Switch = rqctx.context();
-    let ident = mcast::Identifier::Ip(path.into_inner().group_ip);
+    let ip = path.into_inner().group_ip;
 
     // Get the multicast group
-    mcast::get_group(switch, ident)
+    mcast::get_group(switch, ip)
         .map(HttpResponseOk)
         .map_err(HttpError::from)
 }
@@ -3180,9 +3171,9 @@ async fn multicast_group_update(
     group_info: TypedBody<mcast::MulticastGroupUpdateEntry>,
 ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError> {
     let switch: &Switch = rqctx.context();
-    let ident = mcast::Identifier::Ip(path.into_inner().group_ip);
+    let ip = path.into_inner().group_ip;
 
-    mcast::modify_group(switch, ident, group_info.into_inner())
+    mcast::modify_group(switch, ip, group_info.into_inner())
         .map(HttpResponseOk)
         .map_err(HttpError::from)
 }
@@ -3196,53 +3187,36 @@ async fn multicast_group_update(
 }]
 async fn multicast_groups_list(
     rqctx: RequestContext<Arc<Switch>>,
-    query_id: Query<MulticastGroupIdParam>,
     query_params: Query<
         PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
     >,
 ) -> Result<HttpResponseOk<ResultsPage<mcast::MulticastGroupResponse>>, HttpError>
 {
     let switch: &Switch = rqctx.context();
-    let group_id = query_id.into_inner().group_id;
 
     // If a group ID is provided, get the group by ID
-    if let Some(group_id) = group_id {
-        let ident = mcast::Identifier::GroupId(group_id);
-        let entry = mcast::get_group(switch, ident)?;
-        Ok(HttpResponseOk(ResultsPage::new(
-            vec![entry],
-            &EmptyScanParams {},
-            |e: &mcast::MulticastGroupResponse, _| MulticastGroupIpParam {
-                group_ip: e.ip(),
-            },
-        )?))
-    } else {
-        // If no group ID is provided, paginate through the groups
-        let pag_params = query_params.into_inner();
-        let Ok(limit) = usize::try_from(rqctx.page_limit(&pag_params)?.get())
-        else {
-            return Err(
-                DpdError::Invalid("Invalid page limit".to_string()).into()
-            );
-        };
 
-        let last_addr = match &pag_params.page {
-            WhichPage::First(..) => None,
-            WhichPage::Next(MulticastGroupIpParam { group_ip }) => {
-                Some(*group_ip)
-            }
-        };
+    // If no group ID is provided, paginate through the groups
+    let pag_params = query_params.into_inner();
+    let Ok(limit) = usize::try_from(rqctx.page_limit(&pag_params)?.get())
+    else {
+        return Err(DpdError::Invalid("Invalid page limit".to_string()).into());
+    };
 
-        let entries = mcast::get_range(switch, last_addr, limit, None);
+    let last_addr = match &pag_params.page {
+        WhichPage::First(..) => None,
+        WhichPage::Next(MulticastGroupIpParam { group_ip }) => Some(*group_ip),
+    };
 
-        Ok(HttpResponseOk(ResultsPage::new(
-            entries,
-            &EmptyScanParams {},
-            |e: &mcast::MulticastGroupResponse, _| MulticastGroupIpParam {
-                group_ip: e.ip(),
-            },
-        )?))
-    }
+    let entries = mcast::get_range(switch, last_addr, limit, None);
+
+    Ok(HttpResponseOk(ResultsPage::new(
+        entries,
+        &EmptyScanParams {},
+        |e: &mcast::MulticastGroupResponse, _| MulticastGroupIpParam {
+            group_ip: e.ip(),
+        },
+    )?))
 }
 
 /**

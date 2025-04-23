@@ -490,7 +490,13 @@ impl AsicOps for Handle {
         Ok(self.ports.lock().unwrap().len())
     }
 
-    fn mc_port_add(&self, _group_id: u16, _port: u16) -> AsicResult<()> {
+    fn mc_port_add(
+        &self,
+        _group_id: u16,
+        _port: u16,
+        _rid: u16,
+        _level1_excl_id: u16,
+    ) -> AsicResult<()> {
         unfurl!(self, mc_port_add);
         Err(AsicError::OperationUnsupported)
     }

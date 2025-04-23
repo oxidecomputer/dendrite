@@ -35,6 +35,8 @@ impl McGroupData {
         &mut self,
         group_id: u16,
         port: u16,
+        _rid: u16,
+        _level1_excl_id: u16,
     ) -> AsicResult<()> {
         let group = match self.groups.get_mut(&group_id) {
             Some(g) => Ok(g),

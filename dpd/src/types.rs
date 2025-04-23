@@ -85,8 +85,8 @@ pub enum DpdError {
     Oximeter(String),
     #[error("No switch identifiers available")]
     NoSwitchIdentifiers,
-    #[error("Multicast group error: {}", .0)]
-    McastGroup(String),
+    #[error("Multicast group failure: {}", .0)]
+    McastGroupFailure(String),
     #[error("Resource exhausted: {}", .0)]
     ResourceExhausted(String),
 }
@@ -267,7 +267,7 @@ impl convert::From<DpdError> for dropshot::HttpError {
             e @ DpdError::NoSwitchIdentifiers => {
                 dropshot::HttpError::for_unavail(None, format!("{e}"))
             }
-            DpdError::McastGroup(e) => {
+            DpdError::McastGroupFailure(e) => {
                 dropshot::HttpError::for_internal_error(e.to_string())
             }
             DpdError::ResourceExhausted(e) => {

@@ -33,6 +33,16 @@ pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
             nat_target.inner_mac
         )));
     }
+
+    let internal_nat_ip = Ipv6Net::new_unchecked(nat_target.internal_ip, 128);
+
+    if !internal_nat_ip.is_admin_scoped_multicast() {
+        return Err(DpdError::Invalid(format!(
+            "NAT target internal IP address {} is not a valid site/admin-local or org-scoped multicast address",
+            nat_target.internal_ip
+        )));
+    }
+
     Ok(())
 }
 
@@ -180,36 +190,6 @@ mod tests {
     use oxnet::Ipv4Net;
 
     use std::str::FromStr;
-
-    #[test]
-    fn test_ipv4_subnet_check() {
-        // Test subnet checks
-        assert!(in_subnet_v4(
-            Ipv4Addr::new(224, 0, 0, 100),
-            Ipv4Addr::new(224, 0, 0, 0),
-            24
-        ));
-        assert!(!in_subnet_v4(
-            Ipv4Addr::new(224, 0, 1, 1),
-            Ipv4Addr::new(224, 0, 0, 0),
-            24
-        ));
-    }
-
-    #[test]
-    fn test_ipv6_subnet_check() {
-        // Test subnet checks
-        assert!(in_subnet_v6(
-            Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x1234),
-            Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0),
-            16
-        ));
-        assert!(!in_subnet_v6(
-            Ipv6Addr::new(0xff03, 0, 0, 0, 0, 0, 0, 0x1234),
-            Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0),
-            16
-        ));
-    }
 
     #[test]
     fn test_ipv4_validation() {
@@ -454,7 +434,8 @@ mod tests {
         assert!(validate_nat_target(ucast_nat_target).is_err());
 
         let mcast_nat_target = NatTarget {
-            internal_ip: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
+            // org-scoped multicast
+            internal_ip: Ipv6Addr::new(0xff08, 0, 0, 0, 0, 0, 0, 0x1234),
             // Multicast MAC
             inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x00, 0x00, 0x01),
             vni: Vni::new(100).unwrap(),

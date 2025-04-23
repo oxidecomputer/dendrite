@@ -168,13 +168,19 @@ impl AsicOps for StubHandle {
         let mc_data = self.mc_data.lock().unwrap();
         mc_data.domain_port_count(group_id)
     }
-    fn mc_port_add(&self, group_id: u16, port: u16) -> AsicResult<()> {
+    fn mc_port_add(
+        &self,
+        group_id: u16,
+        port: u16,
+        rid: u16,
+        level1_excl_id: u16,
+    ) -> AsicResult<()> {
         info!(
             self.log,
             "adding port {} to multicast group {}", port, group_id
         );
         let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_port_add(group_id, port)
+        mc_data.domain_port_add(group_id, port, rid, level1_excl_id)
     }
     fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
         info!(

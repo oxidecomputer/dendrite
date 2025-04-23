@@ -452,6 +452,27 @@ impl From<bool> for ValueTypes {
     }
 }
 
+impl TryFrom<&ValueTypes> for bool {
+    type Error = &'static str;
+
+    fn try_from(v: &ValueTypes) -> Result<Self, Self::Error> {
+        match v {
+            ValueTypes::U64(v) => {
+                if *v == 0 {
+                    Ok(false)
+                } else if *v == 1 {
+                    Ok(true)
+                } else {
+                    Err("value not a boolean")
+                }
+            }
+            _ => Err("value not a boolean"),
+        }
+    }
+}
+
+unwrap_value_entry!(bool);
+
 #[derive(Debug, Hash, Clone)]
 pub enum ValueTypes {
     U64(u64),

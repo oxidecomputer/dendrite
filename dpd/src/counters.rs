@@ -251,6 +251,7 @@ enum DropReason {
     MulticastInvalidMac,
     MulticastCpuCopy,
     MulticastSrcFiltered,
+    MulticastPathFiltered,
 }
 
 impl TryFrom<u8> for DropReason {
@@ -280,6 +281,7 @@ impl TryFrom<u8> for DropReason {
             19 => Ok(DropReason::MulticastInvalidMac),
             20 => Ok(DropReason::MulticastCpuCopy),
             21 => Ok(DropReason::MulticastSrcFiltered),
+            22 => Ok(DropReason::MulticastPathFiltered),
             x => Err(format!("Unrecognized drop reason: {x}")),
         }
     }
@@ -314,6 +316,9 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
         DropReason::MulticastCpuCopy => "multicast_cpu_copy".to_string(),
         DropReason::MulticastSrcFiltered => {
             "multicast_src_filtered".to_string()
+        }
+        DropReason::MulticastPathFiltered => {
+            "multicast_path_filtered".to_string()
         }
     };
     Ok(Some(label))

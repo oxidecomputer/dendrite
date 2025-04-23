@@ -155,17 +155,7 @@ impl<T: Clone> RouteEntry<T> {
 }
 
 /// A Vlan identifier, made up of a port, link, and vlan tag.
-#[derive(
-    Debug,
-    Eq,
-    PartialEq,
-    Ord,
-    PartialOrd,
-    Clone,
-    Deserialize,
-    Serialize,
-    JsonSchema,
-)]
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone)]
 struct VlanId {
     // The switch port out which routed traffic is sent.
     port_id: PortId,

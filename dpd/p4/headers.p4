@@ -158,6 +158,7 @@ header geneve_h {
 
 const bit<16> GENEVE_OPT_CLASS_OXIDE	= 0x0129;
 const bit<7> GENEVE_OPT_OXIDE_EXTERNAL	= 0x00;
+const bit<7> GENEVE_OPT_OXIDE_MCAST	= 0x01; // Multicast tag
 
 header geneve_opt_h {
 	bit<16> class;
@@ -167,13 +168,30 @@ header geneve_opt_h {
 	bit<5> opt_len;
 }
 
+/* Geneve option for an `mcast_tag`.
+ * This is a 2-bit field that indicates the type of
+ * multicast traffic:
+ * 0 - Replicate packets to ports set for external multicast traffic
+ * 1 - Replicate packets to ports set for underlay multicast traffic
+ * 2 - Replicate packets to ports set for underlay and external multicast
+       traffic (bifurcated)
+ *
+ * The rest of the option is reserved.
+*/
+header geneve_opt_mcast_h {
+	bit<2> mcast_tag;
+	bit<30> reserved;
+}
+
 // Since we're a TEP, we need to push and read Geneve options.
 // `varbit` only allows us to carry.
 // XXX: For parsing past one option, add `extern ParserCounter`
 //      to oxidecomputer/p4/lang/p4rs/src/externs.rs, consider
 //      storing via `header_union`s.
 struct geneve_opt_headers_t {
-	geneve_opt_h	ox_external_tag;
+	geneve_opt_h ox_external_tag;
+	// Multicast-specific options
+	geneve_opt_mcast_h ox_mcast_tag;
 }
 
 struct sidecar_headers_t {

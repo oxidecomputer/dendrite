@@ -4,7 +4,7 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-//! Table operations for multicast routing entries.
+//! Table operations for multicast routing entries (on Ingress to the switch).
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -14,6 +14,7 @@ use super::{Ipv4MatchKey, Ipv6MatchKey};
 
 use aal::ActionParse;
 use aal_macros::*;
+use oxnet::Ipv6Net;
 use slog::debug;
 
 /// IPv4 Table for multicast routing entries.
@@ -28,7 +29,7 @@ enum Ipv4Action {
     #[action_xlate(name = "forward")]
     Forward,
     #[action_xlate(name = "forward_vlan")]
-    ForwardVlan { vlan_id: u16 },
+    ForwardVLAN { vlan_id: u16 },
 }
 
 #[derive(ActionParse, Debug)]
@@ -36,7 +37,7 @@ enum Ipv6Action {
     #[action_xlate(name = "forward")]
     Forward,
     #[action_xlate(name = "forward_vlan")]
-    ForwardVlan { vlan_id: u16 },
+    ForwardVLAN { vlan_id: u16 },
 }
 
 /// Add an IPv4 multicast route entry to the routing table, keyed on
@@ -47,11 +48,12 @@ pub(crate) fn add_ipv4_entry(
     vlan_id: Option<u16>,
 ) -> DpdResult<()> {
     let match_key = Ipv4MatchKey::new(route);
+
     let action_data = match vlan_id {
         None => Ipv4Action::Forward,
         Some(vlan_id) => {
             common::network::validate_vlan(vlan_id)?;
-            Ipv4Action::ForwardVlan { vlan_id }
+            Ipv4Action::ForwardVLAN { vlan_id }
         }
     };
 
@@ -74,7 +76,7 @@ pub(crate) fn update_ipv4_entry(
         None => Ipv4Action::Forward,
         Some(vlan_id) => {
             common::network::validate_vlan(vlan_id)?;
-            Ipv4Action::ForwardVlan { vlan_id }
+            Ipv4Action::ForwardVLAN { vlan_id }
         }
     };
 
@@ -122,11 +124,19 @@ pub(crate) fn add_ipv6_entry(
     vlan_id: Option<u16>,
 ) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(route);
-    let action_data = match vlan_id {
-        None => Ipv6Action::Forward,
-        Some(vlan_id) => {
-            common::network::validate_vlan(vlan_id)?;
-            Ipv6Action::ForwardVlan { vlan_id }
+    let internal_ip = Ipv6Net::new_unchecked(route, 128);
+
+    let action_data: Ipv6Action = if internal_ip.is_admin_scoped_multicast()
+        || internal_ip.is_unique_local()
+    {
+        Ipv6Action::Forward
+    } else {
+        match vlan_id {
+            None => Ipv6Action::Forward,
+            Some(vlan_id) => {
+                common::network::validate_vlan(vlan_id)?;
+                Ipv6Action::ForwardVLAN { vlan_id }
+            }
         }
     };
 
@@ -145,11 +155,19 @@ pub(crate) fn update_ipv6_entry(
     vlan_id: Option<u16>,
 ) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(route);
-    let action_data = match vlan_id {
-        None => Ipv6Action::Forward,
-        Some(vlan_id) => {
-            common::network::validate_vlan(vlan_id)?;
-            Ipv6Action::ForwardVlan { vlan_id }
+    let internal_ip = Ipv6Net::new_unchecked(route, 128);
+
+    let action_data: Ipv6Action = if internal_ip.is_admin_scoped_multicast()
+        || internal_ip.is_unique_local()
+    {
+        Ipv6Action::Forward
+    } else {
+        match vlan_id {
+            None => Ipv6Action::Forward,
+            Some(vlan_id) => {
+                common::network::validate_vlan(vlan_id)?;
+                Ipv6Action::ForwardVLAN { vlan_id }
+            }
         }
     };
 

@@ -12,7 +12,7 @@ use crate::{mcast::MulticastGroupId, table::*, Switch};
 
 use super::{Ipv4MatchKey, Ipv6MatchKey};
 
-use aal::{ActionParse, AsicOps};
+use aal::ActionParse;
 use aal_macros::*;
 use slog::debug;
 
@@ -27,7 +27,7 @@ pub(crate) const IPV6_TABLE_NAME: &str =
 enum Ipv4Action {
     #[action_xlate(name = "configure_mcastv4")]
     ConfigureIpv4 {
-        mcast_grp: MulticastGroupId,
+        mcast_grp_a: MulticastGroupId,
         rid: u16,
         level1_excl_id: u16,
         // This is a `bit<u9>` in the P4 sidecar and tofino doc, but we can't
@@ -40,7 +40,8 @@ enum Ipv4Action {
 enum Ipv6Action {
     #[action_xlate(name = "configure_mcastv6")]
     ConfigureIpv6 {
-        mcast_grp: MulticastGroupId,
+        mcast_grp_a: MulticastGroupId,
+        mcast_grp_b: MulticastGroupId,
         rid: u16,
         level1_excl_id: u16,
         // This is a `bit<u9>` in the P4 sidecar and tofino doc, but we can't
@@ -49,12 +50,13 @@ enum Ipv6Action {
     },
 }
 
-/// Add an IPv4 multicast entry to the replication table:
-/// `dst_addr -> mcast_grp, replication_id, level1_excl_id, level2_excl_id`.
+/// Add IPv4 multicast entries to the replication table:
+/// `dst_addr -> external_mcast_grp, replication_id, level1_excl_id,
+/// level2_excl_id`.
 pub(crate) fn add_ipv4_entry(
     s: &Switch,
     dst_addr: Ipv4Addr,
-    mcast_grp: MulticastGroupId,
+    external_mcast_grp: MulticastGroupId,
     replication_id: u16,
     level1_excl_id: u16,
     level2_excl_id: u16,
@@ -65,16 +67,10 @@ pub(crate) fn add_ipv4_entry(
         ));
     }
 
-    if !s.asic_hdl.mc_group_exists(mcast_grp) {
-        return Err(DpdError::McastGroup(
-            "multicast group does not exist".to_string(),
-        ));
-    }
-
     let match_key = Ipv4MatchKey::new(dst_addr);
 
     let action_data = Ipv4Action::ConfigureIpv4 {
-        mcast_grp,
+        mcast_grp_a: external_mcast_grp,
         rid: replication_id,
         level1_excl_id,
         level2_excl_id,
@@ -88,11 +84,11 @@ pub(crate) fn add_ipv4_entry(
     s.table_entry_add(TableType::McastIpv4, &match_key, &action_data)
 }
 
-/// Update an IPv4 multicast entry in the replication table.
+/// Update an IPv4 multicast entries in the replication table.
 pub(crate) fn update_ipv4_entry(
     s: &Switch,
     dst_addr: Ipv4Addr,
-    mcast_grp: MulticastGroupId,
+    external_mcast_grp: MulticastGroupId,
     replication_id: u16,
     level1_excl_id: u16,
     level2_excl_id: u16,
@@ -103,16 +99,9 @@ pub(crate) fn update_ipv4_entry(
         ));
     }
 
-    if !s.asic_hdl.mc_group_exists(mcast_grp) {
-        return Err(DpdError::McastGroup(
-            "multicast group does not exist".to_string(),
-        ));
-    }
-
     let match_key = Ipv4MatchKey::new(dst_addr);
-
     let action_data = Ipv4Action::ConfigureIpv4 {
-        mcast_grp,
+        mcast_grp_a: external_mcast_grp,
         rid: replication_id,
         level1_excl_id,
         level2_excl_id,
@@ -123,10 +112,15 @@ pub(crate) fn update_ipv4_entry(
         "update mcast_ipv4 entry {} -> {:?}", dst_addr, action_data
     );
 
+    // Try to update or add (as it may be new)
     s.table_entry_update(TableType::McastIpv4, &match_key, &action_data)
+        .or_else(|_| {
+            // If update fails, try to add instead
+            s.table_entry_add(TableType::McastIpv4, &match_key, &action_data)
+        })
 }
 
-/// Delete an IPv4 multicast entry from replication table, keyed on
+/// Delete an IPv4 multicast entries from replication table, keyed on
 /// `dst_addr`.
 pub(crate) fn del_ipv4_entry(s: &Switch, dst_addr: Ipv4Addr) -> DpdResult<()> {
     let match_key = Ipv4MatchKey::new(dst_addr);
@@ -154,12 +148,14 @@ pub(crate) fn reset_ipv4(s: &Switch) -> DpdResult<()> {
     s.table_clear(TableType::McastIpv4)
 }
 
-/// Add an IPv6 multicast entry to the replication table:
-/// `dst_addr -> mcast_grp, replication_id, level1_excl_id, level2_excl_id`.
+/// Add an IPv6 multicast entries to the replication table:
+/// `dst_addr -> underlay_mcast_grp && external_mcast_grp, replication_id,
+/// level1_excl_id, level2_excl_id`.
 pub(crate) fn add_ipv6_entry(
     s: &Switch,
     dst_addr: Ipv6Addr,
-    mcast_grp: MulticastGroupId,
+    underlay_mcast_grp: Option<MulticastGroupId>,
+    external_mcast_grp: Option<MulticastGroupId>,
     replication_id: u16,
     level1_excl_id: u16,
     level2_excl_id: u16,
@@ -170,16 +166,18 @@ pub(crate) fn add_ipv6_entry(
         ));
     }
 
-    if !s.asic_hdl.mc_group_exists(mcast_grp) {
-        return Err(DpdError::McastGroup(
-            "multicast group does not exist".to_string(),
+    if underlay_mcast_grp.is_none() && external_mcast_grp.is_none() {
+        return Err(DpdError::McastGroupFailure(
+            "neither underlay nor external multicast group specified"
+                .to_string(),
         ));
     }
 
     let match_key = Ipv6MatchKey::new(dst_addr);
 
     let action_data = Ipv6Action::ConfigureIpv6 {
-        mcast_grp,
+        mcast_grp_a: underlay_mcast_grp.unwrap_or(0),
+        mcast_grp_b: external_mcast_grp.unwrap_or(0),
         rid: replication_id,
         level1_excl_id,
         level2_excl_id,
@@ -193,11 +191,12 @@ pub(crate) fn add_ipv6_entry(
     s.table_entry_add(TableType::McastIpv6, &match_key, &action_data)
 }
 
-/// Update an IPv6 multicast entry in the replication table.
+/// Update an IPv6 multicast entries in the replication table.
 pub(crate) fn update_ipv6_entry(
     s: &Switch,
     dst_addr: Ipv6Addr,
-    mcast_grp: MulticastGroupId,
+    underlay_mcast_grp: Option<MulticastGroupId>,
+    external_mcast_grp: Option<MulticastGroupId>,
     replication_id: u16,
     level1_excl_id: u16,
     level2_excl_id: u16,
@@ -208,16 +207,18 @@ pub(crate) fn update_ipv6_entry(
         ));
     }
 
-    if !s.asic_hdl.mc_group_exists(mcast_grp) {
-        return Err(DpdError::McastGroup(
-            "multicast group does not exist".to_string(),
+    if underlay_mcast_grp.is_none() && external_mcast_grp.is_none() {
+        return Err(DpdError::McastGroupFailure(
+            "neither underlay nor external multicast group specified"
+                .to_string(),
         ));
     }
 
     let match_key = Ipv6MatchKey::new(dst_addr);
 
     let action_data = Ipv6Action::ConfigureIpv6 {
-        mcast_grp,
+        mcast_grp_a: underlay_mcast_grp.unwrap_or(0),
+        mcast_grp_b: external_mcast_grp.unwrap_or(0),
         rid: replication_id,
         level1_excl_id,
         level2_excl_id,
@@ -231,7 +232,7 @@ pub(crate) fn update_ipv6_entry(
     s.table_entry_update(TableType::McastIpv6, &match_key, &action_data)
 }
 
-/// Delete an IPv6 multicast entry from replication table, keyed on
+/// Delete an IPv6 multicast entries from replication table, keyed on
 /// `dst_addr`.
 pub(crate) fn del_ipv6_entry(s: &Switch, dst_addr: Ipv6Addr) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(dst_addr);

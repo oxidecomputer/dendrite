@@ -106,7 +106,7 @@ fn associate_node(
             dev_id,
             mgrp_hdl,
             node_hdl,
-            true,
+            exclusion_id != 0,
             exclusion_id,
         )
         .check_error("associating multicast node")?;
@@ -237,11 +237,14 @@ pub fn domain_add_port(
     hdl: &Handle,
     group_id: u16,
     port: u16,
+    rid: u16,
+    level_1_excl_id: u16,
 ) -> AsicResult<()> {
     debug!(
         hdl.log,
         "adding port {} to multicast domain {}", port, group_id
     );
+
     let mut domains = hdl.domains.lock().unwrap();
     let domain = match domains.get_mut(&group_id) {
         Some(d) => Ok(d),
@@ -266,7 +269,7 @@ pub fn domain_add_port(
     mc.node_hdl = node_create(
         bf.mcast_hdl,
         bf.dev_id,
-        port, // Use port_id as the replication ID
+        rid,
         &mut mc.portmap,
         &mut mc.lagmap,
     )?;
@@ -276,7 +279,7 @@ pub fn domain_add_port(
         bf.dev_id,
         domain.mgrp_hdl,
         mc.node_hdl,
-        port, // use the port number as the l1 exclusion ID
+        level_1_excl_id,
     ) {
         Ok(_) => {
             domain.ports.insert(port, mc);

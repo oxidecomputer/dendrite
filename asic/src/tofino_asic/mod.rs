@@ -161,8 +161,14 @@ impl AsicOps for Handle {
         mcast::domain_port_count(self, group_id)
     }
 
-    fn mc_port_add(&self, group_id: u16, port: u16) -> AsicResult<()> {
-        mcast::domain_add_port(self, group_id, port)
+    fn mc_port_add(
+        &self,
+        group_id: u16,
+        port: u16,
+        rid: u16,
+        level_1_excl_id: u16,
+    ) -> AsicResult<()> {
+        mcast::domain_add_port(self, group_id, port, rid, level_1_excl_id)
     }
 
     fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {

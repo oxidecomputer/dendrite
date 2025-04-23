@@ -202,9 +202,15 @@ pub trait AsicOps {
     /// For a given multicast group, return the number of ports assigned to it.
     fn mc_port_count(&self, group_id: u16) -> AsicResult<usize>;
 
-    /// Add a port to a multicast group.  The port is identified using its ASIC
+    /// Add a port to a multicast group. The port is identified using its ASIC
     /// identifier.
-    fn mc_port_add(&self, group_id: u16, port: AsicId) -> AsicResult<()>;
+    fn mc_port_add(
+        &self,
+        group_id: u16,
+        port: AsicId,
+        rid: u16,
+        level_1_excl_id: u16,
+    ) -> AsicResult<()>;
 
     /// Remove a port from a multicast group.  The port is identified using its ASIC
     /// identifier.

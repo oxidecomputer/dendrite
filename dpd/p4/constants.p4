@@ -5,34 +5,6 @@
 // Copyright 2025 Oxide Computer Company
 
 const bit<16> L2_ISOLATED_FLAG = 0x8000;
-#define IS_SERVICE(p) ((p) == USER_SPACE_SERVICE_PORT)
-
-// Includes the checksum for the original data, the geneve header, the
-// outer udp header, and the outer ipv6 pseudo-header.
-// NOTE: safe to include geneve ox_external_tag here as it is filled
-// on nat_ingress, and nat_checksum is only computer on nat_ingress.
-#define COMMON_FIELDS                \
-    meta.body_checksum,              \
-    hdr.inner_eth,                   \
-    hdr.geneve,                      \
-    hdr.geneve_opts.ox_external_tag, \
-    hdr.udp.src_port,                \
-    hdr.udp.dst_port,                \
-    hdr.udp.hdr_length,              \
-    (bit<16>)hdr.ipv6.next_hdr,      \
-    hdr.ipv6.src_addr,               \
-    hdr.ipv6.dst_addr,               \
-    hdr.ipv6.payload_len
-
-// Includes the final bit of the inner ipv4 pseudo-header and the inner ipv4
-// header
-#define IPV4_FIELDS         \
-    meta.l4_length,         \
-    hdr.inner_ipv4
-
-// Includes the inner ipv6 header
-#define IPV6_FIELDS         \
-    hdr.inner_ipv6
 
 // TODO: these all need to be bigger. Early experimentation is showing that this
 // is going to need to come either through ATCAM/ALPM or code restructuring.
@@ -44,7 +16,8 @@ const int IPV4_ARP_SIZE             = 512;  // arp cache
 const int IPV6_NEIGHBOR_SIZE        = 512;  // ipv6 neighbor cache
 const int SWITCH_IPV4_ADDRS_SIZE    = 512;  // ipv4 addrs assigned to our ports
 const int SWITCH_IPV6_ADDRS_SIZE    = 512;  // ipv6 addrs assigned to our ports
-const int MULTICAST_TABLE_SIZE      = 1024; // multicast routing table(s) for ip4/ip6 separately
+const int IPV4_MULTICAST_TABLE_SIZE = 1024; // multicast routing table(s) for IPv4
+const int IPV6_MULTICAST_TABLE_SIZE = 1024; // multicast routing table(s) for IPv6
 
 const bit<8> SC_FWD_FROM_USERSPACE  = 0x00;
 const bit<8> SC_FWD_TO_USERSPACE    = 0x01;
@@ -54,6 +27,7 @@ const bit<8> SC_NEIGHBOR_NEEDED     = 0x04;
 const bit<8> SC_INVALID             = 0xff;
 
 /* flags used for per-packet-type counters */
+const bit<10> PKT_RESUBMIT  = 0x300;
 const bit<10> PKT_ETHER     = 0x200;
 const bit<10> PKT_LLDP      = 0x100;
 const bit<10> PKT_VLAN      = 0x080;
@@ -72,6 +46,21 @@ const bit<8> SVC_COUNTER_V4_PING_REPLY = 2;
 const bit<8> SVC_COUNTER_V6_PING_REPLY = 3;
 const bit<8> SVC_COUNTER_BAD_PING = 4;
 const bit<32> SVC_COUNTER_MAX = 5;
+
+/* Encapped Multicast Tags */
+const bit<2> MULTICAST_TAG_EXTERNAL = 0;
+const bit<2> MULTICAST_TAG_UNDERLAY = 1;
+const bit<2> MULTICAST_TAG_UNDERLAY_EXTERNAL = 2;
+
+/* IPv6 Address Mask Constants */
+const bit<128> IPV6_SCOPE_MASK = 0xfff00000000000000000000000000000;  // Match ff0X::/16
+const bit<128> IPV6_ULA_MASK = 0xff00000000000000000000000000000;     // Match fd00::/8
+
+/* IPv6 Address Pattern Constants */
+const bit<128> IPV6_ADMIN_LOCAL_PATTERN = 0xff040000000000000000000000000000 & IPV6_SCOPE_MASK;  // ff04::/16
+const bit<128> IPV6_SITE_LOCAL_PATTERN = 0xff050000000000000000000000000000 & IPV6_SCOPE_MASK;   // ff05::/16
+const bit<128> IPV6_ORG_SCOPE_PATTERN = 0xff080000000000000000000000000000 & IPV6_SCOPE_MASK;    // ff08::/16
+const bit<128> IPV6_ULA_PATTERN = 0xFfd00000000000000000000000000000 & IPV6_ULA_MASK;            // fd00::/8
 
 /* Reasons a packet may be dropped by the p4 pipeline */
 const bit<8> DROP_IPV4_SWITCH_ADDR_MISS         = 0x01;
@@ -95,4 +84,6 @@ const bit<8> DROP_MULTICAST_NO_GROUP            = 0x12;
 const bit<8> DROP_MULTICAST_INVALID_MAC         = 0x13;
 const bit<8> DROP_MULTICAST_CPU_COPY            = 0x14;
 const bit<8> DROP_MULTICAST_SOURCE_FILTERED     = 0x15;
-const bit<32> DROP_REASON_MAX                   = 0x16;
+const bit<8> DROP_MULTICAST_PATH_FILTERED       = 0x16;
+const bit<32> DROP_REASON_MAX                   = 0x17;
+

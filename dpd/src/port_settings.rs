@@ -4,10 +4,6 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-// This Source Code Form is subject to the terms of the Mozilla Source
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
-
 use crate::api_server::LinkSettings;
 use crate::api_server::PortSettings;
 use crate::link::Link;

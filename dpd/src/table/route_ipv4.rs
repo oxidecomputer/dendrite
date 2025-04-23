@@ -30,7 +30,7 @@ struct IndexKey {
 
 // Route entries stored in the index->route_data table
 #[derive(ActionParse, Debug)]
-pub(crate) enum RouteAction {
+enum RouteAction {
     #[action_xlate(name = "forward")]
     Forward { port: u16, nexthop: Ipv4Addr },
     #[action_xlate(name = "forward_vlan")]

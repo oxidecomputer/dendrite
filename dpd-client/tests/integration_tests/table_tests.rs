@@ -36,7 +36,7 @@ use dpd_client::ResponseValue;
 // This table has further shrunk to 4022 entries with the open source
 // compiler.  That is being tracked as issue #1092, which will presumably
 // subsume #1013.
-// update: with the move to 8192 entries we're now at 8191 entries.
+// update: with the move to 8192 entries we're now at 8190 entries.
 const IPV4_LPM_SIZE: usize = 8191; // ipv4 forwarding table
 const IPV6_LPM_SIZE: usize = 1025; // ipv6 forwarding table
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
@@ -45,8 +45,11 @@ const IPV4_NAT_TABLE_SIZE: usize = 1024; // nat routing table
 const IPV6_NAT_TABLE_SIZE: usize = 1024; // nat routing table
 const IPV4_ARP_SIZE: usize = 512; // arp cache
 const IPV6_NEIGHBOR_SIZE: usize = 512; // ipv6 neighbor cache
-/// Multicast routing tables (ipv4 @ 1024 and ipv6 @ 1024),
-/// and we alternate between ipv4 and ipv6 for each entry.
+/// Multicast routing tables add two entries for each entry in the
+/// replication table, one for each direction (ingress and egress).
+///
+/// We alternate between IPv4 and IPv6 multicast addresses, so it's
+/// 512 entries for each type of address.
 const MULTICAST_TABLE_SIZE: usize = 2048;
 const MCAST_TAG: &str = "mcast_table_test"; // multicast group tag
 
@@ -309,7 +312,7 @@ impl TableTest for types::Ipv4Nat {
         let external_ip = Ipv4Addr::new(192, 168, 0, 1);
 
         let tgt = types::NatTarget {
-            internal_ip: ::common::DEFAULT_MULTICAST_NAT_IP,
+            internal_ip: Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 1),
             inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             vni: 0.into(),
         };
@@ -478,7 +481,8 @@ impl TableTest<types::MulticastGroupResponse, ()>
         switch: &Switch,
         idx: usize,
     ) -> OpResult<types::MulticastGroupResponse> {
-        let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
+        let (port_id1, link_id1) = switch.link_id(PhysPort(11)).unwrap();
+        let (port_id2, link_id2) = switch.link_id(PhysPort(12)).unwrap();
 
         // Alternate between IPv4 and IPv6 based on whether idx is even or odd
         let group_ip = if idx % 2 == 0 {
@@ -489,7 +493,7 @@ impl TableTest<types::MulticastGroupResponse, ()>
 
         // Create a NAT target
         let nat_target = types::NatTarget {
-            internal_ip: dpd_client::default_multicast_nat_ip(),
+            internal_ip: Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 1),
             inner_mac: MacAddr::new(0xe1, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             vni: (100 + idx as u32).into(),
         };
@@ -509,11 +513,21 @@ impl TableTest<types::MulticastGroupResponse, ()>
             vlan_id,
             sources: None,
             replication_info: types::MulticastReplicationEntry {
-                replication_id: Some(1000 + idx as u16),
                 level1_excl_id: Some(10),
                 level2_excl_id: Some(20),
             },
-            members: vec![types::MulticastGroupMember { port_id, link_id }],
+            members: vec![
+                types::MulticastGroupMember {
+                    port_id: port_id1,
+                    link_id: link_id1,
+                    direction: types::Direction::External,
+                },
+                types::MulticastGroupMember {
+                    port_id: port_id2,
+                    link_id: link_id2,
+                    direction: types::Direction::External,
+                },
+            ],
         };
 
         switch.client.multicast_group_create(&group_entry).await

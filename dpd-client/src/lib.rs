@@ -351,11 +351,6 @@ pub const fn default_port() -> u16 {
     ::common::DEFAULT_DPD_PORT
 }
 
-/// Return the default multicast NAT IP target address.
-pub const fn default_multicast_nat_ip() -> Ipv6Addr {
-    ::common::DEFAULT_MULTICAST_NAT_IP
-}
-
 impl types::ReceiverPower {
     /// Fetch the contained floating point value inside a receiver power
     /// measurement.

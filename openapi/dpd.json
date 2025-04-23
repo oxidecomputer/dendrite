@@ -1091,16 +1091,6 @@
         "parameters": [
           {
             "in": "query",
-            "name": "group_id",
-            "schema": {
-              "nullable": true,
-              "type": "integer",
-              "format": "uint16",
-              "minimum": 0
-            }
-          },
-          {
-            "in": "query",
             "name": "limit",
             "description": "Maximum number of items returned by a single call",
             "schema": {
@@ -1176,21 +1166,8 @@
         }
       },
       "delete": {
-        "summary": "Delete a multicast group configuration by ID if provided.",
-        "description": "If no group ID is provided, all multicast groups will be deleted.",
+        "summary": "Reset all multicast group configurations.",
         "operationId": "multicast_reset",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "group_id",
-            "schema": {
-              "nullable": true,
-              "type": "integer",
-              "format": "uint16",
-              "minimum": 0
-            }
-          }
-        ],
         "responses": {
           "204": {
             "description": "successful deletion"
@@ -5809,6 +5786,14 @@
           "readapt_cnt"
         ]
       },
+      "Direction": {
+        "description": "Direction of multicast traffic, either underlay or external.",
+        "type": "string",
+        "enum": [
+          "Underlay",
+          "External"
+        ]
+      },
       "ElectricalMode": {
         "description": "The electrical mode of a QSFP-capable port.\n\nQSFP ports can be broken out into one of several different electrical configurations or modes. This describes how the transmit/receive lanes are grouped into a single, logical link.\n\nNote that the electrical mode may only be changed if there are no links within the port, _and_ if the inserted QSFP module actually supports this mode.",
         "oneOf": [
@@ -7467,6 +7452,9 @@
         "description": "Represents a member of a multicast group.",
         "type": "object",
         "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/Direction"
+          },
           "link_id": {
             "$ref": "#/components/schemas/LinkId"
           },
@@ -7475,6 +7463,7 @@
           }
         },
         "required": [
+          "direction",
           "link_id",
           "port_id"
         ]
@@ -7486,7 +7475,8 @@
           "ext_fwding": {
             "$ref": "#/components/schemas/ExternalForwarding"
           },
-          "group_id": {
+          "external_group_id": {
+            "nullable": true,
             "type": "integer",
             "format": "uint16",
             "minimum": 0
@@ -7517,11 +7507,16 @@
           "tag": {
             "nullable": true,
             "type": "string"
+          },
+          "underlay_group_id": {
+            "nullable": true,
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
           }
         },
         "required": [
           "ext_fwding",
-          "group_id",
           "group_ip",
           "int_fwding",
           "members",
@@ -7607,12 +7602,6 @@
             "type": "integer",
             "format": "uint16",
             "minimum": 0
-          },
-          "replication_id": {
-            "nullable": true,
-            "type": "integer",
-            "format": "uint16",
-            "minimum": 0
           }
         }
       },
@@ -7630,7 +7619,7 @@
             "format": "uint16",
             "minimum": 0
           },
-          "replication_id": {
+          "rid": {
             "type": "integer",
             "format": "uint16",
             "minimum": 0
@@ -7639,7 +7628,7 @@
         "required": [
           "level1_excl_id",
           "level2_excl_id",
-          "replication_id"
+          "rid"
         ]
       },
       "NatTarget": {
