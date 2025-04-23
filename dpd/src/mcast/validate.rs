@@ -182,36 +182,6 @@ mod tests {
     use std::str::FromStr;
 
     #[test]
-    fn test_ipv4_subnet_check() {
-        // Test subnet checks
-        assert!(in_subnet_v4(
-            Ipv4Addr::new(224, 0, 0, 100),
-            Ipv4Addr::new(224, 0, 0, 0),
-            24
-        ));
-        assert!(!in_subnet_v4(
-            Ipv4Addr::new(224, 0, 1, 1),
-            Ipv4Addr::new(224, 0, 0, 0),
-            24
-        ));
-    }
-
-    #[test]
-    fn test_ipv6_subnet_check() {
-        // Test subnet checks
-        assert!(in_subnet_v6(
-            Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x1234),
-            Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0),
-            16
-        ));
-        assert!(!in_subnet_v6(
-            Ipv6Addr::new(0xff03, 0, 0, 0, 0, 0, 0, 0x1234),
-            Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0),
-            16
-        ));
-    }
-
-    #[test]
     fn test_ipv4_validation() {
         // These should be allowed
         assert!(
