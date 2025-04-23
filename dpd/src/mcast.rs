@@ -454,25 +454,57 @@ pub(crate) fn add_group(
 /// Delete a multicast group from the switch, including all associated tables
 /// and port mappings.
 pub(crate) fn del_group(s: &Switch, ident: Identifier) -> DpdResult<()> {
-    let (group_ip, group) = find_group(s, &ident)?;
+    let mut mcast = s.mcast.lock().unwrap();
+    let (group_ip, group) = match ident {
+        Identifier::Ip(ip) => {
+            let group = mcast.groups.remove(&ip).ok_or_else(|| {
+                DpdError::Missing(format!(
+                    "Multicast group for IP {} not found",
+                    ip
+                ))
+            })?;
+            (ip, group)
+        }
+        Identifier::GroupId(group_id) => {
+            let (ip, group) = mcast
+                .groups
+                .iter()
+                .find(|(_, g)| g.group_id == group_id)
+                .map(|(ip, _)| *ip)
+                .ok_or_else(|| {
+                    DpdError::Missing(format!(
+                        "Multicast group ID {} not found",
+                        group_id
+                    ))
+                })
+                .and_then(|ip| {
+                    mcast
+                        .groups
+                        .remove(&ip)
+                        .map(|group| (ip, group))
+                        .ok_or_else(|| {
+                            DpdError::Missing(
+                                "Group not found on second fetch".to_string(),
+                            )
+                        })
+                })?;
+            (ip, group)
+        }
+    };
+    mcast.used_group_ids.remove(&group.group_id);
+
+    drop(mcast);
 
     debug!(s.log, "deleting multicast group for IP {}", group_ip);
 
-    // Now we have both the IP and the group, continue with deletion
-    // Remove the route from all associated tables
     del_entry(s, group_ip, &group)?;
 
-    // Delete the group from the ASIC, which also deletes the associated ports
     s.asic_hdl.mc_group_destroy(group.group_id).map_err(|e| {
         DpdError::McastGroup(format!(
             "failed to delete multicast group for IP {} with ID {}: {:?}",
             group_ip, group.group_id, e
         ))
     })?;
-
-    // Remove from our tracking
-    let mut mcast = s.mcast.lock().unwrap();
-    mcast.groups.remove(&group_ip);
 
     Ok(())
 }
@@ -482,10 +514,40 @@ pub(crate) fn get_group(
     s: &Switch,
     ident: Identifier,
 ) -> DpdResult<MulticastGroupResponse> {
-    let (group_ip, group) = find_group(s, &ident)?;
+    let mcast = s.mcast.lock().unwrap();
 
-    // Convert to response
-    Ok(MulticastGroupResponse::new(group_ip, &group))
+    match ident {
+        Identifier::Ip(ip) => {
+            let group = mcast
+                .groups
+                .get(&ip)
+                .ok_or_else(|| {
+                    DpdError::Missing(format!(
+                        "multicast group for IP {} not found",
+                        ip
+                    ))
+                })?
+                .clone();
+
+            Ok(MulticastGroupResponse::new(ip, &group))
+        }
+        Identifier::GroupId(group_id) => {
+            // We still need to clone here to avoid lifetime issues
+            let (ip, group) = mcast
+                .groups
+                .iter()
+                .find(|(_, g)| g.group_id == group_id)
+                .map(|(ip, g)| (*ip, g.clone()))
+                .ok_or_else(|| {
+                    DpdError::Missing(format!(
+                        "multicast group with ID {} not found",
+                        group_id
+                    ))
+                })?;
+
+            Ok(MulticastGroupResponse::new(ip, &group))
+        }
+    }
 }
 
 /// Modify a multicast group configuration.
@@ -494,13 +556,36 @@ pub(crate) fn modify_group(
     ident: Identifier,
     new_group_info: MulticastGroupUpdateEntry,
 ) -> DpdResult<MulticastGroupResponse> {
-    let (group_ip, group) = find_group(s, &ident)?;
+    let mut mcast = s.mcast.lock().unwrap();
 
-    debug!(s.log, "modifying multicast group for IP {}", group_ip);
+    let (group_ip, group_entry) = match ident {
+        Identifier::Ip(ip) => {
+            let entry = mcast.groups.get_mut(&ip).ok_or_else(|| {
+                DpdError::Missing(format!(
+                    "Multicast group for IP {} not found",
+                    ip
+                ))
+            })?;
+            (ip, entry)
+        }
+        Identifier::GroupId(group_id) => {
+            let (ip, entry) = mcast
+                .groups
+                .iter_mut()
+                .find(|(_, g)| g.group_id == group_id)
+                .ok_or_else(|| {
+                    DpdError::Missing(format!(
+                        "Multicast group ID {} not found",
+                        group_id
+                    ))
+                })?;
+            (*ip, entry)
+        }
+    };
 
-    // For sources, either use the new sources if provided, or keep the old ones
-    let (srcs, srcs_diff) = if let Some(new_srcs) = new_group_info.sources {
-        // Ensure SSM addresses always have sources
+    let (srcs, srcs_diff) = if let Some(new_srcs) =
+        new_group_info.sources.clone()
+    {
         if is_ssm(group_ip) && new_srcs.is_empty() {
             return Err(DpdError::Invalid(format!(
                 "{} is a Source-Specific Multicast address and requires at least one source to be defined",
@@ -510,138 +595,52 @@ pub(crate) fn modify_group(
             (Some(new_srcs), true)
         }
     } else {
-        (group.sources.clone(), false)
+        (group_entry.sources.clone(), false)
     };
 
-    // Track which ports to add and remove from the group
-    let prev_members: HashSet<_> = group.members.iter().cloned().collect();
+    let prev_members: HashSet<_> =
+        group_entry.members.iter().cloned().collect();
     let new_members: HashSet<_> =
         new_group_info.members.iter().cloned().collect();
-
     let mut added_ports = Vec::new();
     let mut removed_ports = Vec::new();
 
-    // Remove ports that are no longer in the group
     for member in prev_members.difference(&new_members) {
-        match s.port_link_to_asic_id(member.port_id, member.link_id) {
-            Ok(asic_id) => {
-                if let Err(e) =
-                    s.asic_hdl.mc_port_remove(group.group_id, asic_id)
-                {
-                    error!(s.log, "failed to remove port from multicast group";
-                        "group_id" => group.group_id,
-                        "group_ip" => %group_ip,
-                        "port_id" => %member.port_id,
-                        "link_id" => %member.link_id,
-                        "error" => ?e,
-                    );
-
-                    // Restore previous state
-                    cleanup_on_group_update(
-                        s,
-                        group_ip,
-                        &added_ports,
-                        &removed_ports,
-                        &group,
-                        None,
-                    )?;
-
-                    return Err(DpdError::McastGroup(format!(
-                        "failed to remove port {} from group for IP {}: {:?}",
-                        member.port_id, group_ip, e
-                    )));
-                }
-                removed_ports.push(member.clone());
-            }
-            Err(e) => {
-                // Restore previous state
-                cleanup_on_group_update(
-                    s,
-                    group_ip,
-                    &added_ports,
-                    &removed_ports,
-                    &group,
-                    None,
-                )?;
-                return Err(e);
-            }
-        }
+        let asic_id = s.port_link_to_asic_id(member.port_id, member.link_id)?;
+        s.asic_hdl.mc_port_remove(group_entry.group_id, asic_id)?;
+        removed_ports.push(member.clone());
     }
 
-    // Add new ports to the group
     for member in new_members.difference(&prev_members) {
-        match s.port_link_to_asic_id(member.port_id, member.link_id) {
-            Ok(asic_id) => {
-                if let Err(e) = s.asic_hdl.mc_port_add(group.group_id, asic_id)
-                {
-                    error!(s.log, "failed to add port to multicast group";
-                        "group_id" => group.group_id,
-                        "group_ip" => %group_ip,
-                        "port_id" => %member.port_id,
-                        "link_id" => %member.link_id,
-                        "error" => ?e,
-                    );
-
-                    // Restore previous state
-                    cleanup_on_group_update(
-                        s,
-                        group_ip,
-                        &added_ports,
-                        &removed_ports,
-                        &group,
-                        None,
-                    )?;
-
-                    return Err(DpdError::McastGroup(format!(
-                        "failed to add port {} to group for IP {}: {:?}",
-                        member.port_id, group_ip, e
-                    )));
-                }
-                added_ports.push(member.clone());
-            }
-            Err(e) => {
-                // Restore previous state
-                cleanup_on_group_update(
-                    s,
-                    group_ip,
-                    &added_ports,
-                    &removed_ports,
-                    &group,
-                    None,
-                )?;
-                return Err(e);
-            }
-        }
+        let asic_id = s.port_link_to_asic_id(member.port_id, member.link_id)?;
+        s.asic_hdl.mc_port_add(group_entry.group_id, asic_id)?;
+        added_ports.push(member.clone());
     }
 
-    // Update replication information if needed
     let rid = new_group_info
         .replication_info
         .replication_id
-        .unwrap_or(group.replication_info.replication_id);
-
+        .unwrap_or(group_entry.replication_info.replication_id);
     let level1_excl_id = new_group_info
         .replication_info
         .level1_excl_id
-        .unwrap_or(group.replication_info.level1_excl_id);
-
+        .unwrap_or(group_entry.replication_info.level1_excl_id);
     let level2_excl_id = new_group_info
         .replication_info
         .level2_excl_id
-        .unwrap_or(group.replication_info.level2_excl_id);
+        .unwrap_or(group_entry.replication_info.level2_excl_id);
 
-    // Use a more explicit result chaining approach
     let mut result = Ok(());
 
-    if rid != group.replication_info.replication_id
-        || level1_excl_id != group.replication_info.level1_excl_id
-        || level2_excl_id != group.replication_info.level2_excl_id
+    if rid != group_entry.replication_info.replication_id
+        || level1_excl_id != group_entry.replication_info.level1_excl_id
+        || level2_excl_id != group_entry.replication_info.level2_excl_id
     {
         result = match group_ip {
             IpAddr::V4(ipv4) => table::mcast::replication::update_ipv4_entry(
                 s,
                 ipv4,
-                group.group_id,
+                group_entry.group_id,
                 rid,
                 level1_excl_id,
                 level2_excl_id,
@@ -649,7 +648,7 @@ pub(crate) fn modify_group(
             IpAddr::V6(ipv6) => table::mcast::replication::update_ipv6_entry(
                 s,
                 ipv6,
-                group.group_id,
+                group_entry.group_id,
                 rid,
                 level1_excl_id,
                 level2_excl_id,
@@ -657,94 +656,38 @@ pub(crate) fn modify_group(
         };
     }
 
-    // Update source filter entries if needed
-    if srcs_diff {
-        // Remove the old source filter entries
-        for src in group.sources.iter().flatten() {
-            match src {
-                IpSrc::Exact(IpAddr::V4(src)) => {
-                    if let IpAddr::V4(ip) = group_ip {
-                        result = table::mcast::src_filter::del_ipv4_entry(
-                            s,
-                            Ipv4Net::new(*src, 32).unwrap(),
-                            ip,
-                        );
-                    }
-                }
-                IpSrc::Subnet(src) => {
-                    if let IpAddr::V4(ip) = group_ip {
-                        result = table::mcast::src_filter::del_ipv4_entry(
-                            s, *src, ip,
-                        );
-                    }
-                }
-                IpSrc::Exact(IpAddr::V6(src)) => {
-                    if let IpAddr::V6(ip) = group_ip {
-                        result = table::mcast::src_filter::del_ipv6_entry(
-                            s, *src, ip,
-                        );
-                    }
-                }
-            }
-        }
-
-        // Then add the new source filter entries
-        if let Some(ref srcs) = srcs {
-            for src in srcs {
-                match src {
-                    IpSrc::Exact(IpAddr::V4(src)) => {
-                        if let IpAddr::V4(ip) = group_ip {
-                            result = table::mcast::src_filter::add_ipv4_entry(
-                                s,
-                                Ipv4Net::new(*src, 32).unwrap(),
-                                ip,
-                            );
-                        }
-                    }
-                    IpSrc::Subnet(src) => {
-                        if let IpAddr::V4(ip) = group_ip {
-                            result = table::mcast::src_filter::add_ipv4_entry(
-                                s, *src, ip,
-                            );
-                        }
-                    }
-                    IpSrc::Exact(IpAddr::V6(src)) => {
-                        if let IpAddr::V6(ip) = group_ip {
-                            result = table::mcast::src_filter::add_ipv6_entry(
-                                s, *src, ip,
-                            );
-                        }
-                    }
-                }
-            }
-        }
+    if result.is_ok() && srcs_diff {
+        remove_source_filters(s, group_ip, group_entry.sources.as_deref());
+        add_source_filters(s, group_ip, srcs.as_deref());
     }
 
     if result.is_ok()
-        && new_group_info.nat_target != group.int_fwding.nat_target
+        && new_group_info.nat_target != group_entry.int_fwding.nat_target
     {
-        result = if let Some(nat_target) = new_group_info.nat_target {
-            match group_ip {
-                IpAddr::V4(ipv4) => {
-                    table::mcast::nat::update_ipv4_entry(s, ipv4, nat_target)
-                }
-                IpAddr::V6(ipv6) => {
-                    table::mcast::nat::update_ipv6_entry(s, ipv6, nat_target)
-                }
+        result = match (
+            group_ip,
+            new_group_info.nat_target,
+            group_entry.int_fwding.nat_target,
+        ) {
+            (IpAddr::V4(ipv4), Some(nat), _) => {
+                table::mcast::nat::update_ipv4_entry(s, ipv4, nat)
             }
-        } else if group.int_fwding.nat_target.is_some() {
-            // Remove NAT entry if it was previously set
-            match group_ip {
-                IpAddr::V4(ipv4) => table::mcast::nat::del_ipv4_entry(s, ipv4),
-                IpAddr::V6(ipv6) => table::mcast::nat::del_ipv6_entry(s, ipv6),
+            (IpAddr::V6(ipv6), Some(nat), _) => {
+                table::mcast::nat::update_ipv6_entry(s, ipv6, nat)
             }
-        } else {
-            Ok(())
+            (IpAddr::V4(ipv4), None, Some(_)) => {
+                table::mcast::nat::del_ipv4_entry(s, ipv4)
+            }
+            (IpAddr::V6(ipv6), None, Some(_)) => {
+                table::mcast::nat::del_ipv6_entry(s, ipv6)
+            }
+            _ => Ok(()),
         };
     }
 
-    // Update VLAN ID if provided and changed
-    if result.is_ok() && new_group_info.vlan_id != group.ext_fwding.vlan_id {
+    if result.is_ok()
+        && new_group_info.vlan_id != group_entry.ext_fwding.vlan_id
+    {
         result = match group_ip {
             IpAddr::V4(ipv4) => table::mcast::route::update_ipv4_entry(
                 s,
@@ -760,47 +703,32 @@ pub(crate) fn modify_group(
     }
 
     if let Err(e) = result {
-        // Restore previous state
         cleanup_on_group_update(
             s,
             group_ip,
             &added_ports,
             &removed_ports,
-            &group,
+            group_entry,
             srcs_diff.then_some(srcs.as_ref().unwrap()),
         )?;
         return Err(e);
     }
 
-    // Create the updated group
-    let updated_group = MulticastGroup {
-        group_id: group.group_id,
-        tag: new_group_info
-            .tag
-            .map(|t| t.to_string())
-            .or(group.tag.clone()),
-        int_fwding: InternalForwarding {
-            nat_target: new_group_info
-                .nat_target
-                .or(group.int_fwding.nat_target),
-        },
-        ext_fwding: ExternalForwarding {
-            vlan_id: new_group_info.vlan_id.or(group.ext_fwding.vlan_id),
-        },
-        sources: srcs,
-        replication_info: MulticastReplicationInfo {
-            replication_id: rid,
-            level1_excl_id,
-            level2_excl_id,
-        },
-        members: new_group_info.members,
+    group_entry.tag = new_group_info.tag.or(group_entry.tag.clone());
+    group_entry.int_fwding.nat_target = new_group_info
+        .nat_target
+        .or(group_entry.int_fwding.nat_target);
+    group_entry.ext_fwding.vlan_id =
+        new_group_info.vlan_id.or(group_entry.ext_fwding.vlan_id);
+    group_entry.sources = srcs;
+    group_entry.replication_info = MulticastReplicationInfo {
+        replication_id: rid,
+        level1_excl_id,
+        level2_excl_id,
     };
+    group_entry.members = new_group_info.members.clone();
 
-    // Update our stored configuration
-    let mut mcast = s.mcast.lock().unwrap();
-    mcast.groups.insert(group_ip, updated_group.clone());
-
-    Ok(MulticastGroupResponse::new(group_ip, &updated_group))
+    Ok(MulticastGroupResponse::new(group_ip, group_entry))
 }
 
 /// List all multicast groups over a range.
@@ -982,49 +910,6 @@ fn del_entry(
     Ok(())
 }
 
-/// Helper function to find a multicast group by IP or group ID, scoping
-/// the use of the lock to the lookup operation.
-fn find_group(
-    s: &Switch,
-    ident: &Identifier,
-) -> DpdResult<(IpAddr, MulticastGroup)> {
-    let mcast = s.mcast.lock().unwrap();
-
-    match ident {
-        Identifier::Ip(ip) => {
-            // We still need to clone here to avoid lifetime issues
-            let group = mcast
-                .groups
-                .get(ip)
-                .ok_or_else(|| {
-                    DpdError::Missing(format!(
-                        "multicast group for IP {} not found",
-                        ip
-                    ))
-                })?
-                .clone();
-
-            Ok((*ip, group))
-        }
-        Identifier::GroupId(group_id) => {
-            // We still need to clone here to avoid lifetime issues
-            let (ip, group) = mcast
-                .groups
-                .iter()
-                .find(|(_, g)| g.group_id == *group_id)
-                .map(|(ip, g)| (*ip, g.clone()))
-                .ok_or_else(|| {
-                    DpdError::Missing(format!(
-                        "multicast group with ID {} not found",
-                        group_id
-                    ))
-                })?;
-
-            Ok((ip, group))
-        }
-    }
-}
-
 /// Cleanup function for a multicast group creation failure.
 fn cleanup_on_group_create(
     s: &Switch,
@@ -1046,27 +931,7 @@ fn cleanup_on_group_create(
     match group_ip {
         IpAddr::V4(ipv4) => {
             let _ = table::mcast::replication::del_ipv4_entry(s, ipv4);
-
-            // Clean up source filter entries if they were added
-            if let Some(srcs) = sources {
-                for src in srcs {
-                    match src {
-                        IpSrc::Exact(IpAddr::V4(src)) => {
-                            let _ = table::mcast::src_filter::del_ipv4_entry(
-                                s,
-                                Ipv4Net::new(*src, 32).unwrap(),
-                                ipv4,
-                            );
-                        }
-                        IpSrc::Subnet(src) => {
-                            let _ = table::mcast::src_filter::del_ipv4_entry(
-                                s, *src, ipv4,
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            remove_source_filters(s, group_ip, sources);
 
             if nat_target.is_some() {
                 let _ = table::mcast::nat::del_ipv4_entry(s, ipv4);
@@ -1076,17 +941,7 @@ fn cleanup_on_group_create(
         }
         IpAddr::V6(ipv6) => {
             let _ = table::mcast::replication::del_ipv6_entry(s, ipv6);
-
-            // Clean up source filter entries if they were added
-            if let Some(srcs) = sources {
-                for src in srcs {
-                    if let IpSrc::Exact(IpAddr::V6(src)) = src {
-                        let _ = table::mcast::src_filter::del_ipv6_entry(
-                            s, *src, ipv6,
-                        );
-                    }
-                }
-            }
+            remove_source_filters(s, group_ip, sources);
 
             if nat_target.is_some() {
                 let _ = table::mcast::nat::del_ipv6_entry(s, ipv6);
@@ -1149,78 +1004,9 @@ fn cleanup_on_group_update(
 
     // If sources were modified, restore the original source filters
     if srcs_modified {
-        match group_ip {
-            IpAddr::V4(ipv4) => {
-                // First, try to remove any new source filters that might have been added
-                if let Some(new_srcs) = new_sources {
-                    for src in new_srcs {
-                        match src {
-                            IpSrc::Exact(IpAddr::V4(src)) => {
-                                let _ =
-                                    table::mcast::src_filter::del_ipv4_entry(
-                                        s,
-                                        Ipv4Net::new(*src, 32).unwrap(),
-                                        ipv4,
-                                    );
-                            }
-                            IpSrc::Subnet(src) => {
-                                let _ =
-                                    table::mcast::src_filter::del_ipv4_entry(
-                                        s, *src, ipv4,
-                                    );
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-
-                // Then, restore the original source filters
-                if let Some(ref srcs) = orig_group_info.sources {
-                    for src in srcs {
-                        match src {
-                            IpSrc::Exact(IpAddr::V4(src)) => {
-                                let _ =
-                                    table::mcast::src_filter::add_ipv4_entry(
-                                        s,
-                                        Ipv4Net::new(*src, 32).unwrap(),
-                                        ipv4,
-                                    );
-                            }
-                            IpSrc::Subnet(src) => {
-                                let _ =
-                                    table::mcast::src_filter::add_ipv4_entry(
-                                        s, *src, ipv4,
-                                    );
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            IpAddr::V6(ipv6) => {
-                // First, try to remove any new source filters that might have been added
-                if let Some(new_srcs) = new_sources {
-                    for src in new_srcs {
-                        if let IpSrc::Exact(IpAddr::V6(src)) = src {
-                            let _ = table::mcast::src_filter::del_ipv6_entry(
-                                s, *src, ipv6,
-                            );
-                        }
-                    }
-                }
-
-                // Then, restore the original source filters
-                if let Some(ref srcs) = orig_group_info.sources {
-                    for src in srcs {
-                        if let IpSrc::Exact(IpAddr::V6(src)) = src {
-                            let _ = table::mcast::src_filter::add_ipv6_entry(
-                                s, *src, ipv6,
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        remove_source_filters(s, group_ip, new_sources);
+        // Restore the original source filters
+        add_source_filters(s, group_ip, orig_group_info.sources.as_deref());
     }
 
     // Revert table entries based on IP version
@@ -1268,4 +1054,82 @@ fn cleanup_on_group_update(
     }
 
     Ok(())
+}
+
+fn remove_source_filters(
+    s: &Switch,
+    group_ip: IpAddr,
+    sources: Option<&[IpSrc]>,
+) {
+    match group_ip {
+        IpAddr::V4(ipv4) => {
+            if let Some(srcs) = sources {
+                for src in srcs {
+                    match src {
+                        IpSrc::Exact(IpAddr::V4(src)) => {
+                            let _ = table::mcast::src_filter::del_ipv4_entry(
+                                s,
+                                Ipv4Net::new(*src, 32).unwrap(),
+                                ipv4,
+                            );
+                        }
+                        IpSrc::Subnet(subnet) => {
+                            let _ = table::mcast::src_filter::del_ipv4_entry(
+                                s, *subnet, ipv4,
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        IpAddr::V6(ipv6) => {
+            if let Some(srcs) = sources {
+                for src in srcs {
+                    if let IpSrc::Exact(IpAddr::V6(src)) = src {
+                        let _ = table::mcast::src_filter::del_ipv6_entry(
+                            s, *src, ipv6,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn add_source_filters(s: &Switch, group_ip: IpAddr, sources: Option<&[IpSrc]>) {
+    match group_ip {
+        IpAddr::V4(ipv4) => {
+            if let Some(srcs) = sources {
+                for src in srcs {
+                    match src {
+                        IpSrc::Exact(IpAddr::V4(src)) => {
+                            let _ = table::mcast::src_filter::add_ipv4_entry(
+                                s,
+                                Ipv4Net::new(*src, 32).unwrap(),
+                                ipv4,
+                            );
+                        }
+                        IpSrc::Subnet(subnet) => {
+                            let _ = table::mcast::src_filter::add_ipv4_entry(
+                                s, *subnet, ipv4,
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        IpAddr::V6(ipv6) => {
+            if let Some(srcs) = sources {
+                for src in srcs {
+                    if let IpSrc::Exact(IpAddr::V6(src)) = src {
+                        let _ = table::mcast::src_filter::add_ipv6_entry(
+                            s, *src, ipv6,
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

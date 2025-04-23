@@ -7,6 +7,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use common::nat::NatTarget;
+use oxnet::{Ipv4Net, Ipv6Net};
 
 use super::IpSrc;
 use crate::types::{DpdError, DpdResult};
@@ -38,7 +39,10 @@ pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
 /// Check if an IP address is a Source-Specific Multicast (SSM) address.
 pub(crate) fn is_ssm(addr: IpAddr) -> bool {
     match addr {
-        IpAddr::V4(ipv4) => in_subnet_v4(ipv4, Ipv4Addr::new(232, 0, 0, 0), 8),
+        IpAddr::V4(ipv4) => {
+            let subnet = Ipv4Net::new_unchecked(Ipv4Addr::new(232, 0, 0, 0), 8);
+            subnet.contains(ipv4)
+        }
         // Check for Source-Specific Multicast (ff3x::/32)
         // In IPv6 multicast, the second nibble (flag field) indicates SSM when set to 3
         IpAddr::V6(ipv6) => {
@@ -46,53 +50,6 @@ pub(crate) fn is_ssm(addr: IpAddr) -> bool {
             flag_field == 3
         }
     }
-}
-
-/// Check if an IPv4 address is in a specific subnet.
-fn in_subnet_v4(
-    addr: Ipv4Addr,
-    subnet_prefix: Ipv4Addr,
-    prefix_len: u8,
-) -> bool {
-    let mask = !((1u32 << (32 - prefix_len)) - 1);
-    let subnet_bits = u32::from_be_bytes(subnet_prefix.octets()) & mask;
-    let addr_bits = u32::from_be_bytes(addr.octets()) & mask;
-    subnet_bits == addr_bits
-}
-
-/// Check if an IPv6 address is in a specific subnet.
-fn in_subnet_v6(
-    addr: Ipv6Addr,
-    subnet_prefix: Ipv6Addr,
-    prefix_len: u8,
-) -> bool {
-    let addr_segments = addr.segments();
-    let subnet_segments = subnet_prefix.segments();
-
-    // Calculate how many complete 16-bit segments are covered by the prefix
-    let complete_segments = prefix_len / 16;
-
-    // Check all complete segments match
-    for i in 0..complete_segments as usize {
-        if addr_segments[i] != subnet_segments[i] {
-            return false;
-        }
-    }
-
-    // If there's a partial segment, check the bits that are covered by the prefix
-    if prefix_len % 16 != 0 {
-        let segment_idx = complete_segments as usize;
-        let remaining_bits = prefix_len % 16;
-        let mask = !((1u16 << (16 - remaining_bits)) - 1);
-
-        if (addr_segments[segment_idx] & mask)
-            != (subnet_segments[segment_idx] & mask)
-        {
-            return false;
-        }
-    }
-
-    true
 }
 
 /// Validates IPv4 multicast addresses.
@@ -129,19 +86,19 @@ fn validate_ipv4_multicast(
     // Define reserved IPv4 multicast subnets
     let reserved_subnets = [
         // Local network control block (link-local)
-        (Ipv4Addr::new(224, 0, 0, 0), 24), // 224.0.0.0/24
+        Ipv4Net::new_unchecked(Ipv4Addr::new(224, 0, 0, 0), 24), // 224.0.0.0/24
         // GLOP addressing
-        (Ipv4Addr::new(233, 0, 0, 0), 8), // 233.0.0.0/8
+        Ipv4Net::new_unchecked(Ipv4Addr::new(233, 0, 0, 0), 8), // 233.0.0.0/8
         // Administrative scoped addresses
-        (Ipv4Addr::new(239, 0, 0, 0), 8), // 239.0.0.0/8 (administratively scoped)
+        Ipv4Net::new_unchecked(Ipv4Addr::new(239, 0, 0, 0), 8), // 239.0.0.0/8 (administratively scoped)
     ];
 
     // Check reserved subnets
-    for (subnet, prefix_len) in &reserved_subnets {
-        if in_subnet_v4(addr, *subnet, *prefix_len) {
+    for subnet in &reserved_subnets {
+        if subnet.contains(addr) {
             return Err(DpdError::Invalid(format!(
-                "{} is in the reserved multicast subnet {}/{}",
-                addr, subnet, prefix_len
+                "{} is in the reserved multicast subnet {}",
+                addr, subnet,
             )));
         }
     }
@@ -196,19 +153,19 @@ fn validate_ipv6_multicast(
     // Define reserved IPv6 multicast subnets
     let reserved_subnets = [
         // Link-local scope
-        (Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0), 16), // ff02::/16
+        Ipv6Net::new_unchecked(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0), 16), // ff02::/16
         // Interface-local scope
-        (Ipv6Addr::new(0xff01, 0, 0, 0, 0, 0, 0, 0), 16), // ff01::/16
+        Ipv6Net::new_unchecked(Ipv6Addr::new(0xff01, 0, 0, 0, 0, 0, 0, 0), 16), // ff01::/16
         // Node-local scope (deprecated)
-        (Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 0), 16), // ff00::/16
+        Ipv6Net::new_unchecked(Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 0), 16), // ff00::/16
     ];
 
     // Check reserved subnets
-    for (subnet, prefix_len) in &reserved_subnets {
-        if in_subnet_v6(addr, *subnet, *prefix_len) {
+    for subnet in &reserved_subnets {
+        if subnet.contains(addr) {
             return Err(DpdError::Invalid(format!(
-                "{} is in the reserved multicast subnet {}/{}",
-                addr, subnet, prefix_len
+                "{} is in the reserved multicast subnet {}",
+                addr, subnet
             )));
         }
     }
