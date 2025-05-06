@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # These describe which version of the SDE to download and where to find it
-SDE_COMMIT=0e4cfe10c92db223a953923d77f09a299b82157b
-SDE_PKG_SHA256=89795e536cfc9713a892904480c6c1d7bff99ca8b9e16ba8c3955fb548e037fe
-SDE_DEB_SHA256=deb3015f8f8a46a16de8d7ddfa549d353a658105a0dcb963e5bd65587f3d0758
+SDE_COMMIT=c59c6d7b9e512a834f15b1847e636426aec7d670
+SDE_PKG_SHA256=c1f024daa62b0f16466c0156fe92e7c5e4ef2ad62db5266507410dbd5a4fb951
+SDE_DEB_SHA256=7526d1c02064f4e40056b0a8a5aa1db86f0a912035a80fa223c322b1ae2709b7
 
 [ `uname -s` == "SunOS" ] && SERIES=illumos
 [ `uname -s` == "SunOS" ] || SERIES=linux
