@@ -1808,13 +1808,13 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
             client
                 .link_enabled_set(&link.port_id, &link.link_id, true)
                 .await
-                .context(format!("failed to enable link",))?;
+                .with_context(|| "failed to enable link")?;
         }
         Link::Disable { link } => {
             client
                 .link_enabled_set(&link.port_id, &link.link_id, false)
                 .await
-                .context(format!("failed to disable link",))?;
+                .with_context(|| "failed to disable link")?;
         }
         Link::History {
             link,
