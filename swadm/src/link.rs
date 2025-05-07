@@ -349,6 +349,12 @@ pub enum Link {
         filter: Option<String>,
     },
 
+    /// Enable a link.
+    Enable { link: LinkPath },
+
+    /// Disable a link.
+    Disable { link: LinkPath },
+
     /// Set a property of a link.
     SetProp {
         /// The link to set the property on.
@@ -833,11 +839,11 @@ async fn link_rmon_counters(
 #[macro_export]
 macro_rules! print_speedenc_fields {
     ($label:expr, $all:ident, $($field_path:ident).+) => {
-	print!("{:10}", $label);
+        print!("{:10}", $label);
         for lane in & $all {
             print!("  {:>6}", lane.$($field_path).+.to_string());
-	}
-	println!();
+        }
+        println!();
     }
 }
 
@@ -865,11 +871,11 @@ async fn link_serdes_enc_speed(
 #[macro_export]
 macro_rules! print_anlt_fields {
     ($label:expr, $all:ident, $($field_path:ident).+) => {
-	print!("{:20}", $label);
+        print!("{:20}", $label);
         for lane in & $all {
             print!("  {:>6}", lane.$($field_path).+.to_string());
-	}
-	println!();
+        }
+        println!();
     }
 }
 
@@ -1005,11 +1011,11 @@ async fn link_serdes_eye(
 #[macro_export]
 macro_rules! print_rx_adapt_fields {
     ($label:expr, $all:ident, $($field_path:ident).+) => {
-	print!("{:14}", $label);
+        print!("{:14}", $label);
         for lane in & $all {
             print!("  {:>6}", lane.$($field_path).+.to_string());
-	}
-	println!();
+        }
+        println!();
     }
 }
 
@@ -1038,13 +1044,13 @@ async fn link_serdes_rx_adapt(
 #[macro_export]
 macro_rules! print_txeq_fields {
     ($label:expr, $all:ident, $($field_path:ident).+) => {
-	print!("{:6}", $label);
+        print!("{:6}", $label);
         for lane in & $all {
             let sw = lane.sw.$($field_path).+.unwrap_or(0);
             let hw = lane.hw.$($field_path).+.unwrap_or(0);
-	    print!("  {:>3} ({:>3})", sw.to_string(), hw.to_string());
-	}
-	println!();
+            print!("  {:>3} ({:>3})", sw.to_string(), hw.to_string());
+        }
+        println!();
     }
 }
 
@@ -1103,11 +1109,11 @@ async fn link_serdes_tx_eq_set(
 #[macro_export]
 macro_rules! print_rx_sig_fields {
     ($label:expr, $all:ident, $($field_path:ident).+) => {
-	print!("{:12}", $label);
+        print!("{:12}", $label);
         for lane in & $all {
             print!("  {:>6}", lane.$($field_path).+.to_string());
-	}
-	println!();
+        }
+        println!();
     }
 }
 
@@ -1798,6 +1804,18 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                     .context("failed to set KR mode")?;
             }
         },
+        Link::Enable { link } => {
+            client
+                .link_enabled_set(&link.port_id, &link.link_id, true)
+                .await
+                .with_context(|| "failed to enable link")?;
+        }
+        Link::Disable { link } => {
+            client
+                .link_enabled_set(&link.port_id, &link.link_id, false)
+                .await
+                .with_context(|| "failed to disable link")?;
+        }
         Link::History {
             link,
             raw,
