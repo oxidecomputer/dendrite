@@ -5594,11 +5594,25 @@
         "description": "The cause of a fault on a transceiver.",
         "oneOf": [
           {
-            "description": "An error occurred accessing the transceiver.",
-            "type": "string",
-            "enum": [
+            "description": "An error occurred accessing the transceiver, with details about the failure.",
+            "type": "object",
+            "properties": {
+              "failed": {
+                "type": "object",
+                "properties": {
+                  "details": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "details"
+                ]
+              }
+            },
+            "required": [
               "failed"
-            ]
+            ],
+            "additionalProperties": false
           },
           {
             "description": "Power was enabled, but did not come up in the requisite time.",

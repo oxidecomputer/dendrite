@@ -1109,8 +1109,16 @@ impl Switch {
                     port.as_qsfp_mut().unwrap().transceiver =
                         Some(Transceiver::Faulted(FaultReason::DisabledBySp));
                 } else if status.failures.modules.is_set(index).unwrap() {
+                    let details = status
+                        .failures
+                        .errors
+                        .get(usize::from(index))
+                        .map(|err| err.to_string())
+                        .unwrap_or_else(|| String::from("Unknown error"));
                     port.as_qsfp_mut().unwrap().transceiver =
-                        Some(Transceiver::Faulted(FaultReason::Failed));
+                        Some(Transceiver::Faulted(FaultReason::Failed {
+                            details,
+                        }));
                 } else {
                     // At this point, the transceiver is present, and so we
                     // _can_ check it for support. To do so requires that it be
@@ -1201,7 +1209,13 @@ impl Switch {
                 let new_transceiver = if unsupported.is_set(index).unwrap() {
                     Transceiver::Unsupported
                 } else if new_modules.failed.is_set(index).unwrap() {
-                    Transceiver::Faulted(FaultReason::Failed)
+                    let details = status
+                        .failures
+                        .errors
+                        .get(usize::from(index))
+                        .map(|err| err.to_string())
+                        .unwrap_or_else(|| String::from("Unknown error"));
+                    Transceiver::Faulted(FaultReason::Failed { details })
                 } else {
                     continue;
                 };
@@ -1327,11 +1341,28 @@ impl Switch {
                         transceiver.in_reset = None;
                         transceiver.interrupt_pending = None;
                     }
-                } else if power.failures.modules.is_set(index).unwrap()
-                    || vendor_info.failures.modules.is_set(index).unwrap()
-                {
+                } else if power.failures.modules.is_set(index).unwrap() {
+                    let details = power
+                        .failures
+                        .errors
+                        .get(usize::from(index))
+                        .map(|err| err.to_string())
+                        .unwrap_or_else(|| String::from("Unknown error"));
                     port_lock.lock().await.as_qsfp_mut().unwrap().transceiver =
-                        Some(Transceiver::Faulted(FaultReason::Failed));
+                        Some(Transceiver::Faulted(FaultReason::Failed {
+                            details,
+                        }));
+                } else if vendor_info.failures.modules.is_set(index).unwrap() {
+                    let details = vendor_info
+                        .failures
+                        .errors
+                        .get(usize::from(index))
+                        .map(|err| err.to_string())
+                        .unwrap_or_else(|| String::from("Unknown error"));
+                    port_lock.lock().await.as_qsfp_mut().unwrap().transceiver =
+                        Some(Transceiver::Faulted(FaultReason::Failed {
+                            details,
+                        }));
                 }
             }
 

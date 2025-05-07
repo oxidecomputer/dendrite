@@ -94,11 +94,12 @@ impl QsfpDevice {
 }
 
 /// The cause of a fault on a transceiver.
-#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, Serialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FaultReason {
-    /// An error occurred accessing the transceiver.
-    Failed,
+    /// An error occurred accessing the transceiver, with details about the
+    /// failure.
+    Failed { details: String },
     /// Power was enabled, but did not come up in the requisite time.
     PowerTimeout,
     /// Power was enabled and later lost.

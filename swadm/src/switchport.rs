@@ -364,7 +364,13 @@ fn print_faulted_transceiver_row(
     port_id: &PortId,
     reason: &types::FaultReason,
 ) -> anyhow::Result<()> {
-    writeln!(tw, "{}\tfaulted ({:?})\t\t\t\t\t\t\t", port_id, reason)
+    let reason = match reason {
+        types::FaultReason::Failed { details } => details.as_str(),
+        types::FaultReason::PowerTimeout => "Power timeout",
+        types::FaultReason::PowerLost => "Power lost",
+        types::FaultReason::DisabledBySp => "Disabled by SP",
+    };
+    writeln!(tw, "{}\tfaulted ({})\t\t\t\t\t\t\t", port_id, reason)
         .map_err(|e| e.into())
 }
 
