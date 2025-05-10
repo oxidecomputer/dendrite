@@ -2755,7 +2755,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4979f22fdb869068da03c9f7528f8297c6fd2606bc3a4affe42e6a823fdb8da4"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -3452,9 +3452,9 @@ checksum = "e22821954cca73148cdd1547a540ac79a3f27b6d55b518490437bb9867212828"
 
 [[package]]
 name = "omicron-zone-package"
-version = "0.12.0"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c74f14c5ac8ea6fe525e496c3d4b984e658857a1a34c758bc7a16a632ec9235"
+checksum = "90857c497284b6cbd15e9d9531081a9abab15d7e4bc9eb6b0e4f176b9c024f7e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6846,7 +6846,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
