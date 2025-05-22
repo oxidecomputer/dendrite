@@ -5844,6 +5844,7 @@
         ]
       },
       "ExternalForwarding": {
+        "description": "Represents the forwarding configuration for external multicast traffic.",
         "type": "object",
         "properties": {
           "vlan_id": {
@@ -6068,6 +6069,7 @@
         ]
       },
       "InternalForwarding": {
+        "description": "Represents the NAT target for multicast traffic for internal/underlay forwarding.",
         "type": "object",
         "properties": {
           "nat_target": {
@@ -7545,6 +7547,7 @@
         ]
       },
       "MulticastGroupUpdateEntry": {
+        "description": "A multicast group update entry for PUT requests.",
         "type": "object",
         "properties": {
           "members": {
