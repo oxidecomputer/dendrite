@@ -41,6 +41,12 @@ pub(crate) const MCAST_ROUTE_IPV4: &str =
     "pipe.Ingress.l3_router.MulticastRouter4.tbl";
 pub(crate) const MCAST_ROUTE_IPV6: &str =
     "pipe.Ingress.l3_router.MulticastRouter6.tbl";
+pub(crate) const MCAST_MAC_REWRITE: &str =
+    "pipe.Egress.mac_rewrite.mac_rewrite";
+pub(crate) const MCAST_DECAP_PORTS: &str =
+    "pipe.Egress.mcast_egress.tbl_decap_ports";
+pub(crate) const MCAST_PORT_ID_MAPPING: &str =
+    "pipe.Egress.mcast_egress.asic_id_to_port";
 
 pub struct Table {
     name: String,

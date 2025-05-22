@@ -102,7 +102,10 @@ impl TableChaos {
             (table::MCAST_SRC_FILTER_IPV4, v),
             (table::MCAST_SRC_FILTER_IPV6, v),
             (table::MCAST_ROUTE_IPV4, v),
-            (table::MCAST_ROUTE_IPV6, v)
+            (table::MCAST_ROUTE_IPV6, v),
+            (table::MCAST_MAC_REWRITE, v),
+            (table::MCAST_DECAP_PORTS, v),
+            (table::MCAST_PORT_ID_MAPPING, v)
         )
     }
 
