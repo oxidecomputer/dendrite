@@ -37,7 +37,7 @@ function check_copyright {
 	ANY="Copyright [0-9]+ Oxide Computer Company"
 
 	grep -q "$CORRECT" $1 && return 0
-	egrep -q "$ANY" $1 
+	egrep -q "$ANY" $1
 	if [ $? == 0 ]; then
 		echo $1: Copyright with wrong year
 	else
@@ -46,7 +46,7 @@ function check_copyright {
 	return 0
 }
 
-FILES=`git ls-files | egrep "\.(sh|xml|rs)$" | grep -v .github`
+FILES=`git ls-files | egrep "\.(sh|xml|rs|p4)$" | grep -v .github`
 
 errs=0
 for f in $FILES

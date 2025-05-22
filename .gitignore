@@ -17,6 +17,7 @@ p4_artifacts*
 # Editor config
 .vscode
 .dir-locals.el
+bacon.toml
 
 # OS artifacts
 .DS_Store

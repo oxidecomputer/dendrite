@@ -22,7 +22,10 @@ use common::ports::PORT_COUNT_REAR;
 cfg_if::cfg_if! {
     if #[cfg(feature = "tofino_asic")] {
         use std::convert::TryFrom;
-    use crate::api_server::LinkCreate;
+        use crate::api_server::LinkCreate;
+        use crate::table::mcast;
+        use crate::table::port_mac;
+        use crate::table::MacOps;
         use common::ports::PortFec;
         use common::ports::PortSpeed;
         use common::ports::InternalPort;
@@ -422,7 +425,11 @@ impl Switch {
             let mut mgr = self.mac_mgmt.lock().unwrap();
             assert_eq!(mgr.set_base_mac(temp_mac)?, None);
         }
-        crate::table::port_mac::reset(self)?;
+
+        // Reset ingress and egress MAC tables and Port ID table(s).
+        MacOps::<port_mac::PortMacTable>::reset(self)?;
+        MacOps::<mcast::mcast_port_mac::PortMacTable>::reset(self)?;
+        mcast::mcast_egress::reset_bitmap_table(self)?;
 
         // Create the link on the CPU port.
         let link_id = self.create_link(port_id, &params)?;

@@ -94,6 +94,11 @@ impl MacAddr {
         self == EMPTY
     }
 
+    /// Return `true` if `self` is a multicast MAC address.
+    pub fn is_multicast(self) -> bool {
+        (self.a[0] & 0x01) == 0x01
+    }
+
     /// Generate a random MAC address.
     pub fn random() -> MacAddr {
         let mut rng = rand::thread_rng();
