@@ -78,7 +78,7 @@ struct CounterDescription {
     p4_name: &'static str,
 }
 
-const COUNTERS: [CounterDescription; 10] = [
+const COUNTERS: [CounterDescription; 12] = [
     CounterDescription {
         id: CounterId::Service,
         client_name: "Service",
@@ -96,7 +96,7 @@ const COUNTERS: [CounterDescription; 10] = [
     },
     CounterDescription {
         id: CounterId::Egress,
-        client_name: "Ingress_Egress",
+        client_name: "Egress",
         p4_name: "pipe.Ingress.egress_ctr",
     },
     CounterDescription {
@@ -120,14 +120,24 @@ const COUNTERS: [CounterDescription; 10] = [
         p4_name: "pipe.Egress.drop_reason_ctr",
     },
     CounterDescription {
-        id: CounterId::Egress,
-        client_name: "Egress",
-        p4_name: "pipe.Egress.egress_ctr",
-    },
-    CounterDescription {
         id: CounterId::Multicast,
         client_name: "Multicast",
         p4_name: "pipe.Egress.mcast_ctr",
+    },
+    CounterDescription {
+        id: CounterId::Multicast,
+        client_name: "Multicast_Link_Local",
+        p4_name: "pipe.Egress.link_local_mcast_ctr",
+    },
+    CounterDescription {
+        id: CounterId::Multicast,
+        client_name: "Multicast_External",
+        p4_name: "pipe.Egress.external_mcast_ctr",
+    },
+    CounterDescription {
+        id: CounterId::Multicast,
+        client_name: "Multicast_Underlay",
+        p4_name: "pipe.Egress.underlay_mcast_ctr",
     },
 ];
 

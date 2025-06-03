@@ -9,7 +9,7 @@ use std::sync::Arc;
 use oxnet::Ipv6Net;
 
 use ::common::network::MacAddr;
-use packet::{sidecar, Endpoint};
+use packet::{ipv6, sidecar, Endpoint};
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
@@ -456,6 +456,61 @@ async fn test_link_local_multicast_outbound() -> TestResult {
     }];
 
     switch.packet_test(vec![send], expected)
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_ipv6_link_local_multicast_hop_limit_one() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let ingress = PhysPort(10);
+
+    let src = Endpoint::parse("e0:d5:5e:67:89:ab", "fe80::1", 3333).unwrap();
+    let dst = Endpoint::parse("33:33:00:00:00:01", "ff02::1", 4444).unwrap();
+
+    let mut send = common::gen_udp_packet(src, dst);
+
+    // Set hop limit to 1 - this should be ALLOWED for link-local multicast
+    ipv6::Ipv6Hdr::adjust_hlim(&mut send, -254); // Set to 1 (255 - 254 = 1)
+
+    let test_pkt = TestPacket {
+        packet: Arc::new(send.clone()),
+        port: ingress,
+    };
+
+    // Link-local multicast packets should be forwarded to userspace with sidecar header
+    let mut recv = send.clone();
+    common::add_sidecar_hdr(
+        switch,
+        &mut recv,
+        sidecar::SC_FWD_TO_USERSPACE,
+        ingress,
+        NO_PORT,
+        None,
+    );
+
+    let expected = vec![TestPacket {
+        packet: Arc::new(recv),
+        port: SERVICE_PORT,
+    }];
+
+    // Verify that the hop limit invalid counter does NOT increment
+    let ctr_baseline_hop_limit =
+        switch.get_counter("ipv6_ttl_invalid", None).await.unwrap();
+
+    let result = switch.packet_test(vec![test_pkt], expected);
+
+    // Verify hop limit invalid counter did NOT increment (packet was not dropped)
+    let ctr_final_hop_limit =
+        switch.get_counter("ipv6_ttl_invalid", None).await.unwrap();
+
+    assert_eq!(
+        ctr_final_hop_limit,
+        ctr_baseline_hop_limit,
+        "Hop limit invalid counter should not increment for link-local multicast with hop limit 1"
+    );
+
+    result
 }
 
 #[tokio::test]

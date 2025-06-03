@@ -2081,8 +2081,10 @@ control Egress(
 	MulticastMacRewrite() mac_rewrite;
 	MulticastEgress() mcast_egress;
 
-	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) egress_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) mcast_ctr;
+	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) link_local_mcast_ctr;
+	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) external_mcast_ctr;
+	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) underlay_mcast_ctr;
 	Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS) drop_port_ctr;
 	Counter<bit<32>, bit<8>>(DROP_REASON_MAX, CounterType_t.PACKETS) drop_reason_ctr;
 
@@ -2119,8 +2121,16 @@ control Egress(
 			drop_reason_ctr.count(meta.drop_reason);
 		} else if (is_mcast == true) {
 			mcast_ctr.count(eg_intr_md.egress_port);
-		} else {
-			egress_ctr.count(eg_intr_md.egress_port);
+
+			if (is_ipv6_mcast) {
+				link_local_mcast_ctr.count(eg_intr_md.egress_port);
+			} else if (hdr.geneve.isValid()) {
+				external_mcast_ctr.count(eg_intr_md.egress_port);
+			} else if (hdr.geneve.isValid() &&
+			           hdr.geneve_opts.ox_mcast_tag.isValid() &&
+			           hdr.geneve_opts.ox_mcast_tag.mcast_tag == MULTICAST_TAG_UNDERLAY) {
+				underlay_mcast_ctr.count(eg_intr_md.egress_port);
+			}
 		}
 	}
 }

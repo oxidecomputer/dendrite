@@ -257,7 +257,8 @@ parser IngressParser(
 
 	state set_link_local_mcast {
 		meta.is_link_local_mcastv6 = true;
-		transition set_mcast_ipv6;
+		meta.is_mcast = true;
+		transition validate_mcast_link_local_hop_limit;
 	}
 
 	state check_ipv6_mcast {
@@ -276,9 +277,15 @@ parser IngressParser(
 		}
 	}
 
-	state set_mcast_ipv6 {
-		meta.is_mcast = true;
-		transition validate_mcast_hop_limit;
+	state validate_mcast_link_local_hop_limit {
+		// For link-local multicast, we allow a hop limit of 1.
+		// This is to ensure that link-local multicast packets
+		// are not forwarded beyond the local link.
+		transition select(hdr.ipv6.hop_limit) {
+			8w0: invalidate_hop_limit;
+			8w1: goto_proto_ipv6;
+			default: goto_proto_ipv6;
+		}
 	}
 
 	state validate_mcast_hop_limit {
@@ -287,6 +294,11 @@ parser IngressParser(
 			8w1: invalidate_hop_limit;
 			default: goto_proto_ipv6;
 		}
+	}
+
+	state set_mcast_ipv6 {
+		meta.is_mcast = true;
+		transition validate_mcast_hop_limit;
 	}
 
 	state invalidate_hop_limit {
