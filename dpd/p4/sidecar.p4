@@ -232,7 +232,7 @@ control Filter(
 				// that follow the format 33:33:xxxx:xxxx where the last 32 bits
 				// are taken directly from the last 32 bits of the IPv6 address.
 				//
-				// Sadly, the first two conditions cannot e checked properly by
+				// Sadly, the first two conditions cannot be checked properly by
 				// the parser, as we reach the total available parser match
 				// registers on the device.
 				if (hdr.ethernet.dst_mac[47:40] != 8w0x33 ||
@@ -689,7 +689,7 @@ control NatIngress (
 		if (hdr.ipv4.isValid() && meta.is_valid) {
 			if (meta.is_mcast) {
 				ingress_ipv4_mcast.apply();
-			} else  {
+			} else {
 				ingress_ipv4.apply();
 			}
 		} else if (hdr.ipv6.isValid() && meta.is_valid) {
