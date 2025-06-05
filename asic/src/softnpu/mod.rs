@@ -349,7 +349,13 @@ impl AsicOps for Handle {
         Ok(self.ports.lock().unwrap().len())
     }
 
-    fn mc_port_add(&self, _group_id: u16, _port: u16) -> AsicResult<()> {
+    fn mc_port_add(
+        &self,
+        _group_id: u16,
+        _port: u16,
+        _rid: u16,
+        _level1_excl_id: u16,
+    ) -> AsicResult<()> {
         Err(AsicError::OperationUnsupported)
     }
 
@@ -362,6 +368,18 @@ impl AsicOps for Handle {
     }
 
     fn mc_group_destroy(&self, _group_id: u16) -> AsicResult<()> {
+        Ok(())
+    }
+
+    fn mc_groups_count(&self) -> AsicResult<usize> {
+        Ok(self.ports.lock().unwrap().len())
+    }
+
+    fn mc_set_max_nodes(
+        &self,
+        _max_nodes: u32,
+        _max_link_aggregated_nodes: u32,
+    ) -> AsicResult<()> {
         Ok(())
     }
 

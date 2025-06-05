@@ -30,12 +30,34 @@ use crate::integration_tests::common::prelude::*;
 
 use futures::TryStreamExt;
 
+/// Build a Geneve packet with the given parameters.
 pub fn gen_geneve_packet(
     src: Endpoint,
     dst: Endpoint,
     inner_type: u16,
     vni: u32,
     tag_ingress: bool,
+    payload: &[u8],
+) -> Packet {
+    gen_geneve_packet_with_mcast_tag(
+        src,
+        dst,
+        inner_type,
+        vni,
+        tag_ingress,
+        None, // No multicast tag
+        payload,
+    )
+}
+
+/// Build a Geneve packet with a possible multicast tag.
+pub fn gen_geneve_packet_with_mcast_tag(
+    src: Endpoint,
+    dst: Endpoint,
+    inner_type: u16,
+    vni: u32,
+    tag_ingress: bool,
+    mcast_tag: Option<u8>, // New parameter for multicast tag
     payload: &[u8],
 ) -> Packet {
     let udp_stack = match src.get_ip("src").unwrap() {
@@ -51,34 +73,79 @@ pub fn gen_geneve_packet(
     let geneve = pkt.hdrs.geneve_hdr.as_mut().unwrap();
     geneve.vni = vni;
 
-    if tag_ingress {
-        // XXX: Consider adding `push_option` to GeneveHdr and defining
-        //      option enums.
-        geneve.opt_len = 1;
-        #[rustfmt::skip]
-        geneve.options.extend_from_slice(&[
-            // class
-            0x01, 0x29,
-            // crit + type
-            0x00,
-            // reserved + body len
-            0x00,
-        ]);
+    match (tag_ingress, mcast_tag) {
+        (true, Some(tag)) if tag < 3 => {
+            geneve.opt_len = 2;
+            // Multicast tag option
+            #[rustfmt::skip]
+            geneve.options.extend_from_slice(&[
+                // First 2 bytes: Geneve option class (0x0129)
+                // The OXIDE vendor-specific class identifier
+                0x01, 0x29,
+                // Third byte: Critical bit (0) + Option type (1)
+                // Type 1 represents multicast tagged packets
+                0x01,
+                // Fourth byte: Option(s) length
+                0x01,
+                // Fifth byte: Tag value (encoded in the data)
+                (tag & 0x03) << 6,
+                // Sixth byte: reserved
+                0x00,
+                // Seventh byte
+                0x00,
+                // Eighth byte
+                0x00,
+            ]);
 
-        let extra_bytes = geneve.options.len() as u16;
+            let extra_bytes = geneve.options.len() as u16;
 
-        match src.get_ip("src").unwrap() {
-            IpAddr::V4(_) => {
-                pkt.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_total_len +=
-                    extra_bytes
+            match src.get_ip("src").unwrap() {
+                IpAddr::V4(_) => {
+                    pkt.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_total_len +=
+                        extra_bytes
+                }
+                IpAddr::V6(_) => {
+                    pkt.hdrs.ipv6_hdr.as_mut().unwrap().ipv6_payload_len +=
+                        extra_bytes
+                }
             }
-            IpAddr::V6(_) => {
-                pkt.hdrs.ipv6_hdr.as_mut().unwrap().ipv6_payload_len +=
-                    extra_bytes
-            }
+
+            pkt.hdrs.udp_hdr.as_mut().unwrap().udp_len += extra_bytes;
         }
+        (true, Some(_)) => {
+            // Multicast tag is not valid
+            panic!("Multicast tag must be less than 3");
+        }
+        (true, None) => {
+            // External packet option
+            geneve.opt_len = 1;
+            #[rustfmt::skip]
+            geneve.options.extend_from_slice(&[
+                // First 2 bytes: Geneve option class (0x0129)
+                // The OXIDE vendor-specific class identifier
+                0x01, 0x29,
+                // Third byte: Critical bit (0) + Option type (1)
+                0x00,
+                // reserved + body len
+                0x00,
+            ]);
 
-        pkt.hdrs.udp_hdr.as_mut().unwrap().udp_len += extra_bytes;
+            let extra_bytes = geneve.options.len() as u16;
+
+            match src.get_ip("src").unwrap() {
+                IpAddr::V4(_) => {
+                    pkt.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_total_len +=
+                        extra_bytes
+                }
+                IpAddr::V6(_) => {
+                    pkt.hdrs.ipv6_hdr.as_mut().unwrap().ipv6_payload_len +=
+                        extra_bytes
+                }
+            }
+
+            pkt.hdrs.udp_hdr.as_mut().unwrap().udp_len += extra_bytes;
+        }
+        _ => {}
     }
 
     pkt
