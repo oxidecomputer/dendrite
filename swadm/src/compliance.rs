@@ -37,7 +37,7 @@ pub enum Compliance {
     ///   swadm compliance links ls           # List qsfp links only
     ///   swadm compliance links ls --all     # List all links
     ///   swadm compliance links ls qsfp      # List qsfp links matching "qsfp"
-    ///   swladm compliance links up           # Enable qsfp links (or 'on')
+    ///   swadm compliance links up           # Enable qsfp links (or 'on')
     ///   swadm compliance links on qsfp0/0   # Enable specific qsfp link
     ///   swadm compliance links down --all   # Disable all links (or 'off')
     ///   swadm compliance links setup        # Create links on qsfp switch ports
