@@ -20,11 +20,30 @@ use crate::LinkPath;
 #[structopt(about = "Compliance management for links")]
 pub enum Compliance {
     /// Manage link compliance settings
+    ///
+    /// This command allows you to control and monitor link states for compliance purposes.
+    ///
+    /// ACTIONS:
+    ///   up    - Enable links (bring them up)
+    ///   down  - Disable links (bring them down)
+    ///   ls    - List links with their enabled status and operational state
+    ///
+    /// PATTERNS:
+    ///   all         - Apply to all links (default if not specified)
+    ///   rear0/0     - Specific link path
+    ///   rear        - Substring match (matches rear0/0, rear1/0, etc.)
+    ///
+    /// EXAMPLES:
+    ///   swadm compliance links ls           # List all links
+    ///   swadm compliance links ls rear      # List links matching "rear"
+    ///   swadm compliance links up           # Enable all links
+    ///   swladm compliance links up rear0/0   # Enable specific link
+    ///   swadm compliance links down rear    # Disable links matching "rear"
+    #[structopt(verbatim_doc_comment)]
     Links {
-        /// Action to perform: "up", "down", or "ls"
+        /// Action to perform: "up" (enable), "down" (disable), or "ls" (list)
         action: String,
-        /// Link pattern: "all" or specific link pattern (e.g., "rear0/0").
-        /// Defaults to "all" if not provided.
+        /// Link pattern to match. Can be "all" (default), specific link like "rear0/0", or substring pattern
         pattern: Option<String>,
     },
 }
@@ -41,7 +60,17 @@ pub async fn compliance_cmd(
                 "up" => compliance_links_enable(client, pattern, true).await,
                 "down" => compliance_links_enable(client, pattern, false).await,
                 _ => anyhow::bail!(
-                    "Invalid action '{}'. Must be 'up', 'down', or 'ls'",
+                    "Invalid action '{}'. Must be 'up', 'down', or 'ls'.\n\n\
+                    USAGE:\n  \
+                    swadm compliance links <ACTION> [PATTERN]\n\n\
+                    ACTIONS:\n  \
+                    up    - Enable links (bring them up)\n  \
+                    down  - Disable links (bring them down)\n  \
+                    ls    - List links with their enabled status and operational state\n\n\
+                    PATTERNS (optional, defaults to 'all'):\n  \
+                    all       - Apply to all links\n  \
+                    rear0/0   - Specific link path\n  \
+                    rear      - Substring match (matches rear0/0, rear1/0, etc.)",
                     action
                 ),
             }
