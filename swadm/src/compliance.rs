@@ -42,9 +42,11 @@ pub enum Compliance {
     ///   swadm compliance links on qsfp0/0   # Enable specific qsfp link
     ///   swadm compliance links down --all   # Disable all links (or 'off')
     ///   swadm compliance links setup        # Create links on qsfp switch ports
+    ///   swadm compliance links setup qsfp0  # Create links on qsfp0 port only
     ///   swadm compliance links setup --all  # Create links on all switch ports
     ///   swadm compliance links setup -s 100G -f rs    # Custom settings with short flags
     ///   swadm compliance links teardown     # Delete qsfp links
+    ///   swadm compliance links teardown qsfp0  # Delete links on qsfp0 port only
     ///   swadm compliance links teardown --all  # Delete all links
     #[structopt(verbatim_doc_comment)]
     Links {
@@ -84,6 +86,8 @@ pub enum LinkAction {
     },
     /// Create links on switch ports with default compliance settings
     Setup {
+        /// Switch port pattern to match. Can be specific port like "qsfp0", or substring pattern
+        pattern: Option<String>,
         /// The speed for the new links
         #[structopt(short, long, parse(try_from_str), default_value = "200G")]
         speed: PortSpeed,
@@ -128,14 +132,23 @@ pub async fn compliance_cmd(
                     .await
             }
             LinkAction::Setup {
+                pattern,
                 speed,
                 fec,
                 autoneg,
                 kr,
                 all,
             } => {
-                compliance_links_setup(client, speed, fec, autoneg, kr, all)
-                    .await
+                compliance_links_setup(
+                    client,
+                    pattern.as_deref(),
+                    speed,
+                    fec,
+                    autoneg,
+                    kr,
+                    all,
+                )
+                .await
             }
             LinkAction::Teardown { pattern, all } => {
                 compliance_links_teardown(client, pattern.as_deref(), all).await
@@ -232,6 +245,7 @@ async fn get_matching_links(
 
 async fn compliance_links_setup(
     client: &Client,
+    pattern: Option<&str>,
     speed: PortSpeed,
     fec: Option<PortFec>,
     autoneg: bool,
@@ -245,14 +259,32 @@ async fn compliance_links_setup(
         .context("failed to list switch ports")?
         .into_inner();
 
-    // Filter to qsfp ports only unless --all is specified
+    // Filter switch ports based on --all flag and pattern
     let switch_ports: Vec<types::PortId> = if all {
-        all_ports
+        // If --all is specified, apply pattern filtering to all ports
+        if let Some(user_pattern) = pattern {
+            all_ports
+                .into_iter()
+                .filter(|port| port.to_string().contains(user_pattern))
+                .collect()
+        } else {
+            all_ports
+        }
     } else {
-        all_ports
+        // If --all is not specified, filter to qsfp ports then apply pattern
+        let qsfp_ports: Vec<types::PortId> = all_ports
             .into_iter()
             .filter(|port| matches!(port, types::PortId::Qsfp(_)))
-            .collect()
+            .collect();
+
+        if let Some(user_pattern) = pattern {
+            qsfp_ports
+                .into_iter()
+                .filter(|port| port.to_string().contains(user_pattern))
+                .collect()
+        } else {
+            qsfp_ports
+        }
     };
 
     let port_type = if all { "all" } else { "qsfp" };
