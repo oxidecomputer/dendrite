@@ -17,9 +17,9 @@ use dpd_client::Client;
 use crate::LinkPath;
 
 #[derive(Debug, StructOpt)]
-#[structopt(about = "Compliance management for links")]
+#[structopt(about = "Commands for compliance testing")]
 pub enum Compliance {
-    /// Manage link compliance settings
+    /// View/Manage link state
     ///
     /// This command allows you to control and monitor link states for compliance purposes.
     ///
