@@ -27,6 +27,7 @@ pub enum Compliance {
     ///   down (off) - Disable links (bring them down, qsfp links by default)
     ///   ls (list) - List links with their enabled status and operational state (qsfp links by default)
     ///   setup     - Create links on qsfp switch ports with compliance settings
+    ///   teardown  - Delete links from switch ports (qsfp links by default)
     ///
     /// PATTERNS (optional, only qsfp links by default unless --all specified):
     ///   qsfp0/0     - Specific link path
@@ -43,6 +44,8 @@ pub enum Compliance {
     ///   swadm compliance links setup        # Create links on qsfp switch ports
     ///   swadm compliance links setup --all  # Create links on all switch ports
     ///   swadm compliance links setup -s 100G -f rs    # Custom settings with short flags
+    ///   swadm compliance links teardown     # Delete qsfp links
+    ///   swadm compliance links teardown --all  # Delete all links
     #[structopt(verbatim_doc_comment)]
     Links {
         #[structopt(subcommand)]
@@ -84,13 +87,24 @@ pub enum LinkAction {
         /// The speed for the new links
         #[structopt(short, long, parse(try_from_str), default_value = "200G")]
         speed: PortSpeed,
-        /// The error-correction scheme for the links
-        #[structopt(short, long, parse(try_from_str), default_value = "None")]
-        fec: PortFec,
+        /// The error-correction scheme for the links (override server default)
+        #[structopt(short, long, parse(try_from_str))]
+        fec: Option<PortFec>,
         /// Enable autonegotiation on the links
         #[structopt(short, long)]
         autoneg: bool,
+        /// Enable KR mode for the links
+        #[structopt(short, long)]
+        kr: bool,
         /// Create links on all switch ports (default: qsfp ports only)
+        #[structopt(long)]
+        all: bool,
+    },
+    /// Delete links from switch ports
+    Teardown {
+        /// Link pattern to match. Can be specific link like "qsfp0/0", or substring pattern
+        pattern: Option<String>,
+        /// Include all links (default: qsfp links only)
         #[structopt(long)]
         all: bool,
     },
@@ -117,8 +131,15 @@ pub async fn compliance_cmd(
                 speed,
                 fec,
                 autoneg,
+                kr,
                 all,
-            } => compliance_links_setup(client, speed, fec, autoneg, all).await,
+            } => {
+                compliance_links_setup(client, speed, fec, autoneg, kr, all)
+                    .await
+            }
+            LinkAction::Teardown { pattern, all } => {
+                compliance_links_teardown(client, pattern.as_deref(), all).await
+            }
         },
     }
 }
@@ -212,8 +233,9 @@ async fn get_matching_links(
 async fn compliance_links_setup(
     client: &Client,
     speed: PortSpeed,
-    fec: PortFec,
+    fec: Option<PortFec>,
     autoneg: bool,
+    kr: bool,
     all: bool,
 ) -> anyhow::Result<()> {
     // Get all switch ports
@@ -234,8 +256,9 @@ async fn compliance_links_setup(
     };
 
     let port_type = if all { "all" } else { "qsfp" };
-    println!("Creating links on {} {} switch ports with speed={}, fec={}, autoneg={}",
-        switch_ports.len(), port_type, speed, fec, autoneg);
+    let fec_display = fec.map_or("default".to_string(), |f| f.to_string());
+    println!("Creating links on {} {} switch ports with speed={}, fec={}, autoneg={}, kr={}",
+        switch_ports.len(), port_type, speed, fec_display, autoneg, kr);
 
     let mut created_count = 0;
     let mut error_count = 0;
@@ -244,9 +267,9 @@ async fn compliance_links_setup(
         let params = types::LinkCreate {
             lane: None, // Use default first lane
             speed: speed.into(),
-            fec: Some(fec.into()),
+            fec: fec.map(|f| f.into()),
             autoneg,
-            kr: false, // Default to false for compliance
+            kr,
             tx_eq: None,
         };
 
@@ -269,6 +292,51 @@ async fn compliance_links_setup(
 
     if error_count > 0 {
         anyhow::bail!("Setup completed with {} errors", error_count);
+    }
+
+    Ok(())
+}
+
+async fn compliance_links_teardown(
+    client: &Client,
+    pattern: Option<&str>,
+    all: bool,
+) -> anyhow::Result<()> {
+    let links = get_matching_links(client, pattern, all).await?;
+
+    if links.is_empty() {
+        println!("No links found to delete");
+        return Ok(());
+    }
+
+    println!("Deleting {} links", links.len());
+
+    let mut deleted_count = 0;
+    let mut error_count = 0;
+
+    for link in links {
+        match client.link_delete(&link.port_id, &link.link_id).await {
+            Ok(_) => {
+                println!("Deleted link {}/{}", link.port_id, link.link_id);
+                deleted_count += 1;
+            }
+            Err(e) => {
+                eprintln!(
+                    "Failed to delete link {}/{}: {}",
+                    link.port_id, link.link_id, e
+                );
+                error_count += 1;
+            }
+        }
+    }
+
+    println!(
+        "Teardown complete: {} links deleted, {} errors",
+        deleted_count, error_count
+    );
+
+    if error_count > 0 {
+        anyhow::bail!("Teardown completed with {} errors", error_count);
     }
 
     Ok(())
