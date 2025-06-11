@@ -107,7 +107,7 @@ async fn compliance_links_list(
         writeln!(
             tw,
             "{}\t{}\t{}",
-            link.to_string(),
+            link,
             link.enabled,
             link.link_state
         )?;
@@ -130,12 +130,12 @@ async fn compliance_links_enable(
             .context(format!(
                 "failed to {} link {}",
                 if enabled { "enable" } else { "disable" },
-                link.to_string()
+                link
             ))?;
         println!(
             "{} link {}",
             if enabled { "Enabled" } else { "Disabled" },
-            link.to_string()
+            link
         );
     }
 
