@@ -11,6 +11,7 @@ use colored::*;
 use structopt::*;
 use tabwriter::TabWriter;
 
+use common::ports::{PortFec, PortSpeed};
 use dpd_client::types;
 use dpd_client::Client;
 
@@ -21,12 +22,13 @@ use crate::LinkPath;
 pub enum Compliance {
     /// View/Manage link state
     ///
-    /// This command allows you to control and monitor link states for compliance purposes.
+    /// This command allows you to control and monitor link states.
     ///
     /// ACTIONS:
     ///   up (on)   - Enable links (bring them up)
     ///   down (off) - Disable links (bring them down)
     ///   ls (list) - List links with their enabled status and operational state
+    ///   setup     - Create links on switch ports. Defaults to just "qsfp" ports unless --all is specified
     ///
     /// PATTERNS:
     ///   all         - Apply to all links (default if not specified)
@@ -39,6 +41,9 @@ pub enum Compliance {
     ///   swadm compliance links up           # Enable all links (or 'on')
     ///   swadm compliance links on rear0/0   # Enable specific link
     ///   swadm compliance links down rear    # Disable links matching "rear" (or 'off')
+    ///   swadm compliance links setup        # Create links on qsfp switch ports
+    ///   swadm compliance links setup --all  # Create links on all switch ports
+    ///   swadm compliance links setup -s 100G -f rs    # Custom settings with short flags
     #[structopt(verbatim_doc_comment)]
     Links {
         #[structopt(subcommand)]
@@ -66,6 +71,21 @@ pub enum LinkAction {
         /// Link pattern to match. Can be "all" (default), specific link like "rear0/0", or substring pattern
         pattern: Option<String>,
     },
+    /// Create links on switch ports with default compliance settings
+    Setup {
+        /// The speed for the new links
+        #[structopt(short, long, parse(try_from_str), default_value = "200G")]
+        speed: PortSpeed,
+        /// The error-correction scheme for the links
+        #[structopt(short, long, parse(try_from_str), default_value = "None")]
+        fec: PortFec,
+        /// Enable autonegotiation on the links
+        #[structopt(short, long)]
+        autoneg: bool,
+        /// Create links on all switch ports (default: qsfp ports only)
+        #[structopt(long)]
+        all: bool,
+    },
 }
 
 pub async fn compliance_cmd(
@@ -86,6 +106,12 @@ pub async fn compliance_cmd(
                 let pattern = pattern.as_deref().unwrap_or("all");
                 compliance_links_enable(client, pattern, false).await
             }
+            LinkAction::Setup {
+                speed,
+                fec,
+                autoneg,
+                all,
+            } => compliance_links_setup(client, speed, fec, autoneg, all).await,
         },
     }
 }
@@ -171,4 +197,69 @@ async fn get_matching_links(
         .collect();
 
     Ok(matching_links)
+}
+
+async fn compliance_links_setup(
+    client: &Client,
+    speed: PortSpeed,
+    fec: PortFec,
+    autoneg: bool,
+    all: bool,
+) -> anyhow::Result<()> {
+    // Get all switch ports
+    let all_ports = client
+        .port_list()
+        .await
+        .context("failed to list switch ports")?
+        .into_inner();
+
+    // Filter to qsfp ports only unless --all is specified
+    let switch_ports: Vec<types::PortId> = if all {
+        all_ports
+    } else {
+        all_ports
+            .into_iter()
+            .filter(|port| matches!(port, types::PortId::Qsfp(_)))
+            .collect()
+    };
+
+    let port_type = if all { "all" } else { "qsfp" };
+    println!("Creating links on {} {} switch ports with speed={}, fec={}, autoneg={}",
+        switch_ports.len(), port_type, speed, fec, autoneg);
+
+    let mut created_count = 0;
+    let mut error_count = 0;
+
+    for port_id in switch_ports {
+        let params = types::LinkCreate {
+            lane: None, // Use default first lane
+            speed: speed.into(),
+            fec: Some(fec.into()),
+            autoneg,
+            kr: false, // Default to false for compliance
+            tx_eq: None,
+        };
+
+        match client.link_create(&port_id, &params).await {
+            Ok(link_id) => {
+                println!("Created link {}/{}", port_id, link_id.into_inner());
+                created_count += 1;
+            }
+            Err(e) => {
+                eprintln!("Failed to create link on {}: {}", port_id, e);
+                error_count += 1;
+            }
+        }
+    }
+
+    println!(
+        "Setup complete: {} links created, {} errors",
+        created_count, error_count
+    );
+
+    if error_count > 0 {
+        anyhow::bail!("Setup completed with {} errors", error_count);
+    }
+
+    Ok(())
 }
