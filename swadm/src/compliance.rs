@@ -24,9 +24,9 @@ pub enum Compliance {
     /// This command allows you to control and monitor link states for compliance purposes.
     ///
     /// ACTIONS:
-    ///   up    - Enable links (bring them up)
-    ///   down  - Disable links (bring them down)
-    ///   ls    - List links with their enabled status and operational state
+    ///   up (on)   - Enable links (bring them up)
+    ///   down (off) - Disable links (bring them down)
+    ///   ls (list) - List links with their enabled status and operational state
     ///
     /// PATTERNS:
     ///   all         - Apply to all links (default if not specified)
@@ -36,9 +36,9 @@ pub enum Compliance {
     /// EXAMPLES:
     ///   swadm compliance links ls           # List all links
     ///   swadm compliance links ls rear      # List links matching "rear"
-    ///   swadm compliance links up           # Enable all links
-    ///   swadm compliance links up rear0/0   # Enable specific link
-    ///   swadm compliance links down rear    # Disable links matching "rear"
+    ///   swadm compliance links up           # Enable all links (or 'on')
+    ///   swadm compliance links on rear0/0   # Enable specific link
+    ///   swadm compliance links down rear    # Disable links matching "rear" (or 'off')
     #[structopt(verbatim_doc_comment)]
     Links {
         #[structopt(subcommand)]
@@ -55,11 +55,13 @@ pub enum LinkAction {
         pattern: Option<String>,
     },
     /// Enable links (bring them up)
+    #[structopt(visible_alias = "on")]
     Up {
         /// Link pattern to match. Can be "all" (default), specific link like "rear0/0", or substring pattern
         pattern: Option<String>,
     },
     /// Disable links (bring them down)
+    #[structopt(visible_alias = "off")]
     Down {
         /// Link pattern to match. Can be "all" (default), specific link like "rear0/0", or substring pattern
         pattern: Option<String>,
@@ -104,13 +106,7 @@ async fn compliance_links_list(
     )?;
 
     for link in links {
-        writeln!(
-            tw,
-            "{}\t{}\t{}",
-            link,
-            link.enabled,
-            link.link_state
-        )?;
+        writeln!(tw, "{}\t{}\t{}", link, link.enabled, link.link_state)?;
     }
 
     tw.flush().map_err(|e| e.into())
