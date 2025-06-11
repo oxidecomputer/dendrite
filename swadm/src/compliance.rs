@@ -21,7 +21,7 @@ use crate::LinkPath;
 pub enum Compliance {
     /// Manage link compliance settings
     Links {
-        /// Action to perform: "on", "off", or "ls"
+        /// Action to perform: "up", "down", or "ls"
         action: String,
         /// Link pattern: "all" or specific link pattern (e.g., "rear0/0").
         /// Defaults to "all" if not provided.
@@ -38,10 +38,10 @@ pub async fn compliance_cmd(
             let pattern = pattern.as_deref().unwrap_or("all");
             match action.as_str() {
                 "ls" => compliance_links_list(client, pattern).await,
-                "on" => compliance_links_enable(client, pattern, true).await,
-                "off" => compliance_links_enable(client, pattern, false).await,
+                "up" => compliance_links_enable(client, pattern, true).await,
+                "down" => compliance_links_enable(client, pattern, false).await,
                 _ => anyhow::bail!(
-                    "Invalid action '{}'. Must be 'on', 'off', or 'ls'",
+                    "Invalid action '{}'. Must be 'up', 'down', or 'ls'",
                     action
                 ),
             }
