@@ -15,8 +15,6 @@ use common::ports::{PortFec, PortSpeed};
 use dpd_client::types;
 use dpd_client::Client;
 
-use crate::LinkPath;
-
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Commands for compliance testing")]
 pub enum Compliance {
@@ -25,22 +23,23 @@ pub enum Compliance {
     /// This command allows you to control and monitor link states.
     ///
     /// ACTIONS:
-    ///   up (on)   - Enable links (bring them up)
-    ///   down (off) - Disable links (bring them down)
-    ///   ls (list) - List links with their enabled status and operational state
-    ///   setup     - Create links on switch ports. Defaults to just "qsfp" ports unless --all is specified
+    ///   up (on)   - Enable links (bring them up, qsfp links by default)
+    ///   down (off) - Disable links (bring them down, qsfp links by default)
+    ///   ls (list) - List links with their enabled status and operational state (qsfp links by default)
+    ///   setup     - Create links on qsfp switch ports with compliance settings
     ///
-    /// PATTERNS:
-    ///   all         - Apply to all links (default if not specified)
-    ///   rear0/0     - Specific link path
-    ///   rear        - Substring match (matches rear0/0, rear1/0, etc.)
+    /// PATTERNS (optional, only qsfp links by default unless --all specified):
+    ///   qsfp0/0     - Specific link path
+    ///   qsfp        - Substring match (matches qsfp0/0, qsfp1/0, etc.)
+    ///   rear0/0     - Specific non-qsfp link (requires --all flag)
     ///
     /// EXAMPLES:
-    ///   swadm compliance links ls           # List all links
-    ///   swadm compliance links ls rear      # List links matching "rear"
-    ///   swadm compliance links up           # Enable all links (or 'on')
-    ///   swadm compliance links on rear0/0   # Enable specific link
-    ///   swadm compliance links down rear    # Disable links matching "rear" (or 'off')
+    ///   swadm compliance links ls           # List qsfp links only
+    ///   swadm compliance links ls --all     # List all links
+    ///   swadm compliance links ls qsfp      # List qsfp links matching "qsfp"
+    ///   swladm compliance links up           # Enable qsfp links (or 'on')
+    ///   swadm compliance links on qsfp0/0   # Enable specific qsfp link
+    ///   swadm compliance links down --all   # Disable all links (or 'off')
     ///   swadm compliance links setup        # Create links on qsfp switch ports
     ///   swadm compliance links setup --all  # Create links on all switch ports
     ///   swadm compliance links setup -s 100G -f rs    # Custom settings with short flags
@@ -56,20 +55,29 @@ pub enum LinkAction {
     /// List links with their enabled status and operational state
     #[structopt(visible_alias = "ls")]
     List {
-        /// Link pattern to match. Can be "all" (default), specific link like "rear0/0", or substring pattern
+        /// Link pattern to match. Can be specific link like "rear0/0", or substring pattern
         pattern: Option<String>,
+        /// Include all links (default: qsfp links only)
+        #[structopt(long)]
+        all: bool,
     },
     /// Enable links (bring them up)
     #[structopt(visible_alias = "on")]
     Up {
-        /// Link pattern to match. Can be "all" (default), specific link like "rear0/0", or substring pattern
+        /// Link pattern to match. Can be specific link like "rear0/0", or substring pattern
         pattern: Option<String>,
+        /// Include all links (default: qsfp links only)
+        #[structopt(long)]
+        all: bool,
     },
     /// Disable links (bring them down)
     #[structopt(visible_alias = "off")]
     Down {
-        /// Link pattern to match. Can be "all" (default), specific link like "rear0/0", or substring pattern
+        /// Link pattern to match. Can be specific link like "rear0/0", or substring pattern
         pattern: Option<String>,
+        /// Include all links (default: qsfp links only)
+        #[structopt(long)]
+        all: bool,
     },
     /// Create links on switch ports with default compliance settings
     Setup {
@@ -94,17 +102,16 @@ pub async fn compliance_cmd(
 ) -> anyhow::Result<()> {
     match compliance {
         Compliance::Links { action } => match action {
-            LinkAction::List { pattern } => {
-                let pattern = pattern.as_deref().unwrap_or("all");
-                compliance_links_list(client, pattern).await
+            LinkAction::List { pattern, all } => {
+                compliance_links_list(client, pattern.as_deref(), all).await
             }
-            LinkAction::Up { pattern } => {
-                let pattern = pattern.as_deref().unwrap_or("all");
-                compliance_links_enable(client, pattern, true).await
+            LinkAction::Up { pattern, all } => {
+                compliance_links_enable(client, pattern.as_deref(), true, all)
+                    .await
             }
-            LinkAction::Down { pattern } => {
-                let pattern = pattern.as_deref().unwrap_or("all");
-                compliance_links_enable(client, pattern, false).await
+            LinkAction::Down { pattern, all } => {
+                compliance_links_enable(client, pattern.as_deref(), false, all)
+                    .await
             }
             LinkAction::Setup {
                 speed,
@@ -118,9 +125,10 @@ pub async fn compliance_cmd(
 
 async fn compliance_links_list(
     client: &Client,
-    pattern: &str,
+    pattern: Option<&str>,
+    all: bool,
 ) -> anyhow::Result<()> {
-    let links = get_matching_links(client, pattern).await?;
+    let links = get_matching_links(client, pattern, all).await?;
 
     let mut tw = TabWriter::new(stdout());
     writeln!(
@@ -140,10 +148,11 @@ async fn compliance_links_list(
 
 async fn compliance_links_enable(
     client: &Client,
-    pattern: &str,
+    pattern: Option<&str>,
     enabled: bool,
+    all: bool,
 ) -> anyhow::Result<()> {
-    let links = get_matching_links(client, pattern).await?;
+    let links = get_matching_links(client, pattern, all).await?;
 
     for link in links {
         client
@@ -166,37 +175,38 @@ async fn compliance_links_enable(
 
 async fn get_matching_links(
     client: &Client,
-    pattern: &str,
+    pattern: Option<&str>,
+    all: bool,
 ) -> anyhow::Result<Vec<types::Link>> {
-    let all_links = client
-        .link_list_all(None)
+    // Determine server-side filter
+    let server_filter = if all {
+        // If --all is specified, send user's pattern to server (or None for all links)
+        pattern
+    } else {
+        // If --all is not specified, get qsfp links from server
+        Some("qsfp")
+    };
+
+    let links = client
+        .link_list_all(server_filter)
         .await
-        .context("failed to list all links")?
+        .context("failed to list links")?
         .into_inner();
 
-    if pattern == "all" {
-        return Ok(all_links);
-    }
-
-    // Try to parse as a specific link path first
-    if let Ok(link_path) = pattern.parse::<LinkPath>() {
-        let matching_links: Vec<types::Link> = all_links
+    // Apply client-side filtering if needed
+    let filtered_links = if !all && pattern.is_some() {
+        // Filter the qsfp links by user's pattern
+        let user_pattern = pattern.unwrap();
+        links
             .into_iter()
-            .filter(|link| {
-                link.port_id == link_path.port_id
-                    && link.link_id == link_path.link_id
-            })
-            .collect();
-        return Ok(matching_links);
-    }
+            .filter(|link| link.to_string().contains(user_pattern))
+            .collect()
+    } else {
+        // Server filtering was sufficient
+        links
+    };
 
-    // Otherwise, treat as a substring pattern
-    let matching_links: Vec<types::Link> = all_links
-        .into_iter()
-        .filter(|link| link.to_string().contains(pattern))
-        .collect();
-
-    Ok(matching_links)
+    Ok(filtered_links)
 }
 
 async fn compliance_links_setup(
