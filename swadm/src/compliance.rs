@@ -37,12 +37,30 @@ pub enum Compliance {
     ///   swadm compliance links ls           # List all links
     ///   swadm compliance links ls rear      # List links matching "rear"
     ///   swadm compliance links up           # Enable all links
-    ///   swladm compliance links up rear0/0   # Enable specific link
+    ///   swadm compliance links up rear0/0   # Enable specific link
     ///   swadm compliance links down rear    # Disable links matching "rear"
     #[structopt(verbatim_doc_comment)]
     Links {
-        /// Action to perform: "up" (enable), "down" (disable), or "ls" (list)
-        action: String,
+        #[structopt(subcommand)]
+        action: LinkAction,
+    },
+}
+
+#[derive(Debug, StructOpt)]
+pub enum LinkAction {
+    /// List links with their enabled status and operational state
+    #[structopt(visible_alias = "ls")]
+    List {
+        /// Link pattern to match. Can be "all" (default), specific link like "rear0/0", or substring pattern
+        pattern: Option<String>,
+    },
+    /// Enable links (bring them up)
+    Up {
+        /// Link pattern to match. Can be "all" (default), specific link like "rear0/0", or substring pattern
+        pattern: Option<String>,
+    },
+    /// Disable links (bring them down)
+    Down {
         /// Link pattern to match. Can be "all" (default), specific link like "rear0/0", or substring pattern
         pattern: Option<String>,
     },
@@ -53,28 +71,20 @@ pub async fn compliance_cmd(
     compliance: Compliance,
 ) -> anyhow::Result<()> {
     match compliance {
-        Compliance::Links { action, pattern } => {
-            let pattern = pattern.as_deref().unwrap_or("all");
-            match action.as_str() {
-                "ls" => compliance_links_list(client, pattern).await,
-                "up" => compliance_links_enable(client, pattern, true).await,
-                "down" => compliance_links_enable(client, pattern, false).await,
-                _ => anyhow::bail!(
-                    "Invalid action '{}'. Must be 'up', 'down', or 'ls'.\n\n\
-                    USAGE:\n  \
-                    swadm compliance links <ACTION> [PATTERN]\n\n\
-                    ACTIONS:\n  \
-                    up    - Enable links (bring them up)\n  \
-                    down  - Disable links (bring them down)\n  \
-                    ls    - List links with their enabled status and operational state\n\n\
-                    PATTERNS (optional, defaults to 'all'):\n  \
-                    all       - Apply to all links\n  \
-                    rear0/0   - Specific link path\n  \
-                    rear      - Substring match (matches rear0/0, rear1/0, etc.)",
-                    action
-                ),
+        Compliance::Links { action } => match action {
+            LinkAction::List { pattern } => {
+                let pattern = pattern.as_deref().unwrap_or("all");
+                compliance_links_list(client, pattern).await
             }
-        }
+            LinkAction::Up { pattern } => {
+                let pattern = pattern.as_deref().unwrap_or("all");
+                compliance_links_enable(client, pattern, true).await
+            }
+            LinkAction::Down { pattern } => {
+                let pattern = pattern.as_deref().unwrap_or("all");
+                compliance_links_enable(client, pattern, false).await
+            }
+        },
     }
 }
 
