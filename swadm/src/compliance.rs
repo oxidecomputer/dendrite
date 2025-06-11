@@ -23,8 +23,9 @@ pub enum Compliance {
     Links {
         /// Action to perform: "on", "off", or "ls"
         action: String,
-        /// Link pattern: "all" or specific link pattern (e.g., "rear0/0")
-        pattern: String,
+        /// Link pattern: "all" or specific link pattern (e.g., "rear0/0").
+        /// Defaults to "all" if not provided.
+        pattern: Option<String>,
     },
 }
 
@@ -33,15 +34,18 @@ pub async fn compliance_cmd(
     compliance: Compliance,
 ) -> anyhow::Result<()> {
     match compliance {
-        Compliance::Links { action, pattern } => match action.as_str() {
-            "ls" => compliance_links_list(client, &pattern).await,
-            "on" => compliance_links_enable(client, &pattern, true).await,
-            "off" => compliance_links_enable(client, &pattern, false).await,
-            _ => anyhow::bail!(
-                "Invalid action '{}'. Must be 'on', 'off', or 'ls'",
-                action
-            ),
-        },
+        Compliance::Links { action, pattern } => {
+            let pattern = pattern.as_deref().unwrap_or("all");
+            match action.as_str() {
+                "ls" => compliance_links_list(client, pattern).await,
+                "on" => compliance_links_enable(client, pattern, true).await,
+                "off" => compliance_links_enable(client, pattern, false).await,
+                _ => anyhow::bail!(
+                    "Invalid action '{}'. Must be 'on', 'off', or 'ls'",
+                    action
+                ),
+            }
+        }
     }
 }
 
