@@ -18,6 +18,7 @@ use dpd_client::ClientState;
 
 mod addr;
 mod arp;
+mod compliance;
 mod counters;
 mod link;
 mod nat;
@@ -60,6 +61,7 @@ enum Commands {
     SwitchPort(switchport::SwitchPort),
     Link(link::Link),
     Table(table::Table),
+    Compliance(compliance::Compliance),
 }
 
 // A LinkPath or "loopback", used when either is appropriate.
@@ -190,5 +192,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::SwitchPort(p) => switchport::switch_cmd(&client, p).await,
         Commands::Link(link) => link::link_cmd(&client, link).await,
         Commands::Table(table) => table::table_cmd(&client, table).await,
+        Commands::Compliance(compliance) => {
+            compliance::compliance_cmd(&client, compliance).await
+        }
     }
 }
