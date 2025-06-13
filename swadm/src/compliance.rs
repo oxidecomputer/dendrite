@@ -223,15 +223,26 @@ async fn compliance_ports_list(
     let mut tw = TabWriter::new(stdout());
     writeln!(
         tw,
-        "{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}",
         "PORT".underline(),
         "LINK".underline(),
         "ENABLED?".underline(),
-        "STATE".underline()
+        "STATE".underline(),
+        "POWER".underline()
     )?;
 
-    // For each port, check for links
+    // For each port, check for links and power state
     for port_id in target_ports {
+        // Get power state for the port
+        let power_state = match client.transceiver_power_get(&port_id).await {
+            Ok(power) => {
+                let state = power.into_inner();
+                // Convert to a cleaner string representation
+                format!("{:?}", state).to_lowercase()
+            }
+            Err(_) => "N/A".to_string(),
+        };
+
         let links = client
             .link_list(&port_id)
             .await
@@ -240,14 +251,22 @@ async fn compliance_ports_list(
 
         if links.is_empty() {
             // Port has no links
-            writeln!(tw, "{}\t{}\t{}\t{}", port_id, "-", "-", "No links")?;
+            writeln!(
+                tw,
+                "{}\t{}\t{}\t{}\t{}",
+                port_id, "-", "-", "No links", power_state
+            )?;
         } else {
-            // Port has links - show each link
+            // Port has links - show each link with the same power state
             for link in links {
                 writeln!(
                     tw,
-                    "{}\t{}\t{}\t{}",
-                    link.port_id, link, link.enabled, link.link_state
+                    "{}\t{}\t{}\t{}\t{}",
+                    link.port_id,
+                    link,
+                    link.enabled,
+                    link.link_state,
+                    power_state
                 )?;
             }
         }
