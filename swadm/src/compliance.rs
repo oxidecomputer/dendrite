@@ -119,10 +119,10 @@ pub enum PortAction {
     },
     /// Control transceiver power state
     Power {
-        /// Port pattern to match. Can be specific port like "qsfp0", or substring pattern
-        pattern: Option<String>,
         /// Power state (high, low, or off)
         state: types::PowerState,
+        /// Port pattern to match. Can be specific port like "qsfp0", or substring pattern
+        pattern: Option<String>,
         /// Force power operation, deleting links if necessary
         #[structopt(short, long)]
         force: bool,
@@ -169,8 +169,8 @@ pub async fn compliance_cmd(
                 compliance_ports_teardown(client, pattern.as_deref(), all).await
             }
             PortAction::Power {
-                pattern,
                 state,
+                pattern,
                 force,
             } => {
                 compliance_ports_power(client, pattern.as_deref(), state, force)
