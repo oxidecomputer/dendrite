@@ -279,20 +279,13 @@ async fn compliance_ports_enable(
 ) -> anyhow::Result<()> {
     let links = get_matching_links(client, pattern, all).await?;
 
+    let op = if enabled { "enable" } else { "disable" };
     for link in links {
         client
             .link_enabled_set(&link.port_id, &link.link_id, enabled)
             .await
-            .context(format!(
-                "failed to {} link {}",
-                if enabled { "enable" } else { "disable" },
-                link
-            ))?;
-        println!(
-            "{} link {}",
-            if enabled { "Enabled" } else { "Disabled" },
-            link
-        );
+            .context(format!("failed to {op} link {link}"))?;
+        println!("{op}d link {link}");
     }
 
     Ok(())
@@ -492,7 +485,7 @@ async fn compliance_ports_power(
     };
 
     if target_ports.is_empty() {
-        println!("No qsfp ports found matching pattern");
+        eprintln!("No qsfp ports found matching pattern");
         return Ok(());
     }
 
