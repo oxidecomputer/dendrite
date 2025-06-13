@@ -251,11 +251,7 @@ async fn compliance_ports_list(
 
         if links.is_empty() {
             // Port has no links
-            writeln!(
-                tw,
-                "{}\t{}\t{}\t{}\t{}",
-                port_id, power_state, "-", "-", "No links"
-            )?;
+            writeln!(tw, "{}\t{}\t-\t-\tNo links", port_id, power_state)?;
         } else {
             // Port has links - show each link with the same power state
             for link in links {
