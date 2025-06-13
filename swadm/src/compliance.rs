@@ -225,10 +225,10 @@ async fn compliance_ports_list(
         tw,
         "{}\t{}\t{}\t{}\t{}",
         "PORT".underline(),
+        "POWER".underline(),
         "LINK".underline(),
-        "ENABLED?".underline(),
-        "STATE".underline(),
-        "POWER".underline()
+        "LINK-ENABLED?".underline(),
+        "LINK-STATE".underline()
     )?;
 
     // For each port, check for links and power state
@@ -254,7 +254,7 @@ async fn compliance_ports_list(
             writeln!(
                 tw,
                 "{}\t{}\t{}\t{}\t{}",
-                port_id, "-", "-", "No links", power_state
+                port_id, power_state, "-", "-", "No links"
             )?;
         } else {
             // Port has links - show each link with the same power state
@@ -263,10 +263,10 @@ async fn compliance_ports_list(
                     tw,
                     "{}\t{}\t{}\t{}\t{}",
                     link.port_id,
+                    power_state,
                     link,
                     link.enabled,
-                    link.link_state,
-                    power_state
+                    link.link_state
                 )?;
             }
         }
