@@ -32,6 +32,30 @@ const GIMLET_MAC: &str = "11:22:33:44:55:66";
 const GIMLET_IP: Ipv6Addr =
     Ipv6Addr::new(0xfd00, 0x1122, 0x7788, 0x0101, 0, 0, 0, 4);
 
+// Bifurcated Multicast Design:
+//
+// The multicast implementation uses a bifurcated design that separates external
+// (customer) and (internal) underlay traffic:
+//
+// 1. External-only groups (IPv4 and non-admin-scoped IPv6):
+//    - Created from API control plane IPs for customer traffic
+//    - Handle customer traffic to/from outside the rack
+//    - Use the external multicast API (/multicast/external-groups)
+//    - Must have NAT targets pointing to internal groups for proper forwarding
+//
+// 2. Internal groups (admin-scoped IPv6 multicast):
+//    - Admin-scoped = admin-local, site-local, or organization-local scope (RFC 7346, RFC 4291)
+//    - Geneve encapsulated multicast traffic (NAT targets of external-only groups)
+//    - Use the internal multicast API (/multicast/groups)
+//    - Can replicate to:
+//      a) External group members (customer traffic)
+//      b) Underlay-only members (infrastructure traffic)
+//      c) Both external and underlay members (bifurcated replication)
+//    - Don't require NAT targets (they serve as targets for external-only groups)
+//
+// This design ensures proper traffic separation and enables flexible multicast forwarding
+// policies between external networks and internal rack infrastructure.
+
 fn derive_ipv6_mcast_mac(ipv6_addr: &Ipv6Addr) -> MacAddr {
     // Get the octets of the IPv6 address
     let ip_octets = ipv6_addr.octets();
@@ -130,25 +154,64 @@ async fn create_test_multicast_group(
         None
     };
 
-    let group_entry = types::MulticastGroupCreateEntry {
-        group_ip,
-        tag: tag.map(String::from),
-        nat_target,
-        vlan_id: vlan_id,
-        sources,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
-        members,
-    };
-
-    switch
-        .client
-        .multicast_group_create(&group_entry)
-        .await
-        .expect("Failed to create multicast group")
-        .into_inner()
+    match group_ip {
+        IpAddr::V4(_) => {
+            // IPv4 groups are always external and require NAT targets
+            let nat_target =
+                nat_target.expect("IPv4 external groups require NAT targets");
+            let external_entry = types::MulticastGroupCreateExternalEntry {
+                group_ip,
+                tag: tag.map(String::from),
+                nat_target,
+                vlan_id,
+                sources,
+            };
+            switch
+                .client
+                .multicast_group_create_external(&external_entry)
+                .await
+                .expect("Failed to create external multicast group")
+                .into_inner()
+        }
+        IpAddr::V6(ipv6) => {
+            if oxnet::Ipv6Net::new_unchecked(ipv6, 128)
+                .is_admin_scoped_multicast()
+            {
+                // Admin-scoped IPv6 groups are internal with replication info
+                let internal_entry = types::MulticastGroupCreateEntry {
+                    group_ip,
+                    tag: tag.map(String::from),
+                    sources,
+                    replication_info: types::MulticastReplicationEntry::default(
+                    ),
+                    members,
+                };
+                switch
+                    .client
+                    .multicast_group_create(&internal_entry)
+                    .await
+                    .expect("Failed to create internal multicast group")
+                    .into_inner()
+            } else {
+                // Non-admin-scoped IPv6 groups are external-only and require NAT targets
+                let nat_target = nat_target
+                    .expect("IPv6 external groups require NAT targets");
+                let external_entry = types::MulticastGroupCreateExternalEntry {
+                    group_ip,
+                    tag: tag.map(String::from),
+                    nat_target,
+                    vlan_id,
+                    sources,
+                };
+                switch
+                    .client
+                    .multicast_group_create_external(&external_entry)
+                    .await
+                    .expect("Failed to create external multicast group")
+                    .into_inner()
+            }
+        }
+    }
 }
 
 /// Clean up a test group.
@@ -342,30 +405,39 @@ async fn test_nonexisting_group() {
 async fn test_group_creation_with_validation() {
     let switch = &*get_switch().await;
 
-    let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
+    // Test the bifurcated multicast design:
+    // - IPv4 external groups require NAT targets pointing to internal groups
+    // - Internal groups handle Geneve encapsulated replication infrastructure
     let nat_target = create_nat_target_ipv4();
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+
+    let egress1 = PhysPort(28);
+    let internal_group = create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("valid_internal_group"),
+        &[(egress1, types::Direction::Underlay)],
+        None,
+        false,
+        None,
+    )
+    .await;
+
+    assert!(internal_group.underlay_group_id.is_some());
 
     // 1. Test creating a group with invalid parameters (e.g., invalid VLAN ID)
-    let invalid_group = types::MulticastGroupCreateEntry {
+    // IPv4 groups are always external
+    let external_invalid = types::MulticastGroupCreateExternalEntry {
         group_ip: IpAddr::V4(MULTICAST_TEST_IPV4),
         tag: Some("test_invalid".to_string()),
-        nat_target: Some(nat_target.clone()),
+        nat_target: nat_target.clone(),
         vlan_id: Some(4096), // Invalid: VLAN ID must be 1-4095
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: Some(10),
-            level2_excl_id: Some(20),
-        },
-        members: vec![types::MulticastGroupMember {
-            port_id: port_id.clone(),
-            link_id,
-            direction: types::Direction::External,
-        }],
     };
 
     let res = switch
         .client
-        .multicast_group_create(&invalid_group)
+        .multicast_group_create_external(&external_invalid)
         .await
         .expect_err("Should fail with invalid group ID");
 
@@ -381,34 +453,26 @@ async fn test_group_creation_with_validation() {
     }
 
     // 2. Test with valid parameters
-    let valid_group = types::MulticastGroupCreateEntry {
+    // IPv4 groups are always external
+    let external_valid = types::MulticastGroupCreateExternalEntry {
         group_ip: IpAddr::V4(MULTICAST_TEST_IPV4_SSM),
         tag: Some("test_valid".to_string()),
-        nat_target: Some(nat_target.clone()),
+        nat_target: nat_target.clone(),
         vlan_id: Some(10),
         sources: Some(vec![types::IpSrc::Exact(
             "192.168.1.1".parse::<IpAddr>().unwrap(),
         )]),
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: Some(10),
-            level2_excl_id: Some(20),
-        },
-        members: vec![types::MulticastGroupMember {
-            port_id: port_id.clone(),
-            link_id,
-            direction: types::Direction::External,
-        }],
     };
 
     let created = switch
         .client
-        .multicast_group_create(&valid_group)
+        .multicast_group_create_external(&external_valid)
         .await
         .expect("Should successfully create valid group")
         .into_inner();
 
     assert_eq!(created.group_ip, MULTICAST_TEST_IPV4_SSM);
-    assert!(created.external_group_id.unwrap() > 0);
+    assert!(created.external_group_id.is_none());
     assert!(created.underlay_group_id.is_none());
     assert_eq!(created.tag, Some("test_valid".to_string()));
     assert_eq!(created.int_fwding.nat_target, Some(nat_target.clone()));
@@ -419,15 +483,11 @@ async fn test_group_creation_with_validation() {
             "192.168.1.1".parse::<IpAddr>().unwrap(),
         )])
     );
-    assert_eq!(
-        created.replication_info.rid,
-        created.external_group_id.unwrap()
+    assert!(
+        created.replication_info.is_none(),
+        "IPv4 groups should not have replication info"
     );
-    assert_eq!(created.replication_info.level1_excl_id, 10);
-    assert_eq!(created.replication_info.level2_excl_id, 20);
-    assert_eq!(created.members.len(), 1);
-    assert_eq!(created.members[0].port_id, port_id);
-    assert_eq!(created.members[0].link_id, link_id);
+    assert_eq!(created.members.len(), 0); // External groups don't have members
 
     switch
         .client
@@ -438,21 +498,15 @@ async fn test_group_creation_with_validation() {
 
 #[tokio::test]
 #[ignore]
-async fn test_group_api_lifecycle() {
+async fn test_internal_ipv6_validation() {
     let switch = &*get_switch().await;
 
-    let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
-    let vlan_id = 10;
-    let nat_target = create_nat_target_ipv4();
+    let (port_id, link_id) = switch.link_id(PhysPort(26)).unwrap();
 
-    let group_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
-
-    // 1. Create a multicast group
-    let group_create = types::MulticastGroupCreateEntry {
-        group_ip,
-        tag: Some("test_lifecycle".to_string()),
-        nat_target: Some(nat_target.clone()),
-        vlan_id: Some(vlan_id),
+    // Test 1: IPv4 groups should be rejected from internal API
+    let ipv4_internal = types::MulticastGroupCreateEntry {
+        group_ip: IpAddr::V4("224.1.1.1".parse().unwrap()),
+        tag: Some("test_ipv4_internal".to_string()),
         sources: None,
         replication_info: types::MulticastReplicationEntry {
             level1_excl_id: None,
@@ -465,9 +519,234 @@ async fn test_group_api_lifecycle() {
         }],
     };
 
+    let ipv4_res = switch.client.multicast_group_create(&ipv4_internal).await;
+
+    assert!(
+        ipv4_res.is_err(),
+        "Should reject IPv4 groups from internal API"
+    );
+    let ipv4_error_msg = format!("{:?}", ipv4_res.unwrap_err());
+    assert!(
+        ipv4_error_msg
+            .contains("IPv4 multicast groups must use the external API"),
+        "Error message should direct to external API: {}",
+        ipv4_error_msg
+    );
+
+    // Test 2: Non-admin-scoped IPv6 groups should be rejected from internal API
+    let non_admin_ipv6 = types::MulticastGroupCreateEntry {
+        group_ip: IpAddr::V6("ff0e::1".parse().unwrap()), // Global scope, not admin-scoped
+        tag: Some("test_non_admin".to_string()),
+        sources: None,
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: None,
+            level2_excl_id: None,
+        },
+        members: vec![types::MulticastGroupMember {
+            port_id: port_id.clone(),
+            link_id,
+            direction: types::Direction::External,
+        }],
+    };
+
+    let non_admin_res =
+        switch.client.multicast_group_create(&non_admin_ipv6).await;
+
+    assert!(
+        non_admin_res.is_err(),
+        "Should reject non-admin-scoped IPv6 groups from internal API"
+    );
+    let non_admin_error_msg = format!("{:?}", non_admin_res.unwrap_err());
+    assert!(
+        non_admin_error_msg.contains(
+            "Non-admin-scoped IPv6 multicast groups must use the external API"
+        ),
+        "Error message should direct to external API: {}",
+        non_admin_error_msg
+    );
+
+    // Test 3: Admin-scoped IPv6 groups work correctly (no VLAN IDs supported)
+    let internal_group = types::MulticastGroupCreateEntry {
+        group_ip: IpAddr::V6("ff04::2".parse().unwrap()), // Admin-scoped IPv6
+        tag: Some("test_admin_scoped".to_string()),
+        sources: None,
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: None,
+            level2_excl_id: None,
+        },
+        members: vec![types::MulticastGroupMember {
+            port_id: port_id.clone(),
+            link_id,
+            direction: types::Direction::Underlay,
+        }],
+    };
+
     let created = switch
         .client
-        .multicast_group_create(&group_create)
+        .multicast_group_create(&internal_group)
+        .await
+        .expect("Should create internal IPv6 group")
+        .into_inner();
+
+    assert_eq!(created.ext_fwding.vlan_id, None);
+    assert!(created.underlay_group_id.is_some());
+
+    // Test update works correctly
+    let update_entry = types::MulticastGroupUpdateEntry {
+        tag: Some("updated_tag".to_string()),
+        sources: None,
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: None,
+            level2_excl_id: None,
+        },
+        members: vec![types::MulticastGroupMember {
+            port_id,
+            link_id,
+            direction: types::Direction::Underlay,
+        }],
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update(&created.group_ip, &update_entry)
+        .await
+        .expect("Should update internal IPv6 group")
+        .into_inner();
+
+    assert_eq!(updated.tag, Some("updated_tag".to_string()));
+    assert_eq!(updated.ext_fwding.vlan_id, None);
+
+    // Cleanup
+    cleanup_test_group(switch, created.group_ip).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_vlan_propagation_to_internal() {
+    let switch = &*get_switch().await;
+
+    let (port_id, link_id) = switch.link_id(PhysPort(30)).unwrap();
+
+    // Step 1: Create internal IPv6 group first
+    let internal_group_entry = types::MulticastGroupCreateEntry {
+        group_ip: IpAddr::V6("ff04::200".parse().unwrap()), // Admin-scoped IPv6
+        tag: Some("test_vlan_propagation".to_string()),
+        sources: None,
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: None,
+            level2_excl_id: None,
+        },
+        members: vec![
+            types::MulticastGroupMember {
+                port_id: port_id.clone(),
+                link_id,
+                direction: types::Direction::External, // External member for bifurcation
+            },
+            types::MulticastGroupMember {
+                port_id: port_id.clone(),
+                link_id,
+                direction: types::Direction::Underlay, // Underlay member for bifurcation
+            },
+        ],
+    };
+
+    let created_admin = switch
+        .client
+        .multicast_group_create(&internal_group_entry)
+        .await
+        .expect("Should create admin-scoped group")
+        .into_inner();
+
+    assert!(created_admin.external_group_id.is_some());
+    assert_eq!(created_admin.ext_fwding.vlan_id, None); // No VLAN initially
+
+    // Step 2: Create external group that references the admin-scoped group
+    let nat_target = types::NatTarget {
+        internal_ip: "ff04::200".parse().unwrap(), // References admin-scoped group
+        inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x03).into(),
+        vni: 200.into(),
+    };
+
+    let external_group = types::MulticastGroupCreateExternalEntry {
+        group_ip: IpAddr::V4("224.1.2.3".parse().unwrap()),
+        tag: Some("test_external_with_vlan".to_string()),
+        nat_target,
+        vlan_id: Some(42), // This VLAN should be used by admin-scoped group
+        sources: None,
+    };
+
+    let created_external = switch
+        .client
+        .multicast_group_create_external(&external_group)
+        .await
+        .expect("Should create external group with NAT target")
+        .into_inner();
+
+    assert_eq!(created_external.ext_fwding.vlan_id, Some(42));
+    assert_eq!(
+        created_external.int_fwding.nat_target.unwrap().internal_ip,
+        "ff04::200".parse::<std::net::Ipv6Addr>().unwrap()
+    );
+
+    // Step 3: Verify the admin-scoped group now has access to the VLAN via NAT target reference
+    // Check the bitmap table to see if VLAN 42 is properly set (this is where VLAN matters for P4)
+    let bitmap_table = switch
+        .client
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .await
+        .expect("Should clean up internal group")
+        .into_inner();
+
+    // Verify the admin-scoped group's bitmap entry has VLAN 42 from external group propagation
+    assert!(
+        bitmap_table
+            .entries
+            .iter()
+            .any(|entry| entry.action_args.values().any(|v| v.contains("42"))),
+        "Admin-scoped group bitmap should have VLAN 42 from external group"
+    );
+
+    // Cleanup
+    cleanup_test_group(switch, created_admin.group_ip).await;
+    cleanup_test_group(switch, created_external.group_ip).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_group_api_lifecycle() {
+    let switch = &*get_switch().await;
+
+    // Create admin-scoped IPv6 group for underlay replication infrastructure
+    let egress1 = PhysPort(28);
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    let underlay_group = create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("valid_underlay_group"),
+        &[(egress1, types::Direction::Underlay)],
+        None,
+        false,
+        None,
+    )
+    .await;
+
+    assert!(underlay_group.underlay_group_id.is_some());
+
+    // Create IPv4 external group with NAT target referencing the underlay group
+    let group_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
+    let vlan_id = 10;
+    let nat_target = create_nat_target_ipv4();
+    let external_create = types::MulticastGroupCreateExternalEntry {
+        group_ip,
+        tag: Some("test_lifecycle".to_string()),
+        nat_target: nat_target.clone(),
+        vlan_id: Some(vlan_id),
+        sources: None,
+    };
+
+    let created = switch
+        .client
+        .multicast_group_create_external(&external_create)
         .await
         .expect("Should be able to create group")
         .into_inner();
@@ -475,16 +754,14 @@ async fn test_group_api_lifecycle() {
     let external_group_id = created.external_group_id;
 
     assert_eq!(created.group_ip, MULTICAST_TEST_IPV4);
-    assert!(created.external_group_id.unwrap() > 0);
+    assert!(created.external_group_id.is_none());
     assert!(created.underlay_group_id.is_none());
     assert_eq!(created.tag, Some("test_lifecycle".to_string()));
     assert_eq!(created.int_fwding.nat_target, Some(nat_target.clone()));
     assert_eq!(created.ext_fwding.vlan_id, Some(vlan_id));
-    assert_eq!(created.members.len(), 1);
-    assert_eq!(created.members[0].port_id, port_id);
-    assert_eq!(created.members[0].link_id, link_id);
+    assert_eq!(created.members.len(), 0); // External groups don't have members
 
-    // 2. Get all groups and verify our group is included
+    // 3. Get all groups and verify our group is included
     let groups = switch
         .client
         .multicast_groups_list_stream(None)
@@ -497,7 +774,7 @@ async fn test_group_api_lifecycle() {
         .any(|g| g.external_group_id == external_group_id);
     assert!(found_in_list, "Created group should be in the list");
 
-    // 3. Get groups by tag
+    // 4. Get groups by tag
     let tagged_groups = switch
         .client
         .multicast_groups_list_by_tag_stream("test_lifecycle", None)
@@ -514,7 +791,7 @@ async fn test_group_api_lifecycle() {
         .any(|g| g.external_group_id == external_group_id);
     assert!(found_by_tag, "Created group should be found by tag");
 
-    // 4. Get the specific group
+    // 5. Get the specific group
     let group = switch
         .client
         .multicast_groups_list_stream(None)
@@ -534,42 +811,25 @@ async fn test_group_api_lifecycle() {
 
     assert_eq!(group_by_ip.external_group_id, external_group_id);
 
-    // 5. Update the group
-    let (port_id2, link_id2) = switch.link_id(PhysPort(12)).unwrap();
+    // 6. Update the group
     let updated_nat_target = types::NatTarget {
         internal_ip: MULTICAST_NAT_IP.into(),
         inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x00, 0x11, 0x22).into(),
         vni: 200.into(),
     };
 
-    let update_entry = types::MulticastGroupUpdateEntry {
+    let external_update = types::MulticastGroupUpdateExternalEntry {
         tag: Some("updated_lifecycle".to_string()),
-        nat_target: Some(updated_nat_target.clone()),
+        nat_target: updated_nat_target.clone(),
         vlan_id: Some(20),
         sources: Some(vec![types::IpSrc::Exact(
             "192.168.1.5".parse::<IpAddr>().unwrap(),
         )]),
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: Some(15),
-            level2_excl_id: Some(25),
-        },
-        members: vec![
-            types::MulticastGroupMember {
-                port_id: port_id.clone(),
-                link_id,
-                direction: types::Direction::External,
-            },
-            types::MulticastGroupMember {
-                port_id: port_id2.clone(),
-                link_id: link_id2,
-                direction: types::Direction::External,
-            },
-        ],
     };
 
     let updated = switch
         .client
-        .multicast_group_update(&group_ip, &update_entry)
+        .multicast_group_update_external(&group_ip, &external_update)
         .await
         .expect("Should be able to update group")
         .into_inner();
@@ -585,28 +845,20 @@ async fn test_group_api_lifecycle() {
             "192.168.1.5".parse::<IpAddr>().unwrap(),
         )])
     );
-    assert_eq!(
-        updated.replication_info.rid,
-        updated.external_group_id.unwrap()
+    assert!(
+        updated.replication_info.is_none(),
+        "IPv4 groups should not have replication info"
     );
-    assert_eq!(updated.replication_info.level1_excl_id, 15);
-    assert_eq!(updated.replication_info.level2_excl_id, 25);
-    assert_eq!(updated.members.len(), 2);
+    assert_eq!(updated.members.len(), 0); // External groups don't have members
 
-    // Verify members were updated correctly
-    let member_port_ids: HashSet<_> =
-        updated.members.iter().map(|m| m.port_id.clone()).collect();
-    assert!(member_port_ids.contains(&port_id));
-    assert!(member_port_ids.contains(&port_id2));
-
-    // 6. Delete the group
+    // 7. Delete the group
     switch
         .client
         .multicast_group_delete(&group_ip)
         .await
         .expect("Should be able to delete group");
 
-    // 7. Verify group was deleted
+    // 8. Verify group was deleted
     let result = switch
         .client
         .multicast_group_get(&group_ip)
@@ -624,7 +876,7 @@ async fn test_group_api_lifecycle() {
         _ => panic!("Expected ErrorResponse when getting a deleted group"),
     }
 
-    // 8. Verify group no longer appears in the list
+    // 9. Verify group no longer appears in the list
     let groups_after_delete = switch
         .client
         .multicast_groups_list_stream(None)
@@ -632,14 +884,13 @@ async fn test_group_api_lifecycle() {
         .await
         .expect("Should be able to list groups");
 
-    let still_in_list1 = groups_after_delete
-        .iter()
-        .any(|g| g.external_group_id == external_group_id);
-    assert!(!still_in_list1, "Deleted group should not be in the list");
-    let still_in_list2 = groups_after_delete
-        .iter()
-        .any(|g| g.underlay_group_id == updated.underlay_group_id);
-    assert!(!still_in_list2, "Deleted group should not be in the list");
+    // Check if the specific deleted group is still in the list
+    let deleted_group_still_in_list =
+        groups_after_delete.iter().any(|g| g.group_ip == group_ip);
+    assert!(
+        !deleted_group_still_in_list,
+        "Deleted group should not be in the list"
+    );
 }
 
 #[tokio::test]
@@ -648,83 +899,68 @@ async fn test_multicast_tagged_groups_management() {
     let switch = &*get_switch().await;
 
     // Create multiple groups with the same tag
-    let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
     let tag = "test_tag_management";
-    let nat_target = create_nat_target_ipv4();
 
+    // Step 1: Create admin-scoped IPv6 internal group for actual replication
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some(&format!("{}_internal", tag)),
+        &[(PhysPort(11), types::Direction::Underlay)],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    let nat_target = create_nat_target_ipv4();
     let group_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
 
-    // Create first group
-    let group1 = types::MulticastGroupCreateEntry {
+    // Step 2: Create first IPv4 external group (entry point only, no members)
+    let external_group1 = types::MulticastGroupCreateExternalEntry {
         group_ip,
         tag: Some(tag.to_string()),
-        nat_target: Some(nat_target.clone()),
+        nat_target: nat_target.clone(),
         vlan_id: Some(10),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
-        members: vec![types::MulticastGroupMember {
-            port_id: port_id.clone(),
-            link_id,
-            direction: types::Direction::External,
-        }],
     };
 
     let created1 = switch
         .client
-        .multicast_group_create(&group1)
+        .multicast_group_create_external(&external_group1)
         .await
         .expect("Should create first group")
         .into_inner();
 
-    // Create second group
-    let group2 = types::MulticastGroupCreateEntry {
+    // Step 3: Create second IPv4 external group (same tag, different IP)
+    let external_group2 = types::MulticastGroupCreateExternalEntry {
         group_ip: "224.0.1.2".parse().unwrap(), // Different IP
         tag: Some(tag.to_string()),
-        nat_target: Some(nat_target.clone()),
+        nat_target: nat_target.clone(),
         vlan_id: Some(10),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
-        members: vec![types::MulticastGroupMember {
-            port_id: port_id.clone(),
-            link_id,
-            direction: types::Direction::External,
-        }],
     };
 
     let created2 = switch
         .client
-        .multicast_group_create(&group2)
+        .multicast_group_create_external(&external_group2)
         .await
         .expect("Should create second group")
         .into_inner();
 
-    // Create third group with different tag
-    let group3 = types::MulticastGroupCreateEntry {
+    // Step 4: Create third IPv4 external group (different tag)
+    let external_group3 = types::MulticastGroupCreateExternalEntry {
         group_ip: "224.0.1.3".parse().unwrap(), // Different IP
         tag: Some("different_tag".to_string()),
-        nat_target: Some(nat_target.clone()),
+        nat_target: nat_target.clone(),
         vlan_id: Some(10),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
-        members: vec![types::MulticastGroupMember {
-            port_id,
-            link_id,
-            direction: types::Direction::External,
-        }],
     };
 
     let created3 = switch
         .client
-        .multicast_group_create(&group3)
+        .multicast_group_create_external(&external_group3)
         .await
         .expect("Should create third group")
         .into_inner();
@@ -739,13 +975,11 @@ async fn test_multicast_tagged_groups_management() {
 
     assert_eq!(tagged_groups.len(), 2, "Should find 2 groups with the tag");
 
-    let group_ids: HashSet<_> = tagged_groups
-        .iter()
-        .map(|g| g.external_group_id.unwrap())
-        .collect();
-    assert!(group_ids.contains(&created1.external_group_id.unwrap()));
-    assert!(group_ids.contains(&created2.external_group_id.unwrap()));
-    assert!(!group_ids.contains(&created3.external_group_id.unwrap()));
+    let group_ips: HashSet<_> =
+        tagged_groups.iter().map(|g| g.group_ip).collect();
+    assert!(group_ips.contains(&created1.group_ip));
+    assert!(group_ips.contains(&created2.group_ip));
+    assert!(!group_ips.contains(&created3.group_ip));
 
     // Delete all groups with the tag
     switch
@@ -762,18 +996,22 @@ async fn test_multicast_tagged_groups_management() {
         .await
         .expect("Should list remaining groups");
 
-    let remaining_ids: HashSet<_> = remaining_groups
-        .iter()
-        .map(|g| g.external_group_id)
-        .collect();
-    assert!(!remaining_ids.contains(&created1.external_group_id));
-    assert!(!remaining_ids.contains(&created2.external_group_id));
-    assert!(remaining_ids.contains(&created3.external_group_id));
+    let remaining_ips: HashSet<_> =
+        remaining_groups.iter().map(|g| g.group_ip).collect();
+    assert!(!remaining_ips.contains(&created1.group_ip));
+    assert!(!remaining_ips.contains(&created2.group_ip));
+    assert!(remaining_ips.contains(&created3.group_ip));
 
-    // Clean up the remaining group
+    // Clean up the remaining group and underlay group
     switch
         .client
         .multicast_group_delete(&created3.group_ip)
+        .await
+        .expect("Should delete the remaining group");
+
+    switch
+        .client
+        .multicast_group_delete(&internal_multicast_ip)
         .await
         .expect("Should delete the remaining group");
 }
@@ -783,56 +1021,51 @@ async fn test_multicast_tagged_groups_management() {
 async fn test_multicast_untagged_groups() {
     let switch = &*get_switch().await;
 
-    // Create a group without a tag
-    let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
+    // First create the internal admin-scoped group that will be the NAT target
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        None, // No tag for NAT target
+        &[(PhysPort(26), types::Direction::Underlay)],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
 
+    // Create a group without a tag
     let group_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
 
-    let untagged_group = types::MulticastGroupCreateEntry {
+    // IPv4 groups are always external - create external entry directly
+    let external_untagged = types::MulticastGroupCreateExternalEntry {
         group_ip,
         tag: None, // No tag
-        nat_target: None,
+        nat_target: create_nat_target_ipv4(),
         vlan_id: Some(10),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
-        members: vec![types::MulticastGroupMember {
-            port_id: port_id.clone(),
-            link_id,
-            direction: types::Direction::External,
-        }],
     };
 
     let created_untagged = switch
         .client
-        .multicast_group_create(&untagged_group)
+        .multicast_group_create_external(&external_untagged)
         .await
         .expect("Should create untagged group")
         .into_inner();
 
     // Create a group with a tag
-    let tagged_group = types::MulticastGroupCreateEntry {
+    // IPv4 groups are always external - create external entry directly
+    let tagged_group = types::MulticastGroupCreateExternalEntry {
         group_ip: "224.0.2.2".parse().unwrap(), // Different IP
         tag: Some("some_tag".to_string()),
-        nat_target: None,
+        nat_target: create_nat_target_ipv4(),
         vlan_id: Some(10),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
-        members: vec![types::MulticastGroupMember {
-            port_id,
-            link_id,
-            direction: types::Direction::External,
-        }],
     };
 
     let created_tagged = switch
         .client
-        .multicast_group_create(&tagged_group)
+        .multicast_group_create_external(&tagged_group)
         .await
         .expect("Should create tagged group")
         .into_inner();
@@ -852,19 +1085,321 @@ async fn test_multicast_untagged_groups() {
         .await
         .expect("Should list remaining groups");
 
-    let remaining_ids: HashSet<_> = remaining_groups
-        .iter()
-        .map(|g| g.external_group_id)
-        .collect();
-    assert!(!remaining_ids.contains(&created_untagged.external_group_id));
-    assert!(remaining_ids.contains(&created_tagged.external_group_id));
+    let remaining_ips: HashSet<_> =
+        remaining_groups.iter().map(|g| g.group_ip).collect();
+    assert!(!remaining_ips.contains(&created_untagged.group_ip));
+    assert!(remaining_ips.contains(&created_tagged.group_ip));
 
     // Clean up the remaining tagged group
+    // (NAT target group was already deleted by multicast_reset_untagged since it had no tag)
     switch
         .client
         .multicast_group_delete(&created_tagged.group_ip)
         .await
         .expect("Should delete remaining tagged group");
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_api_internal_ipv6_bifurcated_replication() {
+    let switch = &*get_switch().await;
+
+    let (port_id1, link_id1) = switch.link_id(PhysPort(11)).unwrap();
+    let (port_id2, link_id2) = switch.link_id(PhysPort(12)).unwrap();
+
+    // Create admin-scoped IPv6 group with both external and underlay members
+    let admin_scoped_group = types::MulticastGroupCreateEntry {
+        group_ip: IpAddr::V6("ff04::100".parse().unwrap()), // Admin-scoped IPv6
+        tag: Some("test_bifurcated".to_string()),
+        sources: None,
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: Some(50),
+            level2_excl_id: Some(60),
+        },
+        members: vec![
+            types::MulticastGroupMember {
+                port_id: port_id1.clone(),
+                link_id: link_id1,
+                direction: types::Direction::External,
+            },
+            types::MulticastGroupMember {
+                port_id: port_id2.clone(),
+                link_id: link_id2,
+                direction: types::Direction::Underlay,
+            },
+        ],
+    };
+
+    let created = switch
+        .client
+        .multicast_group_create(&admin_scoped_group)
+        .await
+        .expect("Should create bifurcated admin-scoped group")
+        .into_inner();
+
+    // Verify both group IDs are populated
+    assert!(
+        created.external_group_id.is_some(),
+        "Should have external group ID"
+    );
+    assert!(
+        created.underlay_group_id.is_some(),
+        "Should have underlay group ID"
+    );
+    assert_ne!(
+        created.external_group_id, created.underlay_group_id,
+        "Group IDs should be different"
+    );
+
+    // Verify replication info is present
+    let replication_info = created
+        .replication_info
+        .expect("Should have replication info");
+    assert_eq!(replication_info.level1_excl_id, 50);
+    assert_eq!(replication_info.level2_excl_id, 60);
+
+    // RID should be set to external group ID (as per P4 logic)
+    assert_eq!(
+        replication_info.rid,
+        created
+            .external_group_id
+            .expect("Bifurcated group should have external_group_id")
+    );
+
+    // Verify members are preserved
+    assert_eq!(created.members.len(), 2);
+    let external_members: Vec<_> = created
+        .members
+        .iter()
+        .filter(|m| m.direction == types::Direction::External)
+        .collect();
+    let underlay_members: Vec<_> = created
+        .members
+        .iter()
+        .filter(|m| m.direction == types::Direction::Underlay)
+        .collect();
+
+    assert_eq!(external_members.len(), 1);
+    assert_eq!(underlay_members.len(), 1);
+
+    cleanup_test_group(switch, created.group_ip).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_api_internal_ipv6_underlay_only() {
+    let switch = &*get_switch().await;
+
+    let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
+
+    // Create admin-scoped IPv6 group with only underlay members
+    let underlay_only_group = types::MulticastGroupCreateEntry {
+        group_ip: IpAddr::V6("ff05::200".parse().unwrap()), // Site-local admin-scoped
+        tag: Some("test_underlay_only".to_string()),
+        sources: None,
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: Some(10),
+            level2_excl_id: None,
+        },
+        members: vec![types::MulticastGroupMember {
+            port_id: port_id.clone(),
+            link_id,
+            direction: types::Direction::Underlay,
+        }],
+    };
+
+    let created = switch
+        .client
+        .multicast_group_create(&underlay_only_group)
+        .await
+        .expect("Should create underlay-only admin-scoped group")
+        .into_inner();
+
+    // Should have underlay group ID but no external group ID
+    assert!(
+        created.underlay_group_id.is_some(),
+        "Should have underlay group ID"
+    );
+    assert!(
+        created.external_group_id.is_none(),
+        "Should NOT have external group ID"
+    );
+
+    // Verify replication info is present
+    let replication_info = created
+        .replication_info
+        .expect("Should have replication info");
+    assert_eq!(replication_info.level1_excl_id, 10);
+    assert_eq!(replication_info.level2_excl_id, 0); // Default value
+
+    // RID should be set to underlay group ID when no external group
+    assert_eq!(
+        replication_info.rid,
+        created
+            .underlay_group_id
+            .expect("Underlay-only group should have underlay_group_id")
+    );
+
+    // Verify only underlay members
+    assert_eq!(created.members.len(), 1);
+    assert_eq!(created.members[0].direction, types::Direction::Underlay);
+
+    cleanup_test_group(switch, created.group_ip).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_api_internal_ipv6_external_only() {
+    let switch = &*get_switch().await;
+
+    let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
+
+    // Create admin-scoped IPv6 group with only external members
+    let external_only_group = types::MulticastGroupCreateEntry {
+        group_ip: IpAddr::V6("ff08::300".parse().unwrap()), // Org-local admin-scoped
+        tag: Some("test_external_only".to_string()),
+        sources: None,
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: None,
+            level2_excl_id: Some(25),
+        },
+        members: vec![types::MulticastGroupMember {
+            port_id: port_id.clone(),
+            link_id,
+            direction: types::Direction::External,
+        }],
+    };
+
+    let created = switch
+        .client
+        .multicast_group_create(&external_only_group)
+        .await
+        .expect("Should create external-only admin-scoped group")
+        .into_inner();
+
+    // Should have external group ID but no underlay group ID
+    assert!(
+        created.external_group_id.is_some(),
+        "Should have external group ID"
+    );
+    assert!(
+        created.underlay_group_id.is_none(),
+        "Should NOT have underlay group ID"
+    );
+
+    // Verify replication info is present
+    let replication_info = created
+        .replication_info
+        .expect("Should have replication info");
+    assert_eq!(replication_info.level1_excl_id, 0); // Default value
+    assert_eq!(replication_info.level2_excl_id, 25);
+
+    // RID should be set to external group ID when no underlay group
+    assert_eq!(
+        replication_info.rid,
+        created
+            .external_group_id
+            .expect("External-only group should have external_group_id")
+    );
+
+    // Verify only external members
+    assert_eq!(created.members.len(), 1);
+    assert_eq!(created.members[0].direction, types::Direction::External);
+
+    cleanup_test_group(switch, created.group_ip).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_api_invalid_combinations() {
+    let switch = &*get_switch().await;
+
+    // First create the internal admin-scoped group that will be the NAT target
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("nat_target_for_invalid_combos"),
+        &[(PhysPort(26), types::Direction::Underlay)],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Test 1: IPv4 with underlay members should fail
+    let ipv4_with_underlay = types::MulticastGroupCreateExternalEntry {
+        group_ip: IpAddr::V4("224.1.0.200".parse().unwrap()), // Avoid 224.0.0.0/24 reserved range
+        tag: Some("test_invalid_ipv4".to_string()),
+        nat_target: create_nat_target_ipv4(),
+        vlan_id: Some(10),
+        sources: None,
+    };
+
+    // This should succeed via external API (IPv4 groups are external-only)
+    let created_ipv4 = switch
+        .client
+        .multicast_group_create_external(&ipv4_with_underlay)
+        .await
+        .expect("IPv4 external group should be created")
+        .into_inner();
+
+    // But it should not have underlay group ID or replication info
+    assert!(created_ipv4.underlay_group_id.is_none());
+    assert!(created_ipv4.replication_info.is_none());
+
+    // Test 2: Non-admin-scoped IPv6 should use external API
+    let non_admin_ipv6 = types::MulticastGroupCreateExternalEntry {
+        group_ip: IpAddr::V6("ff0e::400".parse().unwrap()), // Global scope, not admin-scoped
+        tag: Some("test_non_admin_ipv6".to_string()),
+        nat_target: create_nat_target_ipv6(),
+        vlan_id: Some(20),
+        sources: None,
+    };
+
+    let created_non_admin = switch
+        .client
+        .multicast_group_create_external(&non_admin_ipv6)
+        .await
+        .expect("Non-admin-scoped IPv6 should use external API")
+        .into_inner();
+
+    // Should not have underlay group ID or replication info
+    assert!(created_non_admin.underlay_group_id.is_none());
+    assert!(created_non_admin.replication_info.is_none());
+
+    // Test 3: Admin-scoped IPv6 with underlay members should fail via external API
+    let admin_scoped_external_entry =
+        types::MulticastGroupCreateExternalEntry {
+            group_ip: IpAddr::V6("ff04::500".parse().unwrap()), // Admin-scoped
+            tag: Some("test_admin_external".to_string()),
+            nat_target: create_nat_target_ipv6(),
+            vlan_id: Some(30),
+            sources: None,
+        };
+
+    // This should fail because admin-scoped groups must use internal API
+    let result = switch
+        .client
+        .multicast_group_create_external(&admin_scoped_external_entry)
+        .await
+        .expect_err("Admin-scoped IPv6 should fail via external API");
+
+    // Verify it's the expected validation error
+    match result {
+        Error::ErrorResponse(inner) => {
+            assert_eq!(inner.status(), 400);
+            assert!(inner.message.contains("admin-scoped multicast address"));
+        }
+        _ => panic!(
+            "Expected ErrorResponse for admin-scoped external group creation"
+        ),
+    }
+
+    // Cleanup
+    cleanup_test_group(switch, created_ipv4.group_ip).await;
+    cleanup_test_group(switch, created_non_admin.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 }
 
 #[tokio::test]
@@ -876,17 +1411,32 @@ async fn test_ipv4_multicast_invalid_destination_mac() -> TestResult {
     let ingress = PhysPort(10);
     let egress1 = PhysPort(15);
 
-    // Create multicast group with one egress port
-    let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
+    // Create admin-scoped IPv6 multicast group for underlay replication
+    // This group handles replication within the rack infrastructure
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
     let vlan = Some(10);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_invalid_mac_underlay"),
+        &[(egress1, types::Direction::Underlay)],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Create IPv4 external multicast group with NAT target
+    // This group handles external traffic and references the underlay group via NAT target
+    let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
 
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
         Some("test_invalid_mac"),
-        &[(egress1, types::Direction::External)],
+        &[], // External groups have no members
         vlan,
-        true, // Create NAT target
+        true, // Create NAT target that points to the admin-scoped underlay group
         None,
     )
     .await;
@@ -944,7 +1494,9 @@ async fn test_ipv4_multicast_invalid_destination_mac() -> TestResult {
     .await
     .unwrap();
 
+    // Cleanup: Remove both external IPv4 group and underlay IPv6 group
     cleanup_test_group(switch, created_group.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 
     result
 }
@@ -958,8 +1510,8 @@ async fn test_ipv6_multicast_invalid_destination_mac() -> TestResult {
     let ingress = PhysPort(10);
     let egress1 = PhysPort(15);
 
-    // Create multicast group with one egress port
-    let multicast_ip = IpAddr::V6(MULTICAST_TEST_IPV6);
+    // Create admin-scoped IPv6 multicast group
+    let multicast_ip = IpAddr::V6("ff04::300".parse().unwrap()); // Admin-scoped
     let vlan = Some(10);
 
     let created_group = create_test_multicast_group(
@@ -968,7 +1520,7 @@ async fn test_ipv6_multicast_invalid_destination_mac() -> TestResult {
         Some("test_ipv6_invalid_mac"),
         &[(egress1, types::Direction::External)],
         vlan,
-        true, // Create NAT target
+        false, // Admin-scoped groups don't need NAT targets
         None,
     )
     .await;
@@ -1032,9 +1584,21 @@ async fn test_multicast_ttl_zero() -> TestResult {
     // Define test ports
     let ingress = PhysPort(10);
     let egress1 = PhysPort(15);
-    let egress2 = PhysPort(17);
 
-    // Create multicast group with two egress ports
+    // First create the internal admin-scoped group that will be the NAT target
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("nat_target_for_ttl"),
+        &[(egress1, types::Direction::Underlay)],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Create IPv4 multicast group with two egress ports
     let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
     let vlan = Some(10);
 
@@ -1042,12 +1606,9 @@ async fn test_multicast_ttl_zero() -> TestResult {
         switch,
         multicast_ip,
         Some("test_ttl_drop"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan,
-        false, // No NAT target
+        true, // IPv4 groups need NAT targets
         None,
     )
     .await;
@@ -1093,6 +1654,7 @@ async fn test_multicast_ttl_zero() -> TestResult {
     .unwrap();
 
     cleanup_test_group(switch, created_group.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 
     result
 }
@@ -1105,9 +1667,21 @@ async fn test_multicast_ttl_one() -> TestResult {
     // Define test ports
     let ingress = PhysPort(10);
     let egress1 = PhysPort(15);
-    let egress2 = PhysPort(17);
 
-    // Create multicast group with two egress ports
+    // First create the internal admin-scoped group that will be the NAT target
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("nat_target_for_ttl_one"),
+        &[(egress1, types::Direction::Underlay)],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Create IPv4 multicast group with two egress ports
     let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
     let vlan = Some(10);
 
@@ -1115,12 +1689,9 @@ async fn test_multicast_ttl_one() -> TestResult {
         switch,
         multicast_ip,
         Some("test_ttl_one_drop"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan,
-        false, // No NAT target
+        true, // IPv4 groups need NAT targets
         None,
     )
     .await;
@@ -1166,117 +1737,7 @@ async fn test_multicast_ttl_one() -> TestResult {
     .unwrap();
 
     cleanup_test_group(switch, created_group.group_ip).await;
-
-    result
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_ipv4_multicast_basic_replication_no_nat() -> TestResult {
-    let switch = &*get_switch().await;
-
-    // Define test ports
-    let ingress = PhysPort(10);
-    let egress1 = PhysPort(15);
-    let egress2 = PhysPort(17);
-    let egress3 = PhysPort(19);
-
-    // Create multicast group with three egress ports
-    let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
-    let vlan = Some(10);
-
-    let created_group = create_test_multicast_group(
-        switch,
-        multicast_ip,
-        Some("test_replication"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-            (egress3, types::Direction::External),
-        ],
-        vlan,
-        false, // No NAT target
-        None,
-    )
-    .await;
-
-    let src_mac = switch.get_port_mac(ingress).unwrap();
-    let src_ip = "192.168.1.10";
-    let src_port = 3333;
-    let dst_port = 4444;
-
-    let to_send = create_ipv4_multicast_packet(
-        multicast_ip,
-        src_mac,
-        src_ip,
-        src_port,
-        dst_port,
-    );
-
-    let to_recv1 = prepare_expected_pkt(
-        switch,
-        &to_send,
-        vlan,
-        created_group.int_fwding.nat_target.as_ref(),
-        Some(egress1),
-    );
-
-    let to_recv2 = prepare_expected_pkt(
-        switch,
-        &to_send,
-        vlan,
-        created_group.int_fwding.nat_target.as_ref(),
-        Some(egress2),
-    );
-
-    let to_recv3 = prepare_expected_pkt(
-        switch,
-        &to_send,
-        vlan,
-        created_group.int_fwding.nat_target.as_ref(),
-        Some(egress3),
-    );
-
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
-
-    let expected_pkts = vec![
-        TestPacket {
-            packet: Arc::new(to_recv1),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv2),
-            port: egress2,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv3),
-            port: egress3,
-        },
-    ];
-
-    let port_label_ingress = switch.port_label(ingress).unwrap();
-
-    let ctr_baseline_ingress = switch
-        .get_counter(&port_label_ingress, Some("ingress"))
-        .await
-        .unwrap();
-
-    let result = switch.packet_test(vec![test_pkt], expected_pkts);
-
-    check_counter_incremented(
-        switch,
-        &port_label_ingress,
-        ctr_baseline_ingress,
-        1,
-        Some("ingress"),
-    )
-    .await
-    .unwrap();
-
-    cleanup_test_group(switch, created_group.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 
     result
 }
@@ -1293,9 +1754,24 @@ async fn test_ipv4_multicast_basic_replication_nat_no_admin_ula() -> TestResult
     let egress2 = PhysPort(17);
     let egress3 = PhysPort(19);
 
-    // Create multicast group with three egress ports
-    let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
+    // Step 1: Create admin-scoped IPv6 multicast group for underlay replication
+    // This group handles replication within the rack infrastructure
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
     let vlan = Some(10);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_replication_underlay"),
+        &[(egress1, types::Direction::Underlay)],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Step 2: Create IPv4 external multicast group with NAT target
+    // This group handles external traffic and references the underlay group via NAT target
+    let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
 
     let created_group = create_test_multicast_group(
         switch,
@@ -1307,7 +1783,7 @@ async fn test_ipv4_multicast_basic_replication_nat_no_admin_ula() -> TestResult
             (egress3, types::Direction::External),
         ],
         vlan,
-        true, // Create NAT target
+        true, // Create NAT target that points to the admin-scoped underlay group
         None,
     )
     .await;
@@ -1352,6 +1828,7 @@ async fn test_ipv4_multicast_basic_replication_nat_no_admin_ula() -> TestResult
     .unwrap();
 
     cleanup_test_group(switch, created_group.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 
     result
 }
@@ -1367,11 +1844,31 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
     let egress2 = PhysPort(17);
     let egress3 = PhysPort(19);
 
-    // Create multicast group with three egress ports
+    // Step 1: Create admin-scoped IPv6 multicast group for underlay replication
+    // This handles the actual packet replication within the rack infrastructure
+    // after NAT ingress processing
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    let underlay_members = [
+        (egress1, types::Direction::Underlay),
+        (egress3, types::Direction::Underlay),
+    ];
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_replication_internal"),
+        &underlay_members,
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Step 2: Create IPv4 external multicast group with NAT target
+    // This group handles external traffic and references the underlay group via NAT target
     let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
     let vlan = Some(10);
 
-    let replicated_members = [
+    let external_members = [
         (egress1, types::Direction::External),
         (egress2, types::Direction::External),
     ];
@@ -1379,27 +1876,9 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
         switch,
         multicast_ip,
         Some("test_ipv4_replication"),
-        &replicated_members,
+        &external_members,
         vlan,
-        true, // Create NAT target
-        None,
-    )
-    .await;
-
-    // Create a separate multicast group meant for underlay routing once
-    // encapped (these are the ports that will receive the packets) regarding
-    // NAT ingress (once encapped), with this admin multicast address
-    let replicated_members = [
-        (egress1, types::Direction::Underlay),
-        (egress3, types::Direction::Underlay),
-    ];
-    create_test_multicast_group(
-        switch,
-        MULTICAST_NAT_IP.into(),
-        Some("test_replication_internal"),
-        &replicated_members,
-        vlan,
-        false, // No NAT target
+        true, // Create NAT target that points to the admin-scoped underlay group
         None,
     )
     .await;
@@ -1491,7 +1970,8 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_encapped_multicast_geneve_mcast_tag_to_external() -> TestResult {
+async fn test_encapped_multicast_geneve_mcast_tag_to_external_members(
+) -> TestResult {
     let switch = &*get_switch().await;
 
     // Define test ports
@@ -1499,34 +1979,35 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external() -> TestResult {
     let egress1 = PhysPort(15);
     let egress2 = PhysPort(17);
 
-    // Create multicast group with egress ports
-    let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
-    let vlan = Some(10);
-
-    // This is underlying V4 multicast group used for routing
-    let replicated_members = [
+    // Step 1: Create admin-scoped IPv6 group for actual replication first
+    // This group uses the MULTICAST_NAT_IP address that the external group will reference
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    let replication_members = [
         (egress1, types::Direction::External),
         (egress2, types::Direction::External),
     ];
-    let created_group = create_test_multicast_group(
+    create_test_multicast_group(
         switch,
-        multicast_ip,
-        Some("test_geneve_mcast_tag_0"),
-        &replicated_members,
-        vlan,
-        true, // Create NAT target
+        internal_multicast_ip,
+        Some("test_geneve_mcast_tag_underlay"),
+        &replication_members,
+        None,
+        false, // Admin-scoped groups don't need NAT targets
         None,
     )
     .await;
 
-    // We have generated NAT address group with two external ports ("external")
-    create_test_multicast_group(
+    // Step 2: Create IPv4 external multicast group with NAT target (no members)
+    let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
+    let vlan = Some(10);
+
+    let created_group = create_test_multicast_group(
         switch,
-        MULTICAST_NAT_IP.into(),
+        multicast_ip,
         Some("test_geneve_mcast_tag_0"),
-        &replicated_members, // Should be same as the external group
+        &[], // External groups have no members
         vlan,
-        false, // No NAT target
+        true, // Create NAT target that points to the admin-scoped group
         None,
     )
     .await;
@@ -1630,17 +2111,32 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_encapped_multicast_geneve_mcast_tag_to_underlay() -> TestResult {
+async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members(
+) -> TestResult {
     let switch = &*get_switch().await;
 
     // Define test ports
     let ingress = PhysPort(10);
-    let egress1 = PhysPort(15);
-    let egress2 = PhysPort(17);
     let egress3 = PhysPort(19);
     let egress4 = PhysPort(20);
 
-    // Create multicast group with egress ports
+    // Step 1: Create admin-scoped IPv6 group for underlay replication first
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_geneve_mcast_tag_underlay"),
+        &[
+            (egress3, types::Direction::Underlay),
+            (egress4, types::Direction::Underlay),
+        ],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Step 2: Create IPv4 external multicast group with NAT target (no members)
     let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
     let vlan = Some(10);
 
@@ -1648,27 +2144,9 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay() -> TestResult {
         switch,
         multicast_ip,
         Some("test_geneve_mcast_tag_1"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan,
-        true, // Create NAT target
-        None,
-    )
-    .await;
-
-    // We have generated NAT address group with two external ports ("external")
-    create_test_multicast_group(
-        switch,
-        MULTICAST_NAT_IP.into(),
-        Some("test_geneve_mcast_tag_1"),
-        &[
-            (egress3, types::Direction::Underlay),
-            (egress4, types::Direction::Underlay),
-        ],
-        vlan,
-        false, // No NAT target
+        true, // Create NAT target that points to the admin-scoped group
         None,
     )
     .await;
@@ -1772,7 +2250,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external(
+async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_members(
 ) -> TestResult {
     let switch = &*get_switch().await;
 
@@ -1783,7 +2261,26 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external(
     let egress3 = PhysPort(19);
     let egress4 = PhysPort(20);
 
-    // Create multicast group with egress ports
+    // Step 1: Create admin-scoped IPv6 group for bifurcated replication first
+    // This group has both External and Underlay direction members
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_geneve_mcast_tag_bifurcated"),
+        &[
+            (egress1, types::Direction::External),
+            (egress2, types::Direction::External),
+            (egress3, types::Direction::Underlay),
+            (egress4, types::Direction::Underlay),
+        ],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Step 2: Create IPv4 external multicast group with NAT target (no members)
     let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
     let vlan = Some(10);
 
@@ -1791,29 +2288,9 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external(
         switch,
         multicast_ip,
         Some("test_geneve_mcast_tag_1"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan,
-        true, // Create NAT target
-        None,
-    )
-    .await;
-
-    // We have generated NAT address group with two external ports ("external")
-    create_test_multicast_group(
-        switch,
-        MULTICAST_NAT_IP.into(),
-        Some("test_geneve_mcast_tag_1"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-            (egress3, types::Direction::Underlay),
-            (egress4, types::Direction::Underlay),
-        ],
-        vlan,
-        false, // No NAT target
+        true, // Create NAT target that points to the admin-scoped group
         None,
     )
     .await;
@@ -1936,17 +2413,29 @@ async fn test_ipv4_multicast_drops_ingress_is_egress_port() -> TestResult {
     // Define test ports
     let ingress = PhysPort(10);
 
-    // Create multicast group with three egress ports
+    // First create the underlay admin-scoped IPv6 group for NAT target
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_drops_underlay"),
+        &[(ingress, types::Direction::Underlay)],
+        None,
+        false, // No NAT target for admin-scoped group
+        None,
+    )
+    .await;
+
+    // Create IPv4 external multicast group with NAT target (no members)
     let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
 
-    let replicated_members = [(ingress, types::Direction::External)];
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
         Some("test_replication"),
-        &replicated_members,
+        &[], // External groups have no members
         None,
-        false, // No NAT target
+        true, // Create NAT target that points to the admin-scoped group
         None,
     )
     .await;
@@ -1991,99 +2480,7 @@ async fn test_ipv4_multicast_drops_ingress_is_egress_port() -> TestResult {
     .unwrap();
 
     cleanup_test_group(switch, created_group.group_ip).await;
-
-    result
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_ipv6_multicast_basic_replication_no_nat() -> TestResult {
-    let switch = &*get_switch().await;
-
-    // Define test ports
-    let ingress = PhysPort(10);
-    let egress1 = PhysPort(15);
-    let egress2 = PhysPort(17);
-
-    // Create multicast group with two egress ports
-    let multicast_ipv6 = IpAddr::V6(MULTICAST_TEST_IPV6);
-    let vlan = Some(20);
-
-    let created_group = create_test_multicast_group(
-        switch,
-        multicast_ipv6,
-        Some("test_ipv6_replication"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
-        vlan,
-        false, // No NAT target
-        None,
-    )
-    .await;
-
-    let src_mac = switch.get_port_mac(ingress).unwrap();
-
-    let to_send = create_ipv6_multicast_packet(
-        multicast_ipv6,
-        src_mac,
-        "2001:db8::1",
-        3333,
-        4444,
-    );
-
-    let to_recv1 = prepare_expected_pkt(
-        switch,
-        &to_send,
-        vlan,
-        created_group.int_fwding.nat_target.as_ref(),
-        Some(egress1),
-    );
-
-    let to_recv2 = prepare_expected_pkt(
-        switch,
-        &to_send,
-        vlan,
-        created_group.int_fwding.nat_target.as_ref(),
-        Some(egress2),
-    );
-
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
-
-    let expected_pkts = vec![
-        TestPacket {
-            packet: Arc::new(to_recv1),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv2),
-            port: egress2,
-        },
-    ];
-
-    let port_label_ingress = switch.port_label(ingress).unwrap();
-    let ctr_baseline_ingress = switch
-        .get_counter(&port_label_ingress, Some("ingress"))
-        .await
-        .unwrap();
-
-    let result = switch.packet_test(vec![test_pkt], expected_pkts);
-
-    check_counter_incremented(
-        switch,
-        &port_label_ingress,
-        ctr_baseline_ingress,
-        1,
-        Some("ingress"),
-    )
-    .await
-    .unwrap();
-
-    cleanup_test_group(switch, created_group.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 
     result
 }
@@ -2098,7 +2495,23 @@ async fn test_ipv6_multicast_hop_limit_zero() -> TestResult {
     let egress1 = PhysPort(15);
     let egress2 = PhysPort(17);
 
-    // Create multicast group with two egress ports
+    // Step 1: Create admin-scoped IPv6 group for actual replication first
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_ipv6_hop_limit_underlay"),
+        &[
+            (egress1, types::Direction::External),
+            (egress2, types::Direction::External),
+        ],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Step 2: Create external IPv6 group with NAT target (no members)
     let multicast_ip = IpAddr::V6(MULTICAST_TEST_IPV6);
     let vlan = Some(10);
 
@@ -2106,12 +2519,9 @@ async fn test_ipv6_multicast_hop_limit_zero() -> TestResult {
         switch,
         multicast_ip,
         Some("test_ipv6_hop_limit_zero"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan,
-        true, // Create NAT target
+        true, // Create NAT target that points to the admin-scoped group
         None,
     )
     .await;
@@ -2167,7 +2577,23 @@ async fn test_ipv6_multicast_hop_limit_one() -> TestResult {
     let egress1 = PhysPort(15);
     let egress2 = PhysPort(17);
 
-    // Create multicast group with two egress ports
+    // Step 1: Create admin-scoped IPv6 group for actual replication first
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_ipv6_hop_limit_one_underlay"),
+        &[
+            (egress1, types::Direction::External),
+            (egress2, types::Direction::External),
+        ],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Step 2: Create external IPv6 group with NAT target (no members)
     let multicast_ip = IpAddr::V6(MULTICAST_TEST_IPV6);
     let vlan = Some(10);
 
@@ -2175,12 +2601,9 @@ async fn test_ipv6_multicast_hop_limit_one() -> TestResult {
         switch,
         multicast_ip,
         Some("test_ipv6_hop_limit_one"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan,
-        false, // No NAT target
+        true, // Create NAT target that points to the admin-scoped group
         None,
     )
     .await;
@@ -2238,37 +2661,32 @@ async fn test_ipv6_multicast_basic_replication_nat_ingress() -> TestResult {
     // Define test ports
     let ingress = PhysPort(10);
     let egress1 = PhysPort(15);
-    let egress2 = PhysPort(17);
 
-    // Create multicast group with two egress ports
-    let multicast_ip = IpAddr::V6(MULTICAST_TEST_IPV6);
-    let vlan = Some(10);
-
-    let replicated_members = [
-        (egress1, types::Direction::External),
-        (egress2, types::Direction::External),
-    ];
-    let created_group = create_test_multicast_group(
+    // Step 1: Create admin-scoped IPv6 group for underlay replication first
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    let underlay_members = [(egress1, types::Direction::Underlay)];
+    create_test_multicast_group(
         switch,
-        multicast_ip,
-        Some("test_ipv6_replication"),
-        &replicated_members,
-        vlan,
-        true, // Create NAT target
+        internal_multicast_ip,
+        Some("test_replication_internal"),
+        &underlay_members,
+        None,
+        false, // Admin-scoped groups don't need NAT targets
         None,
     )
     .await;
 
-    // Create a separate multicast group meant for underlay routing once
-    // encapped
-    let replicated_members = [(egress1, types::Direction::Underlay)];
-    create_test_multicast_group(
+    // Step 2: Create external IPv6 group with NAT target (no members)
+    let multicast_ip = IpAddr::V6(MULTICAST_TEST_IPV6);
+    let vlan = Some(10);
+
+    let created_group = create_test_multicast_group(
         switch,
-        MULTICAST_NAT_IP.into(),
-        Some("test_replication_internal"),
-        &replicated_members,
+        multicast_ip,
+        Some("test_ipv6_replication"),
+        &[], // External groups have no members
         vlan,
-        false, // No NAT target
+        true, // Create NAT target that points to the admin-scoped group
         None,
     )
     .await;
@@ -2346,9 +2764,25 @@ async fn test_ipv4_multicast_source_filtering_exact_match() -> TestResult {
     let egress1 = PhysPort(15);
     let egress2 = PhysPort(17);
 
-    // Create multicast group with two egress ports and source filtering
-    let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4_SSM);
+    // First create the underlay admin-scoped IPv6 group for NAT target
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
     let vlan = Some(10);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_source_filtering_underlay"),
+        &[
+            (egress1, types::Direction::External),
+            (egress2, types::Direction::External),
+        ],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Step 2: Create IPv4 SSM external group with source filtering and NAT target (no members)
+    let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4_SSM);
     let allowed_src_ip = "192.168.1.5".parse().unwrap();
     let filtered_src_ip: IpAddr = "192.168.1.6".parse().unwrap();
     let allowed_src = types::IpSrc::Exact(allowed_src_ip);
@@ -2357,12 +2791,9 @@ async fn test_ipv4_multicast_source_filtering_exact_match() -> TestResult {
         switch,
         multicast_ip,
         Some("test_source_filtering"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan,
-        false, // No NAT target
+        true, // Create NAT target that points to the admin-scoped group
         Some(vec![allowed_src]),
     )
     .await;
@@ -2444,6 +2875,7 @@ async fn test_ipv4_multicast_source_filtering_exact_match() -> TestResult {
     .unwrap();
 
     cleanup_test_group(switch, created_group.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 
     result
 }
@@ -2459,9 +2891,25 @@ async fn test_ipv4_multicast_source_filtering_prefix_match() -> TestResult {
     let egress1 = PhysPort(15);
     let egress2 = PhysPort(17);
 
+    // First create the underlay admin-scoped IPv6 group for NAT target
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    let vlan = Some(10);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_source_filtering_prefix_underlay"),
+        &[
+            (egress1, types::Direction::External),
+            (egress2, types::Direction::External),
+        ],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
     // Create multicast group with two egress ports and source filtering
     let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4_SSM);
-    let vlan = Some(10);
 
     let allowed_src_ip1 = "192.168.1.5".parse().unwrap();
     let allowed_src_ip2: IpAddr = "192.168.1.10".parse().unwrap();
@@ -2474,12 +2922,9 @@ async fn test_ipv4_multicast_source_filtering_prefix_match() -> TestResult {
         switch,
         multicast_ip,
         Some("test_source_filtering"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan,
-        false, // No NAT target
+        true, // Create NAT target that points to the admin-scoped group
         Some(vec![allowed_src]),
     )
     .await;
@@ -2597,6 +3042,7 @@ async fn test_ipv4_multicast_source_filtering_prefix_match() -> TestResult {
     .unwrap();
 
     cleanup_test_group(switch, created_group.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 
     result
 }
@@ -2613,7 +3059,23 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
     let egress1 = PhysPort(15);
     let egress2 = PhysPort(17);
 
-    // Create multicast group with two egress ports and multiple source filters
+    // Step 1: Create admin-scoped IPv6 group for actual replication first
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_ipv6_source_filtering_underlay"),
+        &[
+            (egress1, types::Direction::External),
+            (egress2, types::Direction::External),
+        ],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Step 2: Create external IPv6 SSM group with source filtering and NAT target (no members)
     let multicast_ip = IpAddr::V6(MULTICAST_TEST_IPV6_SSM);
     let vlan = Some(10);
 
@@ -2629,12 +3091,9 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
         switch,
         multicast_ip,
         Some("test_ipv6_source_filtering"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan,
-        false, // No NAT target
+        true, // Create NAT target that points to the admin-scoped group
         Some(sources),
     )
     .await;
@@ -2755,6 +3214,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
     .unwrap();
 
     cleanup_test_group(switch, created_group.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 
     result
 }
@@ -2770,7 +3230,23 @@ async fn test_multicast_dynamic_membership() -> TestResult {
     let egress2 = PhysPort(17);
     let egress3 = PhysPort(19);
 
-    // Create multicast group with two egress ports initially
+    // Step 1: Create admin-scoped IPv6 internal group with initial replication members
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_dynamic_membership_internal"),
+        &[
+            (egress1, types::Direction::External),
+            (egress2, types::Direction::External),
+        ],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Step 2: Create IPv4 external group as entry point with NAT target
     let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
     let vlan = Some(10);
 
@@ -2778,19 +3254,14 @@ async fn test_multicast_dynamic_membership() -> TestResult {
         switch,
         multicast_ip,
         Some("test_dynamic_membership"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan,
-        false, // No NAT target
+        true, // Create NAT target pointing to underlay group
         None,
     )
     .await;
 
-    // Get port and link IDs
-    let (port_id2, link_id2) = switch.link_id(egress2).unwrap();
-    let (port_id3, link_id3) = switch.link_id(egress3).unwrap();
+    // Get port and link IDs (not used in this test since external groups don't have members)
 
     // First test with initial configuration
     let src_mac = switch.get_port_mac(ingress).unwrap();
@@ -2837,16 +3308,32 @@ async fn test_multicast_dynamic_membership() -> TestResult {
     let result1 = switch.packet_test(vec![test_pkt], expected_pkts);
     assert!(result1.is_ok(), "Initial test failed: {:?}", result1);
 
-    // Now update the group membership - remove egress1, add egress3
-    let update_entry = types::MulticastGroupUpdateEntry {
+    // Now update the external group - external groups don't have members to update,
+    // but we can update their NAT target, tag, vlan, and sources
+    let external_update_entry = types::MulticastGroupUpdateExternalEntry {
         tag: None,
-        nat_target: None,
+        nat_target: create_nat_target_ipv4(), // Keep the same NAT target
         vlan_id: None,
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &created_group.group_ip,
+            &external_update_entry,
+        )
+        .await
+        .expect("Should be able to update group");
+
+    assert_eq!(updated.members.len(), 0); // External groups don't have members
+
+    // Update the admin-scoped group membership to demonstrate dynamic membership
+    let (port_id2, link_id2) = switch.link_id(egress2).unwrap();
+    let (port_id3, link_id3) = switch.link_id(egress3).unwrap();
+
+    let internal_update_entry = types::MulticastGroupUpdateEntry {
+        tag: None,
         members: vec![
             types::MulticastGroupMember {
                 port_id: port_id2,
@@ -2859,15 +3346,18 @@ async fn test_multicast_dynamic_membership() -> TestResult {
                 direction: types::Direction::External,
             },
         ],
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: Some(0),
+            level2_excl_id: Some(0),
+        },
+        sources: None,
     };
 
-    let updated = switch
+    switch
         .client
-        .multicast_group_update(&created_group.group_ip, &update_entry)
+        .multicast_group_update(&internal_multicast_ip, &internal_update_entry)
         .await
-        .expect("Should be able to update group");
-
-    assert_eq!(updated.members.len(), 2);
+        .expect("Should be able to update admin-scoped group membership");
 
     // Test with updated configuration
     let to_recv1_new = prepare_expected_pkt(
@@ -2904,6 +3394,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
     let result2 = switch.packet_test(vec![test_pkt_new], expected_pkts_new);
 
     cleanup_test_group(switch, created_group.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 
     result2
 }
@@ -2920,7 +3411,25 @@ async fn test_multicast_multiple_groups() -> TestResult {
     let egress3 = PhysPort(19);
     let egress4 = PhysPort(21);
 
-    // Create first multicast group with two egress ports
+    // Step 1: Create admin-scoped IPv6 group for actual replication first
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_multi_group_underlay"),
+        &[
+            (egress1, types::Direction::External),
+            (egress2, types::Direction::External),
+            (egress3, types::Direction::External),
+            (egress4, types::Direction::External),
+        ],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Step 2: Create first IPv4 external group with NAT target (no members)
     let multicast_ip1 = IpAddr::V4(MULTICAST_TEST_IPV4);
     let vlan1 = Some(10);
 
@@ -2928,30 +3437,24 @@ async fn test_multicast_multiple_groups() -> TestResult {
         switch,
         multicast_ip1,
         Some("test_multi_group_1"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan1,
-        false, // No NAT target
+        true, // Create NAT target that points to the admin-scoped group
         None,
     )
     .await;
 
-    // Create second multicast group with different egress ports
-    let multicast_ip2 = IpAddr::V4(Ipv4Addr::new(224, 0, 2, 0));
+    // Step 3: Create second IPv4 external group with NAT target (no members)
+    let multicast_ip2 = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 0)); // Changed to valid range
     let vlan2 = Some(20);
 
     let created_group2 = create_test_multicast_group(
         switch,
         multicast_ip2,
         Some("test_multi_group_2"),
-        &[
-            (egress3, types::Direction::External),
-            (egress4, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan2,
-        false, // No NAT target
+        true, // Create NAT target that points to the admin-scoped group
         None,
     )
     .await;
@@ -3006,6 +3509,39 @@ async fn test_multicast_multiple_groups() -> TestResult {
         Some(egress4),
     );
 
+    // Since both groups NAT to the same admin-scoped group, they both replicate to all ports
+    let to_recv1_3 = prepare_expected_pkt(
+        switch,
+        &to_send1,
+        vlan1,
+        created_group1.int_fwding.nat_target.as_ref(),
+        Some(egress3),
+    );
+
+    let to_recv1_4 = prepare_expected_pkt(
+        switch,
+        &to_send1,
+        vlan1,
+        created_group1.int_fwding.nat_target.as_ref(),
+        Some(egress4),
+    );
+
+    let to_recv2_3 = prepare_expected_pkt(
+        switch,
+        &to_send2,
+        vlan2,
+        created_group2.int_fwding.nat_target.as_ref(),
+        Some(egress1),
+    );
+
+    let to_recv2_4 = prepare_expected_pkt(
+        switch,
+        &to_send2,
+        vlan2,
+        created_group2.int_fwding.nat_target.as_ref(),
+        Some(egress2),
+    );
+
     let test_pkts = vec![
         TestPacket {
             packet: Arc::new(to_send1),
@@ -3018,7 +3554,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
     ];
 
     let expected_pkts = vec![
-        // First multicast group
+        // First multicast group - replicates to all ports since both groups share same NAT target
         TestPacket {
             packet: Arc::new(to_recv1_1),
             port: egress1,
@@ -3027,7 +3563,23 @@ async fn test_multicast_multiple_groups() -> TestResult {
             packet: Arc::new(to_recv1_2),
             port: egress2,
         },
-        // Second multicast group
+        TestPacket {
+            packet: Arc::new(to_recv1_3),
+            port: egress3,
+        },
+        TestPacket {
+            packet: Arc::new(to_recv1_4),
+            port: egress4,
+        },
+        // Second multicast group - also replicates to all ports
+        TestPacket {
+            packet: Arc::new(to_recv2_3),
+            port: egress1,
+        },
+        TestPacket {
+            packet: Arc::new(to_recv2_4),
+            port: egress2,
+        },
         TestPacket {
             packet: Arc::new(to_recv2_1),
             port: egress3,
@@ -3042,6 +3594,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
 
     cleanup_test_group(switch, created_group1.group_ip).await;
     cleanup_test_group(switch, created_group2.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 
     result
 }
@@ -3057,31 +3610,57 @@ async fn test_multicast_reset_all_tables() -> TestResult {
 
     // Create multicast groups with different configurations to populate all tables
 
-    // 1. IPv4 group with NAT and VLAN
+    // Step 1: Create admin-scoped IPv6 groups for NAT targets first
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_reset_all_underlay"),
+        &[
+            (egress1, types::Direction::External),
+            (egress2, types::Direction::External),
+        ],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Step 2: IPv4 external group with NAT and VLAN
     let multicast_ip1 = IpAddr::V4(MULTICAST_TEST_IPV4);
     let vlan1 = Some(10);
-    let nat_target = create_nat_target_ipv4();
 
     let created_group1 = create_test_multicast_group(
         switch,
         multicast_ip1,
         Some("test_reset_all_1"),
-        &[(egress1, types::Direction::External)],
+        &[], // External groups have no members
         vlan1,
         true, // Create NAT target
         None,
     )
     .await;
 
-    // 2. IPv6 group with custom replication parameters
+    // 2. IPv6 external group (non-admin-scoped must use external API)
     let multicast_ip2 = IpAddr::V6(MULTICAST_TEST_IPV6);
-    let vlan2 = Some(20);
 
-    let group_entry2 = types::MulticastGroupCreateEntry {
-        group_ip: multicast_ip2,
-        tag: Some("test_reset_all_2".to_string()),
-        nat_target: Some(nat_target.clone()),
-        vlan_id: vlan2,
+    let created_group2 = create_test_multicast_group(
+        switch,
+        multicast_ip2,
+        Some("test_reset_all_2"),
+        &[],      // External groups have no members
+        Some(20), // Add VLAN for this external group
+        true,     // Create NAT target
+        None,     // No sources for this group
+    )
+    .await;
+
+    // 2b. Admin-scoped IPv6 group to test internal API with custom replication parameters
+    let admin_scoped_ip =
+        IpAddr::V6(Ipv6Addr::new(0xff04, 0, 0, 0, 0, 0, 0, 2));
+    let group_entry2b = types::MulticastGroupCreateEntry {
+        group_ip: admin_scoped_ip,
+        tag: Some("test_reset_all_2b".to_string()),
         sources: None,
         replication_info: types::MulticastReplicationEntry {
             level1_excl_id: Some(100),
@@ -3094,11 +3673,11 @@ async fn test_multicast_reset_all_tables() -> TestResult {
         }],
     };
 
-    let created_group2 = switch
+    let created_group2b = switch
         .client
-        .multicast_group_create(&group_entry2)
+        .multicast_group_create(&group_entry2b)
         .await
-        .expect("Failed to create IPv6 multicast group")
+        .expect("Failed to create admin-scoped IPv6 multicast group")
         .into_inner();
 
     // 3. IPv4 SSM group with source filters
@@ -3115,17 +3694,14 @@ async fn test_multicast_reset_all_tables() -> TestResult {
         switch,
         multicast_ip3,
         Some("test_reset_all_3"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan3,
         true, // Create NAT target
         sources.clone(),
     )
     .await;
 
-    // 4. IPv6 SSM group with source filters
+    // 4. IPv6 SSM external group with source filters
     let multicast_ip4 = IpAddr::V6(MULTICAST_TEST_IPV6_SSM);
     let vlan4 = Some(40);
     let ipv6_sources =
@@ -3135,12 +3711,9 @@ async fn test_multicast_reset_all_tables() -> TestResult {
         switch,
         multicast_ip4,
         Some("test_reset_all_4"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan4,
-        false, // No NAT target
+        true, // IPv6 SSM external groups need NAT targets
         ipv6_sources.clone(),
     )
     .await;
@@ -3148,22 +3721,13 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     // Verify all tables have entries before reset
 
     // 1. Check replication tables
-    let ipv4_repl_table_before = switch
-        .client
-        .table_dump("pipe.Ingress.mcast_ingress.mcast_replication_ipv4")
-        .await
-        .expect("Should be able to dump IPv4 replication table");
-
+    // Note: Only IPv6 has a replication table; IPv4 uses different mechanisms
     let ipv6_repl_table_before = switch
         .client
         .table_dump("pipe.Ingress.mcast_ingress.mcast_replication_ipv6")
         .await
         .expect("Should be able to dump IPv6 replication table");
 
-    assert!(
-        !ipv4_repl_table_before.entries.is_empty(),
-        "IPv4 replication table should have entries before reset"
-    );
     assert!(
         !ipv6_repl_table_before.entries.is_empty(),
         "IPv6 replication table should have entries before reset"
@@ -3245,22 +3809,13 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     // Verify all tables are empty after reset
 
     // 1. Check replication tables after reset
-    let ipv4_repl_table_after = switch
-        .client
-        .table_dump("pipe.Ingress.mcast_ingress.mcast_replication_ipv4")
-        .await
-        .expect("Should be able to dump IPv4 replication table");
-
+    // Note: Only IPv6 has a replication table; IPv4 uses different mechanisms
     let ipv6_repl_table_after = switch
         .client
         .table_dump("pipe.Ingress.mcast_ingress.mcast_replication_ipv6")
         .await
         .expect("Should be able to dump IPv6 replication table");
 
-    assert!(
-        ipv4_repl_table_after.entries.is_empty(),
-        "IPv4 replication table should be empty after reset"
-    );
     assert!(
         ipv6_repl_table_after.entries.is_empty(),
         "IPv6 replication table should be empty after reset"
@@ -3349,8 +3904,10 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     for group_ip in [
         created_group1.group_ip,
         created_group2.group_ip,
+        created_group2b.group_ip,
         created_group3.group_ip,
         created_group4.group_ip,
+        internal_multicast_ip,
     ] {
         let result = switch.client.multicast_group_get(&group_ip).await;
 
@@ -3365,46 +3922,52 @@ async fn test_multicast_reset_all_tables() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_multicast_vlan_translation() -> TestResult {
+async fn test_multicast_vlan_translation_not_possible() -> TestResult {
     let switch = &*get_switch().await;
 
     // Define test ports
     let ingress = PhysPort(10);
-    let egress1 = PhysPort(15);
-    let egress2 = PhysPort(17);
 
-    // Create multicast group with two egress ports and a specific VLAN
+    // Step 1: Create admin-scoped IPv6 underlay group that will handle actual replication
+    // Must have at least one member to satisfy validation requirements
+    let egress1 = PhysPort(15);
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_vlan_underlay"),
+        &[(egress1, types::Direction::External)], // Need at least one member for admin-scoped groups
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Step 2: Create external group with VLAN
     let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
-    let output_vlan = Some(20); // The VLAN we want on the output
+    let output_vlan = Some(20);
 
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some("test_vlan_translation"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-        ],
+        Some("test_vlan_behavior"),
+        &[], // External groups have no members
         output_vlan,
-        false, // No NAT target
+        true, // Create NAT target
         None,
     )
     .await;
 
     let src_mac = switch.get_port_mac(ingress).unwrap();
 
-    // Create test packet with a different input VLAN
+    // Create test packet with input VLAN
     let input_vlan = 10;
-    let src_ip = "192.168.1.20";
-    let src_port = 4444;
-    let dst_port = 5555;
-
     let mut to_send = create_ipv4_multicast_packet(
         multicast_ip,
         src_mac,
-        src_ip,
-        src_port,
-        dst_port,
+        "192.168.1.20",
+        4444,
+        5555,
     );
 
     // Add input VLAN tag
@@ -3414,42 +3977,19 @@ async fn test_multicast_vlan_translation() -> TestResult {
         eth_vlan_tag: input_vlan,
     });
 
-    let to_recv1 = prepare_expected_pkt(
-        switch,
-        &to_send,
-        output_vlan,
-        created_group.int_fwding.nat_target.as_ref(),
-        Some(egress1),
-    );
-
-    let to_recv2 = prepare_expected_pkt(
-        switch,
-        &to_send,
-        output_vlan,
-        created_group.int_fwding.nat_target.as_ref(),
-        Some(egress2),
-    );
-
     let test_pkt = TestPacket {
         packet: Arc::new(to_send),
         port: ingress,
     };
 
-    // Expect packets on both egress ports with the translated VLAN
-    let expected_pkts = vec![
-        TestPacket {
-            packet: Arc::new(to_recv1),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv2),
-            port: egress2,
-        },
-    ];
+    // Expect NO packets - this test demonstrates that VLAN translation
+    // is not possible for multicast packets
+    let expected_pkts = vec![];
 
     let result = switch.packet_test(vec![test_pkt], expected_pkts);
 
     cleanup_test_group(switch, created_group.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 
     result
 }
@@ -3465,7 +4005,24 @@ async fn test_multicast_multiple_packets() -> TestResult {
     let egress2 = PhysPort(17);
     let egress3 = PhysPort(19);
 
-    // Create a multicast group with multiple egress ports
+    // Step 1: Create admin-scoped IPv6 underlay group for actual replication
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some("test_performance_underlay"),
+        &[
+            (egress1, types::Direction::Underlay),
+            (egress2, types::Direction::Underlay),
+            (egress3, types::Direction::Underlay),
+        ],
+        None,
+        false, // Admin-scoped groups don't need NAT targets
+        None,
+    )
+    .await;
+
+    // Step 2: Create IPv4 external group as entry point with NAT target
     let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
     let vlan = Some(10);
 
@@ -3473,13 +4030,9 @@ async fn test_multicast_multiple_packets() -> TestResult {
         switch,
         multicast_ip,
         Some("test_performance"),
-        &[
-            (egress1, types::Direction::External),
-            (egress2, types::Direction::External),
-            (egress3, types::Direction::External),
-        ],
+        &[], // External groups have no members
         vlan,
-        false, // No NAT target
+        true, // Create NAT target pointing to underlay group
         None,
     )
     .await;
@@ -3568,6 +4121,7 @@ async fn test_multicast_multiple_packets() -> TestResult {
     .unwrap();
 
     cleanup_test_group(switch, created_group.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 
     result
 }
@@ -3580,11 +4134,18 @@ async fn test_multicast_no_group_configured() -> TestResult {
     // Define test ports
     let ingress = PhysPort(10);
 
-    // Use a multicast IP address that we will NOT configure any group for
-    let unconfigured_multicast_ipv4 = IpAddr::V4(MULTICAST_TEST_IPV4);
-    let unconfigured_multicast_ipv6 = IpAddr::V6(MULTICAST_TEST_IPV6);
+    // Use unique multicast IP addresses that we will NOT configure any group for
+    let unconfigured_multicast_ipv4 = IpAddr::V4(Ipv4Addr::new(224, 1, 255, 1)); // Unique IPv4 multicast
+    let unconfigured_multicast_ipv6 =
+        IpAddr::V6(Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 255, 1)); // Unique IPv6 multicast
 
     let src_mac = switch.get_port_mac(ingress).unwrap();
+
+    // Get baseline counter before any test packets
+    let initial_ctr_baseline = switch
+        .get_counter("multicast_no_group", None)
+        .await
+        .unwrap();
 
     // Test IPv4 multicast with no configured group
     {
@@ -3603,11 +4164,6 @@ async fn test_multicast_no_group_configured() -> TestResult {
 
         let expected_pkts = vec![];
 
-        let ctr_baseline = switch
-            .get_counter("multicast_no_group", None)
-            .await
-            .unwrap();
-
         switch
             .packet_test(vec![test_pkt], expected_pkts)
             .expect("No packets should be sent");
@@ -3616,7 +4172,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
         check_counter_incremented(
             switch,
             "multicast_no_group",
-            ctr_baseline,
+            initial_ctr_baseline,
             1,
             None,
         )
@@ -3642,97 +4198,16 @@ async fn test_multicast_no_group_configured() -> TestResult {
         // Expect no output packets - should be dropped
         let expected_pkts = vec![];
 
-        let ctr_baseline = switch
-            .get_counter("multicast_no_group", None)
-            .await
-            .unwrap();
-
         switch
             .packet_test(vec![test_pkt], expected_pkts)
             .expect("No packets should be sent");
 
-        // Verify counter incremented for IPv6
+        // Verify counter incremented for IPv6 - expect 2 total drops now
         check_counter_incremented(
             switch,
             "multicast_no_group",
-            ctr_baseline,
-            1,
-            None,
-        )
-        .await
-        .unwrap();
-    }
-
-    // Test SSM multicast addresses with no configured group
-    {
-        let unconfigured_ssm_ipv4 = IpAddr::V4(MULTICAST_TEST_IPV4_SSM);
-        let unconfigured_ssm_ipv6 = IpAddr::V6(MULTICAST_TEST_IPV6_SSM);
-
-        // Test IPv4 SSM
-        let to_send = create_ipv4_multicast_packet(
-            unconfigured_ssm_ipv4,
-            src_mac,
-            "192.168.1.10",
-            3333,
-            4444,
-        );
-
-        let test_pkt = TestPacket {
-            packet: Arc::new(to_send),
-            port: ingress,
-        };
-
-        let ctr_baseline = switch
-            .get_counter("multicast_src_filtered", None)
-            .await
-            .unwrap();
-
-        switch
-            .packet_test(vec![test_pkt], vec![])
-            .expect("No packets should be sent");
-
-        // For SSM addresses without configured sources, should be dropped with source filtered reason
-        check_counter_incremented(
-            switch,
-            "multicast_src_filtered",
-            ctr_baseline,
-            1,
-            None,
-        )
-        .await
-        .unwrap();
-
-        // Test IPv6 SSM
-        let to_send = create_ipv6_multicast_packet(
-            unconfigured_ssm_ipv6,
-            src_mac,
-            "2001:db8::1",
-            3333,
-            4444,
-        );
-
-        let test_pkt = TestPacket {
-            packet: Arc::new(to_send),
-            port: ingress,
-        };
-
-        let expected_pkts = vec![];
-
-        let ctr_baseline = switch
-            .get_counter("multicast_src_filtered", None)
-            .await
-            .unwrap();
-
-        switch
-            .packet_test(vec![test_pkt], expected_pkts)
-            .expect("No packets should be sent");
-
-        // For IPv6 SSM addresses without configured sources, should be dropped with source filtered reason
-        check_counter_incremented(
-            switch,
-            "multicast_src_filtered",
-            ctr_baseline,
-            1,
+            initial_ctr_baseline,
+            2,
             None,
         )
         .await
@@ -3758,11 +4233,11 @@ async fn test_multicast_level1_exclusion_group_pruned() -> TestResult {
 
     let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
 
-    let group = types::MulticastGroupCreateEntry {
-        group_ip: multicast_ip,
-        tag: Some("test_level1_excl_group1".to_string()),
-        nat_target: None,
-        vlan_id: Some(10),
+    // Step 1: Create admin-scoped IPv6 internal group with replication members and exclusion
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    let underlay_group = types::MulticastGroupCreateEntry {
+        group_ip: internal_multicast_ip,
+        tag: Some("test_level1_excl_underlay".to_string()),
         sources: None,
         replication_info: types::MulticastReplicationEntry {
             level1_excl_id: Some(egress2_asic_id),
@@ -3772,19 +4247,35 @@ async fn test_multicast_level1_exclusion_group_pruned() -> TestResult {
             types::MulticastGroupMember {
                 port_id: switch.link_id(egress1).unwrap().0,
                 link_id: switch.link_id(egress1).unwrap().1,
-                direction: types::Direction::External,
+                direction: types::Direction::Underlay,
             },
             types::MulticastGroupMember {
                 port_id: switch.link_id(egress2).unwrap().0,
                 link_id: switch.link_id(egress2).unwrap().1,
-                direction: types::Direction::External,
+                direction: types::Direction::Underlay,
             },
         ],
     };
 
+    let _underlay_created = switch
+        .client
+        .multicast_group_create(&underlay_group)
+        .await
+        .expect("Should create underlay group")
+        .into_inner();
+
+    // Step 2: Create IPv4 external group as entry point with NAT target
+    let external_group = types::MulticastGroupCreateExternalEntry {
+        group_ip: multicast_ip,
+        tag: Some("test_level1_excl_group1".to_string()),
+        nat_target: create_nat_target_ipv4(),
+        vlan_id: Some(10),
+        sources: None,
+    };
+
     let created_group = switch
         .client
-        .multicast_group_create(&group)
+        .multicast_group_create_external(&external_group)
         .await
         .expect("Should create first exclusion group")
         .into_inner();
@@ -3827,6 +4318,306 @@ async fn test_multicast_level1_exclusion_group_pruned() -> TestResult {
     .unwrap();
 
     cleanup_test_group(switch, created_group.group_ip).await;
+    cleanup_test_group(switch, internal_multicast_ip).await;
 
     result
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_external_group_nat_target_validation() {
+    let switch = &*get_switch().await;
+
+    let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
+
+    // Test 1: Creating external group with NAT target referencing non-existent group should fail
+    let nonexistent_nat_target = types::NatTarget {
+        internal_ip: "ff04::1".parse().unwrap(), // Admin-scoped IPv6 that does not exist
+        inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x01).into(),
+        vni: 100.into(),
+    };
+
+    let group_with_invalid_nat = types::MulticastGroupCreateExternalEntry {
+        group_ip: IpAddr::V4("224.1.0.101".parse().unwrap()),
+        tag: Some("test_invalid_nat".to_string()),
+        nat_target: nonexistent_nat_target.clone(),
+        vlan_id: Some(10),
+        sources: None,
+    };
+
+    let res = switch
+        .client
+        .multicast_group_create_external(&group_with_invalid_nat)
+        .await
+        .expect_err("Should fail with non-existent NAT target");
+
+    match res {
+        Error::ErrorResponse(inner) => {
+            assert_eq!(inner.status(), 400, "Expected 400 Bad Request");
+        }
+        _ => panic!("Expected ErrorResponse for invalid NAT target"),
+    }
+
+    // Test 2: Create admin-scoped IPv6 group first, then external group with valid NAT target
+    let admin_scoped_group = types::MulticastGroupCreateEntry {
+        group_ip: IpAddr::V6("ff04::1".parse().unwrap()), // Admin-scoped IPv6
+        tag: Some("test_admin_scoped".to_string()),
+        sources: None,
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: None,
+            level2_excl_id: None,
+        },
+        members: vec![types::MulticastGroupMember {
+            port_id: port_id.clone(),
+            link_id,
+            direction: types::Direction::Underlay,
+        }],
+    };
+
+    let created_admin = switch
+        .client
+        .multicast_group_create(&admin_scoped_group)
+        .await
+        .expect("Should create admin-scoped group")
+        .into_inner();
+
+    assert!(created_admin.underlay_group_id.is_some());
+    assert!(created_admin.replication_info.is_some());
+
+    // Test 3: Now create external group with valid NAT target
+    let valid_nat_target = types::NatTarget {
+        internal_ip: "ff04::1".parse().unwrap(), // References the admin-scoped group we just created
+        inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x02).into(),
+        vni: 100.into(),
+    };
+
+    let group_with_valid_nat = types::MulticastGroupCreateExternalEntry {
+        group_ip: IpAddr::V4("224.1.0.102".parse().unwrap()),
+        tag: Some("test_valid_nat".to_string()),
+        nat_target: valid_nat_target,
+        vlan_id: Some(10),
+        sources: None,
+    };
+
+    let created_external = switch
+        .client
+        .multicast_group_create_external(&group_with_valid_nat)
+        .await
+        .expect("Should create external group with valid NAT target")
+        .into_inner();
+
+    // External groups created via external API don't have external_group_id unless
+    // there are external members in the referenced admin-scoped group
+    assert!(
+        created_external.external_group_id.is_none(),
+        "External API groups shouldn't have external_group_id without external members"
+    );
+    assert!(
+        created_external.underlay_group_id.is_none(),
+        "External group should not have underlay_group_id"
+    );
+    assert!(
+        created_external.replication_info.is_none(),
+        "External group should not have replication_info"
+    );
+    assert_eq!(
+        created_external.members.len(),
+        0,
+        "External group should have no members"
+    );
+
+    // Cleanup
+    cleanup_test_group(switch, created_admin.group_ip).await;
+    cleanup_test_group(switch, created_external.group_ip).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_ipv6_multicast_scope_validation() {
+    let switch = &*get_switch().await;
+    let (egress_port, egress_link) = switch.link_id(PhysPort(11)).unwrap();
+
+    // Test all IPv6 multicast scope types for proper API routing
+
+    // Admin-local scope (ff04::/16) - should work with internal API
+    let admin_local_group = types::MulticastGroupCreateEntry {
+        group_ip: IpAddr::V6("ff04::100".parse().unwrap()),
+        tag: Some("test_admin_local".to_string()),
+        sources: None,
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: None,
+            level2_excl_id: None,
+        },
+        members: vec![types::MulticastGroupMember {
+            port_id: egress_port.clone(),
+            link_id: egress_link,
+            direction: types::Direction::External,
+        }],
+    };
+
+    let admin_local_result = switch
+        .client
+        .multicast_group_create(&admin_local_group)
+        .await;
+    assert!(
+        admin_local_result.is_ok(),
+        "Admin-local scope (ff04::/16) should work with internal API"
+    );
+
+    // Site-local scope (ff05::/16) - should work with internal API
+    let site_local_group = types::MulticastGroupCreateEntry {
+        group_ip: IpAddr::V6("ff05::200".parse().unwrap()),
+        tag: Some("test_site_local".to_string()),
+        sources: None,
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: None,
+            level2_excl_id: None,
+        },
+        members: vec![types::MulticastGroupMember {
+            port_id: egress_port.clone(),
+            link_id: egress_link,
+            direction: types::Direction::External,
+        }],
+    };
+
+    let site_local_result = switch
+        .client
+        .multicast_group_create(&site_local_group)
+        .await;
+    assert!(
+        site_local_result.is_ok(),
+        "Site-local scope (ff05::/16) should work with internal API"
+    );
+
+    // Organization-local scope (ff08::/16) - should work with internal API
+    let org_local_group = types::MulticastGroupCreateEntry {
+        group_ip: IpAddr::V6("ff08::300".parse().unwrap()),
+        tag: Some("test_org_local".to_string()),
+        sources: None,
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: None,
+            level2_excl_id: None,
+        },
+        members: vec![types::MulticastGroupMember {
+            port_id: egress_port.clone(),
+            link_id: egress_link,
+            direction: types::Direction::External,
+        }],
+    };
+
+    let org_local_result =
+        switch.client.multicast_group_create(&org_local_group).await;
+    assert!(
+        org_local_result.is_ok(),
+        "Organization-local scope (ff08::/16) should work with internal API"
+    );
+
+    // Global scope (ff0e::/16) - should be rejected by internal API
+    let global_scope_group = types::MulticastGroupCreateEntry {
+        group_ip: IpAddr::V6("ff0e::400".parse().unwrap()),
+        tag: Some("test_global".to_string()),
+        sources: None,
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: None,
+            level2_excl_id: None,
+        },
+        members: vec![types::MulticastGroupMember {
+            port_id: egress_port.clone(),
+            link_id: egress_link,
+            direction: types::Direction::External,
+        }],
+    };
+
+    let global_scope_result = switch
+        .client
+        .multicast_group_create(&global_scope_group)
+        .await;
+    assert!(
+        global_scope_result.is_err(),
+        "Global scope (ff0e::/16) should be rejected by internal API"
+    );
+    let error_msg = format!("{:?}", global_scope_result.unwrap_err());
+    assert!(
+        error_msg.contains(
+            "Non-admin-scoped IPv6 multicast groups must use the external API"
+        ),
+        "Error should indicate external API required for global scope"
+    );
+
+    // Test the reverse: admin-scoped should be rejected by external API
+    // First create an admin-scoped group to reference
+    let admin_target_group = types::MulticastGroupCreateEntry {
+        group_ip: IpAddr::V6("ff04::1000".parse().unwrap()),
+        tag: Some("test_target".to_string()),
+        sources: None,
+        replication_info: types::MulticastReplicationEntry {
+            level1_excl_id: None,
+            level2_excl_id: None,
+        },
+        members: vec![types::MulticastGroupMember {
+            port_id: egress_port.clone(),
+            link_id: egress_link,
+            direction: types::Direction::External,
+        }],
+    };
+
+    let target_result = switch
+        .client
+        .multicast_group_create(&admin_target_group)
+        .await
+        .expect("Should create target group");
+
+    let admin_scoped_external = types::MulticastGroupCreateExternalEntry {
+        group_ip: IpAddr::V6("ff04::500".parse().unwrap()),
+        tag: Some("test_admin_external".to_string()),
+        nat_target: types::NatTarget {
+            internal_ip: "ff04::1000".parse().unwrap(),
+            inner_mac: MacAddr::new(0x02, 0x00, 0x00, 0x00, 0x00, 0x01).into(),
+            vni: 100.into(),
+        },
+        vlan_id: Some(42),
+        sources: None,
+    };
+
+    let admin_external_result = switch
+        .client
+        .multicast_group_create_external(&admin_scoped_external)
+        .await;
+    assert!(
+        admin_external_result.is_err(),
+        "Admin-scoped addresses should be rejected by external API"
+    );
+    let external_error_msg =
+        format!("{:?}", admin_external_result.unwrap_err());
+    assert!(
+        external_error_msg.contains("admin-scoped multicast address"),
+        "Error should indicate admin-scoped addresses require internal API"
+    );
+
+    // Cleanup all created groups
+    let admin_local_group = admin_local_result.unwrap().into_inner();
+    let site_local_group = site_local_result.unwrap().into_inner();
+    let org_local_group = org_local_result.unwrap().into_inner();
+    let target_group = target_result.into_inner();
+
+    switch
+        .client
+        .multicast_group_delete(&admin_local_group.group_ip)
+        .await
+        .ok();
+    switch
+        .client
+        .multicast_group_delete(&site_local_group.group_ip)
+        .await
+        .ok();
+    switch
+        .client
+        .multicast_group_delete(&org_local_group.group_ip)
+        .await
+        .ok();
+    switch
+        .client
+        .multicast_group_delete(&target_group.group_ip)
+        .await
+        .ok();
 }

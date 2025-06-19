@@ -45,12 +45,9 @@ const IPV4_NAT_TABLE_SIZE: usize = 1024; // nat routing table
 const IPV6_NAT_TABLE_SIZE: usize = 1024; // nat routing table
 const IPV4_ARP_SIZE: usize = 512; // arp cache
 const IPV6_NEIGHBOR_SIZE: usize = 512; // ipv6 neighbor cache
-/// Multicast routing tables add two entries for each entry in the
-/// replication table, one for each direction (ingress and egress).
-///
-/// We alternate between IPv4 and IPv6 multicast addresses, so it's
-/// 512 entries for each type of address.
-const MULTICAST_TABLE_SIZE: usize = 2048;
+/// The size of the multicast table related to replication on
+/// admin-scoped (internal) multicast groups.
+const MULTICAST_TABLE_SIZE: usize = 1024;
 const MCAST_TAG: &str = "mcast_table_test"; // multicast group tag
 
 // The result of a table insert or delete API operation.
@@ -76,30 +73,16 @@ fn gen_ipv6_cidr(idx: usize) -> Ipv6Net {
     Ipv6Net::new(gen_ipv6_addr(idx), 128).unwrap()
 }
 
-/// Generates valid IPv4 multicast addresses that avoid special-purpose ranges
-fn gen_ipv4_multicast_addr(idx: usize) -> Ipv4Addr {
-    // Start with 224.1.0.0 to avoid the 224.0.0.0/24 range
-    // (which contains link-local multicast)
-    // 224.0.0.0/24 is reserved for local network control use
-    let base: u32 = 0xE0010000u32; // hex for 224.1.0.0
-
-    // Avoid special-purpose ranges:
-    // - 232.0.0.0/8 (Source-Specific Multicast)
-    // - 233.0.0.0/8 (GLOP addressing)
-    // - 239.0.0.0/8 (Administratively Scoped)
-    //
-    // Keep within 224.1.0.0 - 231.255.255.255
-    let addr: u32 = base + (idx as u32 % 0x00FFFFFF);
-
-    // Convert to Ipv4Addr
-    addr.into()
-}
-
-/// Generates valid IPv6 multicast addresses that avoid reserved ranges
+// Generates valid IPv6 multicast addresses that are admin-scoped.
 fn gen_ipv6_multicast_addr(idx: usize) -> Ipv6Addr {
-    // Use ff0e::/16 (global scope) to avoid link-local and other reserved scopes
-    // FF0E is global scope multicast (avoid ff00, ff01, ff02 which are reserved)
-    Ipv6Addr::new(0xFF0E, 0, 0, 0, 0, 0, 0, (1000 + idx) as u16)
+    // Use admin-scoped multicast addresses (ff04::/16, ff05::/16, ff08::/16)
+    // This ensures they will be created as internal groups
+    let scope = match idx % 3 {
+        0 => 0xFF04, // admin-scoped
+        1 => 0xFF05, // admin-scoped
+        _ => 0xFF08, // admin-scoped
+    };
+    Ipv6Addr::new(scope, 0, 0, 0, 0, 0, 0, (1000 + idx) as u16)
 }
 
 // For each table we want to test, we define functions to insert, delete, and
@@ -474,8 +457,10 @@ async fn test_routev6_full() -> TestResult {
     test_table_capacity::<RouteV6, (), ()>(IPV6_LPM_SIZE).await
 }
 
+struct MulticastReplicationTableTest {}
+
 impl TableTest<types::MulticastGroupResponse, ()>
-    for types::MulticastGroupCreateEntry
+    for MulticastReplicationTableTest
 {
     async fn insert_entry(
         switch: &Switch,
@@ -484,33 +469,13 @@ impl TableTest<types::MulticastGroupResponse, ()>
         let (port_id1, link_id1) = switch.link_id(PhysPort(11)).unwrap();
         let (port_id2, link_id2) = switch.link_id(PhysPort(12)).unwrap();
 
-        // Alternate between IPv4 and IPv6 based on whether idx is even or odd
-        let group_ip = if idx % 2 == 0 {
-            IpAddr::V4(gen_ipv4_multicast_addr(idx))
-        } else {
-            IpAddr::V6(gen_ipv6_multicast_addr(idx))
-        };
+        // Only IPv6 admin-scoped multicast addresses for replication table testing
+        let group_ip = IpAddr::V6(gen_ipv6_multicast_addr(idx));
 
-        // Create a NAT target
-        let nat_target = types::NatTarget {
-            internal_ip: Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 1),
-            inner_mac: MacAddr::new(0xe1, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
-            vni: (100 + idx as u32).into(),
-        };
-
-        // Alternate having a vlan_id based on whether idx is even or odd
-        let vlan_id = if idx % 2 == 0 {
-            Some(10 + (idx % 4000) as u16)
-        } else {
-            None
-        };
-
-        // Create the multicast group
-        let group_entry = types::MulticastGroupCreateEntry {
+        // Admin-scoped IPv6 groups are internal with replication info and members
+        let internal_entry = types::MulticastGroupCreateEntry {
             group_ip,
             tag: Some(MCAST_TAG.to_string()),
-            nat_target: Some(nat_target),
-            vlan_id,
             sources: None,
             replication_info: types::MulticastReplicationEntry {
                 level1_excl_id: Some(10),
@@ -518,30 +483,22 @@ impl TableTest<types::MulticastGroupResponse, ()>
             },
             members: vec![
                 types::MulticastGroupMember {
-                    port_id: port_id1,
+                    port_id: port_id1.clone(),
                     link_id: link_id1,
                     direction: types::Direction::External,
                 },
                 types::MulticastGroupMember {
-                    port_id: port_id2,
+                    port_id: port_id2.clone(),
                     link_id: link_id2,
                     direction: types::Direction::External,
                 },
             ],
         };
-
-        switch.client.multicast_group_create(&group_entry).await
+        switch.client.multicast_group_create(&internal_entry).await
     }
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
-        // Find the IP with the matching index
-        let ip = if idx % 2 == 0 {
-            IpAddr::V4(gen_ipv4_multicast_addr(idx))
-        } else {
-            IpAddr::V6(gen_ipv6_multicast_addr(idx))
-        };
-
-        // Delete the route entry
+        let ip = IpAddr::V6(gen_ipv6_multicast_addr(idx));
         switch.client.multicast_group_delete(&ip).await
     }
 
@@ -559,9 +516,9 @@ impl TableTest<types::MulticastGroupResponse, ()>
 
 #[tokio::test]
 #[ignore]
-async fn test_multicast_full() -> TestResult {
+async fn test_multicast_replication_table_full() -> TestResult {
     test_table_capacity::<
-        types::MulticastGroupCreateEntry,
+        MulticastReplicationTableTest,
         types::MulticastGroupResponse,
         (),
     >(MULTICAST_TABLE_SIZE)

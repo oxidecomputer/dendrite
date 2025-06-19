@@ -232,7 +232,7 @@ control Filter(
 				// that follow the format 33:33:xxxx:xxxx where the last 32 bits
 				// are taken directly from the last 32 bits of the IPv6 address.
 				//
-				// Sadly, the first two conditions cannot e checked properly by
+				// Sadly, the first two conditions cannot be checked properly by
 				// the parser, as we reach the total available parser match
 				// registers on the device.
 				if (hdr.ethernet.dst_mac[47:40] != 8w0x33 ||
@@ -689,7 +689,7 @@ control NatIngress (
 		if (hdr.ipv4.isValid() && meta.is_valid) {
 			if (meta.is_mcast) {
 				ingress_ipv4_mcast.apply();
-			} else  {
+			} else {
 				ingress_ipv4.apply();
 			}
 		} else if (hdr.ipv6.isValid() && meta.is_valid) {
@@ -1468,25 +1468,34 @@ control MulticastIngress (
 	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md)
 {
-	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv4_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv6_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv4_ssm_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv6_ssm_ctr;
 
-	Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv4_level1;
-	Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv4_level2;
 	Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv6_level1;
 	Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv6_level2;
 
 	// Drop action for IPv4 multicast packets with no group.
+	//
+	// At this point, We should only allow replication for IPv6 packets that
+	// are admin-scoped before possible decapping.
 	action drop_mcastv4_no_group() {
 		ig_dprsr_md.drop_ctl = 1;
 		meta.drop_reason = DROP_MULTICAST_NO_GROUP;
-		mcast_ipv4_ctr.count();
 	}
 
 	// Drop action for IPv6 multicast packets with no group.
+	//
+	// At this point, we should only allow replication for IPv6 packets that
+	// are admin-scoped before possible decapping.
 	action drop_mcastv6_no_group() {
+		ig_dprsr_md.drop_ctl = 1;
+		meta.drop_reason = DROP_MULTICAST_NO_GROUP;
+	}
+
+	// Drop action for IPv6 multicast packets with no group
+	// that is a valid admin-scoped multicast group.
+	action drop_mcastv6_admin_scoped_no_group() {
 		ig_dprsr_md.drop_ctl = 1;
 		meta.drop_reason = DROP_MULTICAST_NO_GROUP;
 		mcast_ipv6_ctr.count();
@@ -1520,35 +1529,9 @@ control MulticastIngress (
 		mcast_ipv6_ssm_ctr.count();
 	}
 
-	action configure_mcastv4(
-		MulticastGroupId_t mcast_grp_a,
-		bit<16> rid,
-		bit<16> level1_excl_id,
-		bit<9> level2_excl_id
-	) {
-		ig_tm_md.mcast_grp_a = mcast_grp_a;
-		ig_tm_md.rid = rid;
-		ig_tm_md.level1_exclusion_id = level1_excl_id;
-		ig_tm_md.level2_exclusion_id = level2_excl_id;
-
-		// Set multicast hash based on IPv4 packet fields
-		ig_tm_md.level1_mcast_hash = (bit<13>)mcast_hashv4_level1.get({
-			hdr.ipv4.src_addr,
-			hdr.ipv4.dst_addr,
-			hdr.ipv4.protocol,
-			meta.l4_src_port,
-			meta.l4_dst_port
-		});
-
-		// Set secondary multicast hash based on IPv4 packet fields
-		ig_tm_md.level2_mcast_hash = (bit<13>)mcast_hashv4_level2.get({
-			(bit<16>)hdr.ipv4.identification,
-			ig_intr_md.ingress_port
-		});
-
-		mcast_ipv4_ctr.count();
-	}
-
+	// Configure IPv6 multicast replication with bifurcated design:
+	// mcast_grp_a: external/customer replication group
+	// mcast_grp_b: underlay/infrastructure replication group
 	action configure_mcastv6(
 		MulticastGroupId_t mcast_grp_a,
 		MulticastGroupId_t mcast_grp_b,
@@ -1580,21 +1563,10 @@ control MulticastIngress (
 		mcast_ipv6_ctr.count();
 	}
 
-	table mcast_replication_ipv4 {
-		key = { hdr.ipv4.dst_addr: exact; }
-		actions = {
-			configure_mcastv4;
-			drop_mcastv4_no_group;
-		}
-		default_action = drop_mcastv4_no_group;
-		const size = IPV4_MULTICAST_TABLE_SIZE;
-		counters = mcast_ipv4_ctr;
-	}
-
 	table mcast_source_filter_ipv4 {
 		key = {
-			hdr.ipv4.src_addr: lpm;
-			hdr.ipv4.dst_addr: exact;
+			hdr.inner_ipv4.src_addr: lpm;
+			hdr.inner_ipv4.dst_addr: exact;
 		}
 		actions = {
 			allow_source_mcastv4;
@@ -1609,17 +1581,17 @@ control MulticastIngress (
 		key = { hdr.ipv6.dst_addr: exact; }
 		actions = {
 			configure_mcastv6;
-			drop_mcastv6_no_group;
+			drop_mcastv6_admin_scoped_no_group;
 		}
-		default_action = drop_mcastv6_no_group;
+		default_action = drop_mcastv6_admin_scoped_no_group;
 		const size = IPV6_MULTICAST_TABLE_SIZE;
 		counters = mcast_ipv6_ctr;
 	}
 
 	table mcast_source_filter_ipv6 {
 		key = {
-			hdr.ipv6.src_addr: exact;
-			hdr.ipv6.dst_addr: exact;
+			hdr.inner_ipv6.src_addr: exact;
+			hdr.inner_ipv6.dst_addr: exact;
 		}
 		actions = {
 			allow_source_mcastv6;
@@ -1650,7 +1622,6 @@ control MulticastIngress (
 
 	table mcast_tag_check {
 		key = {
-			hdr.ipv6.isValid() : ternary;
 			ig_tm_md.mcast_grp_a : ternary;
 			ig_tm_md.mcast_grp_b : ternary;
 			hdr.geneve.isValid() : ternary;
@@ -1666,12 +1637,12 @@ control MulticastIngress (
 		}
 
 		const entries = {
-			( true, _, _, true, true, MULTICAST_TAG_EXTERNAL ) : invalidate_underlay_grp_and_set_decap;
-			( true, _, _, true, true, MULTICAST_TAG_UNDERLAY ) : invalidate_external_grp;
-			( true, _, _, true, true, MULTICAST_TAG_UNDERLAY_EXTERNAL ) : NoAction;
-			( _, 0, _, _, _, _ ) : invalidate_external_grp;
-			( _, _, 0, _, _, _ ) : invalidate_underlay_grp;
-			( _, 0, 0, _, _, _ ) : invalidate_grps;
+			(  _, _, true, true, MULTICAST_TAG_EXTERNAL ) : invalidate_underlay_grp_and_set_decap;
+			(  _, _, true, true, MULTICAST_TAG_UNDERLAY ) : invalidate_external_grp;
+			(  _, _, true, true, MULTICAST_TAG_UNDERLAY_EXTERNAL ) : NoAction;
+			( 0, _, _, _, _ ) : invalidate_external_grp;
+			( _, 0, _, _, _ ) : invalidate_underlay_grp;
+			( 0, 0, _, _, _ ) : invalidate_grps;
 		}
 
 		const size = 6;
@@ -1679,37 +1650,33 @@ control MulticastIngress (
 
 	// Note: SSM tables currently take one extra stage in the pipeline (17->18).
 	apply {
-		if (hdr.ipv4.isValid()) {
-			// Check if the destination address is an IPv4 SSM multicast
+		if (hdr.geneve.isValid() && hdr.inner_ipv4.isValid()) {
+			// Check if the inner destination address is an IPv4 SSM multicast
 			// address.
-			if (hdr.ipv4.dst_addr[31:24] == 8w0xe8) {
+			if (hdr.inner_ipv4.dst_addr[31:24] == 8w0xe8) {
 				mcast_source_filter_ipv4.apply();
-				if (meta.allow_source_mcast) {
-					mcast_replication_ipv4.apply();
-				}
 			} else {
-				// Otherwise, apply the multicast replication table for
-				// non-SSM multicast addresses.
-				mcast_replication_ipv4.apply();
+				meta.allow_source_mcast = true;
 			}
-		} else if (hdr.ipv6.isValid()) {
-			// Check if the destination address is an IPv6 SSM multicast
+		} else if (hdr.geneve.isValid() && hdr.inner_ipv6.isValid()) {
+			// Check if the inner destination address is an IPv6 SSM multicast
 			// address.
-			if ((hdr.ipv6.dst_addr[127:120] == 8w0xff)
-				&& ((hdr.ipv6.dst_addr[119:116] == 4w0x3))) {
+			if ((hdr.inner_ipv6.dst_addr[127:120] == 8w0xff)
+				&& ((hdr.inner_ipv6.dst_addr[119:116] == 4w0x3))) {
 					mcast_source_filter_ipv6.apply();
-				if (meta.allow_source_mcast) {
-					// Then, apply the multicast replication table.
-					mcast_replication_ipv6.apply();
-				}
 			} else {
-				// Otherwise, apply the multicast replication table for
-				// non-SSM multicast addresses.
-				mcast_replication_ipv6.apply();
+				meta.allow_source_mcast = true;
 			}
+		} else if (hdr.ipv4.isValid()) {
+			drop_mcastv4_no_group();
+		} else if (hdr.ipv6.isValid()) {
+			drop_mcastv6_no_group();
 		}
 
-		mcast_tag_check.apply();
+		if (hdr.ipv6.isValid() && meta.allow_source_mcast) {
+			mcast_replication_ipv6.apply();
+			mcast_tag_check.apply();
+		}
 	}
 }
 

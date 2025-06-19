@@ -3082,9 +3082,34 @@ pub struct MulticastGroupIdParam {
 }
 
 /**
- * Create a multicast group configuration.
+ * Create an external-only multicast group configuration.
  *
- * If no group ID is provided, one will be uniquely assigned.
+ * External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast
+ * traffic that doesn't require replication infrastructure. These groups use
+ * simple forwarding tables and require a NAT target.
+ */
+#[endpoint {
+    method = POST,
+    path = "/multicast/external-groups",
+}]
+async fn multicast_group_create_external(
+    rqctx: RequestContext<Arc<Switch>>,
+    group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
+) -> Result<HttpResponseCreated<mcast::MulticastGroupResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let entry = group.into_inner();
+
+    mcast::add_group_external(switch, entry)
+        .map(HttpResponseCreated)
+        .map_err(HttpError::from)
+}
+
+/**
+ * Create an internal multicast group configuration.
+ *
+ * Internal groups are used for admin-scoped IPv6 multicast traffic that
+ * requires replication infrastructure. These groups support both external
+ * and underlay members with full replication capabilities.
  */
 #[endpoint {
     method = POST,
@@ -3097,7 +3122,7 @@ async fn multicast_group_create(
     let switch: &Switch = rqctx.context();
     let entry = group.into_inner();
 
-    mcast::add_group(switch, entry)
+    mcast::add_group_internal(switch, entry)
         .map(HttpResponseCreated)
         .map_err(HttpError::from)
 }
@@ -3159,8 +3184,11 @@ async fn multicast_group_get(
 }
 
 /**
- * Update a multicast group configuration for a given group IP address.
-*/
+ * Update an internal multicast group configuration for a given group IP address.
+ *
+ * Internal groups are used for admin-scoped IPv6 multicast traffic that
+ * requires replication infrastructure with external and underlay members.
+ */
 #[endpoint {
     method = PUT,
     path = "/multicast/groups/{group_ip}",
@@ -3168,13 +3196,37 @@ async fn multicast_group_get(
 async fn multicast_group_update(
     rqctx: RequestContext<Arc<Switch>>,
     path: Path<MulticastGroupIpParam>,
-    group_info: TypedBody<mcast::MulticastGroupUpdateEntry>,
+    group: TypedBody<mcast::MulticastGroupUpdateEntry>,
 ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError> {
     let switch: &Switch = rqctx.context();
     let ip = path.into_inner().group_ip;
 
-    mcast::modify_group(switch, ip, group_info.into_inner())
+    mcast::modify_group_internal(switch, ip, group.into_inner())
         .map(HttpResponseOk)
+        .map_err(HttpError::from)
+}
+
+/**
+ * Update an external-only multicast group configuration for a given group IP address.
+ *
+ * External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast
+ * traffic that doesn't require replication infrastructure.
+ */
+#[endpoint {
+    method = PUT,
+    path = "/multicast/external-groups/{group_ip}",
+}]
+async fn multicast_group_update_external(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastGroupIpParam>,
+    group: TypedBody<mcast::MulticastGroupUpdateExternalEntry>,
+) -> Result<HttpResponseCreated<mcast::MulticastGroupResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let entry = group.into_inner();
+    let ip = path.into_inner().group_ip;
+
+    mcast::modify_group_external(switch, ip, entry)
+        .map(HttpResponseCreated)
         .map_err(HttpError::from)
 }
 
@@ -3423,9 +3475,11 @@ pub fn http_api() -> dropshot::ApiDescription<Arc<Switch>> {
     api.register(ipv4_nat_trigger_update).unwrap();
 
     api.register(multicast_group_create).unwrap();
+    api.register(multicast_group_create_external).unwrap();
     api.register(multicast_reset).unwrap();
     api.register(multicast_group_delete).unwrap();
     api.register(multicast_group_update).unwrap();
+    api.register(multicast_group_update_external).unwrap();
     api.register(multicast_group_get).unwrap();
     api.register(multicast_groups_list).unwrap();
     api.register(multicast_groups_list_by_tag).unwrap();

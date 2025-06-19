@@ -27,7 +27,7 @@ pub mod port_nat;
 pub mod route_ipv4;
 pub mod route_ipv6;
 
-const NAME_TO_TYPE: [(&str, TableType); 22] = [
+const NAME_TO_TYPE: [(&str, TableType); 21] = [
     (route_ipv4::INDEX_TABLE_NAME, TableType::RouteIdxIpv4),
     (route_ipv4::FORWARD_TABLE_NAME, TableType::RouteFwdIpv4),
     (route_ipv6::TABLE_NAME, TableType::RouteIpv6),
@@ -39,10 +39,6 @@ const NAME_TO_TYPE: [(&str, TableType); 22] = [
     (nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4),
     (nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6),
     (port_nat::TABLE_NAME, TableType::NatOnly),
-    (
-        mcast::mcast_replication::IPV4_TABLE_NAME,
-        TableType::McastIpv4,
-    ),
     (
         mcast::mcast_replication::IPV6_TABLE_NAME,
         TableType::McastIpv6,
@@ -122,7 +118,7 @@ impl TableUsage {
     }
 }
 
-/// A p4 table
+/// A P4 table.
 pub struct Table {
     /// Name of the table
     pub name: String,
@@ -285,9 +281,6 @@ pub fn get_entries(switch: &Switch, name: String) -> DpdResult<views::Table> {
             MacOps::<port_mac::PortMacTable>::table_dump(switch)
         }
         TableType::NatOnly => port_nat::table_dump(switch),
-        TableType::McastIpv4 => {
-            mcast::mcast_replication::ipv4_table_dump(switch)
-        }
         TableType::McastIpv6 => {
             mcast::mcast_replication::ipv6_table_dump(switch)
         }
@@ -349,9 +342,6 @@ pub fn get_counters(
         TableType::PortIpv4 => port_ip::ipv4_counter_fetch(switch, force_sync),
         TableType::PortIpv6 => port_ip::ipv6_counter_fetch(switch, force_sync),
         TableType::NatOnly => port_nat::counter_fetch(switch, force_sync),
-        TableType::McastIpv4 => {
-            mcast::mcast_replication::ipv4_counter_fetch(switch, force_sync)
-        }
         TableType::McastIpv6 => {
             mcast::mcast_replication::ipv6_counter_fetch(switch, force_sync)
         }
@@ -401,7 +391,6 @@ pub enum TableType {
     NatIngressIpv4,
     NatIngressIpv6,
     NatOnly,
-    McastIpv4,
     McastIpv6,
     McastIpv4SrcFilter,
     McastIpv6SrcFilter,
