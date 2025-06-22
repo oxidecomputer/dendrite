@@ -41,6 +41,7 @@ enum Ipv6Action {
 /// The bifurcated replication supports:
 /// - external_mcast_grp: for replication to external/customer ports (mcast_grp_a)
 /// - underlay_mcast_grp: for replication to underlay/infrastructure ports (mcast_grp_b)
+///
 /// Both groups are optional depending on the group's member configuration.
 pub(crate) fn add_ipv6_entry(
     s: &Switch,
