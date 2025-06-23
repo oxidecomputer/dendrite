@@ -255,7 +255,7 @@ impl MulticastGroupData {
     ) {
         self.nat_target_refs
             .entry(admin_scoped_ip)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(external_group_ip);
     }
 
@@ -1423,6 +1423,7 @@ fn configure_replication(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn configure_internal_tables(
     s: &Switch,
     group_ip: IpAddr,
