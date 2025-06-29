@@ -3201,7 +3201,17 @@ async fn multicast_group_update(
     let switch: &Switch = rqctx.context();
     let ip = path.into_inner().group_ip;
 
-    mcast::modify_group_internal(switch, ip, group.into_inner())
+    let ipv6 = match ip {
+        IpAddr::V6(ipv6) => ipv6,
+        IpAddr::V4(_) => {
+            return Err(HttpError::for_bad_request(
+                None,
+                "Internal multicast groups must use IPv6 addresses".to_string(),
+            ));
+        }
+    };
+
+    mcast::modify_group_internal(switch, ipv6, group.into_inner())
         .map(HttpResponseOk)
         .map_err(HttpError::from)
 }

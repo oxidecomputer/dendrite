@@ -14,7 +14,6 @@ use std::{
     fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     ops::Bound,
-    sync::atomic::{AtomicU16, Ordering},
 };
 
 use crate::{
@@ -82,14 +81,12 @@ pub(crate) struct ExternalForwarding {
     pub vlan_id: Option<u16>,
 }
 
-/// Represents a multicast replication configuration.
-#[derive(
-    Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema,
-)]
-pub(crate) struct MulticastReplicationInfo {
-    pub(crate) rid: u16,
-    pub(crate) level1_excl_id: u16,
-    pub(crate) level2_excl_id: u16,
+/// Multicast replication configuration (internal only).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct MulticastReplicationInfo {
+    rid: u16,
+    level1_excl_id: u16,
+    level2_excl_id: u16,
 }
 
 /// Represents a multicast group configuration.
@@ -104,25 +101,17 @@ pub(crate) struct MulticastGroup {
     pub(crate) int_fwding: InternalForwarding,
     pub(crate) ext_fwding: ExternalForwarding,
     pub(crate) sources: Option<Vec<IpSrc>>,
-    pub(crate) replication_info: Option<MulticastReplicationInfo>,
+    replication_info: Option<MulticastReplicationInfo>,
     pub(crate) members: Vec<MulticastGroupMember>,
-}
-
-/// Represents a multicast replication entry for POST requests.
-#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct MulticastReplicationEntry {
-    level1_excl_id: Option<u16>,
-    level2_excl_id: Option<u16>,
 }
 
 /// A multicast group configuration for POST requests for internal (to the rack)
 /// groups.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct MulticastGroupCreateEntry {
-    group_ip: IpAddr,
+    group_ip: Ipv6Addr,
     tag: Option<String>,
     sources: Option<Vec<IpSrc>>,
-    replication_info: MulticastReplicationEntry,
     members: Vec<MulticastGroupMember>,
 }
 
@@ -143,7 +132,6 @@ pub(crate) struct MulticastGroupCreateExternalEntry {
 pub(crate) struct MulticastGroupUpdateEntry {
     tag: Option<String>,
     sources: Option<Vec<IpSrc>>,
-    replication_info: MulticastReplicationEntry,
     members: Vec<MulticastGroupMember>,
 }
 
@@ -167,7 +155,6 @@ pub struct MulticastGroupResponse {
     int_fwding: InternalForwarding,
     ext_fwding: ExternalForwarding,
     sources: Option<Vec<IpSrc>>,
-    replication_info: Option<MulticastReplicationInfo>,
     members: Vec<MulticastGroupMember>,
 }
 
@@ -185,7 +172,6 @@ impl MulticastGroupResponse {
                 vlan_id: group.ext_fwding.vlan_id,
             },
             sources: group.sources.clone(),
-            replication_info: group.replication_info.as_ref().cloned(),
             members: group.members.to_vec(),
         }
     }
@@ -196,8 +182,10 @@ impl MulticastGroupResponse {
     }
 }
 
-/// Direction the multicast traffic either being replicated to the underlay
-/// or replicated externally.
+/// Direction a multicast group member is reached by.
+///
+/// `External` group members must have any packet encapsulation removed
+/// before packet delivery.
 #[derive(
     Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
 )]
@@ -211,11 +199,9 @@ pub(crate) enum Direction {
 pub struct MulticastGroupData {
     /// Multicast group configurations keyed by group IP.
     groups: BTreeMap<IpAddr, MulticastGroup>,
-    /// Atomic counter for generating unique multicast group IDs, which
-    /// are assigned in the dataplane.
-    id_generator: AtomicU16,
-    /// Set of in-use group IDs for fast lookup
-    used_group_ids: HashSet<MulticastGroupId>,
+    /// Stack of available group IDs for O(1) allocation.
+    /// Pre-populated with all IDs from GENERATOR_START to u16::MAX-1.
+    free_group_ids: Vec<MulticastGroupId>,
     /// Mapping from admin-scoped group IP to external groups that use it as NAT
     /// target (admin_scoped_ip -> set of external_group_ips)
     nat_target_refs: BTreeMap<IpAddr, HashSet<IpAddr>>,
@@ -225,26 +211,36 @@ impl MulticastGroupData {
     const GENERATOR_START: u16 = 100;
 
     pub(crate) fn new() -> Self {
+        // Pre-populate with all available IDs from GENERATOR_START to u16::MAX-1
+        // Using a Vec as a stack for O(1) push/pop operations
+        let free_group_ids: Vec<MulticastGroupId> =
+            (Self::GENERATOR_START..u16::MAX).collect();
+
         Self {
             groups: BTreeMap::new(),
-            id_generator: AtomicU16::new(Self::GENERATOR_START),
-            used_group_ids: HashSet::new(),
+            free_group_ids,
             nat_target_refs: BTreeMap::new(),
         }
     }
 
-    /// Generates a unique multicast group ID by finding the next available ID.
-    fn generate_group_id(&self) -> DpdResult<MulticastGroupId> {
-        for _ in Self::GENERATOR_START..u16::MAX {
-            let id = self.id_generator.fetch_add(1, Ordering::SeqCst);
+    /// Generates a unique multicast group ID.
+    ///
+    /// O(1) allocation from pre-populated free list. Never allocates.
+    /// IDs below GENERATOR_START (100) to avoid conflicts with reserved ranges.
+    fn generate_group_id(&mut self) -> DpdResult<MulticastGroupId> {
+        self.free_group_ids.pop().ok_or_else(|| {
+            DpdError::McastGroupFailure(
+                "no free multicast group IDs available (exhausted range 100-65534)".to_string(),
+            )
+        })
+    }
 
-            if !self.used_group_ids.contains(&id) {
-                return Ok(id);
-            }
+    /// Returns a group ID to the free pool for reuse.
+    fn free_group_id(&mut self, id: MulticastGroupId) {
+        // Only add to free list if it's in our valid range
+        if id >= Self::GENERATOR_START {
+            self.free_group_ids.push(id);
         }
-        Err(DpdError::McastGroupFailure(
-            "no free multicast group IDs available".to_string(),
-        ))
     }
 
     /// Add a NAT target reference from external group to admin-scoped group.
@@ -296,56 +292,58 @@ fn propagate_vlan_to_internal_group(
     internal_ip: IpAddr,
     vlan_id: u16,
 ) -> DpdResult<()> {
-    let mcast = s.mcast.lock().unwrap();
+    // Extract all needed data in a single lock acquisition
+    let (external_group_id, underlay_group_id, members) = {
+        let mcast = s.mcast.lock().unwrap();
 
-    let internal_group = mcast.groups.get(&internal_ip).ok_or_else(|| {
-        DpdError::Invalid(format!("Internal group {} not found", internal_ip))
-    })?;
+        let internal_group =
+            mcast.groups.get(&internal_ip).ok_or_else(|| {
+                DpdError::Invalid(format!(
+                    "Internal group {} not found",
+                    internal_ip
+                ))
+            })?;
 
-    let external_group_id = internal_group.external_group_id;
-    let underlay_group_id = internal_group.underlay_group_id;
+        (
+            internal_group.external_group_id,
+            internal_group.underlay_group_id,
+            internal_group.members.clone(),
+        )
+    };
 
-    drop(mcast); // Release lock for table operations
-
-    // Note: Route table entries for admin-scoped groups remain as "Forward" action
-    // The VLAN is applied in the egress bitmap tables below
-
-    // For bitmap entries, we need to reconstruct the port bitmap from the
-    // group's members and then update the bitmap entry with the new VLAN
-    let mcast = s.mcast.lock().unwrap();
-    if let Some(internal_group) = mcast.groups.get(&internal_ip) {
-        let members = internal_group.members.clone();
-        drop(mcast);
-
-        if let Some(external_id) = external_group_id {
-            let mut port_bitmap = table::mcast::mcast_egress::PortBitmap::new();
-            for member in &members {
-                if member.direction == Direction::External {
-                    port_bitmap.add_port(member.port_id.as_u8());
-                }
+    // Note: Route table entries for admin-scoped groups remain as "Forward"
+    //       action. The VLAN is applied in the egress bitmap tables below.
+    //
+    // Update external group bitmap if it exists
+    if let Some(external_id) = external_group_id {
+        let mut port_bitmap = table::mcast::mcast_egress::PortBitmap::new();
+        for member in &members {
+            if member.direction == Direction::External {
+                port_bitmap.add_port(member.port_id.as_u8());
             }
-            table::mcast::mcast_egress::update_bitmap_entry(
-                s,
-                external_id,
-                &port_bitmap,
-                Some(vlan_id),
-            )?;
         }
+        table::mcast::mcast_egress::update_bitmap_entry(
+            s,
+            external_id,
+            &port_bitmap,
+            Some(vlan_id),
+        )?;
+    }
 
-        if let Some(underlay_id) = underlay_group_id {
-            let mut port_bitmap = table::mcast::mcast_egress::PortBitmap::new();
-            for member in &members {
-                if member.direction == Direction::Underlay {
-                    port_bitmap.add_port(member.port_id.as_u8());
-                }
+    // Update underlay group bitmap if it exists
+    if let Some(underlay_id) = underlay_group_id {
+        let mut port_bitmap = table::mcast::mcast_egress::PortBitmap::new();
+        for member in &members {
+            if member.direction == Direction::Underlay {
+                port_bitmap.add_port(member.port_id.as_u8());
             }
-            table::mcast::mcast_egress::update_bitmap_entry(
-                s,
-                underlay_id,
-                &port_bitmap,
-                Some(vlan_id),
-            )?;
         }
+        table::mcast::mcast_egress::update_bitmap_entry(
+            s,
+            underlay_id,
+            &port_bitmap,
+            Some(vlan_id),
+        )?;
     }
 
     Ok(())
@@ -421,8 +419,8 @@ pub(crate) fn add_group_external(
     mcast
         .add_nat_target_ref(group_ip, group_info.nat_target.internal_ip.into());
 
-    // Update internal group's tables with the VLAN if it exists and has a VLAN
-    if let Some(vlan_id) = group_info.vlan_id {
+    // Extract VLAN propagation info before releasing lock
+    let vlan_propagation_info = group_info.vlan_id.map(|vlan_id| {
         let internal_ip = group_info.nat_target.internal_ip.into();
         debug!(
             s.log,
@@ -437,7 +435,13 @@ pub(crate) fn add_group_external(
             vlan_id,
             internal_ip
         );
-        drop(mcast); // Release lock before table operations
+        (internal_ip, vlan_id)
+    });
+
+    drop(mcast); // Release lock before table operations
+
+    // Update internal group's tables with the VLAN if needed
+    if let Some((internal_ip, vlan_id)) = vlan_propagation_info {
         if let Err(e) =
             propagate_vlan_to_internal_group(s, internal_ip, vlan_id)
         {
@@ -475,25 +479,17 @@ fn add_group_internal_only(
 
     validate_internal_group_creation(&mcast, group_ip, &group_info)?;
 
-    let ipv6 = match group_ip {
-        IpAddr::V6(ipv6) => ipv6,
-        _ => unreachable!("Should have been handled above"),
-    };
-
     let (external_group_id, underlay_group_id) =
-        create_multicast_group_ids(s, &mcast, ipv6, &group_info)?;
+        create_multicast_group_ids(s, &mut mcast, group_ip, &group_info)?;
 
     let mut added_members = Vec::new();
 
-    let replication_info = configure_replication(
-        &group_info,
-        external_group_id,
-        underlay_group_id,
-    );
+    let replication_info =
+        configure_replication(external_group_id, underlay_group_id);
 
     add_ports_to_groups(
         s,
-        group_ip,
+        group_ip.into(),
         &group_info.members,
         external_group_id,
         underlay_group_id,
@@ -502,11 +498,11 @@ fn add_group_internal_only(
     )?;
 
     // Get VLAN ID from referencing external groups
-    let vlan_id = mcast.get_vlan_for_internal_addr(group_ip);
+    let vlan_id = mcast.get_vlan_for_internal_addr(group_ip.into());
 
     configure_internal_tables(
         s,
-        group_ip,
+        group_ip.into(),
         external_group_id,
         underlay_group_id,
         Some(&replication_info),
@@ -530,46 +526,40 @@ fn add_group_internal_only(
         members: group_info.members,
     };
 
-    mcast.groups.insert(group_ip, group.clone());
+    mcast.groups.insert(group_ip.into(), group.clone());
 
-    if let Some(external_group_id) = group.external_group_id {
-        mcast.used_group_ids.insert(external_group_id);
-    }
-
-    if let Some(underlay_group_id) = group.underlay_group_id {
-        mcast.used_group_ids.insert(underlay_group_id);
-    }
-
-    Ok(MulticastGroupResponse::new(group_ip, &group))
+    Ok(MulticastGroupResponse::new(group_ip.into(), &group))
 }
 
 /// Delete a multicast group from the switch, including all associated tables
 /// and port mappings.
 pub(crate) fn del_group(s: &Switch, group_ip: IpAddr) -> DpdResult<()> {
-    let mut mcast = s.mcast.lock().unwrap();
+    let group: MulticastGroup = {
+        let mut mcast = s.mcast.lock().unwrap();
 
-    let group: MulticastGroup =
-        mcast.groups.remove(&group_ip).ok_or_else(|| {
+        let group = mcast.groups.remove(&group_ip).ok_or_else(|| {
             DpdError::Missing(format!(
                 "Multicast group for IP {} not found",
                 group_ip
             ))
         })?;
 
-    if let Some(external_id) = group.external_group_id {
-        mcast.used_group_ids.remove(&external_id);
-    }
+        if let Some(external_id) = group.external_group_id {
+            mcast.free_group_id(external_id);
+        }
 
-    if let Some(underlay_id) = group.underlay_group_id {
-        mcast.used_group_ids.remove(&underlay_id);
-    }
+        if let Some(underlay_id) = group.underlay_group_id {
+            mcast.free_group_id(underlay_id);
+        }
 
-    // Remove NAT target reference if this was an external group
-    if let Some(nat_target) = group.int_fwding.nat_target {
-        mcast.remove_nat_target_ref(group_ip, nat_target.internal_ip.into());
-    }
+        // Remove NAT target reference if this was an external group
+        if let Some(nat_target) = group.int_fwding.nat_target {
+            mcast
+                .remove_nat_target_ref(group_ip, nat_target.internal_ip.into());
+        }
 
-    drop(mcast);
+        group
+    }; // Lock automatically released here
 
     debug!(s.log, "deleting multicast group for IP {}", group_ip);
 
@@ -675,7 +665,7 @@ pub(crate) fn modify_group_external(
 
 pub(crate) fn modify_group_internal(
     s: &Switch,
-    group_ip: IpAddr,
+    group_ip: Ipv6Addr,
     new_group_info: MulticastGroupUpdateEntry,
 ) -> DpdResult<MulticastGroupResponse> {
     modify_group_internal_only(s, group_ip, new_group_info)
@@ -684,49 +674,34 @@ pub(crate) fn modify_group_internal(
 /// Modify an internal multicast group configuration.
 fn modify_group_internal_only(
     s: &Switch,
-    group_ip: IpAddr,
+    group_ip: Ipv6Addr,
     new_group_info: MulticastGroupUpdateEntry,
 ) -> DpdResult<MulticastGroupResponse> {
     let mut mcast = s.mcast.lock().unwrap();
 
-    if !mcast.groups.contains_key(&group_ip) {
+    if !mcast.groups.contains_key(&group_ip.into()) {
         return Err(DpdError::Missing(format!(
             "Multicast group for IP {} not found",
             group_ip
         )));
     }
 
-    let mut group_entry = mcast.groups.remove(&group_ip).unwrap();
+    let mut group_entry = mcast.groups.remove(&group_ip.into()).unwrap();
 
     let (sources, sources_diff) = validate_sources_update(
-        group_ip,
+        group_ip.into(),
         new_group_info.sources.clone(),
         &group_entry,
         &mut mcast,
     )?;
 
-    let replication_info =
-        if let Some(existing_replication) = &group_entry.replication_info {
-            Some(MulticastReplicationInfo {
-                rid: existing_replication.rid,
-                level1_excl_id: new_group_info
-                    .replication_info
-                    .level1_excl_id
-                    .unwrap_or(existing_replication.level1_excl_id),
-                level2_excl_id: new_group_info
-                    .replication_info
-                    .level2_excl_id
-                    .unwrap_or(existing_replication.level2_excl_id),
-            })
-        } else {
-            None
-        };
+    let replication_info = group_entry.replication_info.clone();
 
     let (added_members, removed_members) =
         if let Some(ref repl_info) = replication_info {
             process_membership_changes(
                 s,
-                group_ip,
+                group_ip.into(),
                 &new_group_info.members,
                 &mut group_entry,
                 repl_info,
@@ -739,20 +714,20 @@ fn modify_group_internal_only(
     if let Some(ref repl_info) = replication_info {
         if let Err(e) = update_group_tables(
             s,
-            group_ip,
+            group_ip.into(),
             &group_entry,
             repl_info,
             &sources,
             &group_entry.sources,
         ) {
-            mcast.groups.insert(group_ip, group_entry);
+            mcast.groups.insert(group_ip.into(), group_entry);
 
             rollback_on_group_update(
                 s,
-                group_ip,
+                group_ip.into(),
                 &added_members,
                 &removed_members,
-                mcast.groups.get_mut(&group_ip).unwrap(),
+                mcast.groups.get_mut(&group_ip.into()).unwrap(),
                 sources_diff.then_some(sources.as_ref().unwrap()),
             )?;
 
@@ -767,8 +742,8 @@ fn modify_group_internal_only(
     group_entry.replication_info = replication_info;
     group_entry.members = new_group_info.members;
 
-    let response = MulticastGroupResponse::new(group_ip, &group_entry);
-    mcast.groups.insert(group_ip, group_entry);
+    let response = MulticastGroupResponse::new(group_ip.into(), &group_entry);
+    mcast.groups.insert(group_ip.into(), group_entry);
 
     Ok(response)
 }
@@ -1008,24 +983,13 @@ fn add_ipv6_source_filters(
 
 fn validate_internal_group_creation(
     mcast: &MulticastGroupData,
-    group_ip: IpAddr,
+    group_ip: Ipv6Addr,
     group_info: &MulticastGroupCreateEntry,
 ) -> DpdResult<()> {
-    validate_group_exists(mcast, group_ip)?;
-    validate_multicast_address(group_ip, group_info.sources.as_deref())?;
-    // Internal API is only for admin-scoped IPv6 groups
-    if group_ip.is_ipv4() {
-        return Err(DpdError::Invalid(
-            "IPv4 multicast groups must use the external API (/multicast/groups/external)".to_string(),
-        ));
-    }
+    validate_group_exists(mcast, group_ip.into())?;
+    validate_multicast_address(group_ip.into(), group_info.sources.as_deref())?;
 
-    let ipv6 = match group_ip {
-        IpAddr::V6(ipv6) => ipv6,
-        _ => unreachable!("Already checked above"),
-    };
-
-    if !Ipv6Net::new_unchecked(ipv6, 128).is_admin_scoped_multicast() {
+    if !Ipv6Net::new_unchecked(group_ip, 128).is_admin_scoped_multicast() {
         return Err(DpdError::Invalid(format!(
             "Non-admin-scoped IPv6 multicast groups must use the external API (/multicast/groups/external). Address {} is not admin-scoped (ff04::/16, ff05::/16, ff08::/16)",
             group_ip
@@ -1129,7 +1093,7 @@ fn configure_external_tables(
 
 fn create_multicast_group_ids(
     s: &Switch,
-    mcast: &MulticastGroupData,
+    mcast: &mut MulticastGroupData,
     group_ip: Ipv6Addr,
     group_info: &MulticastGroupCreateEntry,
 ) -> DpdResult<(Option<MulticastGroupId>, Option<MulticastGroupId>)> {
@@ -1378,7 +1342,6 @@ fn ensure_external_group_exists(
         create_asic_group(s, group_id, group_ip)?;
 
         group_entry.external_group_id = Some(group_id);
-        mcast.used_group_ids.insert(group_id);
     }
 
     Ok(())
@@ -1398,28 +1361,21 @@ fn ensure_underlay_group_exists(
         create_asic_group(s, group_id, group_ip)?;
 
         group_entry.underlay_group_id = Some(group_id);
-        mcast.used_group_ids.insert(group_id);
     }
 
     Ok(())
 }
 
 fn configure_replication(
-    group_info: &MulticastGroupCreateEntry,
     external_group_id: Option<MulticastGroupId>,
     underlay_group_id: Option<MulticastGroupId>,
 ) -> MulticastReplicationInfo {
-    let (level1_excl_id, level2_excl_id) = (
-        group_info.replication_info.level1_excl_id.unwrap_or(0),
-        group_info.replication_info.level2_excl_id.unwrap_or(0),
-    );
-
     let rid = external_group_id.or(underlay_group_id).unwrap();
 
     MulticastReplicationInfo {
         rid,
-        level1_excl_id,
-        level2_excl_id,
+        level1_excl_id: 0,
+        level2_excl_id: 0,
     }
 }
 

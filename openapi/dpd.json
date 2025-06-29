@@ -5869,7 +5869,7 @@
         ]
       },
       "Direction": {
-        "description": "Direction the multicast traffic either being replicated to the underlay or replicated externally.",
+        "description": "Direction a multicast group member is reached by.\n\n`External` group members must have any packet encapsulation removed before packet delivery.",
         "type": "string",
         "enum": [
           "Underlay",
@@ -7489,16 +7489,13 @@
         "properties": {
           "group_ip": {
             "type": "string",
-            "format": "ip"
+            "format": "ipv6"
           },
           "members": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/MulticastGroupMember"
             }
-          },
-          "replication_info": {
-            "$ref": "#/components/schemas/MulticastReplicationEntry"
           },
           "sources": {
             "nullable": true,
@@ -7514,8 +7511,7 @@
         },
         "required": [
           "group_ip",
-          "members",
-          "replication_info"
+          "members"
         ]
       },
       "MulticastGroupCreateExternalEntry": {
@@ -7598,14 +7594,6 @@
               "$ref": "#/components/schemas/MulticastGroupMember"
             }
           },
-          "replication_info": {
-            "nullable": true,
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/MulticastReplicationInfo"
-              }
-            ]
-          },
           "sources": {
             "nullable": true,
             "type": "array",
@@ -7662,9 +7650,6 @@
               "$ref": "#/components/schemas/MulticastGroupMember"
             }
           },
-          "replication_info": {
-            "$ref": "#/components/schemas/MulticastReplicationEntry"
-          },
           "sources": {
             "nullable": true,
             "type": "array",
@@ -7678,8 +7663,7 @@
           }
         },
         "required": [
-          "members",
-          "replication_info"
+          "members"
         ]
       },
       "MulticastGroupUpdateExternalEntry": {
@@ -7709,50 +7693,6 @@
         },
         "required": [
           "nat_target"
-        ]
-      },
-      "MulticastReplicationEntry": {
-        "description": "Represents a multicast replication entry for POST requests.",
-        "type": "object",
-        "properties": {
-          "level1_excl_id": {
-            "nullable": true,
-            "type": "integer",
-            "format": "uint16",
-            "minimum": 0
-          },
-          "level2_excl_id": {
-            "nullable": true,
-            "type": "integer",
-            "format": "uint16",
-            "minimum": 0
-          }
-        }
-      },
-      "MulticastReplicationInfo": {
-        "description": "Represents a multicast replication configuration.",
-        "type": "object",
-        "properties": {
-          "level1_excl_id": {
-            "type": "integer",
-            "format": "uint16",
-            "minimum": 0
-          },
-          "level2_excl_id": {
-            "type": "integer",
-            "format": "uint16",
-            "minimum": 0
-          },
-          "rid": {
-            "type": "integer",
-            "format": "uint16",
-            "minimum": 0
-          }
-        },
-        "required": [
-          "level1_excl_id",
-          "level2_excl_id",
-          "rid"
         ]
       },
       "NatTarget": {
