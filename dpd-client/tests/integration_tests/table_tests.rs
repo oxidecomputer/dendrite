@@ -470,7 +470,7 @@ impl TableTest<types::MulticastGroupResponse, ()>
         let (port_id2, link_id2) = switch.link_id(PhysPort(12)).unwrap();
 
         // Only IPv6 admin-scoped multicast addresses for replication table testing
-        let group_ip = IpAddr::V6(gen_ipv6_multicast_addr(idx));
+        let group_ip = gen_ipv6_multicast_addr(idx);
 
         // Admin-scoped IPv6 groups are internal with replication info and members
         let internal_entry = types::MulticastGroupCreateEntry {

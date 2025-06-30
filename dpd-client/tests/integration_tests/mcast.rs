@@ -3584,10 +3584,9 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     .await;
 
     // 2b. Admin-scoped IPv6 group to test internal API with custom replication parameters
-    let admin_scoped_ip =
-        IpAddr::V6(Ipv6Addr::new(0xff04, 0, 0, 0, 0, 0, 0, 2));
+    let admin_scoped_ip = IpAddr::V6(Ipv6Addr::new(0xff04, 0, 0, 0, 0, 0, 0, 2));
     let group_entry2b = types::MulticastGroupCreateEntry {
-        group_ip: admin_scoped_ip,
+        group_ip: Ipv6Addr::new(0xff04, 0, 0, 0, 0, 0, 0, 2),
         tag: Some("test_reset_all_2b".to_string()),
         sources: None,
         members: vec![types::MulticastGroupMember {
@@ -4160,7 +4159,7 @@ async fn test_multicast_level1_exclusion_group_pruned() -> TestResult {
     // Step 1: Create admin-scoped IPv6 internal group with replication members and exclusion
     let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
     let underlay_group = types::MulticastGroupCreateEntry {
-        group_ip: internal_multicast_ip,
+        group_ip: MULTICAST_NAT_IP,
         tag: Some("test_level1_excl_underlay".to_string()),
         sources: None,
         members: vec![
