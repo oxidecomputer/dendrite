@@ -477,10 +477,6 @@ impl TableTest<types::MulticastGroupResponse, ()>
             group_ip,
             tag: Some(MCAST_TAG.to_string()),
             sources: None,
-            replication_info: types::MulticastReplicationEntry {
-                level1_excl_id: Some(10),
-                level2_excl_id: Some(20),
-            },
             members: vec![
                 types::MulticastGroupMember {
                     port_id: port_id1.clone(),

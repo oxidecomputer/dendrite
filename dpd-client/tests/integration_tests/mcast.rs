@@ -177,13 +177,14 @@ async fn create_test_multicast_group(
             if oxnet::Ipv6Net::new_unchecked(ipv6, 128)
                 .is_admin_scoped_multicast()
             {
-                // Admin-scoped IPv6 groups are internal with replication info
+                // Admin-scoped IPv6 groups are internal
                 let internal_entry = types::MulticastGroupCreateEntry {
-                    group_ip,
+                    group_ip: match group_ip {
+                        IpAddr::V6(ipv6) => ipv6,
+                        _ => panic!("Expected IPv6 address"),
+                    },
                     tag: tag.map(String::from),
                     sources,
-                    replication_info: types::MulticastReplicationEntry::default(
-                    ),
                     members,
                 };
                 switch
@@ -483,10 +484,6 @@ async fn test_group_creation_with_validation() {
             "192.168.1.1".parse::<IpAddr>().unwrap(),
         )])
     );
-    assert!(
-        created.replication_info.is_none(),
-        "IPv4 groups should not have replication info"
-    );
     assert_eq!(created.members.len(), 0); // External groups don't have members
 
     switch
@@ -505,13 +502,9 @@ async fn test_internal_ipv6_validation() {
 
     // Test 1: IPv4 groups should be rejected from internal API
     let ipv4_internal = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V4("224.1.1.1".parse().unwrap()),
+        group_ip: "::ffff:224.1.1.1".parse().unwrap(), // IPv4-mapped IPv6 to test rejection
         tag: Some("test_ipv4_internal".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
         members: vec![types::MulticastGroupMember {
             port_id: port_id.clone(),
             link_id,
@@ -535,13 +528,9 @@ async fn test_internal_ipv6_validation() {
 
     // Test 2: Non-admin-scoped IPv6 groups should be rejected from internal API
     let non_admin_ipv6 = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V6("ff0e::1".parse().unwrap()), // Global scope, not admin-scoped
+        group_ip: "ff0e::1".parse().unwrap(), // Global scope, not admin-scoped
         tag: Some("test_non_admin".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
         members: vec![types::MulticastGroupMember {
             port_id: port_id.clone(),
             link_id,
@@ -567,13 +556,9 @@ async fn test_internal_ipv6_validation() {
 
     // Test 3: Admin-scoped IPv6 groups work correctly (no VLAN IDs supported)
     let internal_group = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V6("ff04::2".parse().unwrap()), // Admin-scoped IPv6
+        group_ip: "ff04::2".parse().unwrap(), // Admin-scoped IPv6
         tag: Some("test_admin_scoped".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
         members: vec![types::MulticastGroupMember {
             port_id: port_id.clone(),
             link_id,
@@ -595,10 +580,6 @@ async fn test_internal_ipv6_validation() {
     let update_entry = types::MulticastGroupUpdateEntry {
         tag: Some("updated_tag".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
         members: vec![types::MulticastGroupMember {
             port_id,
             link_id,
@@ -629,13 +610,9 @@ async fn test_vlan_propagation_to_internal() {
 
     // Step 1: Create internal IPv6 group first
     let internal_group_entry = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V6("ff04::200".parse().unwrap()), // Admin-scoped IPv6
+        group_ip: "ff04::200".parse().unwrap(), // Admin-scoped IPv6
         tag: Some("test_vlan_propagation".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
         members: vec![
             types::MulticastGroupMember {
                 port_id: port_id.clone(),
@@ -844,10 +821,6 @@ async fn test_group_api_lifecycle() {
         Some(vec![types::IpSrc::Exact(
             "192.168.1.5".parse::<IpAddr>().unwrap(),
         )])
-    );
-    assert!(
-        updated.replication_info.is_none(),
-        "IPv4 groups should not have replication info"
     );
     assert_eq!(updated.members.len(), 0); // External groups don't have members
 
@@ -1109,13 +1082,9 @@ async fn test_api_internal_ipv6_bifurcated_replication() {
 
     // Create admin-scoped IPv6 group with both external and underlay members
     let admin_scoped_group = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V6("ff04::100".parse().unwrap()), // Admin-scoped IPv6
+        group_ip: "ff04::100".parse().unwrap(), // Admin-scoped IPv6
         tag: Some("test_bifurcated".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: Some(50),
-            level2_excl_id: Some(60),
-        },
         members: vec![
             types::MulticastGroupMember {
                 port_id: port_id1.clone(),
@@ -1151,19 +1120,10 @@ async fn test_api_internal_ipv6_bifurcated_replication() {
         "Group IDs should be different"
     );
 
-    // Verify replication info is present
-    let replication_info = created
-        .replication_info
-        .expect("Should have replication info");
-    assert_eq!(replication_info.level1_excl_id, 50);
-    assert_eq!(replication_info.level2_excl_id, 60);
-
-    // RID should be set to external group ID (as per P4 logic)
-    assert_eq!(
-        replication_info.rid,
-        created
-            .external_group_id
-            .expect("Bifurcated group should have external_group_id")
+    // Verify group has external_group_id (replication is handled internally)
+    assert!(
+        created.external_group_id.is_some(),
+        "Bifurcated group should have external_group_id"
     );
 
     // Verify members are preserved
@@ -1194,13 +1154,9 @@ async fn test_api_internal_ipv6_underlay_only() {
 
     // Create admin-scoped IPv6 group with only underlay members
     let underlay_only_group = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V6("ff05::200".parse().unwrap()), // Site-local admin-scoped
+        group_ip: "ff05::200".parse().unwrap(), // Site-local admin-scoped
         tag: Some("test_underlay_only".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: Some(10),
-            level2_excl_id: None,
-        },
         members: vec![types::MulticastGroupMember {
             port_id: port_id.clone(),
             link_id,
@@ -1225,19 +1181,10 @@ async fn test_api_internal_ipv6_underlay_only() {
         "Should NOT have external group ID"
     );
 
-    // Verify replication info is present
-    let replication_info = created
-        .replication_info
-        .expect("Should have replication info");
-    assert_eq!(replication_info.level1_excl_id, 10);
-    assert_eq!(replication_info.level2_excl_id, 0); // Default value
-
-    // RID should be set to underlay group ID when no external group
-    assert_eq!(
-        replication_info.rid,
-        created
-            .underlay_group_id
-            .expect("Underlay-only group should have underlay_group_id")
+    // Verify group has underlay_group_id (replication is handled internally)
+    assert!(
+        created.underlay_group_id.is_some(),
+        "Underlay-only group should have underlay_group_id"
     );
 
     // Verify only underlay members
@@ -1256,13 +1203,9 @@ async fn test_api_internal_ipv6_external_only() {
 
     // Create admin-scoped IPv6 group with only external members
     let external_only_group = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V6("ff08::300".parse().unwrap()), // Org-local admin-scoped
+        group_ip: "ff08::300".parse().unwrap(), // Org-local admin-scoped
         tag: Some("test_external_only".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: Some(25),
-        },
         members: vec![types::MulticastGroupMember {
             port_id: port_id.clone(),
             link_id,
@@ -1287,19 +1230,10 @@ async fn test_api_internal_ipv6_external_only() {
         "Should NOT have underlay group ID"
     );
 
-    // Verify replication info is present
-    let replication_info = created
-        .replication_info
-        .expect("Should have replication info");
-    assert_eq!(replication_info.level1_excl_id, 0); // Default value
-    assert_eq!(replication_info.level2_excl_id, 25);
-
-    // RID should be set to external group ID when no underlay group
-    assert_eq!(
-        replication_info.rid,
-        created
-            .external_group_id
-            .expect("External-only group should have external_group_id")
+    // Verify group has external_group_id (replication is handled internally)
+    assert!(
+        created.external_group_id.is_some(),
+        "External-only group should have external_group_id"
     );
 
     // Verify only external members
@@ -1346,11 +1280,10 @@ async fn test_api_invalid_combinations() {
 
     // But it should not have underlay group ID or replication info
     assert!(created_ipv4.underlay_group_id.is_none());
-    assert!(created_ipv4.replication_info.is_none());
 
     // Test 2: Non-admin-scoped IPv6 should use external API
     let non_admin_ipv6 = types::MulticastGroupCreateExternalEntry {
-        group_ip: IpAddr::V6("ff0e::400".parse().unwrap()), // Global scope, not admin-scoped
+        group_ip: "ff0e::400".parse().unwrap(), // Global scope, not admin-scoped
         tag: Some("test_non_admin_ipv6".to_string()),
         nat_target: create_nat_target_ipv6(),
         vlan_id: Some(20),
@@ -1366,12 +1299,11 @@ async fn test_api_invalid_combinations() {
 
     // Should not have underlay group ID or replication info
     assert!(created_non_admin.underlay_group_id.is_none());
-    assert!(created_non_admin.replication_info.is_none());
 
     // Test 3: Admin-scoped IPv6 with underlay members should fail via external API
     let admin_scoped_external_entry =
         types::MulticastGroupCreateExternalEntry {
-            group_ip: IpAddr::V6("ff04::500".parse().unwrap()), // Admin-scoped
+            group_ip: "ff04::500".parse().unwrap(), // Admin-scoped
             tag: Some("test_admin_external".to_string()),
             nat_target: create_nat_target_ipv6(),
             vlan_id: Some(30),
@@ -3346,10 +3278,6 @@ async fn test_multicast_dynamic_membership() -> TestResult {
                 direction: types::Direction::External,
             },
         ],
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: Some(0),
-            level2_excl_id: Some(0),
-        },
         sources: None,
     };
 
@@ -3662,10 +3590,6 @@ async fn test_multicast_reset_all_tables() -> TestResult {
         group_ip: admin_scoped_ip,
         tag: Some("test_reset_all_2b".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: Some(100),
-            level2_excl_id: Some(200),
-        },
         members: vec![types::MulticastGroupMember {
             port_id: switch.link_id(egress1).unwrap().0,
             link_id: switch.link_id(egress1).unwrap().1,
@@ -4239,10 +4163,6 @@ async fn test_multicast_level1_exclusion_group_pruned() -> TestResult {
         group_ip: internal_multicast_ip,
         tag: Some("test_level1_excl_underlay".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: Some(egress2_asic_id),
-            level2_excl_id: None,
-        },
         members: vec![
             types::MulticastGroupMember {
                 port_id: switch.link_id(egress1).unwrap().0,
@@ -4360,13 +4280,9 @@ async fn test_external_group_nat_target_validation() {
 
     // Test 2: Create admin-scoped IPv6 group first, then external group with valid NAT target
     let admin_scoped_group = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V6("ff04::1".parse().unwrap()), // Admin-scoped IPv6
+        group_ip: "ff04::1".parse().unwrap(), // Admin-scoped IPv6
         tag: Some("test_admin_scoped".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
         members: vec![types::MulticastGroupMember {
             port_id: port_id.clone(),
             link_id,
@@ -4382,7 +4298,6 @@ async fn test_external_group_nat_target_validation() {
         .into_inner();
 
     assert!(created_admin.underlay_group_id.is_some());
-    assert!(created_admin.replication_info.is_some());
 
     // Test 3: Now create external group with valid NAT target
     let valid_nat_target = types::NatTarget {
@@ -4416,10 +4331,6 @@ async fn test_external_group_nat_target_validation() {
         created_external.underlay_group_id.is_none(),
         "External group should not have underlay_group_id"
     );
-    assert!(
-        created_external.replication_info.is_none(),
-        "External group should not have replication_info"
-    );
     assert_eq!(
         created_external.members.len(),
         0,
@@ -4441,13 +4352,9 @@ async fn test_ipv6_multicast_scope_validation() {
 
     // Admin-local scope (ff04::/16) - should work with internal API
     let admin_local_group = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V6("ff04::100".parse().unwrap()),
+        group_ip: "ff04::100".parse().unwrap(),
         tag: Some("test_admin_local".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
         members: vec![types::MulticastGroupMember {
             port_id: egress_port.clone(),
             link_id: egress_link,
@@ -4466,13 +4373,9 @@ async fn test_ipv6_multicast_scope_validation() {
 
     // Site-local scope (ff05::/16) - should work with internal API
     let site_local_group = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V6("ff05::200".parse().unwrap()),
+        group_ip: "ff05::200".parse().unwrap(),
         tag: Some("test_site_local".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
         members: vec![types::MulticastGroupMember {
             port_id: egress_port.clone(),
             link_id: egress_link,
@@ -4491,13 +4394,9 @@ async fn test_ipv6_multicast_scope_validation() {
 
     // Organization-local scope (ff08::/16) - should work with internal API
     let org_local_group = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V6("ff08::300".parse().unwrap()),
+        group_ip: "ff08::300".parse().unwrap(),
         tag: Some("test_org_local".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
         members: vec![types::MulticastGroupMember {
             port_id: egress_port.clone(),
             link_id: egress_link,
@@ -4514,13 +4413,9 @@ async fn test_ipv6_multicast_scope_validation() {
 
     // Global scope (ff0e::/16) - should be rejected by internal API
     let global_scope_group = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V6("ff0e::400".parse().unwrap()),
+        group_ip: "ff0e::400".parse().unwrap(),
         tag: Some("test_global".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
         members: vec![types::MulticastGroupMember {
             port_id: egress_port.clone(),
             link_id: egress_link,
@@ -4547,13 +4442,9 @@ async fn test_ipv6_multicast_scope_validation() {
     // Test the reverse: admin-scoped should be rejected by external API
     // First create an admin-scoped group to reference
     let admin_target_group = types::MulticastGroupCreateEntry {
-        group_ip: IpAddr::V6("ff04::1000".parse().unwrap()),
+        group_ip: "ff04::1000".parse().unwrap(),
         tag: Some("test_target".to_string()),
         sources: None,
-        replication_info: types::MulticastReplicationEntry {
-            level1_excl_id: None,
-            level2_excl_id: None,
-        },
         members: vec![types::MulticastGroupMember {
             port_id: egress_port.clone(),
             link_id: egress_link,
@@ -4568,7 +4459,7 @@ async fn test_ipv6_multicast_scope_validation() {
         .expect("Should create target group");
 
     let admin_scoped_external = types::MulticastGroupCreateExternalEntry {
-        group_ip: IpAddr::V6("ff04::500".parse().unwrap()),
+        group_ip: "ff04::500".parse().unwrap(),
         tag: Some("test_admin_external".to_string()),
         nat_target: types::NatTarget {
             internal_ip: "ff04::1000".parse().unwrap(),

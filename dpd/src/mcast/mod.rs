@@ -1372,6 +1372,8 @@ fn configure_replication(
 ) -> MulticastReplicationInfo {
     let rid = external_group_id.or(underlay_group_id).unwrap();
 
+    // We default level exclusion IDs to 0 for internal groups
+    // since they can only be configured internally without API calls.
     MulticastReplicationInfo {
         rid,
         level1_excl_id: 0,
