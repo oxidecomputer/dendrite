@@ -500,10 +500,10 @@ async fn test_internal_ipv6_validation() {
 
     let (port_id, link_id) = switch.link_id(PhysPort(26)).unwrap();
 
-    // Test 1: IPv4 groups should be rejected from internal API
-    let ipv4_internal = types::MulticastGroupCreateEntry {
-        group_ip: "::ffff:224.1.1.1".parse().unwrap(), // IPv4-mapped IPv6 to test rejection
-        tag: Some("test_ipv4_internal".to_string()),
+    // Test 1: IPv4-mapped IPv6 addresses should be rejected as invalid multicast
+    let ipv4_mapped_internal = types::MulticastGroupCreateEntry {
+        group_ip: "::ffff:224.1.1.1".parse().unwrap(), // IPv4-mapped IPv6 
+        tag: Some("test_ipv4_mapped_internal".to_string()),
         sources: None,
         members: vec![types::MulticastGroupMember {
             port_id: port_id.clone(),
@@ -512,18 +512,17 @@ async fn test_internal_ipv6_validation() {
         }],
     };
 
-    let ipv4_res = switch.client.multicast_group_create(&ipv4_internal).await;
+    let ipv4_mapped_res = switch.client.multicast_group_create(&ipv4_mapped_internal).await;
 
     assert!(
-        ipv4_res.is_err(),
-        "Should reject IPv4 groups from internal API"
+        ipv4_mapped_res.is_err(),
+        "Should reject IPv4-mapped IPv6 addresses"
     );
-    let ipv4_error_msg = format!("{:?}", ipv4_res.unwrap_err());
+    let ipv4_mapped_error_msg = format!("{:?}", ipv4_mapped_res.unwrap_err());
     assert!(
-        ipv4_error_msg
-            .contains("IPv4 multicast groups must use the external API"),
-        "Error message should direct to external API: {}",
-        ipv4_error_msg
+        ipv4_mapped_error_msg.contains("is not a multicast address"),
+        "Error message should indicate invalid multicast address: {}",
+        ipv4_mapped_error_msg
     );
 
     // Test 2: Non-admin-scoped IPv6 groups should be rejected from internal API
@@ -3584,7 +3583,6 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     .await;
 
     // 2b. Admin-scoped IPv6 group to test internal API with custom replication parameters
-    let admin_scoped_ip = IpAddr::V6(Ipv6Addr::new(0xff04, 0, 0, 0, 0, 0, 0, 2));
     let group_entry2b = types::MulticastGroupCreateEntry {
         group_ip: Ipv6Addr::new(0xff04, 0, 0, 0, 0, 0, 0, 2),
         tag: Some("test_reset_all_2b".to_string()),
@@ -4149,8 +4147,6 @@ async fn test_multicast_level1_exclusion_group_pruned() -> TestResult {
     let ingress = PhysPort(10);
     let egress1 = PhysPort(15);
     let egress2 = PhysPort(22);
-
-    let egress2_asic_id = switch.tofino_port(egress2);
 
     let src_mac = switch.get_port_mac(ingress).unwrap();
 
