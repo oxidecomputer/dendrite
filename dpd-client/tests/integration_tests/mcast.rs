@@ -502,7 +502,7 @@ async fn test_internal_ipv6_validation() {
 
     // Test 1: IPv4-mapped IPv6 addresses should be rejected as invalid multicast
     let ipv4_mapped_internal = types::MulticastGroupCreateEntry {
-        group_ip: "::ffff:224.1.1.1".parse().unwrap(), // IPv4-mapped IPv6 
+        group_ip: "::ffff:224.1.1.1".parse().unwrap(), // IPv4-mapped IPv6
         tag: Some("test_ipv4_mapped_internal".to_string()),
         sources: None,
         members: vec![types::MulticastGroupMember {
@@ -512,7 +512,10 @@ async fn test_internal_ipv6_validation() {
         }],
     };
 
-    let ipv4_mapped_res = switch.client.multicast_group_create(&ipv4_mapped_internal).await;
+    let ipv4_mapped_res = switch
+        .client
+        .multicast_group_create(&ipv4_mapped_internal)
+        .await;
 
     assert!(
         ipv4_mapped_res.is_err(),
