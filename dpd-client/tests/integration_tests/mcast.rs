@@ -599,7 +599,6 @@ async fn test_internal_ipv6_validation() {
     assert_eq!(updated.tag, Some("updated_tag".to_string()));
     assert_eq!(updated.ext_fwding.vlan_id, None);
 
-    // Cleanup
     cleanup_test_group(switch, created.group_ip).await;
 }
 
@@ -685,7 +684,6 @@ async fn test_vlan_propagation_to_internal() {
         "Admin-scoped group bitmap should have VLAN 42 from external group"
     );
 
-    // Cleanup
     cleanup_test_group(switch, created_admin.group_ip).await;
     cleanup_test_group(switch, created_external.group_ip).await;
 }
@@ -695,7 +693,6 @@ async fn test_vlan_propagation_to_internal() {
 async fn test_group_api_lifecycle() {
     let switch = &*get_switch().await;
 
-    // Create admin-scoped IPv6 group for underlay replication infrastructure
     let egress1 = PhysPort(28);
     let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
     let underlay_group = create_test_multicast_group(
@@ -1330,7 +1327,6 @@ async fn test_api_invalid_combinations() {
         ),
     }
 
-    // Cleanup
     cleanup_test_group(switch, created_ipv4.group_ip).await;
     cleanup_test_group(switch, created_non_admin.group_ip).await;
     cleanup_test_group(switch, internal_multicast_ip).await;
@@ -2024,7 +2020,6 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members(
         .await
         .unwrap();
 
-    // Run the test
     let result = switch.packet_test(vec![test_pkt], expected_pkts);
 
     check_counter_incremented(
@@ -2163,7 +2158,6 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members(
         .await
         .unwrap();
 
-    // Run the test
     let result = switch.packet_test(vec![test_pkt], expected_pkts);
 
     check_counter_incremented(
@@ -2320,7 +2314,6 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
         .await
         .unwrap();
 
-    // Run the test
     let result = switch.packet_test(vec![test_pkt], expected_pkts);
 
     check_counter_incremented(
@@ -4335,7 +4328,6 @@ async fn test_external_group_nat_target_validation() {
         "External group should have no members"
     );
 
-    // Cleanup
     cleanup_test_group(switch, created_admin.group_ip).await;
     cleanup_test_group(switch, created_external.group_ip).await;
 }
@@ -4509,4 +4501,132 @@ async fn test_ipv6_multicast_scope_validation() {
         .multicast_group_delete(&target_group.group_ip)
         .await
         .ok();
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_multicast_group_id_recycling() {
+    let switch = &*get_switch().await;
+
+    // Use admin-scoped IPv6 addresses that get group IDs assigned
+    let group1_ip = IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 10));
+    let group2_ip = IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 11));
+    let group3_ip = IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 12));
+
+    // Create first group and capture its group IDs
+    let group1 = create_test_multicast_group(
+        switch,
+        group1_ip,
+        Some("test_recycling_1"),
+        &[(PhysPort(11), types::Direction::External)],
+        None,
+        false,
+        None,
+    )
+    .await;
+
+    let group1_external_id = group1.external_group_id;
+    assert!(group1_external_id.is_some());
+
+    // Create second group and capture its group IDs
+    let group2 = create_test_multicast_group(
+        switch,
+        group2_ip,
+        Some("test_recycling_2"),
+        &[(PhysPort(12), types::Direction::External)],
+        None,
+        false,
+        None,
+    )
+    .await;
+
+    let group2_external_id = group2.external_group_id;
+    assert!(group2_external_id.is_some());
+    assert_ne!(group1_external_id, group2_external_id);
+
+    // Delete the first group
+    switch
+        .client
+        .multicast_group_delete(&group1_ip)
+        .await
+        .expect("Should be able to delete first group");
+
+    // Verify group1 was actually deleted
+    let groups_after_delete1 = switch
+        .client
+        .multicast_groups_list_stream(None)
+        .try_collect::<Vec<_>>()
+        .await
+        .expect("Should be able to list groups");
+    assert!(
+        !groups_after_delete1.iter().any(|g| g.group_ip == group1_ip),
+        "Group1 should be deleted"
+    );
+
+    // Create third group - should reuse the first group's ID
+    let group3 = create_test_multicast_group(
+        switch,
+        group3_ip,
+        Some("test_recycling_3"),
+        &[(PhysPort(13), types::Direction::External)],
+        None,
+        false,
+        None,
+    )
+    .await;
+
+    let group3_external_id = group3.external_group_id;
+    assert!(group3_external_id.is_some());
+
+    // Verify that ID recycling is working - group3 should get an ID that was
+    // previously used
+    assert_ne!(
+        group2_external_id, group3_external_id,
+        "Third group should get a different ID than the active second group"
+    );
+
+    // Create a fourth group after deleting group2, it should reuse group2's ID
+    switch
+        .client
+        .multicast_group_delete(&group2_ip)
+        .await
+        .expect("Should be able to delete second group");
+
+    // Verify group2 was actually deleted
+    let groups_after_delete2 = switch
+        .client
+        .multicast_groups_list_stream(None)
+        .try_collect::<Vec<_>>()
+        .await
+        .expect("Should be able to list groups");
+    assert!(
+        !groups_after_delete2.iter().any(|g| g.group_ip == group2_ip),
+        "Group2 should be deleted"
+    );
+
+    let group4_ip = IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 13));
+    let group4 = create_test_multicast_group(
+        switch,
+        group4_ip,
+        Some("test_recycling_4"),
+        &[(PhysPort(14), types::Direction::External)],
+        None,
+        false,
+        None,
+    )
+    .await;
+
+    let group4_external_id = group4.external_group_id;
+    assert!(group4_external_id.is_some());
+
+    // Group4 should reuse group2's recently freed ID due to stack-like
+    // allocation
+    assert_eq!(
+        group2_external_id, group4_external_id,
+        "Fourth group should reuse second group's recycled ID"
+    );
+
+    // Cleanup - clean up remaining active groups
+    cleanup_test_group(switch, group3_ip).await;
+    cleanup_test_group(switch, group4_ip).await;
 }

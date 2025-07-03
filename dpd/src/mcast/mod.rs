@@ -14,6 +14,7 @@ use std::{
     fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     ops::Bound,
+    sync::{Arc, Mutex, Weak},
 };
 
 use crate::{
@@ -37,6 +38,41 @@ use validate::{
 
 /// Type alias for multicast group IDs.
 pub(crate) type MulticastGroupId = u16;
+
+/// Wrapper for multicast group IDs during allocation that automatically
+/// returns them to the free pool when dropped. This prevents group ID leaks
+/// when operations fail during group creation.
+#[derive(Debug)]
+struct ScopedGroupId(MulticastGroupId, Weak<Mutex<Vec<MulticastGroupId>>>);
+
+impl ScopedGroupId {
+    /// Get the underlying group ID value.
+    fn id(&self) -> MulticastGroupId {
+        self.0
+    }
+
+    /// Take ownership of the group ID, preventing it from being returned to the
+    /// free pool when this AutoGroupId is dropped.
+    fn take(mut self) -> MulticastGroupId {
+        let id = self.0;
+        self.0 = 0; // Mark as taken to prevent drop cleanup
+        id
+    }
+}
+
+impl Drop for ScopedGroupId {
+    /// Only return to free pool if not taken and if the free pool still
+    /// exists
+    fn drop(&mut self) {
+        if self.0 != 0 {
+            if let Some(free_ids) = self.1.upgrade() {
+                if let Ok(mut pool) = free_ids.lock() {
+                    pool.push(self.0);
+                }
+            }
+        }
+    }
+}
 
 /// Source filter match key for multicast traffic.
 #[derive(
@@ -201,7 +237,7 @@ pub struct MulticastGroupData {
     groups: BTreeMap<IpAddr, MulticastGroup>,
     /// Stack of available group IDs for O(1) allocation.
     /// Pre-populated with all IDs from GENERATOR_START to u16::MAX-1.
-    free_group_ids: Vec<MulticastGroupId>,
+    free_group_ids: Arc<Mutex<Vec<MulticastGroupId>>>,
     /// Mapping from admin-scoped group IP to external groups that use it as NAT
     /// target (admin_scoped_ip -> set of external_group_ips)
     nat_target_refs: BTreeMap<IpAddr, HashSet<IpAddr>>,
@@ -210,11 +246,14 @@ pub struct MulticastGroupData {
 impl MulticastGroupData {
     const GENERATOR_START: u16 = 100;
 
+    /// Creates a new instance of MulticastGroupData with pre-populated free
+    /// group IDs.
     pub(crate) fn new() -> Self {
         // Pre-populate with all available IDs from GENERATOR_START to u16::MAX-1
         // Using a Vec as a stack for O(1) push/pop operations
-        let free_group_ids: Vec<MulticastGroupId> =
-            (Self::GENERATOR_START..u16::MAX).collect();
+        let free_group_ids = Arc::new(Mutex::new(
+            (Self::GENERATOR_START..MulticastGroupId::MAX).collect(),
+        ));
 
         Self {
             groups: BTreeMap::new(),
@@ -223,24 +262,23 @@ impl MulticastGroupData {
         }
     }
 
-    /// Generates a unique multicast group ID.
+    /// Generates a unique multicast group ID with automatic cleanup on drop.
     ///
     /// O(1) allocation from pre-populated free list. Never allocates.
+    ///
     /// IDs below GENERATOR_START (100) to avoid conflicts with reserved ranges.
-    fn generate_group_id(&mut self) -> DpdResult<MulticastGroupId> {
-        self.free_group_ids.pop().ok_or_else(|| {
+    ///
+    /// Returns a ScopedGroupId that will automatically return the ID to the
+    /// free pool if dropped without calling take().
+    fn generate_group_id(&mut self) -> DpdResult<ScopedGroupId> {
+        let mut pool = self.free_group_ids.lock().unwrap();
+        let id = pool.pop().ok_or_else(|| {
             DpdError::McastGroupFailure(
                 "no free multicast group IDs available (exhausted range 100-65534)".to_string(),
             )
-        })
-    }
+        })?;
 
-    /// Returns a group ID to the free pool for reuse.
-    fn free_group_id(&mut self, id: MulticastGroupId) {
-        // Only add to free list if it's in our valid range
-        if id >= Self::GENERATOR_START {
-            self.free_group_ids.push(id);
-        }
+        Ok(ScopedGroupId(id, Arc::downgrade(&self.free_group_ids)))
     }
 
     /// Add a NAT target reference from external group to admin-scoped group.
@@ -286,69 +324,6 @@ impl MulticastGroupData {
     }
 }
 
-/// Update the VLAN metadata for an existing internal group's table entries.
-fn propagate_vlan_to_internal_group(
-    s: &Switch,
-    internal_ip: IpAddr,
-    vlan_id: u16,
-) -> DpdResult<()> {
-    // Extract all needed data in a single lock acquisition
-    let (external_group_id, underlay_group_id, members) = {
-        let mcast = s.mcast.lock().unwrap();
-
-        let internal_group =
-            mcast.groups.get(&internal_ip).ok_or_else(|| {
-                DpdError::Invalid(format!(
-                    "Internal group {} not found",
-                    internal_ip
-                ))
-            })?;
-
-        (
-            internal_group.external_group_id,
-            internal_group.underlay_group_id,
-            internal_group.members.clone(),
-        )
-    };
-
-    // Note: Route table entries for admin-scoped groups remain as "Forward"
-    //       action. The VLAN is applied in the egress bitmap tables below.
-    //
-    // Update external group bitmap if it exists
-    if let Some(external_id) = external_group_id {
-        let mut port_bitmap = table::mcast::mcast_egress::PortBitmap::new();
-        for member in &members {
-            if member.direction == Direction::External {
-                port_bitmap.add_port(member.port_id.as_u8());
-            }
-        }
-        table::mcast::mcast_egress::update_bitmap_entry(
-            s,
-            external_id,
-            &port_bitmap,
-            Some(vlan_id),
-        )?;
-    }
-
-    // Update underlay group bitmap if it exists
-    if let Some(underlay_id) = underlay_group_id {
-        let mut port_bitmap = table::mcast::mcast_egress::PortBitmap::new();
-        for member in &members {
-            if member.direction == Direction::Underlay {
-                port_bitmap.add_port(member.port_id.as_u8());
-            }
-        }
-        table::mcast::mcast_egress::update_bitmap_entry(
-            s,
-            underlay_id,
-            &port_bitmap,
-            Some(vlan_id),
-        )?;
-    }
-
-    Ok(())
-}
-
 impl Default for MulticastGroupData {
     fn default() -> Self {
         Self::new()
@@ -364,21 +339,23 @@ pub(crate) fn add_group_external(
     s: &Switch,
     group_info: MulticastGroupCreateExternalEntry,
 ) -> DpdResult<MulticastGroupResponse> {
-    let mut mcast = s.mcast.lock().unwrap();
     let group_ip = group_info.group_ip;
 
-    validate_external_group_creation(&mcast, group_ip, &group_info)?;
-    validate_nat_target(group_info.nat_target)?;
-
-    // Validate that NAT target points to an existing group
-    if !mcast
-        .groups
-        .contains_key(&group_info.nat_target.internal_ip.into())
     {
-        return Err(DpdError::Invalid(format!(
-            "multicast group for IP address {} must have a NAT target that is also a tracked multicast group",
-            group_ip
-        )));
+        let mcast = s.mcast.lock().unwrap();
+        validate_external_group_creation(&mcast, group_ip, &group_info)?;
+        validate_nat_target(group_info.nat_target)?;
+
+        // Validate that NAT target points to an existing group
+        if !mcast
+            .groups
+            .contains_key(&group_info.nat_target.internal_ip.into())
+        {
+            return Err(DpdError::Invalid(format!(
+                "multicast group for IP address {} must have a NAT target that is also a tracked multicast group",
+                group_ip
+            )));
+        }
     }
 
     let res = configure_external_tables(s, &group_info);
@@ -397,61 +374,121 @@ pub(crate) fn add_group_external(
         .ok(); // Ignore rollback errors, log the original error
         return Err(e);
     }
+    let (group, vlan_propagation_data) = {
+        let mut mcast = s.mcast.lock().unwrap();
 
-    let group = MulticastGroup {
-        external_group_id: None,
-        underlay_group_id: None,
-        tag: group_info.tag,
-        int_fwding: InternalForwarding {
-            nat_target: Some(group_info.nat_target),
-        },
-        ext_fwding: ExternalForwarding {
-            vlan_id: group_info.vlan_id,
-        },
-        sources: group_info.sources,
-        replication_info: None,
-        members: Vec::new(), // External groups have no members
+        let group = MulticastGroup {
+            external_group_id: None,
+            underlay_group_id: None,
+            tag: group_info.tag,
+            int_fwding: InternalForwarding {
+                nat_target: Some(group_info.nat_target),
+            },
+            ext_fwding: ExternalForwarding {
+                vlan_id: group_info.vlan_id,
+            },
+            sources: group_info.sources,
+            replication_info: None,
+            members: Vec::new(), // External groups have no members
+        };
+
+        mcast.groups.insert(group_ip, group.clone());
+
+        // Track NAT target reference for VLAN propagation
+        mcast.add_nat_target_ref(
+            group_ip,
+            group_info.nat_target.internal_ip.into(),
+        );
+
+        // Extract data needed for VLAN propagation to internal groups
+        let vlan_propagation_data = group_info.vlan_id.map(|vlan_id| {
+            let internal_ip = group_info.nat_target.internal_ip.into();
+            debug!(
+                s.log,
+                "External group {} with VLAN {} references internal group {}, propagating VLAN to existing internal group",
+                group_ip,
+                vlan_id,
+                internal_ip
+            );
+
+            let internal_group = mcast
+                .groups
+                .get(&internal_ip)
+                .ok_or_else(|| {
+                    DpdError::Invalid(format!(
+                        "Internal group {} not found",
+                        internal_ip
+                    ))
+                })
+                .expect("Internal group must exist (validated above)");
+
+            (
+                internal_ip,
+                vlan_id,
+                internal_group.external_group_id,
+                internal_group.underlay_group_id,
+                internal_group.members.clone(),
+            )
+        });
+
+        (group, vlan_propagation_data)
     };
 
-    mcast.groups.insert(group_ip, group.clone());
+    // Update internal group's tables with the VLAN if necessary
+    if let Some((
+        internal_ip,
+        vlan_id,
+        external_group_id,
+        underlay_group_id,
+        members,
+    )) = vlan_propagation_data
+    {
+        // Update external group bitmap if it exists
+        if let Some(external_id) = external_group_id {
+            let mut port_bitmap = table::mcast::mcast_egress::PortBitmap::new();
+            for member in &members {
+                if member.direction == Direction::External {
+                    port_bitmap.add_port(member.port_id.as_u8());
+                }
+            }
+            if let Err(e) = table::mcast::mcast_egress::update_bitmap_entry(
+                s,
+                external_id,
+                &port_bitmap,
+                Some(vlan_id),
+            ) {
+                error!(
+                    s.log,
+                    "Failed to update external bitmap for VLAN {} on internal group {}: {:?}",
+                    vlan_id,
+                    internal_ip,
+                    e
+                );
+            }
+        }
 
-    // Track NAT target reference for VLAN propagation
-    mcast
-        .add_nat_target_ref(group_ip, group_info.nat_target.internal_ip.into());
-
-    // Extract VLAN propagation info before releasing lock
-    let vlan_propagation_info = group_info.vlan_id.map(|vlan_id| {
-        let internal_ip = group_info.nat_target.internal_ip.into();
-        debug!(
-            s.log,
-            "External group {} with VLAN {} references internal group {}",
-            group_ip,
-            vlan_id,
-            internal_ip
-        );
-        debug!(
-            s.log,
-            "Propagating VLAN {} to existing internal group {}",
-            vlan_id,
-            internal_ip
-        );
-        (internal_ip, vlan_id)
-    });
-
-    drop(mcast); // Release lock before table operations
-
-    // Update internal group's tables with the VLAN if needed
-    if let Some((internal_ip, vlan_id)) = vlan_propagation_info {
-        if let Err(e) =
-            propagate_vlan_to_internal_group(s, internal_ip, vlan_id)
-        {
-            error!(
-                s.log,
-                "Failed to update VLAN {} for internal group {}: {:?}",
-                vlan_id,
-                internal_ip,
-                e
-            );
+        // Update underlay group bitmap if it exists
+        if let Some(underlay_id) = underlay_group_id {
+            let mut port_bitmap = table::mcast::mcast_egress::PortBitmap::new();
+            for member in &members {
+                if member.direction == Direction::Underlay {
+                    port_bitmap.add_port(member.port_id.as_u8());
+                }
+            }
+            if let Err(e) = table::mcast::mcast_egress::update_bitmap_entry(
+                s,
+                underlay_id,
+                &port_bitmap,
+                Some(vlan_id),
+            ) {
+                error!(
+                    s.log,
+                    "Failed to update underlay bitmap for VLAN {} on internal group {}: {:?}",
+                    vlan_id,
+                    internal_ip,
+                    e
+                );
+            }
         }
     }
 
@@ -474,16 +511,21 @@ fn add_group_internal_only(
     s: &Switch,
     group_info: MulticastGroupCreateEntry,
 ) -> DpdResult<MulticastGroupResponse> {
-    let mut mcast = s.mcast.lock().unwrap();
     let group_ip = group_info.group_ip;
 
-    validate_internal_group_creation(&mcast, group_ip, &group_info)?;
+    let (external_group_id, underlay_group_id, vlan_id) = {
+        let mut mcast = s.mcast.lock().unwrap();
+        validate_internal_group_creation(&mcast, group_ip, &group_info)?;
 
-    let (external_group_id, underlay_group_id) =
-        create_multicast_group_ids(s, &mut mcast, group_ip, &group_info)?;
+        let (external_group_id, underlay_group_id) =
+            create_multicast_group_ids(s, &mut mcast, group_ip, &group_info)?;
 
+        // Get VLAN ID from referencing external groups
+        let vlan_id = mcast.get_vlan_for_internal_addr(group_ip.into());
+
+        (external_group_id, underlay_group_id, vlan_id)
+    };
     let mut added_members = Vec::new();
-
     let replication_info =
         configure_replication(external_group_id, underlay_group_id);
 
@@ -497,9 +539,6 @@ fn add_group_internal_only(
         &mut added_members,
     )?;
 
-    // Get VLAN ID from referencing external groups
-    let vlan_id = mcast.get_vlan_for_internal_addr(group_ip.into());
-
     configure_internal_tables(
         s,
         group_ip.into(),
@@ -511,22 +550,27 @@ fn add_group_internal_only(
         vlan_id,
     )?;
 
-    let group = MulticastGroup {
-        external_group_id,
-        underlay_group_id,
-        tag: group_info.tag,
-        int_fwding: InternalForwarding {
-            nat_target: None, // Internal groups don't have NAT targets
-        },
-        ext_fwding: ExternalForwarding {
-            vlan_id: None, // Internal groups don't have VLANs
-        },
-        sources: group_info.sources,
-        replication_info: Some(replication_info),
-        members: group_info.members,
-    };
+    let group = {
+        let mut mcast = s.mcast.lock().unwrap();
 
-    mcast.groups.insert(group_ip.into(), group.clone());
+        let group = MulticastGroup {
+            external_group_id,
+            underlay_group_id,
+            tag: group_info.tag,
+            int_fwding: InternalForwarding {
+                nat_target: None, // Internal groups don't have NAT targets
+            },
+            ext_fwding: ExternalForwarding {
+                vlan_id: None, // Internal groups don't have VLANs
+            },
+            sources: group_info.sources,
+            replication_info: Some(replication_info),
+            members: group_info.members,
+        };
+
+        mcast.groups.insert(group_ip.into(), group.clone());
+        group
+    };
 
     Ok(MulticastGroupResponse::new(group_ip.into(), &group))
 }
@@ -534,7 +578,7 @@ fn add_group_internal_only(
 /// Delete a multicast group from the switch, including all associated tables
 /// and port mappings.
 pub(crate) fn del_group(s: &Switch, group_ip: IpAddr) -> DpdResult<()> {
-    let group: MulticastGroup = {
+    let (group, nat_target_to_remove) = {
         let mut mcast = s.mcast.lock().unwrap();
 
         let group = mcast.groups.remove(&group_ip).ok_or_else(|| {
@@ -544,25 +588,15 @@ pub(crate) fn del_group(s: &Switch, group_ip: IpAddr) -> DpdResult<()> {
             ))
         })?;
 
-        if let Some(external_id) = group.external_group_id {
-            mcast.free_group_id(external_id);
-        }
+        let nat_target_to_remove = group
+            .int_fwding
+            .nat_target
+            .map(|nat| nat.internal_ip.into());
 
-        if let Some(underlay_id) = group.underlay_group_id {
-            mcast.free_group_id(underlay_id);
-        }
-
-        // Remove NAT target reference if this was an external group
-        if let Some(nat_target) = group.int_fwding.nat_target {
-            mcast
-                .remove_nat_target_ref(group_ip, nat_target.internal_ip.into());
-        }
-
-        group
-    }; // Lock automatically released here
+        (group, nat_target_to_remove)
+    };
 
     debug!(s.log, "deleting multicast group for IP {}", group_ip);
-
     delete_group_tables(s, group_ip, &group)?;
 
     delete_multicast_groups(
@@ -572,6 +606,14 @@ pub(crate) fn del_group(s: &Switch, group_ip: IpAddr) -> DpdResult<()> {
         group.underlay_group_id,
     )?;
 
+    {
+        let mut mcast = s.mcast.lock().unwrap();
+
+        if let Some(internal_ip) = nat_target_to_remove {
+            mcast.remove_nat_target_ref(group_ip, internal_ip);
+        }
+    }
+
     Ok(())
 }
 
@@ -580,18 +622,19 @@ pub(crate) fn get_group(
     s: &Switch,
     group_ip: IpAddr,
 ) -> DpdResult<MulticastGroupResponse> {
-    let mcast = s.mcast.lock().unwrap();
-
-    let group = mcast
-        .groups
-        .get(&group_ip)
-        .ok_or_else(|| {
-            DpdError::Missing(format!(
-                "multicast group for IP {} not found",
-                group_ip
-            ))
-        })?
-        .clone();
+    let group = {
+        let mcast = s.mcast.lock().unwrap();
+        mcast
+            .groups
+            .get(&group_ip)
+            .ok_or_else(|| {
+                DpdError::Missing(format!(
+                    "multicast group for IP {} not found",
+                    group_ip
+                ))
+            })?
+            .clone()
+    };
 
     Ok(MulticastGroupResponse::new(group_ip, &group))
 }
@@ -601,64 +644,80 @@ pub(crate) fn modify_group_external(
     group_ip: IpAddr,
     new_group_info: MulticastGroupUpdateExternalEntry,
 ) -> DpdResult<MulticastGroupResponse> {
-    let mut mcast = s.mcast.lock().unwrap();
+    let (group_entry, old_nat_target) = {
+        let mut mcast = s.mcast.lock().unwrap();
 
-    if !mcast.groups.contains_key(&group_ip) {
-        return Err(DpdError::Missing(format!(
-            "Multicast group for IP {} not found",
-            group_ip
-        )));
-    }
+        if !mcast.groups.contains_key(&group_ip) {
+            return Err(DpdError::Missing(format!(
+                "Multicast group for IP {} not found",
+                group_ip
+            )));
+        }
 
-    let mut group_entry = mcast.groups.remove(&group_ip).unwrap();
+        let group_entry = mcast.groups.remove(&group_ip).unwrap();
+        let old_nat_target = group_entry.int_fwding.nat_target;
 
-    let res =
+        (group_entry, old_nat_target)
+    };
+
+    let table_result =
         update_external_tables(s, group_ip, &group_entry, &new_group_info);
 
-    if let Err(e) = res {
-        mcast.groups.insert(group_ip, group_entry);
+    let response = {
+        let mut mcast = s.mcast.lock().unwrap();
 
-        // Use unified rollback for external modify failures
-        // The group_entry we just restored has the original state
-        rollback_on_group_update(
-            s,
-            group_ip,
-            &[], // External groups don't have member changes
-            &[], // External groups don't have member changes
-            mcast.groups.get_mut(&group_ip).unwrap(),
-            new_group_info.sources.as_deref(), // New sources that might need rollback
-        )
-        .ok(); // Ignore rollback errors, return original error
+        match table_result {
+            Ok(_) => {
+                let mut updated_group = group_entry; // Take ownership
 
-        return Err(e);
-    }
+                // Update NAT target references if NAT target changed
+                if let Some(old_nat) = old_nat_target {
+                    if old_nat.internal_ip
+                        != new_group_info.nat_target.internal_ip
+                    {
+                        mcast.remove_nat_target_ref(
+                            group_ip,
+                            old_nat.internal_ip.into(),
+                        );
+                        mcast.add_nat_target_ref(
+                            group_ip,
+                            new_group_info.nat_target.internal_ip.into(),
+                        );
+                    }
+                }
 
-    // Update NAT target references if NAT target changed
-    if let Some(old_nat_target) = group_entry.int_fwding.nat_target {
-        if old_nat_target.internal_ip != new_group_info.nat_target.internal_ip {
-            // Remove old reference
-            mcast.remove_nat_target_ref(
-                group_ip,
-                old_nat_target.internal_ip.into(),
-            );
-            // Add new reference
-            mcast.add_nat_target_ref(
-                group_ip,
-                new_group_info.nat_target.internal_ip.into(),
-            );
+                // Update the external group fields
+                updated_group.tag = new_group_info.tag.or(updated_group.tag);
+                updated_group.int_fwding.nat_target =
+                    Some(new_group_info.nat_target);
+                updated_group.ext_fwding.vlan_id =
+                    new_group_info.vlan_id.or(updated_group.ext_fwding.vlan_id);
+                updated_group.sources =
+                    new_group_info.sources.or(updated_group.sources);
+
+                let response =
+                    MulticastGroupResponse::new(group_ip, &updated_group);
+                mcast.groups.insert(group_ip, updated_group);
+                Ok(response)
+            }
+            Err(e) => {
+                mcast.groups.insert(group_ip, group_entry);
+
+                // Use unified rollback for external modify failures
+                rollback_on_group_update(
+                    s,
+                    group_ip,
+                    &[], // External groups don't have member changes
+                    &[], // External groups don't have member changes
+                    mcast.groups.get_mut(&group_ip).unwrap(),
+                    new_group_info.sources.as_deref(), // New sources that might need rollback
+                )
+                .ok(); // Ignore rollback errors, return original error
+
+                Err(e)
+            }
         }
-    }
-
-    // Update the external group fields
-    group_entry.tag = new_group_info.tag.or(group_entry.tag.clone());
-    group_entry.int_fwding.nat_target = Some(new_group_info.nat_target);
-    group_entry.ext_fwding.vlan_id =
-        new_group_info.vlan_id.or(group_entry.ext_fwding.vlan_id);
-    group_entry.sources =
-        new_group_info.sources.or(group_entry.sources.clone());
-
-    let response = MulticastGroupResponse::new(group_ip, &group_entry);
-    mcast.groups.insert(group_ip, group_entry);
+    }?;
 
     Ok(response)
 }
@@ -677,25 +736,79 @@ fn modify_group_internal_only(
     group_ip: Ipv6Addr,
     new_group_info: MulticastGroupUpdateEntry,
 ) -> DpdResult<MulticastGroupResponse> {
-    let mut mcast = s.mcast.lock().unwrap();
+    let (
+        mut group_entry,
+        sources,
+        sources_diff,
+        replication_info,
+        external_scoped_id,
+        underlay_scoped_id,
+    ) = {
+        let mut mcast = s.mcast.lock().unwrap();
 
-    if !mcast.groups.contains_key(&group_ip.into()) {
-        return Err(DpdError::Missing(format!(
-            "Multicast group for IP {} not found",
-            group_ip
-        )));
-    }
+        if !mcast.groups.contains_key(&group_ip.into()) {
+            return Err(DpdError::Missing(format!(
+                "Multicast group for IP {} not found",
+                group_ip
+            )));
+        }
 
-    let mut group_entry = mcast.groups.remove(&group_ip.into()).unwrap();
+        let group_entry = mcast.groups.remove(&group_ip.into()).unwrap();
 
-    let (sources, sources_diff) = validate_sources_update(
-        group_ip.into(),
-        new_group_info.sources.clone(),
-        &group_entry,
-        &mut mcast,
-    )?;
+        // Validate sources
+        let (sources, sources_diff) = if let Some(new_srcs) =
+            new_group_info.sources.clone()
+        {
+            if is_ssm(group_ip.into()) && new_srcs.is_empty() {
+                mcast.groups.insert(group_ip.into(), group_entry.clone()); // Restore on error
+                return Err(DpdError::Invalid(format!(
+                    "IP {} is a Source-Specific Multicast address and requires at least one source to be defined",
+                    group_ip
+                )));
+            }
+            (Some(new_srcs), true)
+        } else {
+            (group_entry.sources.clone(), false)
+        };
 
-    let replication_info = group_entry.replication_info.clone();
+        let replication_info = group_entry.replication_info.clone();
+
+        // Pre-allocate group IDs if needed (avoids nested locking later)
+        let new_members_set = new_group_info
+            .members
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>();
+
+        let external_scoped_id = if group_entry.external_group_id.is_none()
+            && new_members_set
+                .iter()
+                .any(|m| m.direction == Direction::External)
+        {
+            Some(mcast.generate_group_id()?)
+        } else {
+            None
+        };
+
+        let underlay_scoped_id = if group_entry.underlay_group_id.is_none()
+            && new_members_set
+                .iter()
+                .any(|m| m.direction == Direction::Underlay)
+        {
+            Some(mcast.generate_group_id()?)
+        } else {
+            None
+        };
+
+        (
+            group_entry,
+            sources,
+            sources_diff,
+            replication_info,
+            external_scoped_id,
+            underlay_scoped_id,
+        )
+    };
 
     let (added_members, removed_members) =
         if let Some(ref repl_info) = replication_info {
@@ -705,45 +818,59 @@ fn modify_group_internal_only(
                 &new_group_info.members,
                 &mut group_entry,
                 repl_info,
-                &mut mcast,
+                external_scoped_id,
+                underlay_scoped_id,
             )?
         } else {
             (Vec::new(), Vec::new())
         };
 
-    if let Some(ref repl_info) = replication_info {
-        if let Err(e) = update_group_tables(
+    // Perform table updates without lock
+    let table_update_result = if let Some(ref repl_info) = replication_info {
+        update_group_tables(
             s,
             group_ip.into(),
             &group_entry,
             repl_info,
             &sources,
             &group_entry.sources,
-        ) {
-            mcast.groups.insert(group_ip.into(), group_entry);
+        )
+    } else {
+        Ok(())
+    };
 
-            rollback_on_group_update(
-                s,
-                group_ip.into(),
-                &added_members,
-                &removed_members,
-                mcast.groups.get_mut(&group_ip.into()).unwrap(),
-                sources_diff.then_some(sources.as_ref().unwrap()),
-            )?;
+    let response = {
+        let mut mcast = s.mcast.lock().unwrap();
 
-            return Err(e);
+        match table_update_result {
+            Ok(_) => {
+                group_entry.tag =
+                    new_group_info.tag.or(group_entry.tag.clone());
+                group_entry.sources = sources;
+                group_entry.replication_info = replication_info;
+                group_entry.members = new_group_info.members;
+
+                let response =
+                    MulticastGroupResponse::new(group_ip.into(), &group_entry);
+                mcast.groups.insert(group_ip.into(), group_entry);
+                Ok(response)
+            }
+            Err(e) => {
+                mcast.groups.insert(group_ip.into(), group_entry.clone());
+
+                rollback_on_group_update(
+                    s,
+                    group_ip.into(),
+                    &added_members,
+                    &removed_members,
+                    mcast.groups.get_mut(&group_ip.into()).unwrap(),
+                    sources_diff.then_some(sources.as_ref().unwrap()),
+                )?;
+
+                Err(e)
+            }
         }
-    }
-
-    group_entry.tag = new_group_info.tag.or(group_entry.tag.clone());
-
-    // Internal groups don't update NAT targets or VLANs - only update these fields:
-    group_entry.sources = sources;
-    group_entry.replication_info = replication_info;
-    group_entry.members = new_group_info.members;
-
-    let response = MulticastGroupResponse::new(group_ip.into(), &group_entry);
-    mcast.groups.insert(group_ip.into(), group_entry);
+    }?;
 
     Ok(response)
 }
@@ -757,18 +884,13 @@ pub(crate) fn get_range(
 ) -> Vec<MulticastGroupResponse> {
     let mcast = s.mcast.lock().unwrap();
 
-    let groups_btree: BTreeMap<IpAddr, &MulticastGroup> = mcast
-        .groups
-        .iter()
-        .map(|(ip, group)| (*ip, group))
-        .collect();
-
     let lower_bound = match last {
         None => Bound::Unbounded,
         Some(last_ip) => Bound::Excluded(last_ip),
     };
 
-    groups_btree
+    mcast
+        .groups
         .range((lower_bound, Bound::Unbounded))
         .filter_map(|(ip, group)| {
             if let Some(tag_filter) = tag {
@@ -790,14 +912,15 @@ pub(crate) fn reset_tag(s: &Switch, tag: &str) -> DpdResult<()> {
         mcast
             .groups
             .iter()
-            .filter(|(_, group)| group.tag.as_deref() == Some(tag))
-            .map(|(ip, _)| *ip)
+            .filter_map(|(ip, group)| {
+                if group.tag.as_deref() == Some(tag) {
+                    Some(*ip)
+                } else {
+                    None
+                }
+            })
             .collect::<Vec<_>>()
     };
-
-    if groups_to_delete.is_empty() {
-        return Ok(());
-    }
 
     for group_ip in groups_to_delete {
         if let Err(e) = del_group(s, group_ip) {
@@ -818,14 +941,17 @@ pub(crate) fn reset_untagged(s: &Switch) -> DpdResult<()> {
         mcast
             .groups
             .iter()
-            .filter(|(_, group)| group.tag.is_none())
-            .map(|(ip, _)| *ip)
+            .filter_map(
+                |(ip, group)| {
+                    if group.tag.is_none() {
+                        Some(*ip)
+                    } else {
+                        None
+                    }
+                },
+            )
             .collect::<Vec<_>>()
     };
-
-    if groups_to_delete.is_empty() {
-        return Ok(());
-    }
 
     for group_ip in groups_to_delete {
         if let Err(e) = del_group(s, group_ip) {
@@ -841,8 +967,8 @@ pub(crate) fn reset_untagged(s: &Switch) -> DpdResult<()> {
 
 /// Reset all multicast groups (and associated routes).
 pub(crate) fn reset(s: &Switch) -> DpdResult<()> {
+    // Step 1: Destroy ASIC groups without holding lock
     let group_ids = s.asic_hdl.mc_domains();
-
     for group_id in group_ids {
         if let Err(e) = s.asic_hdl.mc_group_destroy(group_id) {
             error!(
@@ -854,7 +980,7 @@ pub(crate) fn reset(s: &Switch) -> DpdResult<()> {
         }
     }
 
-    let mut mcast = s.mcast.lock().unwrap();
+    // Step 2: Reset all table entries without holding lock
     table::mcast::mcast_replication::reset_ipv6(s)?;
     table::mcast::mcast_src_filter::reset_ipv4(s)?;
     table::mcast::mcast_src_filter::reset_ipv6(s)?;
@@ -863,8 +989,13 @@ pub(crate) fn reset(s: &Switch) -> DpdResult<()> {
     table::mcast::mcast_route::reset_ipv4(s)?;
     table::mcast::mcast_route::reset_ipv6(s)?;
     table::mcast::mcast_egress::reset_bitmap_table(s)?;
-    mcast.groups.clear();
-    mcast.nat_target_refs.clear();
+
+    // Step 3: Clear data structures while holding lock briefly
+    {
+        let mut mcast = s.mcast.lock().unwrap();
+        mcast.groups.clear();
+        mcast.nat_target_refs.clear();
+    }
 
     Ok(())
 }
@@ -1023,26 +1154,6 @@ fn validate_group_exists(
     Ok(())
 }
 
-fn validate_sources_update(
-    group_ip: IpAddr,
-    new_sources: Option<Vec<IpSrc>>,
-    group_entry: &MulticastGroup,
-    mcast: &mut MulticastGroupData,
-) -> DpdResult<(Option<Vec<IpSrc>>, bool)> {
-    if let Some(new_srcs) = new_sources {
-        if is_ssm(group_ip) && new_srcs.is_empty() {
-            mcast.groups.insert(group_ip, group_entry.clone());
-            return Err(DpdError::Invalid(format!(
-                "IP {} is a Source-Specific Multicast address and requires at least one source to be defined",
-                group_ip
-            )));
-        }
-        Ok((Some(new_srcs), true))
-    } else {
-        Ok((group_entry.sources.clone(), false))
-    }
-}
-
 fn configure_external_tables(
     s: &Switch,
     group_info: &MulticastGroupCreateExternalEntry,
@@ -1097,9 +1208,6 @@ fn create_multicast_group_ids(
     group_ip: Ipv6Addr,
     group_info: &MulticastGroupCreateEntry,
 ) -> DpdResult<(Option<MulticastGroupId>, Option<MulticastGroupId>)> {
-    let mut external_group_id = None;
-    let mut underlay_group_id = None;
-
     let has_external_member = group_info
         .members
         .iter()
@@ -1118,17 +1226,33 @@ fn create_multicast_group_ids(
 
     debug!(s.log, "creating multicast group IDs for IP {}", group_ip);
 
-    if has_external_member {
-        let group_id = mcast.generate_group_id()?;
-        create_asic_group(s, group_id, group_ip.into())?;
-        external_group_id = Some(group_id);
+    // Pre-allocate group IDs to avoid nested locking
+    let external_scoped_id = if has_external_member {
+        Some(mcast.generate_group_id()?)
+    } else {
+        None
+    };
+
+    let underlay_scoped_id = if has_underlay_member {
+        Some(mcast.generate_group_id()?)
+    } else {
+        None
+    };
+
+    // Create ASIC groups without holding the lock
+    let mut external_group_id = None;
+    let mut underlay_group_id = None;
+
+    if let Some(scoped_id) = external_scoped_id {
+        create_asic_group(s, scoped_id.id(), group_ip.into())?;
+        external_group_id = Some(scoped_id.take());
     }
 
-    if has_underlay_member {
-        let group_id = mcast.generate_group_id()?;
-        create_asic_group(s, group_id, group_ip.into())?;
-        underlay_group_id = Some(group_id);
+    if let Some(scoped_id) = underlay_scoped_id {
+        create_asic_group(s, scoped_id.id(), group_ip.into())?;
+        underlay_group_id = Some(scoped_id.take());
     }
+
     Ok((external_group_id, underlay_group_id))
 }
 
@@ -1156,12 +1280,31 @@ fn delete_multicast_groups(
         })?;
     }
 
+    // Return group IDs to the free pool
+    let free_group_ids = {
+        let mcast = s.mcast.lock().unwrap();
+        mcast.free_group_ids.clone() // Cloning an ARC (cheap clone)
+    };
+
+    if let Ok(mut pool) = free_group_ids.lock() {
+        if let Some(external_id) = external_group_id {
+            if external_id >= MulticastGroupData::GENERATOR_START {
+                pool.push(external_id);
+            }
+        }
+        if let Some(underlay_id) = underlay_group_id {
+            if underlay_id >= MulticastGroupData::GENERATOR_START {
+                pool.push(underlay_id);
+            }
+        }
+    }
+
     Ok(())
 }
 
 fn create_asic_group(
     s: &Switch,
-    group_id: u16,
+    group_id: MulticastGroupId,
     group_ip: IpAddr,
 ) -> DpdResult<()> {
     s.asic_hdl
@@ -1245,7 +1388,8 @@ fn process_membership_changes(
     new_members: &[MulticastGroupMember],
     group_entry: &mut MulticastGroup,
     replication_info: &MulticastReplicationInfo,
-    mcast: &mut MulticastGroupData,
+    external_scoped_id: Option<ScopedGroupId>,
+    underlay_scoped_id: Option<ScopedGroupId>,
 ) -> DpdResult<(Vec<MulticastGroupMember>, Vec<MulticastGroupMember>)> {
     // First validate that IPv4 doesn't have underlay members
     if group_ip.is_ipv4()
@@ -1253,7 +1397,6 @@ fn process_membership_changes(
             .iter()
             .any(|m| m.direction == Direction::Underlay)
     {
-        mcast.groups.insert(group_ip, group_entry.clone());
         return Err(DpdError::Invalid(format!(
             "multicast group for IPv4 {} cannot have underlay members",
             group_ip
@@ -1267,6 +1410,26 @@ fn process_membership_changes(
     let mut added_members = Vec::new();
     let mut removed_members = Vec::new();
 
+    // Step 1: Ensure required groups exist (this can fail cleanly)
+    ensure_external_group_exists(
+        s,
+        group_ip,
+        &new_members_set,
+        group_entry,
+        external_scoped_id,
+    )?;
+
+    if group_ip.is_ipv6() {
+        ensure_underlay_group_exists(
+            s,
+            group_ip,
+            &new_members_set,
+            group_entry,
+            underlay_scoped_id,
+        )?;
+    }
+
+    // Step 2: Remove members from ASIC (only after group creation succeeds)
     for member in prev_members.difference(&new_members_set) {
         let group_id = match member.direction {
             Direction::External => group_entry.external_group_id,
@@ -1283,24 +1446,7 @@ fn process_membership_changes(
         removed_members.push(member.clone());
     }
 
-    ensure_external_group_exists(
-        s,
-        group_ip,
-        &new_members_set,
-        group_entry,
-        mcast,
-    )?;
-
-    if group_ip.is_ipv6() {
-        ensure_underlay_group_exists(
-            s,
-            group_ip,
-            &new_members_set,
-            group_entry,
-            mcast,
-        )?;
-    }
-
+    // Step 3: Add new members to ASIC
     for member in new_members_set.difference(&prev_members) {
         if group_ip.is_ipv4() && member.direction == Direction::Underlay {
             continue;
@@ -1333,15 +1479,19 @@ fn ensure_external_group_exists(
     group_ip: IpAddr,
     members: &HashSet<MulticastGroupMember>,
     group_entry: &mut MulticastGroup,
-    mcast: &mut MulticastGroupData,
+    pre_allocated_id: Option<ScopedGroupId>,
 ) -> DpdResult<()> {
     if group_entry.external_group_id.is_none()
         && members.iter().any(|m| m.direction == Direction::External)
     {
-        let group_id = mcast.generate_group_id()?;
-        create_asic_group(s, group_id, group_ip)?;
+        let scoped_group_id = pre_allocated_id.ok_or_else(|| {
+            DpdError::Invalid(
+                "external group ID should have been pre-allocated".to_string(),
+            )
+        })?;
 
-        group_entry.external_group_id = Some(group_id);
+        create_asic_group(s, scoped_group_id.id(), group_ip)?;
+        group_entry.external_group_id = Some(scoped_group_id.take());
     }
 
     Ok(())
@@ -1352,15 +1502,19 @@ fn ensure_underlay_group_exists(
     group_ip: IpAddr,
     members: &HashSet<MulticastGroupMember>,
     group_entry: &mut MulticastGroup,
-    mcast: &mut MulticastGroupData,
+    pre_allocated_id: Option<ScopedGroupId>,
 ) -> DpdResult<()> {
     if group_entry.underlay_group_id.is_none()
         && members.iter().any(|m| m.direction == Direction::Underlay)
     {
-        let group_id = mcast.generate_group_id()?;
-        create_asic_group(s, group_id, group_ip)?;
+        let scoped_group_id = pre_allocated_id.ok_or_else(|| {
+            DpdError::Invalid(
+                "underlay group ID should have been pre-allocated".to_string(),
+            )
+        })?;
 
-        group_entry.underlay_group_id = Some(group_id);
+        create_asic_group(s, scoped_group_id.id(), group_ip)?;
+        group_entry.underlay_group_id = Some(scoped_group_id.take());
     }
 
     Ok(())
@@ -2164,5 +2318,244 @@ fn rollback_restore_nat_v6(
             s.log,
             "failed to remove IPv6 NAT entry during rollback: {:?}", e
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+
+    #[test]
+    fn test_scoped_group_id_drop_returns_to_pool() {
+        let free_ids = Arc::new(Mutex::new(vec![100, 101, 102]));
+        {
+            let scoped_id = ScopedGroupId(101, Arc::downgrade(&free_ids));
+            assert_eq!(scoped_id.id(), 101);
+        }
+
+        // ID should be returned to pool
+        let pool = free_ids.lock().unwrap();
+        assert!(pool.contains(&101));
+        assert_eq!(pool.len(), 4); // Original 3 + returned 1
+    }
+
+    #[test]
+    fn test_scoped_group_id_take_prevents_return() {
+        let free_ids = Arc::new(Mutex::new(vec![100, 102, 103])); // Don't include 101 in original pool
+        {
+            let scoped_id = ScopedGroupId(101, Arc::downgrade(&free_ids));
+            let taken_id = scoped_id.take();
+            assert_eq!(taken_id, 101);
+        }
+
+        // ID should NOT be returned to pool since take() was called
+        let pool = free_ids.lock().unwrap();
+        assert!(!pool.contains(&101));
+        assert_eq!(pool.len(), 3); // Original 3, none returned since take() was called
+    }
+
+    #[test]
+    fn test_scoped_group_id_weak_reference_cleanup() {
+        let free_ids = Arc::new(Mutex::new(vec![100, 101, 102]));
+        let scoped_id = ScopedGroupId(101, Arc::downgrade(&free_ids));
+
+        // Drop the Arc, leaving only the weak reference
+        drop(free_ids);
+
+        // When ScopedGroupId is dropped, it should handle the dead weak
+        // reference gracefully
+        drop(scoped_id); // Should not panic
+    }
+
+    #[test]
+    fn test_multicast_group_data_generate_id_allocation() {
+        let mut mcast_data = MulticastGroupData::new();
+
+        // Generate first ID (Vec is used as stack, so pop() returns highest ID first)
+        let scoped_id1 = mcast_data.generate_group_id().unwrap();
+        assert_eq!(scoped_id1.id(), MulticastGroupId::MAX - 1); // Should be highest available ID
+
+        // Generate second ID
+        let scoped_id2 = mcast_data.generate_group_id().unwrap();
+        assert_eq!(scoped_id2.id(), MulticastGroupId::MAX - 2);
+
+        // Take the first ID to prevent return
+        let taken_id = scoped_id1.take();
+        assert_eq!(taken_id, MulticastGroupId::MAX - 1);
+
+        // Drop the second ID, it should return to pool
+        drop(scoped_id2);
+
+        // Generate third ID, should reuse the returned ID
+        let scoped_id3 = mcast_data.generate_group_id().unwrap();
+        assert_eq!(scoped_id3.id(), MulticastGroupId::MAX - 2); // Should reuse the returned ID
+    }
+
+    #[test]
+    fn test_multicast_group_data_id_exhaustion() {
+        let mut mcast_data = MulticastGroupData::new();
+
+        // Exhaust the pool
+        {
+            let mut pool = mcast_data.free_group_ids.lock().unwrap();
+            pool.clear();
+        }
+
+        // Should return error when no IDs available
+        let result = mcast_data.generate_group_id();
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            DpdError::McastGroupFailure(msg) => {
+                assert!(msg.contains("no free multicast group IDs available"));
+            }
+            _ => panic!("Expected McastGroupFailure error"),
+        }
+    }
+
+    #[test]
+    fn test_concurrent_id_allocation() {
+        let mcast_data = Arc::new(Mutex::new(MulticastGroupData::new()));
+        let mut handles = Vec::new();
+
+        // Spawn multiple threads to allocate IDs concurrently
+        for _ in 0..10 {
+            let mcast_data_clone = Arc::clone(&mcast_data);
+            let handle = thread::spawn(move || {
+                let mut data = mcast_data_clone.lock().unwrap();
+                let scoped_id = data.generate_group_id().unwrap();
+                let id = scoped_id.take();
+                id
+            });
+            handles.push(handle);
+        }
+
+        // Collect all allocated IDs
+        let mut allocated_ids = Vec::new();
+        for handle in handles {
+            allocated_ids.push(handle.join().unwrap());
+        }
+
+        // All IDs should be unique
+        allocated_ids.sort();
+        allocated_ids.dedup();
+        assert_eq!(allocated_ids.len(), 10);
+
+        // All IDs should be in valid range
+        for id in allocated_ids {
+            assert!(id >= MulticastGroupData::GENERATOR_START);
+            assert!(id < MulticastGroupId::MAX);
+        }
+    }
+
+    #[test]
+    fn test_concurrent_allocation_and_deallocation() {
+        let mcast_data = Arc::new(Mutex::new(MulticastGroupData::new()));
+        let mut handles = Vec::new();
+
+        // Spawn threads that allocate and immediately drop (deallocate)
+        for _ in 0..5 {
+            let mcast_data_clone = Arc::clone(&mcast_data);
+            let handle = thread::spawn(move || {
+                for _ in 0..10 {
+                    let scoped_id = {
+                        let mut data = mcast_data_clone.lock().unwrap();
+                        data.generate_group_id().unwrap()
+                    };
+                    drop(scoped_id);
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Pool should have all IDs back (minus any that might still be in use)
+        let pool_size = {
+            let data = mcast_data.lock().unwrap();
+            let pool_len = data.free_group_ids.lock().unwrap().len();
+            pool_len
+        };
+
+        // Should have close to the original number of IDs
+        let expected_size = (MulticastGroupId::MAX
+            - MulticastGroupData::GENERATOR_START)
+            as usize;
+        assert_eq!(pool_size, expected_size);
+    }
+
+    #[test]
+    fn test_id_range_boundaries() {
+        let mcast_data = MulticastGroupData::new();
+
+        // Check that initial pool contains correct range
+        let pool = mcast_data.free_group_ids.lock().unwrap();
+        let expected_size = (MulticastGroupId::MAX
+            - MulticastGroupData::GENERATOR_START)
+            as usize;
+        assert_eq!(pool.len(), expected_size);
+
+        // Check that minimum and maximum IDs are in range
+        assert!(pool.contains(&MulticastGroupData::GENERATOR_START));
+        assert!(pool.contains(&(MulticastGroupId::MAX - 1)));
+        assert!(!pool.contains(&(MulticastGroupData::GENERATOR_START - 1)));
+        assert!(!pool.contains(&MulticastGroupId::MAX));
+    }
+
+    #[test]
+    fn test_scoped_group_id_take_consumes() {
+        let free_ids = Arc::new(Mutex::new(vec![100, 101, 102]));
+        let scoped_id = ScopedGroupId(101, Arc::downgrade(&free_ids));
+
+        // Take should work and consume the ScopedGroupId
+        let taken_id = scoped_id.take();
+        assert_eq!(taken_id, 101);
+
+        let pool = free_ids.lock().unwrap();
+        assert_eq!(pool.len(), 3); // Original size, nothing returned since take() was called
+    }
+
+    #[test]
+    fn test_taken_ids_need_to_be_added_to_pool() {
+        // ScopedGroupId Drop only handles IDs that weren't taken
+        // Taken IDs (stored in groups) need manual cleanup during deletion
+        let free_ids = Arc::new(Mutex::new(vec![100, 101, 102]));
+        let initial_size = free_ids.lock().unwrap().len();
+
+        // Simulate successful group creation (IDs get taken)
+        let taken_id = {
+            let scoped_id = ScopedGroupId(200, Arc::downgrade(&free_ids));
+            scoped_id.take() // This prevents Drop cleanup
+        };
+
+        // Simulate failed group creation (ID gets dropped without take)
+        {
+            let _scoped_id = ScopedGroupId(201, Arc::downgrade(&free_ids));
+            // When this drops, Drop trait should return it to pool
+        }
+
+        let pool = free_ids.lock().unwrap();
+        assert_eq!(pool.len(), initial_size + 1); // Only the dropped ID (201) was returned
+        assert!(pool.contains(&201)); // Dropped ID returned automatically
+        assert!(!pool.contains(&taken_id)); // Taken ID (200) NOT returned
+
+        // Taken IDs need manual cleanup (as delete_multicast_groups does)
+        drop(pool);
+        {
+            let mut pool = free_ids.lock().unwrap();
+            if taken_id >= 100 {
+                // Simulate GENERATOR_START check
+                pool.push(taken_id);
+            }
+        }
+
+        let final_pool = free_ids.lock().unwrap();
+        assert_eq!(final_pool.len(), initial_size + 2); // Both IDs now returned
+        assert!(final_pool.contains(&taken_id)); // Taken ID returned via manual cleanup
+        assert!(final_pool.contains(&201)); // Dropped ID returned via Drop trait
     }
 }
