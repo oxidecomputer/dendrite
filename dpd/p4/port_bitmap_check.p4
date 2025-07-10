@@ -6,7 +6,7 @@
 
 	action check_port_bitmap_0(bit<32> bit_mask) {
 		meta.bitmap_result = meta.decap_ports_0 & bit_mask;
-    }
+	}
 
 	action check_port_bitmap_1(bit<32> bit_mask) {
 		meta.bitmap_result = meta.decap_ports_1 & bit_mask;
