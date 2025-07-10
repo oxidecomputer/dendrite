@@ -1413,7 +1413,7 @@ fn ensure_external_group_exists(
         && members.iter().any(|m| m.direction == Direction::External)
     {
         let scoped_group_id = pre_allocated_id.ok_or_else(|| {
-            DpdError::Invalid(
+            DpdError::Other(
                 "external group ID should have been pre-allocated".to_string(),
             )
         })?;
@@ -1436,7 +1436,7 @@ fn ensure_underlay_group_exists(
         && members.iter().any(|m| m.direction == Direction::Underlay)
     {
         let scoped_group_id = pre_allocated_id.ok_or_else(|| {
-            DpdError::Invalid(
+            DpdError::Other(
                 "underlay group ID should have been pre-allocated".to_string(),
             )
         })?;
