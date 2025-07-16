@@ -17,6 +17,7 @@ pub const TABLE_NAME: &str = "pipe.Ingress.nat_ingress.nat_only";
 
 #[derive(MatchParse, Debug, Hash)]
 struct MatchKey {
+    #[match_xlate(name = "ingress_port")]
     in_port: u16,
 }
 

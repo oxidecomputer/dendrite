@@ -55,22 +55,23 @@ enum IndexAction {
     Index { idx: u16, slots: u8 },
 }
 
-// Add an entry to the route->index table
+/// Add an entry to the route->index table
 pub fn add_route_index(
     s: &Switch,
     cidr: &Ipv4Net,
     idx: u16,
     slots: u8,
 ) -> DpdResult<()> {
-    let match_key = RouteKey { dst_addr: *cidr };
     let action_data = IndexAction::Index { idx, slots };
+
+    let match_key = RouteKey { dst_addr: *cidr };
 
     match s.table_entry_add(TableType::RouteIdxIpv4, &match_key, &action_data) {
         Ok(()) => {
             info!(s.log, "added ipv4 route entry";
 		    "route" => %cidr,
 		    "index" => %idx,
-                    "slots" => %slots);
+            "slots" => %slots);
             Ok(())
         }
         Err(e) => {
@@ -84,7 +85,7 @@ pub fn add_route_index(
     }
 }
 
-// Remove an entry from the route->index table
+/// Remove an entry from the route->index table
 pub fn delete_route_index(s: &Switch, cidr: &Ipv4Net) -> DpdResult<()> {
     let match_key = RouteKey { dst_addr: *cidr };
 

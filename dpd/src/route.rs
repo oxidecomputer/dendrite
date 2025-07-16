@@ -86,6 +86,7 @@
 //                                         6        (1, 172.17.10.1, 1)
 //                                         7        (5, 172.17.14.1, 0)
 //
+//
 // Still todo:
 //    - Implement this multipath support for IPv6.  This should be a simple
 //      copy-and-paste of the IPv4 implementation.  This is currently blocked on
@@ -153,6 +154,7 @@ impl<T: Clone> RouteEntry<T> {
     }
 }
 
+/// A Vlan identifier, made up of a port, link, and vlan tag.
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone)]
 struct VlanId {
     // The switch port out which routed traffic is sent.
@@ -164,11 +166,7 @@ struct VlanId {
 }
 
 impl VlanId {
-    pub fn new(
-        port_id: PortId,
-        link_id: LinkId,
-        vlan_id: u16,
-    ) -> DpdResult<Self> {
+    fn new(port_id: PortId, link_id: LinkId, vlan_id: u16) -> DpdResult<Self> {
         if vlan_id > 0 {
             common::network::validate_vlan(vlan_id)?;
         }
@@ -454,6 +452,7 @@ fn replace_route_targets_ipv4(
 
     // Insert all the entries into the table
     let mut idx = new_entry.index;
+
     for target in targets {
         if let Err(e) = table::route_ipv4::add_route_target(
             switch,
@@ -742,6 +741,7 @@ pub fn delete_route_ipv4_locked(
         .v4
         .remove(&subnet)
         .ok_or(DpdError::Missing("no such route".into()))?;
+
     cleanup_route_ipv4(switch, route_data, Some(subnet), entry)
 }
 

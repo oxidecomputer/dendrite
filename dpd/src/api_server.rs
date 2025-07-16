@@ -39,6 +39,7 @@ use crate::fault::Fault;
 use crate::link::LinkFsmCounters;
 use crate::link::LinkId;
 use crate::link::LinkUpCounter;
+use crate::mcast;
 use crate::oxstats;
 use crate::port_map::BackplaneLink;
 use crate::route::Ipv4Route;
@@ -2551,6 +2552,10 @@ async fn reset_all(
         error!(switch.log, "failed to reset ipv6 nat table: {:?}", e);
         err = Some(e);
     }
+    if let Err(e) = mcast::reset(switch) {
+        error!(switch.log, "failed to reset multicast state: {:?}", e);
+        err = Some(e);
+    }
 
     match err {
         Some(e) => Err(e.into()),
@@ -3061,6 +3066,296 @@ async fn counter_get(
         .map_err(HttpError::from)
 }
 
+/// Used to identify a multicast group by IP address, the main
+/// identifier for a multicast group.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MulticastGroupIpParam {
+    pub group_ip: IpAddr,
+}
+
+/// Used to identify a multicast group by ID.
+///
+/// If not provided, it will return all multicast groups.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MulticastGroupIdParam {
+    pub group_id: Option<mcast::MulticastGroupId>,
+}
+
+/**
+ * Create an external-only multicast group configuration.
+ *
+ * External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast
+ * traffic that doesn't require replication infrastructure. These groups use
+ * simple forwarding tables and require a NAT target.
+ */
+#[endpoint {
+    method = POST,
+    path = "/multicast/external-groups",
+}]
+async fn multicast_group_create_external(
+    rqctx: RequestContext<Arc<Switch>>,
+    group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
+) -> Result<HttpResponseCreated<mcast::MulticastGroupResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let entry = group.into_inner();
+
+    mcast::add_group_external(switch, entry)
+        .map(HttpResponseCreated)
+        .map_err(HttpError::from)
+}
+
+/**
+ * Create an internal multicast group configuration.
+ *
+ * Internal groups are used for admin-scoped IPv6 multicast traffic that
+ * requires replication infrastructure. These groups support both external
+ * and underlay members with full replication capabilities.
+ */
+#[endpoint {
+    method = POST,
+    path = "/multicast/groups",
+}]
+async fn multicast_group_create(
+    rqctx: RequestContext<Arc<Switch>>,
+    group: TypedBody<mcast::MulticastGroupCreateEntry>,
+) -> Result<HttpResponseCreated<mcast::MulticastGroupResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let entry = group.into_inner();
+
+    mcast::add_group_internal(switch, entry)
+        .map(HttpResponseCreated)
+        .map_err(HttpError::from)
+}
+
+/**
+ * Delete a multicast group configuration by IP address.
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/groups/{group_ip}",
+}]
+async fn multicast_group_delete(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastGroupIpParam>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let ip = path.into_inner().group_ip;
+
+    mcast::del_group(switch, ip)
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+
+/**
+ * Reset all multicast group configurations.
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/groups",
+}]
+async fn multicast_reset(
+    rqctx: RequestContext<Arc<Switch>>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+
+    mcast::reset(switch)
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+
+/**
+ * Get the multicast group configuration for a given group IP address.
+ */
+#[endpoint {
+    method = GET,
+    path = "/multicast/groups/{group_ip}",
+}]
+async fn multicast_group_get(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastGroupIpParam>,
+) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let ip = path.into_inner().group_ip;
+
+    // Get the multicast group
+    mcast::get_group(switch, ip)
+        .map(HttpResponseOk)
+        .map_err(HttpError::from)
+}
+
+/**
+ * Update an internal multicast group configuration for a given group IP address.
+ *
+ * Internal groups are used for admin-scoped IPv6 multicast traffic that
+ * requires replication infrastructure with external and underlay members.
+ */
+#[endpoint {
+    method = PUT,
+    path = "/multicast/groups/{group_ip}",
+}]
+async fn multicast_group_update(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastGroupIpParam>,
+    group: TypedBody<mcast::MulticastGroupUpdateEntry>,
+) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let ip = path.into_inner().group_ip;
+
+    let ipv6 = match ip {
+        IpAddr::V6(ipv6) => ipv6,
+        IpAddr::V4(_) => {
+            return Err(HttpError::for_bad_request(
+                None,
+                "Internal multicast groups must use IPv6 addresses".to_string(),
+            ));
+        }
+    };
+
+    mcast::modify_group_internal(switch, ipv6, group.into_inner())
+        .map(HttpResponseOk)
+        .map_err(HttpError::from)
+}
+
+/**
+ * Update an external-only multicast group configuration for a given group IP address.
+ *
+ * External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast
+ * traffic that doesn't require replication infrastructure.
+ */
+#[endpoint {
+    method = PUT,
+    path = "/multicast/external-groups/{group_ip}",
+}]
+async fn multicast_group_update_external(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<MulticastGroupIpParam>,
+    group: TypedBody<mcast::MulticastGroupUpdateExternalEntry>,
+) -> Result<HttpResponseCreated<mcast::MulticastGroupResponse>, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let entry = group.into_inner();
+    let ip = path.into_inner().group_ip;
+
+    mcast::modify_group_external(switch, ip, entry)
+        .map(HttpResponseCreated)
+        .map_err(HttpError::from)
+}
+
+/**
+ * List all multicast groups.
+ */
+#[endpoint {
+    method = GET,
+    path = "/multicast/groups",
+}]
+async fn multicast_groups_list(
+    rqctx: RequestContext<Arc<Switch>>,
+    query_params: Query<
+        PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+    >,
+) -> Result<HttpResponseOk<ResultsPage<mcast::MulticastGroupResponse>>, HttpError>
+{
+    let switch: &Switch = rqctx.context();
+
+    // If a group ID is provided, get the group by ID
+
+    // If no group ID is provided, paginate through the groups
+    let pag_params = query_params.into_inner();
+    let Ok(limit) = usize::try_from(rqctx.page_limit(&pag_params)?.get())
+    else {
+        return Err(DpdError::Invalid("Invalid page limit".to_string()).into());
+    };
+
+    let last_addr = match &pag_params.page {
+        WhichPage::First(..) => None,
+        WhichPage::Next(MulticastGroupIpParam { group_ip }) => Some(*group_ip),
+    };
+
+    let entries = mcast::get_range(switch, last_addr, limit, None);
+
+    Ok(HttpResponseOk(ResultsPage::new(
+        entries,
+        &EmptyScanParams {},
+        |e: &mcast::MulticastGroupResponse, _| MulticastGroupIpParam {
+            group_ip: e.ip(),
+        },
+    )?))
+}
+
+/**
+ * List all multicast groups with a given tag.
+ */
+#[endpoint {
+    method = GET,
+    path = "/multicast/tags/{tag}",
+}]
+async fn multicast_groups_list_by_tag(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<TagPath>,
+    query_params: Query<
+        PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+    >,
+) -> Result<HttpResponseOk<ResultsPage<mcast::MulticastGroupResponse>>, HttpError>
+{
+    let switch: &Switch = rqctx.context();
+    let tag = path.into_inner().tag;
+
+    let pag_params = query_params.into_inner();
+    let Ok(limit) = usize::try_from(rqctx.page_limit(&pag_params)?.get())
+    else {
+        return Err(DpdError::Invalid("Invalid page limit".to_string()).into());
+    };
+
+    let last_addr = match &pag_params.page {
+        WhichPage::First(..) => None,
+        WhichPage::Next(MulticastGroupIpParam { group_ip }) => Some(*group_ip),
+    };
+
+    let entries = mcast::get_range(switch, last_addr, limit, Some(&tag));
+    Ok(HttpResponseOk(ResultsPage::new(
+        entries,
+        &EmptyScanParams {},
+        |e: &mcast::MulticastGroupResponse, _| MulticastGroupIpParam {
+            group_ip: e.ip(),
+        },
+    )?))
+}
+
+/**
+ * Delete all multicast groups (and associated routes) with a given tag.
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/tags/{tag}",
+}]
+async fn multicast_reset_by_tag(
+    rqctx: RequestContext<Arc<Switch>>,
+    path: Path<TagPath>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+    let tag = path.into_inner().tag;
+
+    mcast::reset_tag(switch, &tag)
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+
+/**
+ * Delete all multicast groups (and associated routes) without a tag.
+ */
+#[endpoint {
+    method = DELETE,
+    path = "/multicast/untagged",
+}]
+async fn multicast_reset_untagged(
+    rqctx: RequestContext<Arc<Switch>>,
+) -> Result<HttpResponseDeleted, HttpError> {
+    let switch: &Switch = rqctx.context();
+
+    mcast::reset_untagged(switch)
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+}
+
 pub fn http_api() -> dropshot::ApiDescription<Arc<Switch>> {
     let mut api = dropshot::ApiDescription::new();
     api.register(build_info).unwrap();
@@ -3188,6 +3483,18 @@ pub fn http_api() -> dropshot::ApiDescription<Arc<Switch>> {
 
     api.register(ipv4_nat_generation).unwrap();
     api.register(ipv4_nat_trigger_update).unwrap();
+
+    api.register(multicast_group_create).unwrap();
+    api.register(multicast_group_create_external).unwrap();
+    api.register(multicast_reset).unwrap();
+    api.register(multicast_group_delete).unwrap();
+    api.register(multicast_group_update).unwrap();
+    api.register(multicast_group_update_external).unwrap();
+    api.register(multicast_group_get).unwrap();
+    api.register(multicast_groups_list).unwrap();
+    api.register(multicast_groups_list_by_tag).unwrap();
+    api.register(multicast_reset_by_tag).unwrap();
+    api.register(multicast_reset_untagged).unwrap();
 
     #[cfg(feature = "tofino_asic")]
     crate::tofino_api_server::init(&mut api);

@@ -1,3 +1,9 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/
+//
+// Copyright 2025 Oxide Computer Company
+
 const bit<16> ETHERTYPE_IPV4	= 0x0800;
 const bit<16> ETHERTYPE_ARP	= 0x0806;
 const bit<16> ETHERTYPE_VLAN	= 0x8100;
@@ -152,6 +158,7 @@ header geneve_h {
 
 const bit<16> GENEVE_OPT_CLASS_OXIDE	= 0x0129;
 const bit<7> GENEVE_OPT_OXIDE_EXTERNAL	= 0x00;
+const bit<7> GENEVE_OPT_OXIDE_MCAST	= 0x01; // Multicast tag
 
 header geneve_opt_h {
 	bit<16> class;
@@ -161,13 +168,30 @@ header geneve_opt_h {
 	bit<5> opt_len;
 }
 
+/* Geneve option for an `mcast_tag`.
+ * This is a 2-bit field that indicates the type of
+ * multicast traffic:
+ * 0 - Replicate packets to ports set for external multicast traffic
+ * 1 - Replicate packets to ports set for underlay multicast traffic
+ * 2 - Replicate packets to ports set for underlay and external multicast
+       traffic (bifurcated)
+ *
+ * The rest of the option is reserved.
+*/
+header geneve_opt_mcast_h {
+	bit<2> mcast_tag;
+	bit<30> reserved;
+}
+
 // Since we're a TEP, we need to push and read Geneve options.
 // `varbit` only allows us to carry.
 // XXX: For parsing past one option, add `extern ParserCounter`
 //      to oxidecomputer/p4/lang/p4rs/src/externs.rs, consider
 //      storing via `header_union`s.
 struct geneve_opt_headers_t {
-	geneve_opt_h	ox_external_tag;
+	geneve_opt_h ox_external_tag;
+	// Multicast-specific options
+	geneve_opt_mcast_h ox_mcast_tag;
 }
 
 struct sidecar_headers_t {
@@ -189,43 +213,4 @@ struct sidecar_headers_t {
 	icmp_h		inner_icmp;
 	tcp_h		inner_tcp;
 	udp_h		inner_udp;
-}
-
-struct sidecar_ingress_meta_t {
-	PortId_t in_port;		// ingress port for this packet
-
-	bool ipv4_checksum_err;		// failed ipv4 checksum
-	bool routed;			// packet routed at layer 3
-	bool is_switch_address;		// destination IP was a switch port
-	bool multicast;			// packet was multicast
-	bool service_routed;		// routed to or from a service routine
-	bool nat_egress;		// NATed packet from guest -> uplink
-	bool nat_ingress;		// NATed packet from uplink -> guest
-	bool nat_ingress_port;		// This port accepts only NAT traffic
-	ipv4_addr_t nexthop_ipv4;	// ip address of next router
-	ipv6_addr_t nexthop_ipv6;	// ip address of next router
-	bit<10> pkt_type;
-	bit<8> drop_reason;		// reason a packet was dropped
-
-	bit<16> l4_src_port;		// tcp or udp destination port
-	bit<16> l4_dst_port;		// tcp or udp destination port
-	ipv6_addr_t nat_ingress_tgt;
-	mac_addr_t nat_inner_mac;
-	geneve_vni_t nat_geneve_vni;
-
-	// If we modify an ICMP header, we need to recalculate its checksum.
-	// To do the math, we need the original checksum.
-	bool icmp_recalc;
-	bit<16> icmp_csum;
-
-	// Used when calculating outer UDP checksum for encapsulated NAT
-	// ingress packets
-	bit<16> body_checksum;		// residual csum for packet body
-	bit<16> l4_length;
-
-	// Used for responding to pings
-	mac_addr_t orig_src_mac;	// source mac address before rewriting
-	ipv4_addr_t orig_src_ipv4;	// original ipv4 source
-
-	ipv4_addr_t orig_dst_ipv4;	// original ipv4 target
 }

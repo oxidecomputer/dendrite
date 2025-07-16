@@ -25,15 +25,15 @@ pub const IPV6_TABLE_NAME: &str = "pipe.Ingress.filter.switch_ipv6_addr";
 struct Ipv4MatchKey {
     #[match_xlate(name = "orig_dst_ipv4")]
     dst_addr: Ipv4Addr,
-    #[match_xlate(name = "in_port", type = "mask")]
-    port: MatchMask,
+    #[match_xlate(name = "ingress_port", type = "mask")]
+    in_port: MatchMask,
 }
 
 #[derive(MatchParse, Hash)]
 struct Ipv6MatchKey {
     dst_addr: Ipv6Addr,
-    #[match_xlate(name = "in_port", type = "mask")]
-    port: MatchMask,
+    #[match_xlate(name = "ingress_port", type = "mask")]
+    in_port: MatchMask,
 }
 
 #[derive(ActionParse)]
@@ -72,14 +72,14 @@ const REPAIR_ATTEMPTS: usize = 3;
 fn match_keys_ipv4(ipv4: Ipv4Addr, port: u16) -> (Ipv4MatchKey, Ipv4MatchKey) {
     let claim_key = Ipv4MatchKey {
         dst_addr: ipv4,
-        port: MatchMask {
+        in_port: MatchMask {
             val: port.into(),
             mask: 0x1ffu16.into(),
         },
     };
     let drop_key = Ipv4MatchKey {
         dst_addr: ipv4,
-        port: MatchMask {
+        in_port: MatchMask {
             val: port.into(),
             mask: 0u16.into(),
         },
@@ -90,14 +90,14 @@ fn match_keys_ipv4(ipv4: Ipv4Addr, port: u16) -> (Ipv4MatchKey, Ipv4MatchKey) {
 fn match_keys_ipv6(ipv6: Ipv6Addr, port: u16) -> (Ipv6MatchKey, Ipv6MatchKey) {
     let claim_key = Ipv6MatchKey {
         dst_addr: ipv6,
-        port: MatchMask {
+        in_port: MatchMask {
             val: port.into(),
             mask: 0x1ffu16.into(),
         },
     };
     let drop_key = Ipv6MatchKey {
         dst_addr: ipv6,
-        port: MatchMask {
+        in_port: MatchMask {
             val: 0u16.into(),
             mask: 0u16.into(),
         },
@@ -108,7 +108,7 @@ fn match_keys_ipv6(ipv6: Ipv6Addr, port: u16) -> (Ipv6MatchKey, Ipv6MatchKey) {
 pub fn loopback_ipv4_add(s: &Switch, ipv4: Ipv4Addr) -> DpdResult<()> {
     let claim_key = Ipv4MatchKey {
         dst_addr: ipv4,
-        port: MatchMask {
+        in_port: MatchMask {
             val: 0u16.into(),
             mask: 0u16.into(),
         },
@@ -125,7 +125,7 @@ pub fn loopback_ipv4_add(s: &Switch, ipv4: Ipv4Addr) -> DpdResult<()> {
 pub fn loopback_ipv4_delete(s: &Switch, ipv4: Ipv4Addr) -> DpdResult<()> {
     let claim_key = Ipv4MatchKey {
         dst_addr: ipv4,
-        port: MatchMask {
+        in_port: MatchMask {
             val: 0u16.into(),
             mask: 0u16.into(),
         },
@@ -142,7 +142,7 @@ pub fn loopback_ipv4_delete(s: &Switch, ipv4: Ipv4Addr) -> DpdResult<()> {
 pub fn loopback_ipv6_add(s: &Switch, ipv6: Ipv6Addr) -> DpdResult<()> {
     let claim_key = Ipv6MatchKey {
         dst_addr: ipv6,
-        port: MatchMask {
+        in_port: MatchMask {
             val: 0u16.into(),
             mask: 0u16.into(),
         },
@@ -159,7 +159,7 @@ pub fn loopback_ipv6_add(s: &Switch, ipv6: Ipv6Addr) -> DpdResult<()> {
 pub fn loopback_ipv6_delete(s: &Switch, ipv6: Ipv6Addr) -> DpdResult<()> {
     let claim_key = Ipv6MatchKey {
         dst_addr: ipv6,
-        port: MatchMask {
+        in_port: MatchMask {
             val: 0u16.into(),
             mask: 0u16.into(),
         },

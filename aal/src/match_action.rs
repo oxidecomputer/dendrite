@@ -72,7 +72,7 @@ impl MatchData {
 /// The MatchParse trait defines the behavior needed to convert a high-level
 /// Match field into our intermediate representation.
 pub trait MatchParse {
-    /// Return all the name sand values of the key fields as strings
+    /// Return all the names and values of the key fields as strings
     fn key_values(&self) -> BTreeMap<String, String>;
     /// Convert the key Struct to a MatchData struct
     fn key_to_ir(&self) -> AsicResult<MatchData>;
@@ -451,6 +451,27 @@ impl From<bool> for ValueTypes {
         })
     }
 }
+
+impl TryFrom<&ValueTypes> for bool {
+    type Error = &'static str;
+
+    fn try_from(v: &ValueTypes) -> Result<Self, Self::Error> {
+        match v {
+            ValueTypes::U64(v) => {
+                if *v == 0 {
+                    Ok(false)
+                } else if *v == 1 {
+                    Ok(true)
+                } else {
+                    Err("value not a boolean")
+                }
+            }
+            _ => Err("value not a boolean"),
+        }
+    }
+}
+
+unwrap_value_entry!(bool);
 
 #[derive(Debug, Hash, Clone)]
 pub enum ValueTypes {

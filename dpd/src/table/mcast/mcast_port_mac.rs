@@ -4,15 +4,19 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use super::{MacTable, TableType};
+//! Table operations for multicast port MAC entries.
 
-pub const TABLE_NAME: &str = "pipe.Ingress.mac_rewrite.mac_rewrite";
+use crate::table::{MacTable, TableType};
 
+/// Table for multicast port MAC entries.
+pub const TABLE_NAME: &str = "pipe.Egress.mac_rewrite.mac_rewrite";
+
+/// Table for multicast port MAC entries.
 pub struct PortMacTable;
 
 impl MacTable for PortMacTable {
     fn table_type() -> TableType {
-        TableType::PortMac
+        TableType::PortMacMcast
     }
 
     fn table_name() -> &'static str {
