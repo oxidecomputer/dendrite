@@ -173,7 +173,7 @@ async fn build_info(client: &Client) -> anyhow::Result<()> {
 fn main() -> anyhow::Result<()> {
     oxide_tokio_rt::run_builder(
         &mut oxide_tokio_rt::Builder::new_current_thread(),
-        main_impl,
+        main_impl(),
     )
 }
 
