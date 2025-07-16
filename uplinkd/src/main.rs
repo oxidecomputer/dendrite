@@ -564,8 +564,11 @@ fn handle_signals(log: slog::Logger, tx: mpsc::Sender<Messages>) {
     }
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    oxide_tokio_rt::run(main_impl)
+}
+
+async fn main_impl() -> anyhow::Result<()> {
     let opts = Opt::from_args();
 
     let mut global = Global {

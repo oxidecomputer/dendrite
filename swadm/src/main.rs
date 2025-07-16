@@ -170,8 +170,14 @@ async fn build_info(client: &Client) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    oxide_tokio_rt::run_builder(
+        &mut oxide_tokio_rt::Builder::new_current_thread(),
+        main_impl,
+    )
+}
+
+async fn main_impl() -> anyhow::Result<()> {
     let opts = GlobalOpts::from_args();
     let port = opts.port.unwrap_or_else(default_port);
     let host = opts.host.unwrap_or_else(|| "localhost".to_string());

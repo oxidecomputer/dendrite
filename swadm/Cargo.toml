@@ -12,6 +12,7 @@ colored.workspace = true
 common.workspace = true
 dpd-client.workspace = true
 futures.workspace = true
+oxide-tokio-rt.workspace = true
 oxnet.workspace = true
 slog.workspace = true
 structopt.workspace = true

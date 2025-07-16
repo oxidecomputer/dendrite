@@ -241,6 +241,11 @@ fn collect_binaries<T: ToString>(
     collect(src, dst, binaries)
 }
 
+#[expect(
+    clippy::disallowed_macros,
+    reason = "using `#[tokio::main]` in xtasks is fine, as they are not \
+     deployed in production"
+)]
 #[tokio::main]
 async fn main() {
     let task = Xtasks::from_args();
