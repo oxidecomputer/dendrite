@@ -565,7 +565,7 @@ fn handle_signals(log: slog::Logger, tx: mpsc::Sender<Messages>) {
 }
 
 fn main() -> anyhow::Result<()> {
-    oxide_tokio_rt::run(main_impl)
+    oxide_tokio_rt::run(main_impl())
 }
 
 async fn main_impl() -> anyhow::Result<()> {

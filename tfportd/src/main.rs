@@ -253,7 +253,7 @@ fn pcap_open(log: &slog::Logger, pkt_src: &str) -> anyhow::Result<pcap::Pcap> {
 }
 
 fn main() -> anyhow::Result<()> {
-    oxide_tokio_rt::run(main_impl)
+    oxide_tokio_rt::run(main_impl())
 }
 
 async fn main_impl() -> anyhow::Result<()> {
