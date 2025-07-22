@@ -32,6 +32,7 @@ tokio.workspace = true
 uuid.workspace = true
 
 omicron-common.workspace = true
+oxide-tokio-rt.workspace = true
 oximeter.workspace = true
 oximeter-instruments.workspace = true
 oximeter-producer.workspace = true

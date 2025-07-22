@@ -10,6 +10,7 @@ common.workspace = true
 
 anyhow.workspace = true
 libc.workspace = true
+oxide-tokio-rt.workspace = true
 oxnet.workspace = true
 signal-hook.workspace = true
 slog.workspace = true

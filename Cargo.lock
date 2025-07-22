@@ -1324,6 +1324,7 @@ dependencies = [
  "nexus-client",
  "omicron-common",
  "openssl",
+ "oxide-tokio-rt",
  "oximeter",
  "oximeter-producer",
  "oxnet",
@@ -1427,7 +1428,7 @@ dependencies = [
  "slog-bunyan",
  "slog-json",
  "slog-term",
- "thiserror 2.0.11",
+ "thiserror 2.0.12",
  "tokio",
  "tokio-rustls 0.25.0",
  "toml 0.8.19",
@@ -2582,6 +2583,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc6d6206008e25125b1f97fbe5d309eb7b85141cf9199d52dbd3729a1584dd16"
 
 [[package]]
+name = "io-uring"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b86e202f00093dcba4275d4636b93ef9dd75d025ae560d2521b45ea28ab49013"
+dependencies = [
+ "bitflags 2.6.0",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "ipconfig"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3586,7 +3598,7 @@ dependencies = [
  "oxide-vpc",
  "postcard",
  "serde",
- "thiserror 2.0.11",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -3594,6 +3606,17 @@ name = "owo-colors"
 version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb37767f6569cd834a413442455e0f066d0d522de8630436e2a1761d9726ba56"
+
+[[package]]
+name = "oxide-tokio-rt"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84bd87abf37c68d414e4df90a545857542140e07206f75039b8f63b244da87b8"
+dependencies = [
+ "anyhow",
+ "tokio",
+ "tokio-dtrace",
+]
 
 [[package]]
 name = "oxide-vpc"
@@ -4250,7 +4273,7 @@ dependencies = [
  "serde",
  "serde_json",
  "syn 2.0.100",
- "thiserror 2.0.11",
+ "thiserror 2.0.12",
  "typify 0.3.0",
  "unicode-ident",
 ]
@@ -4412,7 +4435,7 @@ dependencies = [
  "rustc-hash",
  "rustls 0.23.16",
  "socket2",
- "thiserror 2.0.11",
+ "thiserror 2.0.12",
  "tokio",
  "tracing",
 ]
@@ -4431,7 +4454,7 @@ dependencies = [
  "rustls 0.23.16",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.11",
+ "thiserror 2.0.12",
  "tinyvec",
  "tracing",
  "web-time",
@@ -5526,6 +5549,7 @@ dependencies = [
  "common 0.1.0",
  "dpd-client",
  "futures",
+ "oxide-tokio-rt",
  "oxnet",
  "slog",
  "structopt",
@@ -5736,6 +5760,7 @@ dependencies = [
  "libc",
  "lldpd-client",
  "omicron-common",
+ "oxide-tokio-rt",
  "oximeter",
  "oximeter-instruments",
  "oximeter-producer",
@@ -5766,11 +5791,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.11"
+version = "2.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d452f284b73e6d76dd36758a0c8684b1d5be31f92b89d07fd5822175732206fc"
+checksum = "567b8a2dae586314f7be2a752ec7474332959c6460e02bde30d702a66d488708"
 dependencies = [
- "thiserror-impl 2.0.11",
+ "thiserror-impl 2.0.12",
 ]
 
 [[package]]
@@ -5786,9 +5811,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.11"
+version = "2.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26afc1baea8a989337eeb52b6e72a039780ce45c3edfcc9c5b9d112feeb173c2"
+checksum = "7f7cf42b4507d8ea322120659672cf1b9dbb93f8f2d4ecfd6e51350ff5b17a1d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5885,21 +5910,34 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.44.2"
+version = "1.46.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6b88822cbe49de4185e3a4cbf8321dd487cf5fe0c5c65695fef6346371e9c48"
+checksum = "0cc3a2344dafbe23a245241fe8b09735b521110d30fcefbbd5feb1797ca35d17"
 dependencies = [
  "backtrace",
  "bytes",
+ "io-uring",
  "libc",
  "mio",
  "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
+ "slab",
  "socket2",
  "tokio-macros",
  "tracing",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "tokio-dtrace"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5eb4bcf85c373ff09a8beb87a477c2df185cd8842a770386a88bc3ff7ac5abb"
+dependencies = [
+ "thiserror 2.0.12",
+ "tokio",
+ "usdt 0.5.0",
 ]
 
 [[package]]
@@ -6175,7 +6213,7 @@ dependencies = [
  "slog-async",
  "slog-term",
  "tabled",
- "thiserror 2.0.11",
+ "thiserror 2.0.12",
  "tokio",
  "transceiver-decode",
  "transceiver-messages",
@@ -6191,7 +6229,7 @@ dependencies = [
  "schemars",
  "serde",
  "static_assertions",
- "thiserror 2.0.11",
+ "thiserror 2.0.12",
  "transceiver-messages",
 ]
 
@@ -6205,7 +6243,7 @@ dependencies = [
  "hubpack",
  "schemars",
  "serde",
- "thiserror 2.0.11",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -6282,7 +6320,7 @@ dependencies = [
  "serde",
  "serde_json",
  "syn 2.0.100",
- "thiserror 2.0.11",
+ "thiserror 2.0.12",
  "unicode-ident",
 ]
 
@@ -6420,6 +6458,7 @@ dependencies = [
  "anyhow",
  "common 0.1.0",
  "libc",
+ "oxide-tokio-rt",
  "oxnet",
  "signal-hook",
  "slog",

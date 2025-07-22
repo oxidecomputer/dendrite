@@ -797,13 +797,12 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::main(flavor = "multi_thread")]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     let args = Args::from_args();
 
     match args {
         Args::Openapi => print_openapi(),
-        Args::Run(opt) => run_dpd(opt).await,
+        Args::Run(opt) => oxide_tokio_rt::run(run_dpd(opt)),
     }
 }
 
