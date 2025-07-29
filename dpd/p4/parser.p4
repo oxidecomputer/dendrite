@@ -394,15 +394,15 @@ parser IngressParser(
 	}
 
 	state parse_geneve_opt {
-		pkt.extract(hdr.geneve_opts.ox_external_tag);
-		transition select(hdr.geneve_opts.ox_external_tag.class) {
+		pkt.extract(hdr.geneve_opts.opt_tag);
+		transition select(hdr.geneve_opts.opt_tag.class) {
 			GENEVE_OPT_CLASS_OXIDE: parse_geneve_ox_opt;
 			default: reject;
 		}
 	}
 
 	state parse_geneve_ox_opt {
-		transition select(hdr.geneve_opts.ox_external_tag.type) {
+		transition select(hdr.geneve_opts.opt_tag.type) {
 			GENEVE_OPT_OXIDE_EXTERNAL: geneve_parsed;
 			GENEVE_OPT_OXIDE_MCAST: parse_geneve_mcast_tag;
 			default: reject;
@@ -587,22 +587,29 @@ parser EgressParser(
 	}
 
 	state parse_geneve_opt {
-		pkt.extract(hdr.geneve_opts.ox_external_tag);
-		transition select(hdr.geneve_opts.ox_external_tag.class) {
+		pkt.extract(hdr.geneve_opts.opt_tag);
+		transition select(hdr.geneve_opts.opt_tag.class) {
 			GENEVE_OPT_CLASS_OXIDE: parse_geneve_ox_opt;
 			default: reject;
 		}
 	}
 
 	state parse_geneve_ox_opt {
-		transition select(hdr.geneve_opts.ox_external_tag.type) {
+		transition select(hdr.geneve_opts.opt_tag.type) {
+			GENEVE_OPT_OXIDE_EXTERNAL: geneve_parsed;
 			GENEVE_OPT_OXIDE_MCAST: parse_geneve_mcast_tag;
+			GENEVE_OPT_OXIDE_MSS: parse_geneve_mss_tag;
 			default: reject;
 		}
 	}
 
 	state parse_geneve_mcast_tag {
 		pkt.extract(hdr.geneve_opts.ox_mcast_tag);
+		transition geneve_parsed;
+	}
+
+	state parse_geneve_mss_tag {
+		pkt.extract(hdr.geneve_opts.ox_mss_tag);
 		transition geneve_parsed;
 	}
 

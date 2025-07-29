@@ -158,7 +158,8 @@ header geneve_h {
 
 const bit<16> GENEVE_OPT_CLASS_OXIDE	= 0x0129;
 const bit<7> GENEVE_OPT_OXIDE_EXTERNAL	= 0x00;
-const bit<7> GENEVE_OPT_OXIDE_MCAST	= 0x01; // Multicast tag
+const bit<7> GENEVE_OPT_OXIDE_MCAST	= 0x01;
+const bit<7> GENEVE_OPT_OXIDE_MSS	= 0x02;
 
 header geneve_opt_h {
 	bit<16> class;
@@ -183,15 +184,28 @@ header geneve_opt_mcast_h {
 	bit<30> reserved;
 }
 
+
+header geneve_opt_mss_h {
+	bit<32> mss;
+}
+
 // Since we're a TEP, we need to push and read Geneve options.
 // `varbit` only allows us to carry.
 // XXX: For parsing past one option, add `extern ParserCounter`
-//      to oxidecomputer/p4/lang/p4rs/src/externs.rs, consider
-//      storing via `header_union`s.
+//      to oxidecomputer/p4/lang/p4rs/src/externs.rs.
+// XXX: these are stored adjacently because:
+//      `error: Unsupported type header_union geneve_opt_body_h`
 struct geneve_opt_headers_t {
-	geneve_opt_h ox_external_tag;
-	// Multicast-specific options
+	geneve_opt_h opt_tag;
+
+	// External Packet tag (0x00)
+	// <<no body>>
+
+	// Multicast-specific options (0x01)
 	geneve_opt_mcast_h ox_mcast_tag;
+
+	// MSS option [OPTE-only] (0x02)
+	geneve_opt_mss_h ox_mss_tag;
 }
 
 struct sidecar_headers_t {

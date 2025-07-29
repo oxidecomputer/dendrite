@@ -22,13 +22,13 @@ const bit<9> USER_SPACE_SERVICE_PORT = 192;
 
 // Includes the checksum for the original data, the geneve header, the
 // outer udp header, and the outer ipv6 pseudo-header.
-// NOTE: safe to include geneve ox_external_tag here as it is filled
+// NOTE: safe to include geneve opt_tag here as it is filled
 // on nat_ingress, and nat_checksum is only computer on nat_ingress.
 #define COMMON_FIELDS                \
     meta.body_checksum,              \
     hdr.inner_eth,                   \
     hdr.geneve,                      \
-    hdr.geneve_opts.ox_external_tag, \
+    hdr.geneve_opts.opt_tag, \
     hdr.udp.src_port,                \
     hdr.udp.dst_port,                \
     hdr.udp.hdr_length,              \
@@ -467,13 +467,13 @@ control NatIngress (
 		hdr.geneve.vni = meta.nat_geneve_vni;
 		hdr.geneve.reserved2 = 0;
 
-		// 4-byte option -- 'VPC-external packet'.
-		hdr.geneve_opts.ox_external_tag.setValid();
-		hdr.geneve_opts.ox_external_tag.class = GENEVE_OPT_CLASS_OXIDE;
-		hdr.geneve_opts.ox_external_tag.crit = 0;
-		hdr.geneve_opts.ox_external_tag.type = GENEVE_OPT_OXIDE_EXTERNAL;
-		hdr.geneve_opts.ox_external_tag.reserved = 0;
-		hdr.geneve_opts.ox_external_tag.opt_len = 0;
+		// 4-byte option type 0x00 -- 'VPC-external packet'.
+		hdr.geneve_opts.opt_tag.setValid();
+		hdr.geneve_opts.opt_tag.class = GENEVE_OPT_CLASS_OXIDE;
+		hdr.geneve_opts.opt_tag.crit = 0;
+		hdr.geneve_opts.opt_tag.type = GENEVE_OPT_OXIDE_EXTERNAL;
+		hdr.geneve_opts.opt_tag.reserved = 0;
+		hdr.geneve_opts.opt_tag.opt_len = 0;
 
 		// 14 bytes
 		hdr.inner_eth.setValid();
@@ -748,7 +748,7 @@ control NatEgress (
 
 		// Should never be valid for outbound traffic, but no harm
 		// in being careful.
-		hdr.geneve_opts.ox_external_tag.setInvalid();
+		hdr.geneve_opts.opt_tag.setInvalid();
 		hdr.geneve_opts.ox_mcast_tag.setInvalid();
 	}
 
@@ -1784,8 +1784,9 @@ control MulticastEgress (
 		hdr.tcp.setInvalid();
 		hdr.udp.setInvalid();
 		hdr.geneve.setInvalid();
-		hdr.geneve_opts.ox_external_tag.setInvalid();
+		hdr.geneve_opts.opt_tag.setInvalid();
 		hdr.geneve_opts.ox_mcast_tag.setInvalid();
+		hdr.geneve_opts.ox_mss_tag.setInvalid();
 	}
 
 	#include <port_bitmap_check.p4>
