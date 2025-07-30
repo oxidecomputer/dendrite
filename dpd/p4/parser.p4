@@ -379,7 +379,7 @@ parser IngressParser(
 		bit<16> curr_opt = pkt.lookahead<bit<16>>();
 		transition select(curr_opt) {
 			GENEVE_OPT_CLASS_OXIDE: parse_geneve_ox_opt;
-			default: reject;
+			default: geneve_unknown;
 		}
 	}
 
@@ -391,18 +391,17 @@ parser IngressParser(
 			GENEVE_OPT_OXIDE_EXTERNAL: parse_geneve_ext_tag;
 			GENEVE_OPT_OXIDE_MCAST: parse_geneve_mcast_tag;
 			GENEVE_OPT_OXIDE_MSS: parse_geneve_mss_tag;
-			default: reject;
+			default: geneve_unknown;
 		}
 	}
 
 	state parse_geneve_ext_tag {
 		pkt.extract(hdr.geneve_opts.oxg_ext_tag);
 
-		// if (curr_opt.opt_len != 0) {
-		// 	meta.drop_reason = DROP_GENEVE_OPTION_MALFORMED;
-		// }
-
-		transition geneve_opt_parsed;
+		transition select (hdr.geneve_opts.oxg_ext_tag.opt_len) {
+			0: geneve_opt_parsed;
+			_: geneve_malformed;
+		}
 	}
 
 	state parse_geneve_mcast_tag {
@@ -410,11 +409,10 @@ parser IngressParser(
 		pkt.extract(hdr.geneve_opts.oxg_mcast_tag);
 		pkt.extract(hdr.geneve_opts.oxg_mcast);
 
-		// if (curr_opt.opt_len != 1) {
-		// 	meta.drop_reason = DROP_GENEVE_OPTION_MALFORMED;
-		// }
-
-		transition geneve_opt_parsed;
+		transition select (hdr.geneve_opts.oxg_mcast_tag.opt_len) {
+			1: geneve_opt_parsed;
+			_: geneve_malformed;
+		}
 	}
 
 	state parse_geneve_mss_tag {
@@ -422,29 +420,40 @@ parser IngressParser(
 		pkt.extract(hdr.geneve_opts.oxg_mss_tag);
 		pkt.extract(hdr.geneve_opts.oxg_mss);
 
-		// if (curr_opt.opt_len != 1) {
-		// 	meta.drop_reason = DROP_GENEVE_OPTION_MALFORMED;
-		// }
-
-		transition geneve_opt_parsed;
+		transition select (hdr.geneve_opts.oxg_mss_tag.opt_len) {
+			1: geneve_opt_parsed;
+			_: geneve_malformed;
+		}
 	}
 
 	state geneve_opt_parsed {
-		if (geneve_chunks.is_negative()) {
-			meta.drop_reason = DROP_GENEVE_OPTION_TOO_LONG;
+		transition select (geneve_chunks.is_zero(), geneve_chunks.is_negative()) {
+			(false, false): parse_geneve_opt;
+			(true, false): geneve_parsed;
+			(false, true): geneve_bad_size;
+			// Unreachable.
+			default: reject;
 		}
+	}
 
-		// transition select (geneve_chunks.is_zero(), meta.drop_reason.isValid() && meta.drop_reason != 0) {
-		// 	(false, false): parse_geneve_opt;
-		// 	(true, false): geneve_parsed;
-		// 	(false, true): accept;
-		// 	// Unreachable.
-		// 	default: reject;
-		// }
-		transition select (geneve_chunks.is_zero()) {
-			false: parse_geneve_opt;
-			true: geneve_parsed;
-		}
+	state geneve_malformed {
+		meta.drop_reason = DROP_GENEVE_OPTION_MALFORMED;
+		meta.is_valid = false;
+		transition accept;
+	}
+
+	state geneve_bad_size {
+		meta.drop_reason = DROP_GENEVE_OPTION_TOO_LONG;
+		meta.is_valid = false;
+		transition accept;
+	}
+
+	// We may, in future, want to varbit every remaining option
+	// once we hit one we don't understand, for forward-compatibility.
+	state geneve_unknown {
+		meta.drop_reason = DROP_GENEVE_OPTION_UNKNOWN;
+		meta.is_valid = false;
+		transition accept;
 	}
 
 	state geneve_parsed {
@@ -644,11 +653,10 @@ parser EgressParser(
 	state parse_geneve_ext_tag {
 		pkt.extract(hdr.geneve_opts.oxg_ext_tag);
 
-		// if (curr_opt.opt_len != 0) {
-		// 	meta.drop_reason = DROP_GENEVE_OPTION_MALFORMED;
-		// }
-
-		transition geneve_opt_parsed;
+		transition select (hdr.geneve_opts.oxg_ext_tag.opt_len) {
+			0: geneve_opt_parsed;
+			_: reject;
+		}
 	}
 
 	state parse_geneve_mcast_tag {
@@ -656,11 +664,10 @@ parser EgressParser(
 		pkt.extract(hdr.geneve_opts.oxg_mcast_tag);
 		pkt.extract(hdr.geneve_opts.oxg_mcast);
 
-		// if (curr_opt.opt_len != 1) {
-		// 	meta.drop_reason = DROP_GENEVE_OPTION_MALFORMED;
-		// }
-
-		transition geneve_opt_parsed;
+		transition select (hdr.geneve_opts.oxg_mcast_tag.opt_len) {
+			1: geneve_opt_parsed;
+			_: reject;
+		}
 	}
 
 	state parse_geneve_mss_tag {
@@ -668,28 +675,19 @@ parser EgressParser(
 		pkt.extract(hdr.geneve_opts.oxg_mss_tag);
 		pkt.extract(hdr.geneve_opts.oxg_mss);
 
-		// if (curr_opt.opt_len != 1) {
-		// 	meta.drop_reason = DROP_GENEVE_OPTION_MALFORMED;
-		// }
-
-		transition geneve_opt_parsed;
+		transition select (hdr.geneve_opts.oxg_mss_tag.opt_len) {
+			1: geneve_opt_parsed;
+			_: reject;
+		}
 	}
 
 	state geneve_opt_parsed {
-		if (geneve_chunks.is_negative()) {
-			meta.drop_reason = DROP_GENEVE_OPTION_TOO_LONG;
-		}
-
-		// transition select (geneve_chunks.is_zero(), meta.drop_reason.isValid() && meta.drop_reason != 0) {
-		// 	(false, false): parse_geneve_opt;
-		// 	(true, false): geneve_parsed;
-		// 	(false, true): accept;
-		// 	// Unreachable.
-		// 	default: reject;
-		// }
-		transition select (geneve_chunks.is_zero()) {
-			false: parse_geneve_opt;
-			true: geneve_parsed;
+		transition select (geneve_chunks.is_zero(), geneve_chunks.is_negative()) {
+			(false, false): parse_geneve_opt;
+			(true, false): geneve_parsed;
+			(false, true): reject;
+			// Unreachable.
+			default: reject;
 		}
 	}
 
