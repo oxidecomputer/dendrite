@@ -443,7 +443,7 @@ parser IngressParser(
 	}
 
 	state geneve_bad_size {
-		meta.drop_reason = DROP_GENEVE_OPTION_TOO_LONG;
+		meta.drop_reason = DROP_GENEVE_OPTIONS_TOO_LONG;
 		meta.is_valid = false;
 		transition accept;
 	}
