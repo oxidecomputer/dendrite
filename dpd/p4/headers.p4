@@ -191,21 +191,24 @@ header geneve_opt_mss_h {
 
 // Since we're a TEP, we need to push and read Geneve options.
 // `varbit` only allows us to carry.
-// XXX: For parsing past one option, add `extern ParserCounter`
-//      to oxidecomputer/p4/lang/p4rs/src/externs.rs.
-// XXX: these are stored adjacently because:
-//      `error: Unsupported type header_union geneve_opt_body_h`
+// These are stored adjacently (rather than a header stack), which
+// has the caveat that we won't preserve the order of any options which
+// we understand.
+//
+// The other issue in using a headerstack is that `header_union`s appear
+// to be unsupported.
 struct geneve_opt_headers_t {
-	geneve_opt_h opt_tag;
-
 	// External Packet tag (0x00)
+	geneve_opt_h oxg_ext_tag;
 	// <<no body>>
 
 	// Multicast-specific options (0x01)
-	geneve_opt_mcast_h ox_mcast_tag;
+	geneve_opt_h oxg_mcast_tag;
+	geneve_opt_mcast_h oxg_mcast;
 
 	// MSS option [OPTE-only] (0x02)
-	geneve_opt_mss_h ox_mss_tag;
+	geneve_opt_h oxg_mss_tag;
+	geneve_opt_mss_h oxg_mss;
 }
 
 struct sidecar_headers_t {

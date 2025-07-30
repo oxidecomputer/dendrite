@@ -22,13 +22,14 @@ const bit<9> USER_SPACE_SERVICE_PORT = 192;
 
 // Includes the checksum for the original data, the geneve header, the
 // outer udp header, and the outer ipv6 pseudo-header.
-// NOTE: safe to include geneve opt_tag here as it is filled
-// on nat_ingress, and nat_checksum is only computer on nat_ingress.
+// NOTE: safe to include geneve oxg_ext_tag here (via nat_ingress_csum)
+// as it is filled unconditionally on nat_ingress, and nat_checksum is only
+// computed on nat_ingress.
 #define COMMON_FIELDS                \
     meta.body_checksum,              \
     hdr.inner_eth,                   \
     hdr.geneve,                      \
-    hdr.geneve_opts.opt_tag, \
+    meta.nat_ingress_csum,           \
     hdr.udp.src_port,                \
     hdr.udp.dst_port,                \
     hdr.udp.hdr_length,              \
@@ -468,12 +469,12 @@ control NatIngress (
 		hdr.geneve.reserved2 = 0;
 
 		// 4-byte option type 0x00 -- 'VPC-external packet'.
-		hdr.geneve_opts.opt_tag.setValid();
-		hdr.geneve_opts.opt_tag.class = GENEVE_OPT_CLASS_OXIDE;
-		hdr.geneve_opts.opt_tag.crit = 0;
-		hdr.geneve_opts.opt_tag.type = GENEVE_OPT_OXIDE_EXTERNAL;
-		hdr.geneve_opts.opt_tag.reserved = 0;
-		hdr.geneve_opts.opt_tag.opt_len = 0;
+		hdr.geneve_opts.oxg_ext_tag.setValid();
+		hdr.geneve_opts.oxg_ext_tag.class = GENEVE_OPT_CLASS_OXIDE;
+		hdr.geneve_opts.oxg_ext_tag.crit = 0;
+		hdr.geneve_opts.oxg_ext_tag.type = GENEVE_OPT_OXIDE_EXTERNAL;
+		hdr.geneve_opts.oxg_ext_tag.reserved = 0;
+		hdr.geneve_opts.oxg_ext_tag.opt_len = 0;
 
 		// 14 bytes
 		hdr.inner_eth.setValid();
@@ -748,8 +749,11 @@ control NatEgress (
 
 		// Should never be valid for outbound traffic, but no harm
 		// in being careful.
-		hdr.geneve_opts.opt_tag.setInvalid();
-		hdr.geneve_opts.ox_mcast_tag.setInvalid();
+		hdr.geneve_opts.oxg_ext_tag.setInvalid();
+		hdr.geneve_opts.oxg_mcast_tag.setInvalid();
+		hdr.geneve_opts.oxg_mcast.setInvalid();
+		hdr.geneve_opts.oxg_mss_tag.setInvalid();
+		hdr.geneve_opts.oxg_mss.setInvalid();
 	}
 
 	action decap_ipv4() {
@@ -1625,8 +1629,8 @@ control MulticastIngress (
 			ig_tm_md.mcast_grp_a : ternary;
 			ig_tm_md.mcast_grp_b : ternary;
 			hdr.geneve.isValid() : ternary;
-			hdr.geneve_opts.ox_mcast_tag.isValid() : ternary;
-			hdr.geneve_opts.ox_mcast_tag.mcast_tag : ternary;
+			hdr.geneve_opts.oxg_mcast.isValid() : ternary;
+			hdr.geneve_opts.oxg_mcast.mcast_tag : ternary;
 		}
 		actions = {
 			invalidate_external_grp;
@@ -1725,8 +1729,8 @@ control MulticastEgress (
 			hdr.ipv6.isValid(): exact;
 			hdr.ipv6.dst_addr: ternary;
 			hdr.geneve.isValid(): exact;
-			hdr.geneve_opts.ox_mcast_tag.isValid(): exact;
-			hdr.geneve_opts.ox_mcast_tag.mcast_tag: exact;
+			hdr.geneve_opts.oxg_mcast.isValid(): exact;
+			hdr.geneve_opts.oxg_mcast.mcast_tag: exact;
 		}
 
 		actions = { NoAction; }
@@ -1784,9 +1788,11 @@ control MulticastEgress (
 		hdr.tcp.setInvalid();
 		hdr.udp.setInvalid();
 		hdr.geneve.setInvalid();
-		hdr.geneve_opts.opt_tag.setInvalid();
-		hdr.geneve_opts.ox_mcast_tag.setInvalid();
-		hdr.geneve_opts.ox_mss_tag.setInvalid();
+		hdr.geneve_opts.oxg_ext_tag.setInvalid();
+		hdr.geneve_opts.oxg_mcast_tag.setInvalid();
+		hdr.geneve_opts.oxg_mcast.setInvalid();
+		hdr.geneve_opts.oxg_mss_tag.setInvalid();
+		hdr.geneve_opts.oxg_mss.setInvalid();
 	}
 
 	#include <port_bitmap_check.p4>
@@ -1952,6 +1958,31 @@ control Ingress(
 			meta.bridge_hdr.setInvalid();
 			ig_tm_md.bypass_egress = 1w1;
 		}
+
+		if (meta.nat_ingress_hit) {
+			// This works around a few things which cropped up in
+			// supporting several concurrent Geneve options:
+			//
+			// - Why aren't we just accessing
+			//   `hdr.geneve_opts.oxg_ext_tag`?
+			//   > error: bytes within W2 appear multiple times in
+			//     checksum 1
+			//   And so on, for various other checksums. I assume
+			//   this is because there are theoretically several
+			//   parser paths which could set this header. However,
+			//   we know on this code path that the header could only
+			//   have been pushed and was never *in* the initial
+			//   parse (nat_ingress).
+			//
+			// - Why are we storing this in metadata?
+			//   > error: Non-zero constant entry in checksum
+			//     calculation not implemented yet: 16w0x129
+			//   Fairly straightforward, and I imagine this could
+			//   be the easier one to fix in tofino-p4c. This
+			//   `todo!()` covers various other tricks, including
+			//   wrapping the const in a struct/header.
+			meta.nat_ingress_csum = 16w0x0129;
+		}
 	}
 }
 
@@ -1973,7 +2004,6 @@ control IngressDeparser(packet_out pkt,
 		// checksum engine, exceeding the hardware's limit.  Rewriting
 		// the logic as seen below somehow makes the independence
 		// apparent to the compiler.
-
 		if (meta.nat_ingress_hit && hdr.inner_ipv4.isValid() &&
 		    hdr.inner_udp.isValid()) {
 			hdr.udp.checksum = nat_checksum.update({
@@ -2095,8 +2125,8 @@ control Egress(
 			} else if (hdr.geneve.isValid()) {
 				external_mcast_ctr.count(eg_intr_md.egress_port);
 			} else if (hdr.geneve.isValid() &&
-			           hdr.geneve_opts.ox_mcast_tag.isValid() &&
-			           hdr.geneve_opts.ox_mcast_tag.mcast_tag == MULTICAST_TAG_UNDERLAY) {
+			           hdr.geneve_opts.oxg_mcast.isValid() &&
+			           hdr.geneve_opts.oxg_mcast.mcast_tag == MULTICAST_TAG_UNDERLAY) {
 				underlay_mcast_ctr.count(eg_intr_md.egress_port);
 			}
 		}

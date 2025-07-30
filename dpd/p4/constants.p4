@@ -85,5 +85,8 @@ const bit<8> DROP_MULTICAST_INVALID_MAC         = 0x13;
 const bit<8> DROP_MULTICAST_CPU_COPY            = 0x14;
 const bit<8> DROP_MULTICAST_SOURCE_FILTERED     = 0x15;
 const bit<8> DROP_MULTICAST_PATH_FILTERED       = 0x16;
-const bit<32> DROP_REASON_MAX                   = 0x17;
+const bit<8> DROP_GENEVE_OPTION_TOO_LONG        = 0x17;
+const bit<8> DROP_GENEVE_OPTION_MALFORMED       = 0x18;
+// MAX(DROP_xxx) + 1
+const bit<32> DROP_REASON_MAX                   = 0x19;
 
