@@ -10,10 +10,8 @@ use std::{
     sync::Arc,
 };
 
-use crate::integration_tests::{
-    common::{self, get_switch, prelude::*},
-    nat::{gen_geneve_packet, gen_geneve_packet_with_mcast_tag},
-};
+use crate::integration_tests::common;
+use crate::integration_tests::common::prelude::*;
 use ::common::network::MacAddr;
 use anyhow::anyhow;
 use dpd_client::{types, Error};
@@ -324,7 +322,7 @@ fn prepare_expected_pkt(
                 .unwrap()
                 .to_string();
 
-            let mut forward_pkt = gen_geneve_packet(
+            let mut forward_pkt = common::gen_external_geneve_packet(
                 Endpoint::parse(
                     &switch_port_mac,
                     "::0",
@@ -339,7 +337,6 @@ fn prepare_expected_pkt(
                 .unwrap(),
                 eth::ETHER_ETHER,
                 *nat.vni,
-                true,
                 &ingress_payload,
             );
 
@@ -1975,7 +1972,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members(
     // Create the Geneve packet with mcast_tag = 0
     // According to mcast_tag_check table, when geneve.isValid() is true and
     // mcast_tag is 0, it should invalidate the underlay group and set decap
-    let geneve_pkt = gen_geneve_packet_with_mcast_tag(
+    let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
         Endpoint::parse(
             GIMLET_MAC,
             &GIMLET_IP.to_string(),
@@ -1990,8 +1987,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members(
         .unwrap(),
         eth::ETHER_IPV4,
         nat_target.vni.clone().into(),
-        true,    // tag_ingress = true to enable option setting
-        Some(0), // mcast_tag = 0
+        0, // mcast_tag = 0
         &payload,
     );
 
@@ -2117,13 +2113,12 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members(
     // Create the Geneve packet with mcast_tag = 1
     // According to mcast_tag_check table, when geneve.isValid() is true and
     // mcast_tag is 1, it should invalidate the external group and not decap
-    let geneve_pkt = gen_geneve_packet_with_mcast_tag(
+    let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
         geneve_src,
         geneve_dst,
         eth::ETHER_IPV4,
         nat_target.vni.clone().into(),
-        true,    // tag_ingress = true to enable option setting
-        Some(1), // mcast_tag = 1
+        1, // mcast_tag = 1
         &payload,
     );
 
@@ -2248,7 +2243,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     // According to mcast_tag_check table, when geneve.isValid() is true and
     // mcast_tag is 2, it should not invalidate any group, decapping only the
     // external group(s)
-    let geneve_pkt = gen_geneve_packet_with_mcast_tag(
+    let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
         Endpoint::parse(
             GIMLET_MAC,
             &GIMLET_IP.to_string(),
@@ -2263,8 +2258,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
         .unwrap(),
         eth::ETHER_IPV4,
         nat_target.vni.clone().into(),
-        true,    // tag_ingress = true to enable option setting
-        Some(2), // mcast_tag = 2
+        2, // mcast_tag = 2
         &payload,
     );
 
