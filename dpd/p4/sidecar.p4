@@ -1981,6 +1981,16 @@ control Ingress(
 			//   be the easier one to fix in tofino-p4c. This
 			//   `todo!()` covers various other tricks, including
 			//   wrapping the const in a struct/header.
+			//
+			// This value is derived from the geneve option pushed in
+			// NatIngress:
+			//
+			//              class = GENEVE_OPT_CLASS_OXIDE
+			//                           vvvvvvvvvv
+			//                           0x01, 0x29
+			//                           0x00, 0x00
+			//                             ^^    ^^
+			// id = GENEVE_OPT_OXIDE_EXTERNAL    reserved, len = 0
 			meta.nat_ingress_csum = 16w0x0129;
 		}
 	}
