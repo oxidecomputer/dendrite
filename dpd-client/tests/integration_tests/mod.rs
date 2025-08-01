@@ -6,6 +6,7 @@
 
 mod common;
 mod counters;
+mod geneve;
 mod icmp_ipv4;
 mod loopback;
 mod mcast;

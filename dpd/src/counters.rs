@@ -262,6 +262,9 @@ enum DropReason {
     MulticastCpuCopy,
     MulticastSrcFiltered,
     MulticastPathFiltered,
+    GeneveOptionsTooLong,
+    GeneveOptionMalformed,
+    GeneveOptionUnknown,
 }
 
 impl TryFrom<u8> for DropReason {
@@ -292,6 +295,9 @@ impl TryFrom<u8> for DropReason {
             20 => Ok(DropReason::MulticastCpuCopy),
             21 => Ok(DropReason::MulticastSrcFiltered),
             22 => Ok(DropReason::MulticastPathFiltered),
+            23 => Ok(DropReason::GeneveOptionsTooLong),
+            24 => Ok(DropReason::GeneveOptionMalformed),
+            25 => Ok(DropReason::GeneveOptionUnknown),
             x => Err(format!("Unrecognized drop reason: {x}")),
         }
     }
@@ -330,6 +336,13 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
         DropReason::MulticastPathFiltered => {
             "multicast_path_filtered".to_string()
         }
+        DropReason::GeneveOptionsTooLong => {
+            "geneve_options_too_long".to_string()
+        }
+        DropReason::GeneveOptionMalformed => {
+            "geneve_option_malformed".to_string()
+        }
+        DropReason::GeneveOptionUnknown => "geneve_option_unknown".to_string(),
     };
     Ok(Some(label))
 }

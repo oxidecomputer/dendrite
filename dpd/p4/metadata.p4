@@ -48,6 +48,8 @@ struct sidecar_ingress_meta_t {
 	ipv4_addr_t orig_dst_ipv4;	// original ipv4 target
 
 	bridge_h bridge_hdr;		// bridge header
+
+	bit<16> nat_ingress_csum;
 }
 
 struct sidecar_egress_meta_t {
