@@ -4,7 +4,6 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
@@ -23,133 +22,11 @@ use packet::ipv6;
 use packet::tcp;
 use packet::udp;
 use packet::Endpoint;
-use packet::Packet;
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
 
 use futures::TryStreamExt;
-
-/// Build a Geneve packet with the given parameters.
-pub fn gen_geneve_packet(
-    src: Endpoint,
-    dst: Endpoint,
-    inner_type: u16,
-    vni: u32,
-    tag_ingress: bool,
-    payload: &[u8],
-) -> Packet {
-    gen_geneve_packet_with_mcast_tag(
-        src,
-        dst,
-        inner_type,
-        vni,
-        tag_ingress,
-        None, // No multicast tag
-        payload,
-    )
-}
-
-/// Build a Geneve packet with a possible multicast tag.
-pub fn gen_geneve_packet_with_mcast_tag(
-    src: Endpoint,
-    dst: Endpoint,
-    inner_type: u16,
-    vni: u32,
-    tag_ingress: bool,
-    mcast_tag: Option<u8>, // New parameter for multicast tag
-    payload: &[u8],
-) -> Packet {
-    let udp_stack = match src.get_ip("src").unwrap() {
-        IpAddr::V4(_) => {
-            vec![inner_type, ipv4::IPPROTO_UDP.into(), eth::ETHER_IPV4]
-        }
-        IpAddr::V6(_) => {
-            vec![inner_type, ipv6::IPPROTO_UDP.into(), eth::ETHER_IPV6]
-        }
-    };
-
-    let mut pkt = Packet::gen(src, dst, udp_stack, Some(payload)).unwrap();
-    let geneve = pkt.hdrs.geneve_hdr.as_mut().unwrap();
-    geneve.vni = vni;
-
-    match (tag_ingress, mcast_tag) {
-        (true, Some(tag)) if tag < 3 => {
-            geneve.opt_len = 2;
-            // Multicast tag option
-            #[rustfmt::skip]
-            geneve.options.extend_from_slice(&[
-                // First 2 bytes: Geneve option class (0x0129)
-                // The OXIDE vendor-specific class identifier
-                0x01, 0x29,
-                // Third byte: Critical bit (0) + Option type (1)
-                // Type 1 represents multicast tagged packets
-                0x01,
-                // Fourth byte: Option(s) length
-                0x01,
-                // Fifth byte: Tag value (encoded in the data)
-                (tag & 0x03) << 6,
-                // Sixth byte: reserved
-                0x00,
-                // Seventh byte
-                0x00,
-                // Eighth byte
-                0x00,
-            ]);
-
-            let extra_bytes = geneve.options.len() as u16;
-
-            match src.get_ip("src").unwrap() {
-                IpAddr::V4(_) => {
-                    pkt.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_total_len +=
-                        extra_bytes
-                }
-                IpAddr::V6(_) => {
-                    pkt.hdrs.ipv6_hdr.as_mut().unwrap().ipv6_payload_len +=
-                        extra_bytes
-                }
-            }
-
-            pkt.hdrs.udp_hdr.as_mut().unwrap().udp_len += extra_bytes;
-        }
-        (true, Some(_)) => {
-            // Multicast tag is not valid
-            panic!("Multicast tag must be less than 3");
-        }
-        (true, None) => {
-            // External packet option
-            geneve.opt_len = 1;
-            #[rustfmt::skip]
-            geneve.options.extend_from_slice(&[
-                // First 2 bytes: Geneve option class (0x0129)
-                // The OXIDE vendor-specific class identifier
-                0x01, 0x29,
-                // Third byte: Critical bit (0) + Option type (1)
-                0x00,
-                // reserved + body len
-                0x00,
-            ]);
-
-            let extra_bytes = geneve.options.len() as u16;
-
-            match src.get_ip("src").unwrap() {
-                IpAddr::V4(_) => {
-                    pkt.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_total_len +=
-                        extra_bytes
-                }
-                IpAddr::V6(_) => {
-                    pkt.hdrs.ipv6_hdr.as_mut().unwrap().ipv6_payload_len +=
-                        extra_bytes
-                }
-            }
-
-            pkt.hdrs.udp_hdr.as_mut().unwrap().udp_len += extra_bytes;
-        }
-        _ => {}
-    }
-
-    pkt
-}
 
 #[tokio::test]
 #[ignore]
@@ -292,65 +169,6 @@ async fn test_api() -> TestResult {
     Ok(())
 }
 
-// Build a UDP packet with a Geneve payload.  Because it isn't addressed to a
-// switch IP address, the switch should forward it unmolested.
-#[tokio::test]
-#[ignore]
-async fn test_geneve() -> TestResult {
-    let switch = &*get_switch().await;
-
-    let ingress_port = PhysPort(10);
-    let uplink_port = PhysPort(14);
-    let router_ip = "fd00:1122:3344:0101::1";
-    let uplink_route = "fd00:1122:3344:0101::/56";
-    let router_mac = "02:aa:bb:cc:dd:ee".parse()?;
-    common::set_route_ipv6(switch, uplink_route, uplink_port, router_ip)
-        .await?;
-    common::add_neighbor_ipv6(switch, router_ip, router_mac).await?;
-
-    let vpc_src_ip = "172.16.10.33";
-    let vpc_src_mac = "04:01:01:01:01:01";
-    let vpc_src_port = 3333;
-    let vpc_dst_ip = "10.10.10.2";
-    let vpc_dst_mac = "04:01:01:01:01:02";
-    let vpc_dst_port = 4444;
-    let payload = common::gen_udp_packet(
-        Endpoint::parse(vpc_src_mac, vpc_src_ip, vpc_src_port).unwrap(),
-        Endpoint::parse(vpc_dst_mac, vpc_dst_ip, vpc_dst_port).unwrap(),
-    )
-    .deparse()
-    .unwrap()
-    .to_vec();
-
-    let mut to_send = gen_geneve_packet(
-        Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0101::4", 3333)
-            .unwrap(),
-        Endpoint::parse(
-            "e0:d5:5e:67:89:ac",
-            "fd00:1122:3344:0101::5",
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        eth::ETHER_IPV4,
-        345,
-        false,
-        &payload,
-    );
-    eth::EthHdr::rewrite_dmac(&mut to_send, router_mac);
-    let to_recv = common::gen_packet_routed(switch, uplink_port, &to_send);
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress_port,
-    };
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: uplink_port,
-    };
-
-    // These tests are a bit slower, for non-obvious reasons.
-    switch.packet_test(vec![send], vec![expected])
-}
-
 enum L4Protocol {
     Tcp,
     Udp,
@@ -473,7 +291,7 @@ async fn test_nat_egress(switch: &Switch, test: &NatTest) -> TestResult {
 
     let switch_mac = switch.get_port_mac(test.gimlet_port).unwrap().to_string();
     let payload = payload_pkt.deparse().unwrap().to_vec();
-    let to_send = gen_geneve_packet(
+    let to_send = common::gen_geneve_packet(
         Endpoint::parse(&test.gimlet_mac, &test.gimlet_ip, 3333).unwrap(),
         Endpoint::parse(
             &switch_mac,
@@ -483,7 +301,7 @@ async fn test_nat_egress(switch: &Switch, test: &NatTest) -> TestResult {
         .unwrap(),
         inner,
         test.geneve_vni,
-        false,
+        &[],
         &payload[14..],
     );
 
@@ -586,7 +404,7 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
     let switch_port_ip = "::0";
 
     // Build the encapsulated packet we expect to receive from tofino
-    let mut forward_pkt = gen_geneve_packet(
+    let mut forward_pkt = common::gen_external_geneve_packet(
         Endpoint::parse(
             &gimlet_port_mac,
             switch_port_ip,
@@ -601,10 +419,9 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
         .unwrap(),
         eth::ETHER_ETHER,
         test.geneve_vni,
-        true,
         &ingress_payload,
     );
-    let mut forward_icmp_pkt = gen_geneve_packet(
+    let mut forward_icmp_pkt = common::gen_external_geneve_packet(
         Endpoint::parse(
             &gimlet_port_mac,
             switch_port_ip,
@@ -619,7 +436,6 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
         .unwrap(),
         eth::ETHER_ETHER,
         test.geneve_vni,
-        true,
         &ingress_icmp_payload,
     );
 

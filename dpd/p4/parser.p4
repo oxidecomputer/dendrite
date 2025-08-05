@@ -5,7 +5,7 @@
 // Copyright 2025 Oxide Computer Company
 
 parser IngressParser(
-    packet_in pkt,
+	packet_in pkt,
 	out sidecar_headers_t hdr,
 	out sidecar_ingress_meta_t meta,
 	out ingress_intrinsic_metadata_t ig_intr_md
@@ -13,6 +13,8 @@ parser IngressParser(
 	Checksum() ipv4_checksum;
 	Checksum() icmp_checksum;
 	Checksum() nat_checksum;
+
+	ParserCounter() geneve_chunks;
 
 	/* tofino-required state */
 	state start {
@@ -47,6 +49,7 @@ parser IngressParser(
 		meta.orig_dst_ipv4 = 0;
 		meta.pkt_type = 0;
 		meta.drop_reason = 0;
+		meta.nat_ingress_csum = 0;
 
 		meta.bridge_hdr.setValid();
 		meta.bridge_hdr.ingress_port = ig_intr_md.ingress_port;
@@ -364,54 +367,93 @@ parser IngressParser(
 	state parse_geneve {
 		pkt.extract(hdr.geneve);
 
-		// XXX: There are some issues in parsing arbitrary Geneve options
-		// in P4, hence this single-opt hack. An iterative parser won't yet
-		// work as add/sub-assn to PHV is disallowed, and:
-		//  * Tofino's ParserCounter isn't yet supported in p4rs, but
-		//    shouldn't be hard. The main issue is that all `incr`/`decr`s
-		//    must be by a const, which we can't do for unknown options.
-		//  * Any `varbit`s can't be modified/interfaced with later.
-		//  * We can't `advance` by non-const.
-		// For now, we have only one geneve option, and we are in
-		// complete control of encap'd packets.
-		// Possible solutions?
-		// 1) Use (0x0129, 0x7f) as our 'bottom of stack' marker.
-		//    + This allows varbits outside of header stacks.
-		//    + No need for Tofino externs.
-		//    - 4B overhead/pkt iff. other options.
-		// 2) Use a ParserCounter.
-		//    + Better validation/rejection of bad opt_lens.
-		//    + No per-packet overhead.
-		//    - ICRP forums suggest higher parse cost?
-		//    - Probably a lot of ugly states/branching on opt_len
-		//      to get a const value for counter decrement.
+		geneve_chunks.set(hdr.geneve.opt_len);
+
 		transition select(hdr.geneve.opt_len) {
 			0: geneve_parsed;
-			1: parse_geneve_opt;
-			2: parse_geneve_opt;
-			default: reject;
+			default: parse_geneve_opt;
 		}
 	}
 
 	state parse_geneve_opt {
-		pkt.extract(hdr.geneve_opts.ox_external_tag);
-		transition select(hdr.geneve_opts.ox_external_tag.class) {
+		bit<16> curr_opt = pkt.lookahead<bit<16>>();
+		transition select(curr_opt) {
 			GENEVE_OPT_CLASS_OXIDE: parse_geneve_ox_opt;
-			default: reject;
+			default: geneve_unknown;
 		}
 	}
 
 	state parse_geneve_ox_opt {
-		transition select(hdr.geneve_opts.ox_external_tag.type) {
-			GENEVE_OPT_OXIDE_EXTERNAL: geneve_parsed;
+		bit<24> curr_opt = pkt.lookahead<bit<24>>();
+		geneve_chunks.decrement(1);
+
+		transition select(curr_opt[6:0]) {
+			GENEVE_OPT_OXIDE_EXTERNAL: parse_geneve_ext_tag;
 			GENEVE_OPT_OXIDE_MCAST: parse_geneve_mcast_tag;
-			default: reject;
+			GENEVE_OPT_OXIDE_MSS: parse_geneve_mss_tag;
+			default: geneve_unknown;
+		}
+	}
+
+	state parse_geneve_ext_tag {
+		pkt.extract(hdr.geneve_opts.oxg_ext_tag);
+
+		transition select (hdr.geneve_opts.oxg_ext_tag.opt_len) {
+			0: geneve_opt_parsed;
+			_: geneve_malformed;
 		}
 	}
 
 	state parse_geneve_mcast_tag {
-		pkt.extract(hdr.geneve_opts.ox_mcast_tag);
-		transition geneve_parsed;
+		geneve_chunks.decrement(1);
+		pkt.extract(hdr.geneve_opts.oxg_mcast_tag);
+		pkt.extract(hdr.geneve_opts.oxg_mcast);
+
+		transition select (hdr.geneve_opts.oxg_mcast_tag.opt_len) {
+			1: geneve_opt_parsed;
+			_: geneve_malformed;
+		}
+	}
+
+	state parse_geneve_mss_tag {
+		geneve_chunks.decrement(1);
+		pkt.extract(hdr.geneve_opts.oxg_mss_tag);
+		pkt.extract(hdr.geneve_opts.oxg_mss);
+
+		transition select (hdr.geneve_opts.oxg_mss_tag.opt_len) {
+			1: geneve_opt_parsed;
+			_: geneve_malformed;
+		}
+	}
+
+	state geneve_opt_parsed {
+		transition select (geneve_chunks.is_zero(), geneve_chunks.is_negative()) {
+			(false, false): parse_geneve_opt;
+			(true, false): geneve_parsed;
+			(false, true): geneve_bad_size;
+			// Unreachable.
+			default: reject;
+		}
+	}
+
+	state geneve_malformed {
+		meta.drop_reason = DROP_GENEVE_OPTION_MALFORMED;
+		meta.is_valid = false;
+		transition accept;
+	}
+
+	state geneve_bad_size {
+		meta.drop_reason = DROP_GENEVE_OPTIONS_TOO_LONG;
+		meta.is_valid = false;
+		transition accept;
+	}
+
+	// We may, in future, want to varbit every remaining option
+	// once we hit one we don't understand, for forward-compatibility.
+	state geneve_unknown {
+		meta.drop_reason = DROP_GENEVE_OPTION_UNKNOWN;
+		meta.is_valid = false;
+		transition accept;
 	}
 
 	state geneve_parsed {
@@ -477,13 +519,15 @@ parser EgressParser(
 
 	bridge_h bridge_hdr;
 
-    state start {
-		pkt.extract(eg_intr_md);
-        transition meta_init;
-    }
+	ParserCounter() geneve_chunks;
 
-    state meta_init {
-        meta.drop_reason = 0;
+	state start {
+		pkt.extract(eg_intr_md);
+		transition meta_init;
+	}
+
+	state meta_init {
+		meta.drop_reason = 0;
 		meta.bridge_hdr.setInvalid();
 
 		meta.decap_ports_0 = 0;
@@ -502,7 +546,7 @@ parser EgressParser(
 
 
 		transition parse_bridge_hdr;
-    }
+	}
 
 	state parse_bridge_hdr {
 		pkt.extract(bridge_hdr);
@@ -578,32 +622,73 @@ parser EgressParser(
 	state parse_geneve {
 		pkt.extract(hdr.geneve);
 
+		geneve_chunks.set(hdr.geneve.opt_len);
+
 		transition select(hdr.geneve.opt_len) {
 			0: geneve_parsed;
-			1: parse_geneve_opt;
-			2: parse_geneve_opt;
-			default: reject;
+			default: parse_geneve_opt;
 		}
 	}
 
 	state parse_geneve_opt {
-		pkt.extract(hdr.geneve_opts.ox_external_tag);
-		transition select(hdr.geneve_opts.ox_external_tag.class) {
+		bit<16> curr_opt = pkt.lookahead<bit<16>>();
+		transition select(curr_opt) {
 			GENEVE_OPT_CLASS_OXIDE: parse_geneve_ox_opt;
 			default: reject;
 		}
 	}
 
 	state parse_geneve_ox_opt {
-		transition select(hdr.geneve_opts.ox_external_tag.type) {
+		bit<24> curr_opt = pkt.lookahead<bit<24>>();
+		geneve_chunks.decrement(1);
+
+		transition select(curr_opt[6:0]) {
+			GENEVE_OPT_OXIDE_EXTERNAL: parse_geneve_ext_tag;
 			GENEVE_OPT_OXIDE_MCAST: parse_geneve_mcast_tag;
+			GENEVE_OPT_OXIDE_MSS: parse_geneve_mss_tag;
 			default: reject;
 		}
 	}
 
+	state parse_geneve_ext_tag {
+		pkt.extract(hdr.geneve_opts.oxg_ext_tag);
+
+		transition select (hdr.geneve_opts.oxg_ext_tag.opt_len) {
+			0: geneve_opt_parsed;
+			_: reject;
+		}
+	}
+
 	state parse_geneve_mcast_tag {
-		pkt.extract(hdr.geneve_opts.ox_mcast_tag);
-		transition geneve_parsed;
+		geneve_chunks.decrement(1);
+		pkt.extract(hdr.geneve_opts.oxg_mcast_tag);
+		pkt.extract(hdr.geneve_opts.oxg_mcast);
+
+		transition select (hdr.geneve_opts.oxg_mcast_tag.opt_len) {
+			1: geneve_opt_parsed;
+			_: reject;
+		}
+	}
+
+	state parse_geneve_mss_tag {
+		geneve_chunks.decrement(1);
+		pkt.extract(hdr.geneve_opts.oxg_mss_tag);
+		pkt.extract(hdr.geneve_opts.oxg_mss);
+
+		transition select (hdr.geneve_opts.oxg_mss_tag.opt_len) {
+			1: geneve_opt_parsed;
+			_: reject;
+		}
+	}
+
+	state geneve_opt_parsed {
+		transition select (geneve_chunks.is_zero(), geneve_chunks.is_negative()) {
+			(false, false): parse_geneve_opt;
+			(true, false): geneve_parsed;
+			(false, true): reject;
+			// Unreachable.
+			default: reject;
+		}
 	}
 
 	state geneve_parsed {
