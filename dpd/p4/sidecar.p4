@@ -2116,12 +2116,12 @@ control Egress(
 		// Check multicast egress packets by checking that RID is not 0.
 		bool is_egress_rid_mcast = eg_intr_md.egress_rid > 0;
 		// We track IPv6 multicast packets separately for counters.
-		bool is_ipv6_mcast = false;
+		bool is_link_local_ipv6_mcast = false;
 		if (hdr.ipv6.isValid()) {
 			bit<16> ipv6_prefix = (bit<16>)hdr.ipv6.dst_addr[127:112];
-			is_ipv6_mcast = (ipv6_prefix != 16w0xff02);
+			is_link_local_ipv6_mcast = (ipv6_prefix == 16w0xff02);
 		}
-		bool is_mcast = is_egress_rid_mcast || is_ipv6_mcast;
+		bool is_mcast = is_egress_rid_mcast || is_link_local_ipv6_mcast;
 
 		if (is_egress_rid_mcast == true) {
 			if (meta.bridge_hdr.ingress_port == eg_intr_md.egress_port) {
@@ -2147,7 +2147,7 @@ control Egress(
 		} else if (is_mcast == true) {
 			mcast_ctr.count(eg_intr_md.egress_port);
 
-			if (!is_ipv6_mcast) {
+			if (is_link_local_ipv6_mcast) {
 				link_local_mcast_ctr.count(eg_intr_md.egress_port);
 			} else if (hdr.geneve.isValid()) {
 				external_mcast_ctr.count(eg_intr_md.egress_port);
