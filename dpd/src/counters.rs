@@ -62,6 +62,7 @@ enum CounterId {
     MulticastExt,
     MulticastLL,
     MulticastUL,
+    MulticastDrop,
 }
 
 impl From<CounterId> for u8 {
@@ -84,7 +85,7 @@ struct CounterDescription {
     p4_name: &'static str,
 }
 
-const COUNTERS: [CounterDescription; 13] = [
+const COUNTERS: [CounterDescription; 14] = [
     CounterDescription {
         id: CounterId::Service,
         client_name: "Service",
@@ -149,6 +150,11 @@ const COUNTERS: [CounterDescription; 13] = [
         id: CounterId::MulticastUL,
         client_name: "Multicast_Underlay",
         p4_name: "pipe.Egress.underlay_mcast_ctr",
+    },
+    CounterDescription {
+        id: CounterId::MulticastDrop,
+        client_name: "Multicast_Drop",
+        p4_name: "pipe.Ingress.filter.drop_mcast_ctr",
     },
 ];
 
@@ -416,7 +422,8 @@ pub async fn get_values(
             | CounterId::Multicast
             | CounterId::MulticastExt
             | CounterId::MulticastLL
-            | CounterId::MulticastUL => port_label(switch, idx.idx).await,
+            | CounterId::MulticastUL
+            | CounterId::MulticastDrop => port_label(switch, idx.idx).await,
             CounterId::DropReason | CounterId::EgressDropReason => {
                 reason_label(idx.idx as u8)?
             }

@@ -94,6 +94,21 @@ banner "Links"
 
 ./target/debug/swadm -h '[::1]' link ls || echo "failed to list links"
 
+banner "swadm Checks"
+
+pushd swadm
+
+DENDRITE_TEST_HOST='[::1]' \
+    DENDRITE_TEST_VERBOSITY=3 \
+    cargo test \
+    --no-fail-fast \
+    --test \
+    counters \
+    -- \
+    --ignored
+
+popd
+
 banner "Packet Tests"
 
 set +o errexit
