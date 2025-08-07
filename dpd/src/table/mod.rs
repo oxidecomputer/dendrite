@@ -333,6 +333,9 @@ pub fn get_counters(
             neighbor_ipv6::counter_fetch(switch, force_sync)
         }
         TableType::ArpIpv4 => arp_ipv4::counter_fetch(switch, force_sync),
+        TableType::PortMac => {
+            MacOps::<port_mac::PortMacTable>::counter_fetch(switch, force_sync)
+        }
         TableType::NatIngressIpv4 => {
             nat::ipv4_counter_fetch(switch, force_sync)
         }
@@ -369,10 +372,11 @@ pub fn get_counters(
         TableType::McastEgressPortMapping => {
             mcast::mcast_egress::port_mapping_counter_fetch(switch, force_sync)
         }
-
-        // There is no counter in the PortMac table, as it duplicates data
-        // already available in the rmon egress counter.
-        _ => Err(DpdError::NoSuchTable(name)),
+        TableType::PortMacMcast => {
+            MacOps::<mcast::mcast_port_mac::PortMacTable>::counter_fetch(
+                switch, force_sync,
+            )
+        }
     }
 }
 
@@ -546,6 +550,13 @@ impl<T: MacTable> MacOps<T> {
 
     pub fn table_dump(s: &Switch) -> DpdResult<views::Table> {
         s.table_dump::<MacMatchKey, MacAction>(T::table_type())
+    }
+
+    pub fn counter_fetch(
+        s: &Switch,
+        force_sync: bool,
+    ) -> DpdResult<Vec<views::TableCounterEntry>> {
+        s.counter_fetch::<MacMatchKey>(force_sync, T::table_type())
     }
 
     /// Remove all entries from the MAC table.

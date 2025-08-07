@@ -45,7 +45,9 @@ const bit<8> SVC_COUNTER_FW_FROM_USER = 1;
 const bit<8> SVC_COUNTER_V4_PING_REPLY = 2;
 const bit<8> SVC_COUNTER_V6_PING_REPLY = 3;
 const bit<8> SVC_COUNTER_BAD_PING = 4;
-const bit<32> SVC_COUNTER_MAX = 5;
+const bit<8> SVC_COUNTER_INBOUND_LL = 5;
+const bit<8> SVC_COUNTER_PASS = 6;
+const bit<32> SVC_COUNTER_MAX = 7;
 
 /* Encapped Multicast Tags */
 const bit<2> MULTICAST_TAG_EXTERNAL = 0;

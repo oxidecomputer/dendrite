@@ -52,10 +52,16 @@ enum CounterId {
     Service,
     Ingress,
     Egress,
-    Multicast,
     Packet,
     DropPort,
     DropReason,
+    EgressDropPort,
+    EgressDropReason,
+    Unicast,
+    Multicast,
+    MulticastExt,
+    MulticastLL,
+    MulticastUL,
 }
 
 impl From<CounterId> for u8 {
@@ -78,7 +84,7 @@ struct CounterDescription {
     p4_name: &'static str,
 }
 
-const COUNTERS: [CounterDescription; 12] = [
+const COUNTERS: [CounterDescription; 13] = [
     CounterDescription {
         id: CounterId::Service,
         client_name: "Service",
@@ -110,14 +116,19 @@ const COUNTERS: [CounterDescription; 12] = [
         p4_name: "pipe.Ingress.drop_reason_ctr",
     },
     CounterDescription {
-        id: CounterId::DropPort,
+        id: CounterId::EgressDropPort,
         client_name: "Egress_Drop_Port",
         p4_name: "pipe.Egress.drop_port_ctr",
     },
     CounterDescription {
-        id: CounterId::DropReason,
+        id: CounterId::EgressDropReason,
         client_name: "Egress_Drop_Reason",
         p4_name: "pipe.Egress.drop_reason_ctr",
+    },
+    CounterDescription {
+        id: CounterId::Unicast,
+        client_name: "Unicast",
+        p4_name: "pipe.Egress.unicast_ctr",
     },
     CounterDescription {
         id: CounterId::Multicast,
@@ -125,17 +136,17 @@ const COUNTERS: [CounterDescription; 12] = [
         p4_name: "pipe.Egress.mcast_ctr",
     },
     CounterDescription {
-        id: CounterId::Multicast,
-        client_name: "Multicast_Link_Local",
-        p4_name: "pipe.Egress.link_local_mcast_ctr",
-    },
-    CounterDescription {
-        id: CounterId::Multicast,
+        id: CounterId::MulticastExt,
         client_name: "Multicast_External",
         p4_name: "pipe.Egress.external_mcast_ctr",
     },
     CounterDescription {
-        id: CounterId::Multicast,
+        id: CounterId::MulticastLL,
+        client_name: "Multicast_Link_Local",
+        p4_name: "pipe.Egress.link_local_mcast_ctr",
+    },
+    CounterDescription {
+        id: CounterId::MulticastUL,
         client_name: "Multicast_Underlay",
         p4_name: "pipe.Egress.underlay_mcast_ctr",
     },
@@ -230,6 +241,8 @@ fn service_label(ctr: u8) -> Option<String> {
         2 => "ping_v4_reply".to_string(),
         3 => "ping_v6_reply".to_string(),
         4 => "bad_ping".to_string(),
+        5 => "inbound_link_local".to_string(),
+        6 => "pass".to_string(),
         x => format!("unknown service counter {x}"),
     };
     Some(label)
@@ -397,9 +410,16 @@ pub async fn get_values(
             CounterId::Service => service_label(idx.idx as u8),
             CounterId::Ingress
             | CounterId::Egress
+            | CounterId::EgressDropPort
             | CounterId::DropPort
-            | CounterId::Multicast => port_label(switch, idx.idx).await,
-            CounterId::DropReason => reason_label(idx.idx as u8)?,
+            | CounterId::Unicast
+            | CounterId::Multicast
+            | CounterId::MulticastExt
+            | CounterId::MulticastLL
+            | CounterId::MulticastUL => port_label(switch, idx.idx).await,
+            CounterId::DropReason | CounterId::EgressDropReason => {
+                reason_label(idx.idx as u8)?
+            }
         };
 
         if let Some(key) = key {

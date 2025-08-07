@@ -292,7 +292,6 @@ control Services(
 	// It's not strictly necessary, but we also bump up the TTL to make sure
 	// the packet makes it all the way back to the sender.
 	action ping4_reply() {
-		service_ctr.count(SVC_COUNTER_V4_PING_REPLY);
 		hdr.ethernet.dst_mac = meta.orig_src_mac;
 
 		hdr.ipv4.src_addr = hdr.ipv4.dst_addr;
@@ -305,10 +304,10 @@ control Services(
 		ig_tm_md.ucast_egress_port = ig_intr_md.ingress_port;
 
 		meta.service_routed = true;
+		service_ctr.count(SVC_COUNTER_V4_PING_REPLY);
 	}
 
 	action ping6_reply() {
-		service_ctr.count(SVC_COUNTER_V6_PING_REPLY);
 		hdr.ethernet.dst_mac = meta.orig_src_mac;
 
 		bit<128> orig_src = hdr.ipv6.src_addr;
@@ -322,6 +321,7 @@ control Services(
 		ig_tm_md.ucast_egress_port = ig_intr_md.ingress_port;
 
 		meta.service_routed = true;
+		service_ctr.count(SVC_COUNTER_V6_PING_REPLY);
 	}
 
 	// Send a network service request to a service port.  Push on a
@@ -372,6 +372,11 @@ control Services(
 		ig_tm_md.ucast_egress_port = USER_SPACE_SERVICE_PORT;
 		meta.is_mcast = true;
 		meta.is_link_local_mcastv6 = true;
+		service_ctr.count(SVC_COUNTER_INBOUND_LL);
+	}
+
+	action no_service() {
+		service_ctr.count(SVC_COUNTER_PASS);
 	}
 
 	table service {
@@ -398,6 +403,7 @@ control Services(
 			forward_from_userspace;
 			forward_to_userspace;
 			mcast_inbound_link_local;
+			no_service;
 		}
 
 		const entries = {
@@ -417,6 +423,7 @@ control Services(
 			( 0, false, true, true, _, _, _, _, _, _, _, _, _ ) : mcast_inbound_link_local;
 		}
 
+		default_action = no_service;
 		const size = 16;
 	}
 
@@ -1384,8 +1391,11 @@ control MacRewrite(
 	inout sidecar_headers_t hdr,
 	in PortId_t port
 ) {
+	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ctr;
+
 	action rewrite(mac_addr_t mac) {
 		hdr.ethernet.src_mac = mac;
+		ctr.count();
 	}
 
 	table mac_rewrite {
@@ -1393,6 +1403,7 @@ control MacRewrite(
 		actions = { rewrite; }
 
 		const size = 256;
+		counters = ctr;
 	}
 
 	apply {
@@ -1409,8 +1420,11 @@ control MulticastMacRewrite(
 	inout sidecar_headers_t hdr,
 	in PortId_t port
 ) {
+	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ctr;
+
 	action rewrite(mac_addr_t mac) {
 		hdr.ethernet.src_mac = mac;
+		ctr.count();
 	}
 
 	table mac_rewrite {
@@ -1418,6 +1432,7 @@ control MulticastMacRewrite(
 		actions = { rewrite; }
 
 		const size = 256;
+		counters = ctr;
 	}
 
 	apply {
@@ -2089,6 +2104,7 @@ control Egress(
 	MulticastMacRewrite() mac_rewrite;
 	MulticastEgress() mcast_egress;
 
+	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) unicast_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) mcast_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) link_local_mcast_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) external_mcast_ctr;
@@ -2100,12 +2116,12 @@ control Egress(
 		// Check multicast egress packets by checking that RID is not 0.
 		bool is_egress_rid_mcast = eg_intr_md.egress_rid > 0;
 		// We track IPv6 multicast packets separately for counters.
-		bool is_ipv6_mcast = false;
+		bool is_link_local_ipv6_mcast = false;
 		if (hdr.ipv6.isValid()) {
 			bit<16> ipv6_prefix = (bit<16>)hdr.ipv6.dst_addr[127:112];
-			is_ipv6_mcast = (ipv6_prefix != 16w0xff02);
+			is_link_local_ipv6_mcast = (ipv6_prefix == 16w0xff02);
 		}
-		bool is_mcast = is_egress_rid_mcast || is_ipv6_mcast;
+		bool is_mcast = is_egress_rid_mcast || is_link_local_ipv6_mcast;
 
 		if (is_egress_rid_mcast == true) {
 			if (meta.bridge_hdr.ingress_port == eg_intr_md.egress_port) {
@@ -2117,7 +2133,8 @@ control Egress(
 				mcast_egress.apply(hdr, meta, eg_intr_md, eg_dprsr_md);
 				mac_rewrite.apply(hdr, eg_intr_md.egress_port);
 			}
-        } else if (eg_intr_md.egress_rid == 0 && eg_intr_md.egress_rid_first == 1) {
+		} else if (eg_intr_md.egress_rid == 0 &&
+		    eg_intr_md.egress_rid_first == 1) {
 			// Drop CPU copies (RID=0) to prevent unwanted packets on port 0
 			eg_dprsr_md.drop_ctl = 1;
 			meta.drop_reason = DROP_MULTICAST_CPU_COPY;
@@ -2130,7 +2147,7 @@ control Egress(
 		} else if (is_mcast == true) {
 			mcast_ctr.count(eg_intr_md.egress_port);
 
-			if (is_ipv6_mcast) {
+			if (is_link_local_ipv6_mcast) {
 				link_local_mcast_ctr.count(eg_intr_md.egress_port);
 			} else if (hdr.geneve.isValid()) {
 				external_mcast_ctr.count(eg_intr_md.egress_port);
@@ -2139,6 +2156,10 @@ control Egress(
 			           hdr.geneve_opts.oxg_mcast.mcast_tag == MULTICAST_TAG_UNDERLAY) {
 				underlay_mcast_ctr.count(eg_intr_md.egress_port);
 			}
+		} else {
+			# non-multicast packets should bypass the egress
+			# pipeline, so we would expect this to be 0.
+			unicast_ctr.count(eg_intr_md.egress_port);
 		}
 	}
 }
