@@ -107,7 +107,6 @@ control Filter(
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv4_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv6_ctr;
 	Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS) drop_mcast_ctr;
-	Counter<bit<32>, bit<8>>(DROP_REASON_MAX, CounterType_t.PACKETS) drop_reason_ctr;
 	bit<16> mcast_scope;
 
 	action dropv4() {
@@ -184,7 +183,6 @@ control Filter(
 			if (meta.is_mcast && !meta.is_valid) {
 				drop_mcast();
 				drop_mcast_ctr.count(ig_intr_md.ingress_port);
-				drop_reason_ctr.count(meta.drop_reason);
 				return;
 			} else if (meta.is_mcast && meta.is_valid) {
 				// IPv4 Multicast Address Validation (RFC 1112, RFC 7042)
@@ -223,7 +221,6 @@ control Filter(
 			if (meta.is_mcast && !meta.is_valid) {
 				drop_mcast();
 				drop_mcast_ctr.count(ig_intr_md.ingress_port);
-				drop_reason_ctr.count(meta.drop_reason);
 				return;
 			} else if (meta.is_mcast && meta.is_valid) {
 				// Validate the IPv6 multicast MAC address format (RFC 2464,
@@ -240,7 +237,6 @@ control Filter(
 					hdr.ethernet.dst_mac[39:32] != 8w0x33) {
 						drop_mcast_with_reason(DROP_MULTICAST_INVALID_MAC);
 						drop_mcast_ctr.count(ig_intr_md.ingress_port);
-						drop_reason_ctr.count(meta.drop_reason);
 						return;
 				}
 
@@ -255,7 +251,6 @@ control Filter(
 					hdr.ethernet.dst_mac[7:0] != hdr.ipv6.dst_addr[7:0]) {
 						drop_mcast_with_reason(DROP_MULTICAST_INVALID_MAC);
 						drop_mcast_ctr.count(ig_intr_md.ingress_port);
-						drop_reason_ctr.count(meta.drop_reason);
 						return;
 				}
 			}
