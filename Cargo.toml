@@ -44,7 +44,7 @@ omicron-common = { git = "https://github.com/oxidecomputer/omicron", branch= "ma
 oximeter = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 oximeter-producer = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 oximeter-instruments = { git = "https://github.com/oxidecomputer/omicron", branch = "main", default-features = false, features = ["kstat"] }
-oxnet = { version = "0.1.2", default-features = false, features = ["schemars", "serde"] }
+oxnet = { version = "0.1.3", default-features = false, features = ["schemars", "serde"] }
 propolis = { git = "https://github.com/oxidecomputer/propolis" }
 sled-agent-client = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 smf = { git = "https://github.com/illumos/smf-rs" }
