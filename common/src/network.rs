@@ -101,17 +101,17 @@ impl MacAddr {
 
     /// Generate a random MAC address.
     pub fn random() -> MacAddr {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut m = MacAddr { a: [0; 6] };
         for octet in m.a.iter_mut() {
-            *octet = rng.gen();
+            *octet = rng.random();
         }
         m
     }
 
     /// Generate a random MAC address with the Oxide OUI.
     pub fn random_oxide() -> MacAddr {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut octets = [0; 6];
         octets[..3].copy_from_slice(&Self::OXIDE_OUI);
         rng.fill(&mut octets[3..]);

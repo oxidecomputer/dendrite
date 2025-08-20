@@ -95,9 +95,9 @@ fn test_purge() {
 pub fn random_interval(min: Duration, max: Duration) -> Duration {
     assert!(min <= max);
 
-    use rand::distributions::Distribution;
-    let dist = rand::distributions::Uniform::new(min, max);
-    dist.sample(&mut rand::thread_rng())
+    use rand::distr::Distribution;
+    let dist = rand::distr::Uniform::new(min, max).unwrap();
+    dist.sample(&mut rand::rng())
 }
 
 static mut START_OF_DAY: Option<Instant> = None;
