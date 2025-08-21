@@ -2152,8 +2152,8 @@ control Egress(
 				underlay_mcast_ctr.count(eg_intr_md.egress_port);
 			}
 		} else {
-			# non-multicast packets should bypass the egress
-			# pipeline, so we would expect this to be 0.
+			// non-multicast packets should bypass the egress
+			// pipeline, so we would expect this to be 0.
 			unicast_ctr.count(eg_intr_md.egress_port);
 		}
 	}
