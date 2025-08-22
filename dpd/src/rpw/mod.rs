@@ -24,7 +24,7 @@ use tokio::{
 };
 
 use crate::{nat, oxstats::is_localhost, types::DpdError::Exists, Switch};
-use nexus_client::types::Ipv4NatEntryView;
+use nexus_client::types::NatEntryView;
 use nexus_client::Client as NexusClient;
 
 static IPV4_NAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -141,7 +141,7 @@ async fn fetch_nat_updates(
     client: &NexusClient,
     gen: i64,
     log: &Logger,
-) -> Option<nexus_client::ResponseValue<Vec<Ipv4NatEntryView>>> {
+) -> Option<nexus_client::ResponseValue<Vec<NatEntryView>>> {
     debug!(log, "checking Nexus for updates");
     let updates = match client.ipv4_nat_changeset(gen, 100).await {
         Ok(response) => response,
@@ -158,10 +158,17 @@ async fn fetch_nat_updates(
 fn apply_updates(
     switch: &Switch,
     mut gen: i64,
-    updates: Vec<Ipv4NatEntryView>,
+    updates: Vec<NatEntryView>,
 ) -> i64 {
     for entry in &updates {
-        let nat_ip: Ipv4Addr = entry.external_address;
+        let nat_ip: Ipv4Addr = match entry.external_address {
+            std::net::IpAddr::V4(x) => x,
+            std::net::IpAddr::V6(x) => {
+                error!(switch.log, "unexpected IPv6 address: {x}");
+                continue;
+            }
+        };
+
         let vni = match Vni::new(*entry.vni).ok_or(anyhow!("invalid vni")) {
             Ok(vni) => vni,
             Err(e) => {

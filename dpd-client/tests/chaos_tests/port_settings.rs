@@ -525,9 +525,9 @@ fn sort_addrs(settings: &mut PortSettings) {
 }
 
 fn random_port_settings() -> PortSettings {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
-    if rng.gen::<f64>() < 0.15 {
+    if rng.random::<f64>() < 0.15 {
         return PortSettings {
             links: HashMap::new(),
         };
@@ -539,8 +539,8 @@ fn random_port_settings() -> PortSettings {
 
     let params = LinkCreate {
         lane: Some(LinkId(0)),
-        autoneg: rng.gen(),
-        kr: rng.gen(),
+        autoneg: rng.random(),
+        kr: rng.random(),
         speed: PortSpeed::Speed100G,
         tx_eq: None,
         fec: Some(PortFec::None),
@@ -550,11 +550,11 @@ fn random_port_settings() -> PortSettings {
     // Create some random addresses.
 
     let mut addrs = Vec::new();
-    for _ in 0..rng.gen_range(0..15) {
-        addrs.push(Ipv4Addr::from(rng.gen::<u32>()).into());
+    for _ in 0..rng.random_range(0..15) {
+        addrs.push(Ipv4Addr::from(rng.random::<u32>()).into());
     }
-    for _ in 0..rng.gen_range(0..15) {
-        addrs.push(Ipv6Addr::from(rng.gen::<u128>()).into());
+    for _ in 0..rng.random_range(0..15) {
+        addrs.push(Ipv6Addr::from(rng.random::<u128>()).into());
     }
     // Because these routes are in a vector in the API we need to sort them for
     // comparison.

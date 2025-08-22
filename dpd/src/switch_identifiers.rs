@@ -114,7 +114,7 @@ pub(crate) async fn fetch_switch_identifiers_loop(
             model: sp.model,
             revision: sp.revision,
             serial: sp.serial_number,
-            slot: slot as u16,
+            slot,
         })
     };
     let notify = |err, delay| {
