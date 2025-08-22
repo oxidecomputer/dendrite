@@ -59,31 +59,21 @@ async fn add_route(
 ) -> TestResult {
     let client = &switch.client;
     let route = router.build_route(switch);
-    let route_add = build_route_add(cidr, &route);
+    let route_add = build_route_update(cidr, &route, false);
 
     client.route_ipv4_add(&route_add).await?;
     Ok(())
 }
 
-fn build_route_set(
+fn build_route_update(
     subnet: Ipv4Net,
     target: &types::Ipv4Route,
     replace: bool,
-) -> types::RouteSet {
-    types::RouteSet {
+) -> types::Ipv4RouteUpdate {
+    types::Ipv4RouteUpdate {
         cidr: subnet.into(),
         target: target.into(),
         replace,
-    }
-}
-
-fn build_route_add(
-    subnet: Ipv4Net,
-    target: &types::Ipv4Route,
-) -> types::RouteAdd {
-    types::RouteAdd {
-        cidr: subnet.into(),
-        target: target.into(),
     }
 }
 
@@ -435,8 +425,8 @@ async fn test_create_and_set_semantics_v4() -> TestResult {
     let route_33 = Router::new(10, "203.0.113.33", "02:78:39:45:b9:33", None)
         .build_route(switch);
 
-    let route_set_47 = build_route_set(cidr, &route_47, false);
-    let route_set_33 = build_route_set(cidr, &route_33, false);
+    let route_set_47 = build_route_update(cidr, &route_47, false);
+    let route_set_33 = build_route_update(cidr, &route_33, false);
 
     // Setting a new route should work
     client.route_ipv4_set(&route_set_47).await?;
@@ -449,7 +439,7 @@ async fn test_create_and_set_semantics_v4() -> TestResult {
     client.route_ipv4_set(&route_set_47).await?;
 
     // Attempting to replace the route with "replace = true" should succeed
-    let route_set_33 = build_route_set(cidr, &route_33, true);
+    let route_set_33 = build_route_update(cidr, &route_33, true);
     client.route_ipv4_set(&route_set_33).await?;
     // Verify that the route was replaced correctly
     validate_routes(client, &cidr, &[route_33]).await

@@ -577,15 +577,15 @@ async fn test_create_and_set_semantics_v6() -> TestResult {
     let mut target33 = target47.clone();
     target33.tgt_ip = "fe80::1701:c:2000:33".parse().unwrap();
 
-    let route47 = types::RouteSet {
-        cidr: cidr.into(),
-        target: (&target47).into(),
+    let route47 = types::Ipv6RouteUpdate {
+        cidr,
+        target: target47,
         replace: false,
     };
 
-    let mut route33 = types::RouteSet {
-        cidr: cidr.into(),
-        target: (&target33).into(),
+    let mut route33 = types::Ipv6RouteUpdate {
+        cidr,
+        target: target33.clone(),
         replace: false,
     };
 

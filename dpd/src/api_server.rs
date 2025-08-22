@@ -140,29 +140,32 @@ impl TryFrom<RouteTarget> for Ipv6Route {
     }
 }
 
-/// Represents a new or replacement mapping of a subnet to a single RouteTarget
-/// nexthop target.
+/// Represents a new or replacement mapping of a subnet to a single IPv4
+/// RouteTarget nexthop target.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct RouteSet {
+pub struct Ipv4RouteUpdate {
     /// Traffic destined for any address within the CIDR block is routed using
     /// this information.
-    pub cidr: IpNet,
+    pub cidr: Ipv4Net,
     /// A single RouteTarget associated with this CIDR
-    pub target: RouteTarget,
+    pub target: Ipv4Route,
     /// Should this route replace any existing route?  If a route exists and
     /// this parameter is false, then the call will fail.
     pub replace: bool,
 }
 
-/// Represents a single mapping of a subnet to a single RouteTarget
-/// nexthop target.
+/// Represents a new or replacement mapping of a subnet to a single IPv4
+/// RouteTarget nexthop target.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct RouteAdd {
+pub struct Ipv6RouteUpdate {
     /// Traffic destined for any address within the CIDR block is routed using
     /// this information.
-    pub cidr: IpNet,
+    pub cidr: Ipv6Net,
     /// A single RouteTarget associated with this CIDR
-    pub target: RouteTarget,
+    pub target: Ipv6Route,
+    /// Should this route replace any existing route?  If a route exists and
+    /// this parameter is false, then the call will fail.
+    pub replace: bool,
 }
 
 /// Represents all mappings of a subnet to a its nexthop target(s).
@@ -562,19 +565,6 @@ async fn route_ipv6_get(
         .map_err(HttpError::from)
 }
 
-fn net_to_v6(net: IpNet) -> Result<Ipv6Net, HttpError> {
-    let IpNet::V6(subnet) = net else {
-        return Err(client_error(format!("{} is IPv4", net)));
-    };
-    Ok(subnet)
-}
-fn net_to_v4(net: IpNet) -> Result<Ipv4Net, HttpError> {
-    let IpNet::V4(subnet) = net else {
-        return Err(client_error(format!("{} is IPv6", net)));
-    };
-    Ok(subnet)
-}
-
 /**
  * Route an IPv6 subnet to a link and a nexthop gateway.
  *
@@ -587,13 +577,11 @@ fn net_to_v4(net: IpNet) -> Result<Ipv4Net, HttpError> {
 }]
 async fn route_ipv6_add(
     rqctx: RequestContext<Arc<Switch>>,
-    update: TypedBody<RouteAdd>,
+    update: TypedBody<Ipv6RouteUpdate>,
 ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
     let switch: &Switch = rqctx.context();
     let route = update.into_inner();
-    let subnet = net_to_v6(route.cidr)?;
-    let target = Ipv6Route::try_from(route.target)?;
-    route::add_route_ipv6(switch, subnet, target)
+    route::add_route_ipv6(switch, route.cidr, route.target)
         .await
         .map(|_| HttpResponseUpdatedNoContent())
         .map_err(HttpError::from)
@@ -611,13 +599,11 @@ async fn route_ipv6_add(
 }]
 async fn route_ipv6_set(
     rqctx: RequestContext<Arc<Switch>>,
-    update: TypedBody<RouteSet>,
+    update: TypedBody<Ipv6RouteUpdate>,
 ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
     let switch: &Switch = rqctx.context();
     let route = update.into_inner();
-    let subnet = net_to_v6(route.cidr)?;
-    let target = Ipv6Route::try_from(route.target)?;
-    route::set_route_ipv6(switch, subnet, target, route.replace)
+    route::set_route_ipv6(switch, route.cidr, route.target, route.replace)
         .await
         .map(|_| HttpResponseUpdatedNoContent())
         .map_err(HttpError::from)
@@ -710,14 +696,12 @@ async fn route_ipv4_get(
 }]
 async fn route_ipv4_add(
     rqctx: RequestContext<Arc<Switch>>,
-    update: TypedBody<RouteAdd>,
+    update: TypedBody<Ipv4RouteUpdate>,
 ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
     let switch: &Switch = rqctx.context();
     let route = update.into_inner();
-    let subnet = net_to_v4(route.cidr)?;
-    let target = Ipv4Route::try_from(route.target)?;
 
-    route::add_route_ipv4(switch, subnet, target)
+    route::add_route_ipv4(switch, route.cidr, route.target)
         .await
         .map(|_| HttpResponseUpdatedNoContent())
         .map_err(HttpError::from)
@@ -735,13 +719,11 @@ async fn route_ipv4_add(
 }]
 async fn route_ipv4_set(
     rqctx: RequestContext<Arc<Switch>>,
-    update: TypedBody<RouteSet>,
+    update: TypedBody<Ipv4RouteUpdate>,
 ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
     let switch: &Switch = rqctx.context();
     let route = update.into_inner();
-    let subnet = net_to_v4(route.cidr)?;
-    let target = Ipv4Route::try_from(route.target)?;
-    route::set_route_ipv4(switch, subnet, target, route.replace)
+    route::set_route_ipv4(switch, route.cidr, route.target, route.replace)
         .await
         .map(|_| HttpResponseUpdatedNoContent())
         .map_err(HttpError::from)

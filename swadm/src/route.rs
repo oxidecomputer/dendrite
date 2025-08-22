@@ -195,35 +195,43 @@ async fn route_add(
     gw: IpAddr,
     vlan_id: Option<u16>,
 ) -> anyhow::Result<()> {
-    match gw {
-        IpAddr::V4(tgt_ip) => client
-            .route_ipv4_add(&types::RouteAdd {
+    match (gw, cidr) {
+        (IpAddr::V4(tgt_ip), IpNet::V4(cidr)) => client
+            .route_ipv4_add(&types::Ipv4RouteUpdate {
                 cidr,
-                target: types::RouteTarget::V4(types::Ipv4Route {
+                target: types::Ipv4Route {
                     tag: client.inner().tag.clone(),
                     port_id: link_path.port_id,
                     link_id: link_path.link_id,
                     tgt_ip,
                     vlan_id,
-                }),
+                },
+                replace: false,
             })
             .await
             .context("adding IPv4 route")
             .map(|_| ()),
-        IpAddr::V6(tgt_ip) => client
-            .route_ipv6_add(&types::RouteAdd {
+        (IpAddr::V6(tgt_ip), IpNet::V6(cidr)) => client
+            .route_ipv6_add(&types::Ipv6RouteUpdate {
                 cidr,
-                target: types::RouteTarget::V6(types::Ipv6Route {
+                target: types::Ipv6Route {
                     tag: client.inner().tag.clone(),
                     port_id: link_path.port_id,
                     link_id: link_path.link_id,
                     tgt_ip,
                     vlan_id,
-                }),
+                },
+                replace: false,
             })
             .await
             .context("adding IPv6 route")
             .map(|_| ()),
+        (IpAddr::V6(_), IpNet::V4(_)) => {
+            Err(anyhow!("cannot have an IPv4 route to an IPv6 address"))
+        }
+        (IpAddr::V4(_), IpNet::V6(_)) => {
+            Err(anyhow!("cannot have an IPv6 route to an IPv4 address"))
+        }
     }
 }
 

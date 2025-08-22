@@ -10,7 +10,6 @@ use std::net::Ipv6Addr;
 
 use ::common::network::MacAddr;
 use futures::TryStreamExt;
-use oxnet::IpNet;
 use oxnet::Ipv4Net;
 use oxnet::Ipv6Net;
 use reqwest::StatusCode;
@@ -377,15 +376,15 @@ struct RouteV4 {}
 impl TableTest for RouteV4 {
     async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
-        let route = types::RouteSet {
-            cidr: IpNet::V4(gen_ipv4_cidr(idx)),
-            target: types::RouteTarget::V4(types::Ipv4Route {
+        let route = types::Ipv4RouteUpdate {
+            cidr: gen_ipv4_cidr(idx),
+            target: types::Ipv4Route {
                 tag: switch.client.inner().tag.clone(),
                 port_id,
                 link_id,
                 tgt_ip: "10.10.10.1".parse::<Ipv4Addr>().unwrap().into(),
                 vlan_id: None,
-            }),
+            },
             replace: false,
         };
         switch.client.route_ipv4_set(&route).await
@@ -418,9 +417,9 @@ struct RouteV6 {}
 impl TableTest for RouteV6 {
     async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
-        let route = types::RouteSet {
-            cidr: IpNet::V6(gen_ipv6_cidr(idx)),
-            target: types::RouteTarget::V6(types::Ipv6Route {
+        let route = types::Ipv6RouteUpdate {
+            cidr: gen_ipv6_cidr(idx),
+            target: types::Ipv6Route {
                 tag: switch.client.inner().tag.clone(),
                 port_id,
                 link_id,
@@ -429,7 +428,7 @@ impl TableTest for RouteV6 {
                     .unwrap()
                     .into(),
                 vlan_id: None,
-            }),
+            },
             replace: false,
         };
         switch.client.route_ipv6_set(&route).await
