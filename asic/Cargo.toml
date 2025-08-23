@@ -48,5 +48,5 @@ uuid.workspace = true
 
 [build-dependencies]
 cc = "1.0"
-bindgen = "0.71"
+bindgen = "0.72"
 anyhow = "1.0"
