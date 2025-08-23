@@ -63,7 +63,7 @@ use common::ports::PortSpeed;
 use common::ports::QsfpPort;
 use common::ports::TxEq;
 use common::ports::{Ipv4Entry, Ipv6Entry, PortPrbsMode};
-use oxnet::{IpNet, Ipv4Net, Ipv6Net};
+use oxnet::{Ipv4Net, Ipv6Net};
 
 type ApiServer = dropshot::HttpServer<Arc<Switch>>;
 
@@ -105,41 +105,6 @@ pub struct ArpEntry {
     pub update: String,
 }
 
-/// Represents a specific egress port and nexthop target.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub enum RouteTarget {
-    V4(Ipv4Route),
-    V6(Ipv6Route),
-}
-
-impl TryFrom<RouteTarget> for Ipv4Route {
-    type Error = HttpError;
-
-    fn try_from(target: RouteTarget) -> Result<Self, Self::Error> {
-        match target {
-            RouteTarget::V4(route) => Ok(route),
-            _ => Err(DpdError::InvalidRoute(
-                "expected an IPv4 route target".to_string(),
-            )
-            .into()),
-        }
-    }
-}
-
-impl TryFrom<RouteTarget> for Ipv6Route {
-    type Error = HttpError;
-
-    fn try_from(target: RouteTarget) -> Result<Self, Self::Error> {
-        match target {
-            RouteTarget::V6(route) => Ok(route),
-            _ => Err(DpdError::InvalidRoute(
-                "expected an IPv6 route target".to_string(),
-            )
-            .into()),
-        }
-    }
-}
-
 /// Represents a new or replacement mapping of a subnet to a single IPv4
 /// RouteTarget nexthop target.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -147,14 +112,14 @@ pub struct Ipv4RouteUpdate {
     /// Traffic destined for any address within the CIDR block is routed using
     /// this information.
     pub cidr: Ipv4Net,
-    /// A single RouteTarget associated with this CIDR
+    /// A single Route associated with this CIDR
     pub target: Ipv4Route,
     /// Should this route replace any existing route?  If a route exists and
     /// this parameter is false, then the call will fail.
     pub replace: bool,
 }
 
-/// Represents a new or replacement mapping of a subnet to a single IPv4
+/// Represents a new or replacement mapping of a subnet to a single IPv6
 /// RouteTarget nexthop target.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct Ipv6RouteUpdate {
@@ -168,14 +133,24 @@ pub struct Ipv6RouteUpdate {
     pub replace: bool,
 }
 
-/// Represents all mappings of a subnet to a its nexthop target(s).
+/// Represents all mappings of an IPv4 subnet to a its nexthop target(s).
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct Route {
+pub struct Ipv4Routes {
     /// Traffic destined for any address within the CIDR block is routed using
     /// this information.
-    pub cidr: IpNet,
+    pub cidr: Ipv4Net,
     /// All RouteTargets associated with this CIDR
-    pub targets: Vec<RouteTarget>,
+    pub targets: Vec<Ipv4Route>,
+}
+
+/// Represents all mappings of an IPv6 subnet to a its nexthop target(s).
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct Ipv6Routes {
+    /// Traffic destined for any address within the CIDR block is routed using
+    /// this information.
+    pub cidr: Ipv6Net,
+    /// All RouteTargets associated with this CIDR
+    pub targets: Vec<Ipv6Route>,
 }
 
 // Generate a 400 client error with the provided message.
@@ -505,8 +480,12 @@ struct RoutePathV6 {
  * sorting, it is sufficient to track the last mac address reported.
  */
 #[derive(Deserialize, Serialize, JsonSchema)]
-struct RouteToken {
-    cidr: IpNet,
+struct Ipv4RouteToken {
+    cidr: Ipv4Net,
+}
+#[derive(Deserialize, Serialize, JsonSchema)]
+struct Ipv6RouteToken {
+    cidr: Ipv6Net,
 }
 
 /**
@@ -519,29 +498,26 @@ struct RouteToken {
 }]
 async fn route_ipv6_list(
     rqctx: RequestContext<Arc<Switch>>,
-    query: Query<PaginationParams<EmptyScanParams, RouteToken>>,
-) -> Result<HttpResponseOk<ResultsPage<Route>>, HttpError> {
+    query: Query<PaginationParams<EmptyScanParams, Ipv6RouteToken>>,
+) -> Result<HttpResponseOk<ResultsPage<Ipv6Routes>>, HttpError> {
     let switch: &Switch = rqctx.context();
     let pag_params = query.into_inner();
     let max = rqctx.page_limit(&pag_params)?.get();
 
     let previous = match &pag_params.page {
         WhichPage::First(..) => None,
-        WhichPage::Next(RouteToken { cidr }) => match cidr {
-            IpNet::V6(cidr) => Some(*cidr),
-            IpNet::V4(_) => {
-                return Err(DpdError::Invalid("bad token".into()).into())
-            }
-        },
+        WhichPage::Next(Ipv6RouteToken { cidr }) => Some(*cidr),
     };
 
     route::get_range_ipv6(switch, previous, max)
         .await
         .map_err(HttpError::from)
         .and_then(|entries| {
-            ResultsPage::new(entries, &EmptyScanParams {}, |e: &Route, _| {
-                RouteToken { cidr: e.cidr }
-            })
+            ResultsPage::new(
+                entries,
+                &EmptyScanParams {},
+                |e: &Ipv6Routes, _| Ipv6RouteToken { cidr: e.cidr },
+            )
         })
         .map(HttpResponseOk)
 }
@@ -638,29 +614,26 @@ async fn route_ipv6_delete(
 }]
 async fn route_ipv4_list(
     rqctx: RequestContext<Arc<Switch>>,
-    query: Query<PaginationParams<EmptyScanParams, RouteToken>>,
-) -> Result<HttpResponseOk<ResultsPage<Route>>, HttpError> {
+    query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
+) -> Result<HttpResponseOk<ResultsPage<Ipv4Routes>>, HttpError> {
     let switch: &Switch = rqctx.context();
     let pag_params = query.into_inner();
     let max = rqctx.page_limit(&pag_params)?.get();
 
     let previous = match &pag_params.page {
         WhichPage::First(..) => None,
-        WhichPage::Next(RouteToken { cidr }) => match cidr {
-            IpNet::V6(_) => {
-                return Err(DpdError::Invalid("bad token".into()).into())
-            }
-            IpNet::V4(cidr) => Some(*cidr),
-        },
+        WhichPage::Next(Ipv4RouteToken { cidr }) => Some(*cidr),
     };
 
     route::get_range_ipv4(switch, previous, max)
         .await
         .map_err(HttpError::from)
         .and_then(|entries| {
-            ResultsPage::new(entries, &EmptyScanParams {}, |e: &Route, _| {
-                RouteToken { cidr: e.cidr }
-            })
+            ResultsPage::new(
+                entries,
+                &EmptyScanParams {},
+                |e: &Ipv4Routes, _| Ipv4RouteToken { cidr: e.cidr },
+            )
         })
         .map(HttpResponseOk)
 }

@@ -119,14 +119,20 @@ use slog::error;
 use slog::info;
 use slog::warn;
 
-use crate::api_server::Route;
-use crate::api_server::RouteTarget;
+use crate::api_server;
 use crate::freemap;
 use crate::link::LinkId;
 use crate::types::{DpdError, DpdResult};
 use crate::{table, Switch};
 use common::ports::PortId;
-use oxnet::{IpNet, Ipv4Net, Ipv6Net};
+use oxnet::{Ipv4Net, Ipv6Net};
+
+/// Represents a specific egress port and nexthop target.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub enum RouteTarget {
+    V4(Ipv4Route),
+    V6(Ipv6Route),
+}
 
 // These are the largest numbers of targets supported for a single route
 const MAX_TARGETS_IPV4: usize = 8;
@@ -798,7 +804,7 @@ pub async fn get_range_ipv4(
     switch: &Switch,
     last: Option<Ipv4Net>,
     max: u32,
-) -> DpdResult<Vec<Route>> {
+) -> DpdResult<Vec<api_server::Ipv4Routes>> {
     let route_data = switch.routes.lock().await;
     let lower = match last {
         None => Bound::Unbounded,
@@ -806,18 +812,14 @@ pub async fn get_range_ipv4(
     };
 
     let mut routes = Vec::new();
-    for (subnet, entry) in route_data
+    for (subnet, target_list) in route_data
         .v4
         .range((lower, Bound::Unbounded))
         .take(usize::try_from(max).expect("invalid usize"))
     {
-        routes.push(Route {
-            cidr: IpNet::V4(*subnet),
-            targets: entry
-                .targets()
-                .iter()
-                .map(|r| RouteTarget::V4(r.clone()))
-                .collect(),
+        routes.push(api_server::Ipv4Routes {
+            cidr: *subnet,
+            targets: target_list.targets().to_vec(),
         })
     }
 
@@ -828,7 +830,7 @@ pub async fn get_range_ipv6(
     switch: &Switch,
     last: Option<Ipv6Net>,
     max: u32,
-) -> DpdResult<Vec<Route>> {
+) -> DpdResult<Vec<api_server::Ipv6Routes>> {
     let route_data = switch.routes.lock().await;
 
     let lower = match last {
@@ -842,12 +844,10 @@ pub async fn get_range_ipv6(
         .range((lower, Bound::Unbounded))
         .take(usize::try_from(max).expect("invalid usize"))
     {
-        for target in target_list {
-            routes.push(Route {
-                cidr: IpNet::V6(*subnet),
-                targets: vec![RouteTarget::V6(target.clone())],
-            })
-        }
+        routes.push(api_server::Ipv6Routes {
+            cidr: *subnet,
+            targets: target_list.to_vec(),
+        })
     }
 
     Ok(routes)

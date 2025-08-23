@@ -71,18 +71,6 @@ impl Client {
     }
 }
 
-impl From<&types::Ipv4Route> for types::RouteTarget {
-    fn from(route: &types::Ipv4Route) -> types::RouteTarget {
-        types::RouteTarget::V4(route.clone())
-    }
-}
-
-impl From<&types::Ipv6Route> for types::RouteTarget {
-    fn from(route: &types::Ipv6Route) -> types::RouteTarget {
-        types::RouteTarget::V6(route.clone())
-    }
-}
-
 impl std::fmt::Display for types::LinkState {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
