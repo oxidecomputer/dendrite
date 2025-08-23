@@ -15,6 +15,7 @@ use reqwest::StatusCode;
 use ::common::ports::Ipv4Entry;
 use ::common::ports::Ipv6Entry;
 use dpd_client::types;
+use dpd_client::ClientInfo;
 use dpd_client::Error;
 use types::PortId;
 

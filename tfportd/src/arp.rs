@@ -19,6 +19,7 @@ use crate::Global;
 use common::network::MacAddr;
 use dpd_client::types;
 use dpd_client::Client;
+use dpd_client::ClientInfo;
 
 const ARP: &str = "/usr/sbin/arp";
 const DEFAULT_IPV4_MASK: Ipv4Addr = Ipv4Addr::new(255, 255, 255, 255);

@@ -20,6 +20,7 @@ use slog::Drain;
 use ::common::network::MacAddr;
 use dpd_client::types;
 use dpd_client::Client;
+use dpd_client::ClientInfo;
 use dpd_client::ClientState;
 use packet::arp;
 use packet::eth;
