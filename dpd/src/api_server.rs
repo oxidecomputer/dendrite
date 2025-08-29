@@ -3303,9 +3303,6 @@ mod imp {
     > {
         let switch: &Switch = rqctx.context();
 
-        // If a group ID is provided, get the group by ID
-
-        // If no group ID is provided, paginate through the groups
         let pag_params = query_params.into_inner();
         let Ok(limit) = usize::try_from(rqctx.page_limit(&pag_params)?.get())
         else {
