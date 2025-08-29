@@ -419,7 +419,7 @@ fn extract_trailing_integer(s: &str, offset: usize) -> u32 {
     let s = s
         .get(offset..)
         .expect("parse succeeded, so this length is valid");
-    u32::from_str_radix(s, 10)
+    s.parse()
         .expect("parse succeeded, so this ends with an integer")
 }
 
