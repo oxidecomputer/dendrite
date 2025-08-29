@@ -992,9 +992,6 @@ impl Switch {
             sleep(INTERVAL).await;
             probes::transceiver__monitor__loop__start!(|| ());
 
-            // We'll add unsupported modules to this set as we iterate below.
-            let mut unsupported = ModuleId::empty();
-
             // Acquire the controller.
             //
             // There are a lot of operations we're doing using the controller in
@@ -1134,7 +1131,7 @@ impl Switch {
                     // https://github.com/oxidecomputer/dendrite/issues/111.
                     if matches!(
                         port.as_qsfp().unwrap().transceiver,
-                        Transceiver::Unsupported
+                        Some(Transceiver::Unsupported)
                     ) {
                         warn!(
                             log,
@@ -1189,8 +1186,7 @@ impl Switch {
                 }
             };
             drop(locked_controller);
-            unsupported = new_modules.unsupported;
-            unsupported &= !new_modules.failed;
+            let unsupported = new_modules.unsupported & !new_modules.failed;
 
             // Update any modules that have been determined as unsupported or
             // failed. The latter set is possibly larger than the set of failed
