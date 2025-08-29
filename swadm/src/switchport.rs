@@ -415,13 +415,64 @@ fn print_supported_transceiver_row(
     .map_err(|e| e.into())
 }
 
-pub trait SwitchId: FromStr + std::fmt::Debug {
+fn extract_trailing_integer(s: &str, offset: usize) -> u32 {
+    let s = s
+        .get(offset..)
+        .expect("parse succeeded, so this length is valid");
+    s.parse()
+        .expect("parse succeeded, so this ends with an integer")
+}
+
+fn order_by_trailing_integer(
+    lhs: &str,
+    rhs: &str,
+    offset: usize,
+) -> std::cmp::Ordering {
+    let lhs = extract_trailing_integer(lhs, offset);
+    let rhs = extract_trailing_integer(rhs, offset);
+    lhs.cmp(&rhs)
+}
+
+pub trait SwitchId: FromStr {
     fn order_by_id(&self, other: &Self) -> std::cmp::Ordering;
 }
 
 impl SwitchId for PortId {
+    // Switch ports are ordered first by their kind:
+    //
+    // - internal (the "CPU port")
+    // - rear (backplane)
+    // - QSFPs
+    //
+    // Within those types, they are sorted by their port number numerically, not
+    // lexicographically. E.g., 0, 1, 2, ..., 10, 11, 12...
     fn order_by_id(&self, other: &Self) -> std::cmp::Ordering {
-        self.cmp(other)
+        use std::cmp::Ordering;
+        match (self, other) {
+            // Internal ports sort relative to each other
+            (PortId::Internal(lhs), PortId::Internal(rhs)) => {
+                // These are formatted as "intX".
+                order_by_trailing_integer(lhs.as_str(), rhs.as_str(), 3)
+            }
+            // Internal ports are before anything else
+            (PortId::Internal(_), _) => Ordering::Less,
+            // Rear are after internal.
+            (PortId::Rear(_), PortId::Internal(_)) => Ordering::Greater,
+            // Sorted relative to each other
+            (PortId::Rear(lhs), PortId::Rear(rhs)) => {
+                // These are formatted as "rearX"
+                order_by_trailing_integer(lhs.as_str(), rhs.as_str(), 4)
+            }
+            // Rear are before QSFP
+            (PortId::Rear(_), PortId::Qsfp(_)) => Ordering::Less,
+            // Sorted relative to each other
+            (PortId::Qsfp(lhs), PortId::Qsfp(rhs)) => {
+                // These are formatted as "qsfpX"
+                order_by_trailing_integer(lhs.as_str(), rhs.as_str(), 4)
+            }
+            // QSFP after anything else
+            (PortId::Qsfp(_), _) => Ordering::Greater,
+        }
     }
 }
 
@@ -1111,5 +1162,34 @@ mod test {
             },
         )]);
         print_cmis_datapath(port_id, "Lucent Connector (LC)", datapaths);
+    }
+
+    #[test]
+    fn port_id_ordering() {
+        use std::cmp::Ordering;
+        for (lhs, rhs, order) in [
+            ("int0", "rear0", Ordering::Less),
+            ("int0", "qsfp0", Ordering::Less),
+            ("int0", "int0", Ordering::Equal),
+            ("rear0", "qsfp0", Ordering::Less),
+            ("rear0", "rear1", Ordering::Less),
+            ("rear2", "rear10", Ordering::Less),
+            ("rear0", "rear0", Ordering::Equal),
+            ("qsfp0", "qsfp1", Ordering::Less),
+            ("qsfp2", "qsfp10", Ordering::Less),
+            ("qsfp0", "qsfp0", Ordering::Equal),
+        ] {
+            println!("testing that {lhs} {order:?} {rhs}");
+            let lhs: PortId = lhs.parse().unwrap();
+            let rhs: PortId = rhs.parse().unwrap();
+            assert_eq!(
+                lhs.order_by_id(&rhs),
+                order,
+                "{:?} should be {:?} than {:?}",
+                lhs,
+                order,
+                rhs
+            );
+        }
     }
 }
