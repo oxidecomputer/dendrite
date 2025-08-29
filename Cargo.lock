@@ -1493,7 +1493,9 @@ dependencies = [
  "console-subscriber",
  "csv",
  "display-error-chain",
+ "dpd-api",
  "dpd-client 0.1.0",
+ "dpd-types",
  "dropshot",
  "expectorate",
  "futures",
@@ -1532,6 +1534,19 @@ dependencies = [
  "usdt 0.5.0",
  "uuid",
  "vergen",
+]
+
+[[package]]
+name = "dpd-api"
+version = "0.1.0"
+dependencies = [
+ "common 0.1.0",
+ "dpd-types",
+ "dropshot",
+ "oxnet",
+ "schemars",
+ "serde",
+ "transceiver-controller",
 ]
 
 [[package]]
@@ -1588,6 +1603,22 @@ dependencies = [
  "serde_json",
  "slog",
  "tokio",
+ "transceiver-controller",
+ "uuid",
+]
+
+[[package]]
+name = "dpd-types"
+version = "0.1.0"
+dependencies = [
+ "aal",
+ "chrono",
+ "common 0.1.0",
+ "omicron-common",
+ "oxnet",
+ "schemars",
+ "serde",
+ "thiserror 1.0.69",
  "transceiver-controller",
  "uuid",
 ]

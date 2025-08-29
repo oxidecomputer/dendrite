@@ -6,10 +6,10 @@
 
 use std::collections::BTreeSet;
 
+use dpd_types::link::LinkId;
 use slog::debug;
 use slog::o;
 
-use crate::link::LinkId;
 use crate::types::DpdError;
 use crate::types::DpdResult;
 use crate::Switch;
@@ -529,7 +529,6 @@ fn mac_offset(port_id: PortId, link_id: LinkId) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::mac_offset;
-    use crate::link::LinkId;
     use crate::macaddrs::BaseMac;
     use crate::macaddrs::MacManagement;
     use common::network::MacAddr;
@@ -537,6 +536,7 @@ mod tests {
     use common::ports::PortId;
     use common::ports::QsfpPort;
     use common::ports::RearPort;
+    use dpd_types::link::LinkId;
     use slog::Drain;
     use std::convert::TryFrom;
 

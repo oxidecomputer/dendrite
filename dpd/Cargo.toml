@@ -24,6 +24,8 @@ aal.workspace = true
 aal_macros.workspace = true
 asic.workspace = true
 common.workspace = true
+dpd-api.workspace = true
+dpd-types.workspace = true
 
 anyhow.workspace = true
 cfg-if.workspace = true
