@@ -476,7 +476,6 @@ impl TableTest<types::MulticastGroupResponse, ()>
         let internal_entry = types::MulticastGroupCreateEntry {
             group_ip,
             tag: Some(MCAST_TAG.to_string()),
-            sources: None,
             members: vec![
                 types::MulticastGroupMember {
                     port_id: port_id1.clone(),

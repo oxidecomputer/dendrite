@@ -7682,13 +7682,6 @@
               "$ref": "#/components/schemas/MulticastGroupMember"
             }
           },
-          "sources": {
-            "nullable": true,
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/IpSrc"
-            }
-          },
           "tag": {
             "nullable": true,
             "type": "string"
@@ -7761,7 +7754,6 @@
             "$ref": "#/components/schemas/ExternalForwarding"
           },
           "external_group_id": {
-            "nullable": true,
             "type": "integer",
             "format": "uint16",
             "minimum": 0
@@ -7791,7 +7783,6 @@
             "type": "string"
           },
           "underlay_group_id": {
-            "nullable": true,
             "type": "integer",
             "format": "uint16",
             "minimum": 0
@@ -7799,9 +7790,11 @@
         },
         "required": [
           "ext_fwding",
+          "external_group_id",
           "group_ip",
           "int_fwding",
-          "members"
+          "members",
+          "underlay_group_id"
         ]
       },
       "MulticastGroupResponseResultsPage": {
@@ -7833,13 +7826,6 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/MulticastGroupMember"
-            }
-          },
-          "sources": {
-            "nullable": true,
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/IpSrc"
             }
           },
           "tag": {

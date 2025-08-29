@@ -19,17 +19,6 @@ use crate::link::LinkId;
 /// Type alias for multicast group IDs.
 pub type MulticastGroupId = u16;
 
-/// A multicast group configuration for POST requests for external (to the rack)
-/// groups.
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub struct MulticastGroupCreateExternalEntry {
-    pub group_ip: IpAddr,
-    pub tag: Option<String>,
-    pub nat_target: NatTarget,
-    pub vlan_id: Option<u16>,
-    pub sources: Option<Vec<IpSrc>>,
-}
-
 /// Source filter match key for multicast traffic.
 #[derive(
     Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
@@ -58,6 +47,17 @@ pub struct MulticastGroupCreateEntry {
     pub tag: Option<String>,
     pub sources: Option<Vec<IpSrc>>,
     pub members: Vec<MulticastGroupMember>,
+}
+
+/// A multicast group configuration for POST requests for external (to the rack)
+/// groups.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct MulticastGroupCreateExternalEntry {
+    pub group_ip: IpAddr,
+    pub tag: Option<String>,
+    pub nat_target: NatTarget,
+    pub vlan_id: Option<u16>,
+    pub sources: Option<Vec<IpSrc>>,
 }
 
 /// Represents a multicast replication entry for PUT requests for internal
