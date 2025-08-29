@@ -433,11 +433,19 @@ fn order_by_trailing_integer(
     lhs.cmp(&rhs)
 }
 
-pub trait SwitchId: FromStr + std::fmt::Debug {
+pub trait SwitchId: FromStr {
     fn order_by_id(&self, other: &Self) -> std::cmp::Ordering;
 }
 
 impl SwitchId for PortId {
+    // Switch ports are ordered first by their kind:
+    //
+    // - internal (the "CPU port")
+    // - rear (backplane)
+    // - QSFPs
+    //
+    // Within those types, they are sorted by their port number numerically, not
+    // lexicographically. E.g., 0, 1, 2, ..., 10, 11, 12...
     fn order_by_id(&self, other: &Self) -> std::cmp::Ordering {
         use std::cmp::Ordering;
         match (self, other) {

@@ -31,5 +31,5 @@ cargo fmt -- --check
 banner "test"
 for feat in tofino_stub tofino_asic softnpu chaos
 do
-    cargo test --features $feat
+    RUST_BACKTRACE=full cargo test --features $feat --no-fail-fast
 done
