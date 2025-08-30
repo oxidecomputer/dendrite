@@ -22,13 +22,13 @@ use common::ports::PORT_COUNT_REAR;
 cfg_if::cfg_if! {
     if #[cfg(feature = "tofino_asic")] {
         use std::convert::TryFrom;
-        use crate::api_server::LinkCreate;
         use crate::table::mcast;
         use crate::table::port_mac;
         use crate::table::MacOps;
         use common::ports::PortFec;
         use common::ports::PortSpeed;
         use common::ports::InternalPort;
+        use dpd_api::LinkCreate;
         use transceiver_controller::Error as TransceiverError;
     }
 }

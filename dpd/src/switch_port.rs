@@ -8,7 +8,6 @@
 
 use anyhow::Context;
 use dpd_types::port_map::BackplaneLink;
-#[cfg(not(feature = "tofino_asic"))]
 use dpd_types::switch_port::Led;
 use dpd_types::switch_port::LedPolicy;
 use dpd_types::switch_port::ManagementMode;

@@ -36,6 +36,8 @@ pub fn qsfp_xcvr_mpn(
 
     #[cfg(feature = "tofino_asic")]
     {
+        use dpd_types::transceivers::Transceiver;
+
         match &qsfp.transceiver {
             Some(Transceiver::Supported(xcvr_info)) => {
                 if let Some(vendor_info) = &xcvr_info.vendor_info {
@@ -169,14 +171,14 @@ impl FakeQsfpModule {
 mod mpn_test {
     use std::time::Instant;
 
-    use crate::switch_port::ManagementMode;
-    use crate::types::DpdError;
+    use crate::{transceivers::qsfp_xcvr_mpn, types::DpdError};
+    use dpd_types::{
+        switch_port::ManagementMode,
+        transceivers::{ElectricalMode, Transceiver, TransceiverInfo},
+    };
     use transceiver_controller::Identifier;
 
-    use super::ElectricalMode;
     use super::QsfpDevice;
-    use super::Transceiver;
-    use super::TransceiverInfo;
 
     #[test]
     // If a QsfpDevice is found with a transceiver present, and if the VendorInfo
@@ -213,7 +215,7 @@ mod mpn_test {
             transceiver: Some(transceiver),
             management_mode: ManagementMode::Manual,
         };
-        assert_eq!(qsfp.xcvr_mpn().unwrap(), Some("part".to_string()));
+        assert_eq!(qsfp_xcvr_mpn(&qsfp).unwrap(), Some("part".to_string()));
     }
 
     #[test]
@@ -234,7 +236,7 @@ mod mpn_test {
             transceiver: Some(transceiver),
             management_mode: ManagementMode::Manual,
         };
-        assert_eq!(qsfp.xcvr_mpn().unwrap(), None);
+        assert_eq!(qsfp_xcvr_mpn(&qsfp).unwrap(), None);
     }
 
     // If a Qsfp port is found without any transceiver detected,
@@ -247,6 +249,6 @@ mod mpn_test {
         };
         // It would be preferable to use assert_matches! here, but that's still
         // unstable.
-        assert!(matches!(qsfp.xcvr_mpn(), Err(DpdError::Missing(_))));
+        assert!(matches!(qsfp_xcvr_mpn(&qsfp), Err(DpdError::Missing(_))));
     }
 }
