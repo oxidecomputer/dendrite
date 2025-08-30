@@ -757,7 +757,7 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
                         fec: Some(common::ports::PortFec::RS),
                         autoneg: true,
                         kr: true,
-                        lane: Some(crate::link::LinkId(0)),
+                        lane: Some(dpd_types::link::LinkId(0)),
                         tx_eq: None,
                     };
                     Some((*port_id, create))
