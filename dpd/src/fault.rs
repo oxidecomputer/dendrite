@@ -8,11 +8,9 @@ use std::fmt;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use schemars::JsonSchema;
-use serde::Deserialize;
-use serde::Serialize;
+use dpd_types::fault::Fault;
+use dpd_types::link::LinkFsmCounter;
 
-use crate::link::LinkFsmCounter;
 use asic::FsmStats;
 use asic::PortFsmState;
 
@@ -86,16 +84,6 @@ impl Limiter {
             None => Ok(()),
         }
     }
-}
-
-/// A Fault represents a specific kind of failure, and carries some additional
-/// context.  Currently Faults are only used to describe Link failures, but
-/// there is no reason they couldn't be used elsewhere.
-#[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema, Serialize)]
-pub enum Fault {
-    LinkFlap(String),
-    Autoneg(String),
-    Injected(String),
 }
 
 /// The Faultable trait is implemented by metadata structures whose values could

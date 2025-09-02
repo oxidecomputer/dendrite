@@ -6,9 +6,9 @@
 
 //! Manage logical Ethernet links on the Sidecar switch.
 
-use crate::api_server::LinkCreate;
-use crate::fault;
+use crate::fault::AutonegTracker;
 use crate::fault::Faultable;
+use crate::fault::LinkUpTracker;
 use crate::ports::AdminEvent;
 use crate::ports::Event;
 use crate::table::mcast;
@@ -16,9 +16,9 @@ use crate::table::port_ip;
 use crate::table::port_mac;
 use crate::table::port_nat;
 use crate::table::MacOps;
+use crate::transceivers::qsfp_xcvr_mpn;
 use crate::types::DpdError;
 use crate::types::DpdResult;
-use crate::views;
 use crate::MacAddr;
 use crate::Switch;
 use aal::AsicId;
@@ -34,6 +34,13 @@ use common::ports::PortMedia;
 use common::ports::PortPrbsMode;
 use common::ports::PortSpeed;
 use common::ports::TxEq;
+use dpd_api::LinkCreate;
+use dpd_types::fault;
+use dpd_types::link::LinkFsmCounters;
+use dpd_types::link::LinkId;
+use dpd_types::link::LinkState;
+use dpd_types::link::LinkUpCounter;
+use dpd_types::views;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -44,7 +51,6 @@ use slog::o;
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::fmt;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
@@ -236,16 +242,64 @@ pub struct Link {
     pub ipv6: BTreeSet<Ipv6Entry>,
     /// Tracks the history of linkup/linkdown transitions, allowing us to
     /// detect flapping links.
-    pub linkup_tracker: fault::LinkUpTracker,
+    pub linkup_tracker: LinkUpTracker,
     /// Tracks the link's progress through the autonegotiation/link-training
     /// finite state machine, so we can detect and diagnose linkup failures.
-    pub autoneg_tracker: fault::AutonegTracker,
+    pub autoneg_tracker: AutonegTracker,
 
     /// The configuration of the link as requested by the user / sled-agent
     pub config: LinkConfig,
 
     /// The state of the link as it actually exists in the ASIC layer
     plumbed: LinkPlumbed,
+}
+
+impl From<&Link> for views::Link {
+    fn from(m: &Link) -> Self {
+        Self {
+            port_id: m.port_id,
+            link_id: m.link_id,
+            tofino_connector: m.port_hdl.connector.as_u16(),
+            asic_id: m.asic_port_id,
+            presence: m.presence,
+            fsm_state: m.fsm_state.to_string(),
+            media: m.media,
+            link_state: m.link_state.clone(),
+            ipv6_enabled: m.ipv6_enabled,
+            enabled: m.config.enabled,
+            prbs: m.config.prbs,
+            speed: m.config.speed,
+            fec: m.get_fec(),
+            kr: m.config.kr,
+            autoneg: m.config.autoneg,
+            address: m.config.mac,
+        }
+    }
+}
+
+impl From<Link> for views::Link {
+    fn from(m: crate::link::Link) -> Self {
+        Self::from(&m)
+    }
+}
+
+impl From<&Link> for views::TfportData {
+    fn from(m: &Link) -> Self {
+        Self {
+            port_id: m.port_id,
+            link_id: m.link_id,
+            asic_id: m.asic_port_id,
+            mac: m.config.mac,
+            ipv6_enabled: m.ipv6_enabled,
+            link_local: m.link_local(),
+        }
+    }
+}
+
+impl From<Link> for views::TfportData {
+    fn from(m: Link) -> Self {
+        Self::from(&m)
+    }
 }
 
 // This struct represents the configuration of the link requested by the
@@ -407,8 +461,8 @@ impl Link {
             media: PortMedia::None,
             ipv4: BTreeSet::new(),
             ipv6: BTreeSet::new(),
-            linkup_tracker: fault::LinkUpTracker::default(),
-            autoneg_tracker: fault::AutonegTracker::default(),
+            linkup_tracker: LinkUpTracker::default(),
+            autoneg_tracker: AutonegTracker::default(),
 
             config,
             plumbed,
@@ -436,141 +490,6 @@ impl Link {
             self.config.fec
         }
     }
-}
-
-/// An identifier for a link within a switch port.
-///
-/// A switch port identified by a [`PortId`] may have multiple links within it,
-/// each identified by a `LinkId`. These are unique within a switch port only.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Deserialize,
-    Eq,
-    Hash,
-    JsonSchema,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Serialize,
-)]
-pub struct LinkId(pub u8);
-
-impl From<LinkId> for u8 {
-    fn from(l: LinkId) -> Self {
-        l.0
-    }
-}
-
-impl From<LinkId> for u16 {
-    fn from(l: LinkId) -> Self {
-        l.0 as u16
-    }
-}
-
-impl From<u8> for LinkId {
-    fn from(x: u8) -> Self {
-        Self(x)
-    }
-}
-
-impl fmt::Display for LinkId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// The state of a data link with a peer.
-#[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LinkState {
-    /// An error was encountered while trying to configure the link in the
-    /// switch hardware.
-    ConfigError(String),
-    /// The link is up.
-    Up,
-    /// The link is down.
-    Down,
-    /// The Link is offline due to a fault
-    Faulted(fault::Fault),
-    /// The link's state is not known.
-    Unknown,
-}
-
-impl LinkState {
-    /// A shortcut to tell whether a LinkState is Faulted or not, allowing for
-    /// cleaner code in the callers.
-    pub fn is_fault(&self) -> bool {
-        matches!(self, LinkState::Faulted(_))
-    }
-
-    /// If the link is in a faulted state, return the Fault.  If not, return
-    /// None.
-    pub fn get_fault(&self) -> Option<fault::Fault> {
-        match self {
-            LinkState::Faulted(f) => Some(f.clone()),
-            _ => None,
-        }
-    }
-}
-
-impl std::fmt::Display for LinkState {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            LinkState::Up => write!(f, "Up"),
-            LinkState::Down => write!(f, "Down"),
-            LinkState::ConfigError(_) => write!(f, "ConfigError"),
-            LinkState::Faulted(_) => write!(f, "Faulted"),
-            LinkState::Unknown => write!(f, "Unknown"),
-        }
-    }
-}
-
-impl std::fmt::Debug for LinkState {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            LinkState::Up => write!(f, "Up"),
-            LinkState::Down => write!(f, "Down"),
-            LinkState::ConfigError(detail) => {
-                write!(f, "ConfigError - {:?}", detail)
-            }
-            LinkState::Faulted(reason) => write!(f, "Faulted - {:?}", reason),
-            LinkState::Unknown => write!(f, "Unknown"),
-        }
-    }
-}
-
-/// Reports how many times a link has transitioned from Down to Up.
-#[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
-pub struct LinkUpCounter {
-    /// Link being reported
-    pub link_path: String,
-    /// LinkUp transitions since the link was last enabled
-    pub current: u32,
-    /// LinkUp transitions since the link was created
-    pub total: u32,
-}
-
-/// Reports how many times a given autoneg/link-training state has been entered
-#[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
-pub struct LinkFsmCounter {
-    /// FSM state being counted
-    pub state_name: String,
-    /// Times entered since the link was last enabled
-    pub current: u32,
-    /// Times entered since the link was created
-    pub total: u32,
-}
-
-/// Reports all the autoneg/link-training states a link has transitioned into.
-#[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
-pub struct LinkFsmCounters {
-    /// Link being reported
-    pub link_path: String,
-    /// All the states this link has entered, along with counts of how many
-    /// times each state was entered.
-    pub counters: Vec<LinkFsmCounter>,
 }
 
 /// Reports the bit-error rate (BER) for a link.
@@ -1825,7 +1744,7 @@ async fn reconcile_link(
             .as_qsfp()
             .cloned();
         if let Some(qsfp) = qsfp {
-            qsfp.xcvr_mpn().unwrap_or(None)
+            qsfp_xcvr_mpn(&qsfp).unwrap_or(None)
         } else {
             None
         }

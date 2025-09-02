@@ -11,23 +11,29 @@
 
 use std::{
     collections::{BTreeMap, HashSet},
-    fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     ops::Bound,
     sync::{Arc, Mutex, Weak},
 };
 
 use crate::{
-    link::LinkId,
     table,
     types::{DpdError, DpdResult},
     Switch,
 };
 use aal::{AsicError, AsicOps};
 use common::{nat::NatTarget, ports::PortId};
+use dpd_types::{
+    link::LinkId,
+    mcast::{
+        Direction, ExternalForwarding, InternalForwarding, IpSrc,
+        MulticastGroupCreateEntry, MulticastGroupCreateExternalEntry,
+        MulticastGroupId, MulticastGroupMember, MulticastGroupResponse,
+        MulticastGroupUpdateEntry, MulticastGroupUpdateExternalEntry,
+    },
+};
 use oxnet::{Ipv4Net, Ipv6Net};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+
 use slog::{debug, error};
 
 mod validate;
@@ -35,9 +41,6 @@ use validate::{
     is_ssm, validate_multicast_address, validate_nat_target,
     validate_not_admin_scoped_ipv6,
 };
-
-/// Type alias for multicast group IDs.
-pub(crate) type MulticastGroupId = u16;
 
 #[derive(Debug)]
 struct ScopedIdInner(MulticastGroupId, Weak<Mutex<Vec<MulticastGroupId>>>);
@@ -75,49 +78,6 @@ impl From<ScopedIdInner> for ScopedGroupId {
     }
 }
 
-/// Source filter match key for multicast traffic.
-#[derive(
-    Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
-)]
-pub(crate) enum IpSrc {
-    /// Exact match for the source IP address.
-    Exact(IpAddr),
-    /// Subnet match for the source IP address.
-    Subnet(Ipv4Net),
-}
-
-impl fmt::Display for IpSrc {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            IpSrc::Exact(ip) => write!(f, "{}", ip),
-            IpSrc::Subnet(subnet) => write!(f, "{}", subnet),
-        }
-    }
-}
-
-/// Represents a member of a multicast group.
-#[derive(
-    Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
-)]
-pub(crate) struct MulticastGroupMember {
-    pub port_id: PortId,
-    pub link_id: LinkId,
-    pub direction: Direction,
-}
-
-/// Represents the NAT target for multicast traffic for internal/underlay
-/// forwarding.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct InternalForwarding {
-    pub nat_target: Option<NatTarget>,
-}
-
-/// Represents the forwarding configuration for external multicast traffic.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct ExternalForwarding {
-    pub vlan_id: Option<u16>,
-}
-
 /// Multicast replication configuration (internal only).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct MulticastReplicationInfo {
@@ -150,95 +110,23 @@ impl MulticastGroup {
     fn underlay_group_id(&self) -> Option<MulticastGroupId> {
         self.underlay_group_id.as_ref().map(ScopedGroupId::id)
     }
-}
 
-/// A multicast group configuration for POST requests for internal (to the rack)
-/// groups.
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct MulticastGroupCreateEntry {
-    group_ip: Ipv6Addr,
-    tag: Option<String>,
-    sources: Option<Vec<IpSrc>>,
-    members: Vec<MulticastGroupMember>,
-}
-
-/// A multicast group configuration for POST requests for external (to the rack)
-/// groups.
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct MulticastGroupCreateExternalEntry {
-    group_ip: IpAddr,
-    tag: Option<String>,
-    nat_target: NatTarget,
-    vlan_id: Option<u16>,
-    sources: Option<Vec<IpSrc>>,
-}
-
-/// Represents a multicast replication entry for PUT requests for internal
-/// (to the rack) groups.
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct MulticastGroupUpdateEntry {
-    tag: Option<String>,
-    sources: Option<Vec<IpSrc>>,
-    members: Vec<MulticastGroupMember>,
-}
-
-/// A multicast group update entry for PUT requests for external (to the rack)
-/// groups.
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct MulticastGroupUpdateExternalEntry {
-    tag: Option<String>,
-    nat_target: NatTarget,
-    vlan_id: Option<u16>,
-    sources: Option<Vec<IpSrc>>,
-}
-
-/// Response structure for multicast group operations.
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub struct MulticastGroupResponse {
-    group_ip: IpAddr,
-    external_group_id: Option<MulticastGroupId>,
-    underlay_group_id: Option<MulticastGroupId>,
-    tag: Option<String>,
-    int_fwding: InternalForwarding,
-    ext_fwding: ExternalForwarding,
-    sources: Option<Vec<IpSrc>>,
-    members: Vec<MulticastGroupMember>,
-}
-
-impl MulticastGroupResponse {
-    fn new(group_ip: IpAddr, group: &MulticastGroup) -> Self {
-        Self {
+    fn to_response(&self, group_ip: IpAddr) -> MulticastGroupResponse {
+        MulticastGroupResponse {
             group_ip,
-            external_group_id: group.external_group_id(),
-            underlay_group_id: group.underlay_group_id(),
-            tag: group.tag.clone(),
+            external_group_id: self.external_group_id(),
+            underlay_group_id: self.underlay_group_id(),
+            tag: self.tag.clone(),
             int_fwding: InternalForwarding {
-                nat_target: group.int_fwding.nat_target,
+                nat_target: self.int_fwding.nat_target,
             },
             ext_fwding: ExternalForwarding {
-                vlan_id: group.ext_fwding.vlan_id,
+                vlan_id: self.ext_fwding.vlan_id,
             },
-            sources: group.sources.clone(),
-            members: group.members.to_vec(),
+            sources: self.sources.clone(),
+            members: self.members.to_vec(),
         }
     }
-
-    /// Get the multicast group IP address.
-    pub(crate) fn ip(&self) -> IpAddr {
-        self.group_ip
-    }
-}
-
-/// Direction a multicast group member is reached by.
-///
-/// `External` group members must have any packet encapsulation removed
-/// before packet delivery.
-#[derive(
-    Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
-)]
-pub(crate) enum Direction {
-    Underlay,
-    External,
 }
 
 /// Stores multicast group configurations.
@@ -497,7 +385,7 @@ pub(crate) fn add_group_external(
         }
     }
 
-    Ok(MulticastGroupResponse::new(group_ip, &group))
+    Ok(group.to_response(group_ip))
 }
 
 /// Add an internal multicast group to the switch, which creates the group on
@@ -573,7 +461,7 @@ fn add_group_internal_only(
 
     mcast.groups.insert(group_ip.into(), group.clone());
 
-    Ok(MulticastGroupResponse::new(group_ip.into(), &group))
+    Ok(group.to_response(group_ip.into()))
 }
 
 /// Delete a multicast group from the switch, including all associated tables
@@ -628,7 +516,7 @@ pub(crate) fn get_group(
         })?
         .clone();
 
-    Ok(MulticastGroupResponse::new(group_ip, &group))
+    Ok(group.to_response(group_ip))
 }
 
 pub(crate) fn modify_group_external(
@@ -679,8 +567,7 @@ pub(crate) fn modify_group_external(
             updated_group.sources =
                 new_group_info.sources.or(updated_group.sources);
 
-            let response =
-                MulticastGroupResponse::new(group_ip, &updated_group);
+            let response = updated_group.to_response(group_ip);
             mcast.groups.insert(group_ip, updated_group);
             Ok(response)
         }
@@ -809,8 +696,7 @@ fn modify_group_internal_only(
             group_entry.replication_info = replication_info;
             group_entry.members = new_group_info.members;
 
-            let response =
-                MulticastGroupResponse::new(group_ip.into(), &group_entry);
+            let response = group_entry.to_response(group_ip.into());
             mcast.groups.insert(group_ip.into(), group_entry);
             Ok(response)
         }
@@ -855,7 +741,7 @@ pub(crate) fn get_range(
                 }
             }
 
-            Some(MulticastGroupResponse::new(*ip, group))
+            Some(group.to_response(*ip))
         })
         .take(limit)
         .collect()

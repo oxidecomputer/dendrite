@@ -6,7 +6,9 @@ members = [
 	"aal_macros",
 	"common",
 	"dpd",
+	"dpd-api",
 	"dpd-client",
+	"dpd-types",
 	"packet",
 	"pcap",
 	"swadm",
@@ -29,7 +31,9 @@ panic = "abort"
 aal = { path = "aal" }
 aal_macros = { path = "aal_macros" }
 asic = { path = "asic" }
+dpd-api = { path = "dpd-api" }
 dpd-client = { path = "dpd-client" }
+dpd-types = { path = "dpd-types" }
 common = { path = "common" }
 packet = { path = "packet" }
 pcap = { path = "pcap" }

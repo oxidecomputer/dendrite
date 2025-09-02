@@ -108,21 +108,20 @@
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
-use std::fmt;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::Ipv4Addr;
 use std::ops::Bound;
 
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use dpd_api::Route;
+use dpd_api::RouteTarget;
+use dpd_types::link::LinkId;
+use dpd_types::route::Ipv4Route;
+use dpd_types::route::Ipv6Route;
 use slog::debug;
 use slog::error;
 use slog::info;
 use slog::warn;
 
-use crate::api_server::Route;
-use crate::api_server::RouteTarget;
 use crate::freemap;
-use crate::link::LinkId;
 use crate::types::{DpdError, DpdResult};
 use crate::{table, Switch};
 use common::ports::PortId;
@@ -211,129 +210,6 @@ pub struct RouteData {
     pub(crate) v6: BTreeMap<Ipv6Net, Vec<Ipv6Route>>,
     v4_freemap: freemap::FreeMap,
     v6_freemap: freemap::FreeMap,
-}
-
-/// A route for an IPv4 subnet.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct Ipv4Route {
-    // The client-specific tag for this route.
-    pub(crate) tag: String,
-    // The switch port out which routed traffic is sent.
-    pub(crate) port_id: PortId,
-    // The link out which routed traffic is sent.
-    pub(crate) link_id: LinkId,
-    // Route traffic matching the subnet via this IP.
-    pub(crate) tgt_ip: Ipv4Addr,
-    // Tag traffic on this route with this vlan ID.
-    pub(crate) vlan_id: Option<u16>,
-}
-
-// We implement PartialEq for Ipv4Route because we want to exclude the tag and
-// vlan_id from any comparisons.  We do this because the tag is a comment
-// identifying the originator rather than a semantically meaningful part of the
-// route.  The vlan_id is used to modify the traffic on a specific route, rather
-// then being part of the route itself.
-impl PartialEq for Ipv4Route {
-    fn eq(&self, other: &Self) -> bool {
-        self.port_id == other.port_id
-            && self.link_id == other.link_id
-            && self.tgt_ip == other.tgt_ip
-    }
-}
-
-// See the comment above PartialEq to understand why we implement Hash rather
-// then Deriving it.
-impl std::hash::Hash for Ipv4Route {
-    fn hash<H>(&self, state: &mut H)
-    where
-        H: std::hash::Hasher,
-    {
-        self.port_id.hash(state);
-        self.link_id.hash(state);
-        self.tgt_ip.hash(state);
-    }
-}
-
-impl fmt::Display for Ipv4Route {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "port: {} link: {} gw: {}  vlan: {:?}",
-            self.port_id, self.link_id, self.tgt_ip, self.vlan_id
-        )?;
-        Ok(())
-    }
-}
-
-impl From<&Ipv4Route> for RouteTarget {
-    fn from(route: &Ipv4Route) -> RouteTarget {
-        RouteTarget::V4(route.clone())
-    }
-}
-
-impl From<Ipv4Route> for RouteTarget {
-    fn from(route: Ipv4Route) -> RouteTarget {
-        RouteTarget::V4(route)
-    }
-}
-
-/// A route for an IPv6 subnet.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct Ipv6Route {
-    // The client-specific tag for this route.
-    pub(crate) tag: String,
-    // The switch port out which routed traffic is sent.
-    pub(crate) port_id: PortId,
-    // The link out which routed traffic is sent.
-    pub(crate) link_id: LinkId,
-    // Route traffic matching the subnet to this IP.
-    pub(crate) tgt_ip: Ipv6Addr,
-    // Tag traffic on this route with this vlan ID.
-    pub(crate) vlan_id: Option<u16>,
-}
-
-// See the comment above the PartialEq for IPv4Route
-impl PartialEq for Ipv6Route {
-    fn eq(&self, other: &Self) -> bool {
-        self.port_id == other.port_id
-            && self.link_id == other.link_id
-            && self.tgt_ip == other.tgt_ip
-    }
-}
-
-// See the comment above PartialEq for IPv4Route
-impl std::hash::Hash for Ipv6Route {
-    fn hash<H>(&self, state: &mut H)
-    where
-        H: std::hash::Hasher,
-    {
-        self.port_id.hash(state);
-        self.link_id.hash(state);
-        self.tgt_ip.hash(state);
-    }
-}
-
-impl fmt::Display for Ipv6Route {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "port: {} link: {} gw: {}  vlan: {:?}",
-            self.port_id, self.link_id, self.tgt_ip, self.vlan_id
-        )?;
-        Ok(())
-    }
-}
-
-impl From<&Ipv6Route> for RouteTarget {
-    fn from(route: &Ipv6Route) -> RouteTarget {
-        RouteTarget::V6(route.clone())
-    }
-}
-
-impl From<Ipv6Route> for RouteTarget {
-    fn from(route: Ipv6Route) -> RouteTarget {
-        RouteTarget::V6(route)
-    }
 }
 
 // Remove all the data for a given route from both the route_data and

@@ -7,6 +7,9 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
+use dpd_api::LinkCreate;
+use dpd_types::link::LinkId;
+use dpd_types::views::LinkEvent;
 use slog::debug;
 use slog::error;
 use slog::info;
@@ -16,10 +19,7 @@ use aal::AsicOps;
 use aal::Connector;
 use aal::PortHdl;
 
-use crate::api_server::LinkCreate;
-use crate::link::LinkId;
 use crate::types::DpdResult;
-use crate::views::LinkEvent;
 use crate::Switch;
 use common::ports::PortId;
 

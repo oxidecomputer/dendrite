@@ -8,12 +8,13 @@
 
 use std::net::Ipv6Addr;
 
-use crate::{mcast::MulticastGroupId, table::*, Switch};
+use crate::{table::*, Switch};
 
 use super::Ipv6MatchKey;
 
 use aal::ActionParse;
 use aal_macros::*;
+use dpd_types::mcast::MulticastGroupId;
 use slog::debug;
 
 /// IPv6 Table for multicast replication entries and group membership.

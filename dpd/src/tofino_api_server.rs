@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 
+use dpd_api::LinkPath;
+use dpd_types::link::LinkId;
 use dropshot::endpoint;
 use dropshot::HttpError;
 use dropshot::HttpResponseOk;
@@ -16,8 +18,6 @@ use dropshot::TypedBody;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::api_server::LinkPath;
-use crate::link::LinkId;
 use crate::types::DpdError;
 use crate::PortId;
 use crate::Switch;

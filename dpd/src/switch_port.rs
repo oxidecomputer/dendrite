@@ -7,18 +7,20 @@
 //! Types for describing and managing physical ports on the Sidecar switch.
 
 use anyhow::Context;
-use schemars::JsonSchema;
+use dpd_types::port_map::BackplaneLink;
+use dpd_types::switch_port::Led;
+use dpd_types::switch_port::LedPolicy;
+use dpd_types::switch_port::ManagementMode;
+use dpd_types::transceivers::QsfpDevice;
+use dpd_types::views;
 use serde::Deserialize;
-use serde::Serialize;
 use tokio::sync::Mutex;
 pub use transceiver_controller::message::LedState;
 
 use crate::link::Link;
-use crate::port_map::BackplaneLink;
 use crate::port_map::PortMap;
 use crate::port_map::SidecarRevision;
 use crate::transceivers::FakeQsfpModule;
-use crate::transceivers::QsfpDevice;
 use crate::types::DpdError;
 use crate::types::DpdResult;
 use aal::AsicOps;
@@ -151,89 +153,6 @@ impl SwitchPorts {
     }
 }
 
-/// How a switch port is managed.
-///
-/// The free-side devices in QSFP ports are complex devices, whose operation
-/// usually involves coordinated steps through one or more state machines. For
-/// example, when bringing up an optical link, a signal from the peer link must
-/// be detected; then a signal recovered; equalizer gains set; etc. In
-/// `Automatic` mode, all these kinds of steps are managed autonomously by
-/// switch driver software. In `Manual` mode, none of these will occur -- a
-/// switch port will only change in response to explicit requests from the
-/// operator or Oxide control plane.
-//
-// NOTE: This is the parameter which marks a switch port _visible_ to the BF
-// SDE. `Manual` means under our control, `Automatic` means visible to the SDE
-// and under its control.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Deserialize,
-    Eq,
-    Hash,
-    JsonSchema,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Serialize,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ManagementMode {
-    /// A port is managed manually, by either the Oxide control plane or an
-    /// operator.
-    Manual,
-    /// A port is managed automatically by the switch software.
-    Automatic,
-}
-
-/// The policy by which a port's LED is controlled.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Deserialize,
-    Eq,
-    Hash,
-    JsonSchema,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Serialize,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum LedPolicy {
-    /// The default policy is for the LED to reflect the port's state itself.
-    ///
-    /// If the port is operating normally, the LED will be solid on. Without a
-    /// transceiver, the LED will be solid off. A blinking LED is used to
-    /// indicate an unsupported module or other failure on that port.
-    Automatic,
-    /// The LED is explicitly overridden by client requests.
-    Override,
-}
-
-/// Information about a QSFP port's LED.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Deserialize,
-    Eq,
-    Hash,
-    JsonSchema,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Serialize,
-)]
-pub struct Led {
-    /// The policy by which the LED is controlled.
-    pub policy: LedPolicy,
-    /// The state of the LED.
-    pub state: LedState,
-}
-
 /// A physical port on the Sidecar switch.
 #[derive(Debug)]
 pub struct SwitchPort {
@@ -358,6 +277,19 @@ impl SwitchPort {
                 ref mut led_policy, ..
             } => Some(led_policy),
             _ => None,
+        }
+    }
+}
+
+impl From<&SwitchPort> for views::SwitchPort {
+    fn from(p: &SwitchPort) -> Self {
+        let qsfp_device = match &p.fixed_side {
+            FixedSideDevice::Qsfp { device, .. } => Some(device.clone()),
+            _ => None,
+        };
+        Self {
+            port_id: p.port_id(),
+            qsfp_device,
         }
     }
 }

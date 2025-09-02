@@ -16,6 +16,9 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 
 use anyhow::Context;
+use dpd_api::LinkCreate;
+use dpd_types::link::LinkId;
+use dpd_types::oxstats::OximeterMetadata;
 use futures::stream::StreamExt;
 use libc::c_int;
 use signal_hook::consts::SIGHUP;
@@ -32,15 +35,14 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::time::sleep;
 use tokio::time::Duration;
 
-use crate::api_server::LinkCreate;
 use crate::macaddrs::BaseMac;
 use crate::port_map::SidecarRevision;
 use crate::rpw::WorkflowServer;
-use crate::switch_identifiers::SwitchIdentifiers;
 use crate::switch_port::SwitchPorts;
 use aal::{ActionParse, AsicError, MatchParse};
 use common::network::MacAddr;
 use common::ports::PortId;
+use dpd_types::switch_identifiers::SwitchIdentifiers;
 use table::Table;
 use types::*;
 
@@ -77,7 +79,6 @@ mod tofino_api_server;
 mod transceivers;
 mod types;
 mod version;
-mod views;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "dpd", about = "dataplane controller for oxide switch")]
@@ -202,7 +203,7 @@ pub struct Switch {
     pub loopback: Mutex<loopback::LoopbackData>,
     pub identifiers: Mutex<Option<SwitchIdentifiers>>,
     pub oximeter_producer: Mutex<Option<oximeter_producer::Server>>,
-    pub oximeter_meta: Mutex<Option<oxstats::OximeterMetadata>>,
+    pub oximeter_meta: Mutex<Option<OximeterMetadata>>,
     pub reconciler: link::LinkReconciler,
     pub mcast: Mutex<mcast::MulticastGroupData>,
 
@@ -404,10 +405,10 @@ impl Switch {
     pub fn table_dump<M: MatchParse, A: ActionParse>(
         &self,
         t: table::TableType,
-    ) -> DpdResult<views::Table> {
+    ) -> DpdResult<dpd_types::views::Table> {
         let t = self.table_get(t)?;
 
-        Ok(views::Table {
+        Ok(dpd_types::views::Table {
             name: t.name.to_string(),
             size: t.usage.size as usize,
             entries: t
@@ -421,7 +422,7 @@ impl Switch {
                 .map(|vec| {
                     vec.into_iter()
                         .map(|(key, action): (M, A)| {
-                            views::TableEntry::new(key, action)
+                            dpd_types::views::TableEntry::new(key, action)
                         })
                         .collect()
                 })?,
@@ -433,7 +434,7 @@ impl Switch {
         &self,
         force_sync: bool,
         t: table::TableType,
-    ) -> DpdResult<Vec<views::TableCounterEntry>> {
+    ) -> DpdResult<Vec<dpd_types::views::TableCounterEntry>> {
         let t = self.table_get(t)?;
 
         t.get_counters::<M>(&self.asic_hdl, force_sync)
@@ -446,7 +447,7 @@ impl Switch {
             .map(|vec| {
                 vec.into_iter()
                     .map(|(key, data): (M, aal::CounterData)| {
-                        views::TableCounterEntry::new(key, data)
+                        dpd_types::views::TableCounterEntry::new(key, data)
                     })
                     .collect()
             })
@@ -461,7 +462,7 @@ impl Switch {
     pub fn allocate_mac_address(
         &self,
         port_id: PortId,
-        link_id: link::LinkId,
+        link_id: LinkId,
     ) -> DpdResult<MacAddr> {
         let mut mgr = self.mac_mgmt.lock().unwrap();
         mgr.allocate_mac_address(port_id, link_id)
@@ -756,7 +757,7 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
                         fec: Some(common::ports::PortFec::RS),
                         autoneg: true,
                         kr: true,
-                        lane: Some(crate::link::LinkId(0)),
+                        lane: Some(dpd_types::link::LinkId(0)),
                         tx_eq: None,
                     };
                     Some((*port_id, create))
@@ -807,6 +808,11 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn print_openapi() -> anyhow::Result<()> {
+    // TODO: Once migrated to the OpenAPI manager, this should use the stub API
+    // description. But there are currently additional backend-specific methods
+    // added by the tofino-asic and softnpu features -- those would need to be
+    // migrated to the API trait (possibly via a uniform API across all
+    // backends).
     crate::api_server::http_api()
         .openapi(
             "Oxide Switch Dataplane Controller",

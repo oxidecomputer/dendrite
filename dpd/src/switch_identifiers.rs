@@ -9,10 +9,8 @@
 use std::sync::Arc;
 
 use display_error_chain::DisplayErrorChain;
-use schemars::JsonSchema;
-use serde::Serialize;
+use dpd_types::switch_identifiers::SwitchIdentifiers;
 use slog::{debug, error, info, o};
-use uuid::Uuid;
 
 use crate::DpdResult;
 use crate::Switch;
@@ -23,34 +21,6 @@ use omicron_common::{
         retry_notify, retry_policy_internal_service_aggressive, BackoffError,
     },
 };
-
-/// Identifiers for a switch.
-#[derive(Clone, Debug, JsonSchema, Serialize)]
-pub struct SwitchIdentifiers {
-    /// Unique identifier for the chip.
-    pub sidecar_id: Uuid,
-    /// Asic backend (compiler target) responsible for these identifiers.
-    pub asic_backend: String,
-    /// Fabrication plant identifier.
-    pub fab: Option<char>,
-    /// Lot identifier.
-    pub lot: Option<char>,
-    /// Wafer number within the lot.
-    pub wafer: Option<u8>,
-    /// The wafer location as (x, y) coordinates on the wafer, represented as
-    /// an array due to the lack of tuple support in OpenAPI.
-    pub wafer_loc: Option<[i16; 2]>,
-    /// The model number of the switch being managed.
-    pub model: String,
-    /// The revision number of the switch being managed.
-    pub revision: u32,
-    /// The serial number of the switch being managed.
-    pub serial: String,
-    /// The slot number of the switch being managed.
-    ///
-    /// MGS uses u16 for this internally.
-    pub slot: u16,
-}
 
 /// Fetch unique switch identifying information from the local MGS and
 /// get current sidecar ID, which is embedded with the fab, lot, wafer id,
