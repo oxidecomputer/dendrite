@@ -1133,7 +1133,7 @@ impl Switch {
                         port.as_qsfp().unwrap().transceiver,
                         Some(Transceiver::Unsupported)
                     ) {
-                        warn!(
+                        debug!(
                             log,
                             "transceiver was previously marked unsupported, \
                             we'll check again for support automatically";
