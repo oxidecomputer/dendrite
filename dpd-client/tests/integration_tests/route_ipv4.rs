@@ -59,31 +59,21 @@ async fn add_route(
 ) -> TestResult {
     let client = &switch.client;
     let route = router.build_route(switch);
-    let route_add = build_route_add(cidr, &route);
+    let route_add = build_route_update(cidr, &route, false);
 
     client.route_ipv4_add(&route_add).await?;
     Ok(())
 }
 
-fn build_route_set(
+fn build_route_update(
     subnet: Ipv4Net,
     target: &types::Ipv4Route,
     replace: bool,
-) -> types::RouteSet {
-    types::RouteSet {
+) -> types::Ipv4RouteUpdate {
+    types::Ipv4RouteUpdate {
         cidr: subnet.into(),
         target: target.into(),
         replace,
-    }
-}
-
-fn build_route_add(
-    subnet: Ipv4Net,
-    target: &types::Ipv4Route,
-) -> types::RouteAdd {
-    types::RouteAdd {
-        cidr: subnet.into(),
-        target: target.into(),
     }
 }
 
@@ -435,8 +425,8 @@ async fn test_create_and_set_semantics_v4() -> TestResult {
     let route_33 = Router::new(10, "203.0.113.33", "02:78:39:45:b9:33", None)
         .build_route(switch);
 
-    let route_set_47 = build_route_set(cidr, &route_47, false);
-    let route_set_33 = build_route_set(cidr, &route_33, false);
+    let route_set_47 = build_route_update(cidr, &route_47, false);
+    let route_set_33 = build_route_update(cidr, &route_33, false);
 
     // Setting a new route should work
     client.route_ipv4_set(&route_set_47).await?;
@@ -449,43 +439,44 @@ async fn test_create_and_set_semantics_v4() -> TestResult {
     client.route_ipv4_set(&route_set_47).await?;
 
     // Attempting to replace the route with "replace = true" should succeed
-    let route_set_33 = build_route_set(cidr, &route_33, true);
+    let route_set_33 = build_route_update(cidr, &route_33, true);
     client.route_ipv4_set(&route_set_33).await?;
     // Verify that the route was replaced correctly
     validate_routes(client, &cidr, &[route_33]).await
 }
 
 #[ignore]
-async fn do_multipath_add(switch: &Switch) -> TestResult {
+async fn do_multipath_add(
+    switch: &Switch,
+    subnet: &Ipv4Net,
+    routers: &Vec<Router>,
+) -> TestResult {
     let client = &switch.client;
-    let cidr: Ipv4Net = "203.0.113.0/24".parse().unwrap();
 
-    let router_47 = Router::new(10, "203.0.47.1", "02:78:39:45:b9:47", None);
-    let router_33 = Router::new(11, "203.0.33.1", "02:78:39:45:b9:33", None);
-    let router_22 = Router::new(12, "203.0.22.1", "02:78:39:45:b9:22", None);
+    for r in routers {
+        add_route(switch, *subnet, r).await?;
+    }
 
-    // Setting a new route should work
-    add_route(switch, cidr, &router_47).await?;
-
-    // Adding a second target should work
-    add_route(switch, cidr, &router_33).await?;
-    // Adding a third target should work
-    add_route(switch, cidr, &router_22).await?;
-
-    let routes = vec![
-        router_22.build_route(switch),
-        router_33.build_route(switch),
-        router_47.build_route(switch),
-    ];
+    let routes: Vec<types::Ipv4Route> = routers
+        .iter()
+        .map(|router| router.build_route(switch))
+        .collect();
     // Verify that the set of routes on the switch match those we just set
-    validate_routes(client, &cidr, &routes).await
+    validate_routes(client, subnet, &routes).await
 }
 
 #[tokio::test]
 #[ignore]
 async fn test_multipath_add() -> TestResult {
     let switch = &*get_switch().await;
-    do_multipath_add(switch).await
+    let cidr: Ipv4Net = "203.0.113.0/24".parse().unwrap();
+    let routers = vec![
+        Router::new(10, "203.0.47.1", "02:78:39:45:b9:47", None),
+        Router::new(11, "203.0.33.1", "02:78:39:45:b9:33", None),
+        Router::new(12, "203.0.22.1", "02:78:39:45:b9:22", None),
+    ];
+
+    do_multipath_add(switch, &cidr, &routers).await
 }
 
 #[tokio::test]
@@ -531,18 +522,19 @@ async fn delete_ipv4_route_target(
 async fn test_multipath_delete() -> TestResult {
     let switch = &*get_switch().await;
     let client = &switch.client;
-    do_multipath_add(switch).await?;
 
     let cidr: Ipv4Net = "203.0.113.0/24".parse().unwrap();
+    let routers = vec![
+        Router::new(10, "203.0.47.1", "02:78:39:45:b9:47", None),
+        Router::new(11, "203.0.33.1", "02:78:39:45:b9:33", None),
+        Router::new(12, "203.0.22.1", "02:78:39:45:b9:22", None),
+    ];
+    do_multipath_add(switch, &cidr, &routers).await?;
 
-    let route_47 = Router::new(10, "203.0.47.1", "02:78:39:45:b9:47", None)
-        .build_route(switch);
-    let route_33 = Router::new(11, "203.0.33.1", "02:78:39:45:b9:33", None)
-        .build_route(switch);
-    let route_22 = Router::new(12, "203.0.22.1", "02:78:39:45:b9:22", None)
-        .build_route(switch);
-
-    let mut routes = vec![route_22, route_33, route_47];
+    let mut routes: Vec<types::Ipv4Route> = routers
+        .iter()
+        .map(|router| router.build_route(switch))
+        .collect();
     while let Some(route) = routes.pop() {
         delete_ipv4_route_target(client, &cidr, &route).await?;
         validate_routes(client, &cidr, &routes).await?;
@@ -580,7 +572,7 @@ async fn test_multipath(switch: &Switch, routers: &[Router]) -> TestResult {
     // The tofino CRC8 implementation uses the default polynomial value of 0x07
     let mut crc8 = crc8::Crc8::create_msb(0x07);
     let hash = crc8.calc(&data, 12, 0);
-    let expected_egress = hash as usize % routers.len();
+    let expected_egress = (hash & 0x3f) as usize % routers.len();
 
     let (to_send, mut to_recv) = common::gen_udp_routed_pair(
         switch,
@@ -611,18 +603,22 @@ async fn test_multipath(switch: &Switch, routers: &[Router]) -> TestResult {
     switch.packet_test(vec![send], vec![expected])
 }
 
-/// Attempt to send a packet with 1-8 different possible routes
+/// Attempt to send a packet with 1-16 different possible routes
 #[tokio::test]
 #[ignore]
 async fn test_multipath_traffic() -> TestResult {
     let switch = &*get_switch().await;
     let cidr: Ipv4Net = "203.0.113.0/24".parse().unwrap();
-    let routers: Vec<Router> = (11..19)
-        .map(|egress| {
+    let routers: Vec<Router> = (0..32)
+        .map(|x| {
+            // Only ports 8-24 have veths attached to them, so we end up
+            // with multiple routes going out each port when the list of 32
+            // routers is fully populated.
+            let port = (x % 16) + 8;
             Router::new(
-                egress,
-                format!("10.10.{egress}.1").as_str(),
-                format!("02:78:39:45:b9:{egress}").as_str(),
+                port,
+                format!("10.10.{x}.1").as_str(),
+                format!("02:78:39:45:b9:{x}").as_str(),
                 None,
             )
         })
@@ -637,7 +633,7 @@ async fn test_multipath_traffic() -> TestResult {
     Ok(())
 }
 
-/// Attempt to send a packet with 1-8 different possible routes, each on a
+/// Attempt to send a packet with 1-32 different possible routes, each on a
 /// different vlan.
 #[tokio::test]
 #[ignore]
@@ -645,13 +641,18 @@ async fn test_multipath_traffic_vlan() -> TestResult {
     let switch = &*get_switch().await;
     let cidr: Ipv4Net = "203.0.113.0/24".parse().unwrap();
 
-    let routers: Vec<Router> = (11..19)
-        .map(|egress| {
+    let routers: Vec<Router> = (0..32)
+        .map(|x| {
+            // Only ports 8-24 have veths attached to them, so we end up
+            // with multiple routes going out each port when the list of 32
+            // routers is fully populated.
+            let port = (x % 16) + 8;
+            let vlan = 100 + x;
             Router::new(
-                egress,
-                format!("10.10.{egress}.1").as_str(),
-                format!("02:78:39:45:b9:{egress}").as_str(),
-                Some(egress),
+                port,
+                format!("10.10.{x}.1").as_str(),
+                format!("02:78:39:45:b9:{x}").as_str(),
+                Some(vlan),
             )
         })
         .collect();

@@ -68,14 +68,14 @@ pub fn add_route_index(
 
     match s.table_entry_add(TableType::RouteIdxIpv4, &match_key, &action_data) {
         Ok(()) => {
-            info!(s.log, "added ipv4 route entry";
+            info!(s.log, "added ipv4 route index";
 		    "route" => %cidr,
 		    "index" => %idx,
             "slots" => %slots);
             Ok(())
         }
         Err(e) => {
-            error!(s.log, "failed to add ipv4 route entry";
+            error!(s.log, "failed to add ipv4 route index";
 		    "route" => %cidr,
 		    "index" => %idx,
 		    "slots" => %slots,
@@ -90,9 +90,9 @@ pub fn delete_route_index(s: &Switch, cidr: &Ipv4Net) -> DpdResult<()> {
     let match_key = RouteKey { dst_addr: *cidr };
 
     s.table_entry_del(TableType::RouteIdxIpv4, &match_key)
-        .map(|_| info!(s.log, "deleted ipv4 route"; "route" => %cidr))
+        .map(|_| info!(s.log, "deleted ipv4 index"; "route" => %cidr))
         .map_err(|e| {
-            error!(s.log, "failed to delete ipv4 route";
+            error!(s.log, "failed to delete ipv4 index";
 		"route" => %cidr,
 		"error" => %e);
             e

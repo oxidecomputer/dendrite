@@ -4572,7 +4572,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RouteResultsPage"
+                  "$ref": "#/components/schemas/Ipv4RoutesResultsPage"
                 }
               }
             }
@@ -4596,7 +4596,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RouteSet"
+                "$ref": "#/components/schemas/Ipv4RouteUpdate"
               }
             }
           },
@@ -4622,7 +4622,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RouteAdd"
+                "$ref": "#/components/schemas/Ipv4RouteUpdate"
               }
             }
           },
@@ -4708,7 +4708,7 @@
     },
     "/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}": {
       "delete": {
-        "summary": "Remove a single target for the given subnet",
+        "summary": "Remove a single target for the given IPv4 subnet",
         "operationId": "route_ipv4_delete_target",
         "parameters": [
           {
@@ -4795,7 +4795,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RouteResultsPage"
+                  "$ref": "#/components/schemas/Ipv6RoutesResultsPage"
                 }
               }
             }
@@ -4819,7 +4819,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RouteSet"
+                "$ref": "#/components/schemas/Ipv6RouteUpdate"
               }
             }
           },
@@ -4845,7 +4845,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RouteAdd"
+                "$ref": "#/components/schemas/Ipv6RouteUpdate"
               }
             }
           },
@@ -4913,6 +4913,62 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/Ipv6Net"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/route/ipv6/{cidr}/{port_id}/{link_id}/{tgt_ip}": {
+      "delete": {
+        "summary": "Remove a single target for the given IPv6 subnet",
+        "operationId": "route_ipv6_delete_target",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cidr",
+            "description": "The subnet being routed",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Ipv6Net"
+            }
+          },
+          {
+            "in": "path",
+            "name": "link_id",
+            "description": "The link to which packets should be sent",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LinkId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port to which packets should be sent",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "tgt_ip",
+            "description": "The next hop in the IPv4 route",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "ipv6"
             }
           }
         ],
@@ -6164,31 +6220,6 @@
           }
         }
       },
-      "IpNet": {
-        "x-rust-type": {
-          "crate": "oxnet",
-          "path": "oxnet::IpNet",
-          "version": "0.1.0"
-        },
-        "oneOf": [
-          {
-            "title": "v4",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Ipv4Net"
-              }
-            ]
-          },
-          {
-            "title": "v6",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Ipv6Net"
-              }
-            ]
-          }
-        ]
-      },
       "IpSrc": {
         "description": "Source filter match key for multicast traffic.",
         "oneOf": [
@@ -6354,6 +6385,83 @@
           "tgt_ip"
         ]
       },
+      "Ipv4RouteUpdate": {
+        "description": "Represents a new or replacement mapping of a subnet to a single IPv4 RouteTarget nexthop target.",
+        "type": "object",
+        "properties": {
+          "cidr": {
+            "description": "Traffic destined for any address within the CIDR block is routed using this information.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Ipv4Net"
+              }
+            ]
+          },
+          "replace": {
+            "description": "Should this route replace any existing route?  If a route exists and this parameter is false, then the call will fail.",
+            "type": "boolean"
+          },
+          "target": {
+            "description": "A single Route associated with this CIDR",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Ipv4Route"
+              }
+            ]
+          }
+        },
+        "required": [
+          "cidr",
+          "replace",
+          "target"
+        ]
+      },
+      "Ipv4Routes": {
+        "description": "Represents all mappings of an IPv4 subnet to a its nexthop target(s).",
+        "type": "object",
+        "properties": {
+          "cidr": {
+            "description": "Traffic destined for any address within the CIDR block is routed using this information.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Ipv4Net"
+              }
+            ]
+          },
+          "targets": {
+            "description": "All RouteTargets associated with this CIDR",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv4Route"
+            }
+          }
+        },
+        "required": [
+          "cidr",
+          "targets"
+        ]
+      },
+      "Ipv4RoutesResultsPage": {
+        "description": "A single page of results",
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "list of items on this page of results",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv4Routes"
+            }
+          },
+          "next_page": {
+            "nullable": true,
+            "description": "token used to fetch the next page of results (if any)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
       "Ipv6Entry": {
         "description": "An IPv6 address assigned to a link.",
         "type": "object",
@@ -6485,6 +6593,83 @@
           "port_id",
           "tag",
           "tgt_ip"
+        ]
+      },
+      "Ipv6RouteUpdate": {
+        "description": "Represents a new or replacement mapping of a subnet to a single IPv6 RouteTarget nexthop target.",
+        "type": "object",
+        "properties": {
+          "cidr": {
+            "description": "Traffic destined for any address within the CIDR block is routed using this information.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Ipv6Net"
+              }
+            ]
+          },
+          "replace": {
+            "description": "Should this route replace any existing route?  If a route exists and this parameter is false, then the call will fail.",
+            "type": "boolean"
+          },
+          "target": {
+            "description": "A single RouteTarget associated with this CIDR",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Ipv6Route"
+              }
+            ]
+          }
+        },
+        "required": [
+          "cidr",
+          "replace",
+          "target"
+        ]
+      },
+      "Ipv6Routes": {
+        "description": "Represents all mappings of an IPv6 subnet to a its nexthop target(s).",
+        "type": "object",
+        "properties": {
+          "cidr": {
+            "description": "Traffic destined for any address within the CIDR block is routed using this information.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Ipv6Net"
+              }
+            ]
+          },
+          "targets": {
+            "description": "All RouteTargets associated with this CIDR",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv6Route"
+            }
+          }
+        },
+        "required": [
+          "cidr",
+          "targets"
+        ]
+      },
+      "Ipv6RoutesResultsPage": {
+        "description": "A single page of results",
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "list of items on this page of results",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv6Routes"
+            }
+          },
+          "next_page": {
+            "nullable": true,
+            "description": "token used to fetch the next page of results (if any)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
         ]
       },
       "LaneEncoding": {
@@ -8623,138 +8808,6 @@
             },
             "required": [
               "peak_to_peak"
-            ],
-            "additionalProperties": false
-          }
-        ]
-      },
-      "Route": {
-        "description": "Represents all mappings of a subnet to a its nexthop target(s).",
-        "type": "object",
-        "properties": {
-          "cidr": {
-            "description": "Traffic destined for any address within the CIDR block is routed using this information.",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/IpNet"
-              }
-            ]
-          },
-          "targets": {
-            "description": "All RouteTargets associated with this CIDR",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RouteTarget"
-            }
-          }
-        },
-        "required": [
-          "cidr",
-          "targets"
-        ]
-      },
-      "RouteAdd": {
-        "description": "Represents a single mapping of a subnet to a single RouteTarget nexthop target.",
-        "type": "object",
-        "properties": {
-          "cidr": {
-            "description": "Traffic destined for any address within the CIDR block is routed using this information.",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/IpNet"
-              }
-            ]
-          },
-          "target": {
-            "description": "A single RouteTarget associated with this CIDR",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/RouteTarget"
-              }
-            ]
-          }
-        },
-        "required": [
-          "cidr",
-          "target"
-        ]
-      },
-      "RouteResultsPage": {
-        "description": "A single page of results",
-        "type": "object",
-        "properties": {
-          "items": {
-            "description": "list of items on this page of results",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Route"
-            }
-          },
-          "next_page": {
-            "nullable": true,
-            "description": "token used to fetch the next page of results (if any)",
-            "type": "string"
-          }
-        },
-        "required": [
-          "items"
-        ]
-      },
-      "RouteSet": {
-        "description": "Represents a new or replacement mapping of a subnet to a single RouteTarget nexthop target.",
-        "type": "object",
-        "properties": {
-          "cidr": {
-            "description": "Traffic destined for any address within the CIDR block is routed using this information.",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/IpNet"
-              }
-            ]
-          },
-          "replace": {
-            "description": "Should this route replace any existing route?  If a route exists and this parameter is false, then the call will fail.",
-            "type": "boolean"
-          },
-          "target": {
-            "description": "A single RouteTarget associated with this CIDR",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/RouteTarget"
-              }
-            ]
-          }
-        },
-        "required": [
-          "cidr",
-          "replace",
-          "target"
-        ]
-      },
-      "RouteTarget": {
-        "description": "Represents a specific egress port and nexthop target.",
-        "oneOf": [
-          {
-            "type": "object",
-            "properties": {
-              "V4": {
-                "$ref": "#/components/schemas/Ipv4Route"
-              }
-            },
-            "required": [
-              "V4"
-            ],
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "properties": {
-              "V6": {
-                "$ref": "#/components/schemas/Ipv6Route"
-              }
-            },
-            "required": [
-              "V6"
             ],
             "additionalProperties": false
           }

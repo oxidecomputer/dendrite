@@ -4,6 +4,7 @@
 //
 // Copyright 2025 Oxide Computer Company
 
+use std::net::Ipv6Addr;
 use std::sync::Arc;
 
 use oxnet::Ipv6Net;
@@ -13,8 +14,80 @@ use packet::{ipv6, sidecar, Endpoint};
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
+use packet::eth::EthQHdr;
 
 use dpd_client::types;
+
+#[derive(Debug)]
+struct Router {
+    pub port: u16,
+    pub ip: String,
+    pub mac: ::common::network::MacAddr,
+    pub vlan: Option<u16>,
+}
+
+impl Router {
+    pub fn new(port: u16, ip: &str, mac: &str, vlan: Option<u16>) -> Self {
+        let mac = mac.parse().unwrap();
+        Router {
+            port,
+            ip: ip.to_string(),
+            mac,
+            vlan,
+        }
+    }
+
+    pub fn build_route(&self, switch: &Switch) -> types::Ipv6Route {
+        let (port_id, link_id) = switch.link_id(PhysPort(self.port)).unwrap();
+        types::Ipv6Route {
+            port_id,
+            link_id,
+            tgt_ip: self.ip.parse().unwrap(),
+            tag: "testing".into(),
+            vlan_id: self.vlan,
+        }
+    }
+}
+
+async fn add_neighbor(switch: &Switch, router: &Router) -> TestResult {
+    common::add_neighbor_ipv6(switch, &router.ip, router.mac).await?;
+    Ok(())
+}
+
+async fn add_route(
+    switch: &Switch,
+    cidr: Ipv6Net,
+    router: &Router,
+) -> TestResult {
+    let client = &switch.client;
+    let route = router.build_route(switch);
+    let route_add = build_route_add(cidr, &route);
+
+    client.route_ipv6_add(&route_add).await?;
+    Ok(())
+}
+
+fn build_route_add(
+    subnet: Ipv6Net,
+    target: &types::Ipv6Route,
+) -> types::Ipv6RouteUpdate {
+    types::Ipv6RouteUpdate {
+        cidr: subnet.into(),
+        target: target.into(),
+        replace: false,
+    }
+}
+
+#[cfg(test)]
+async fn config_router(
+    switch: &Switch,
+    cidr: Ipv6Net,
+    router: &Router,
+) -> TestResult {
+    add_neighbor(switch, router).await?;
+    add_route(switch, cidr, router).await?;
+    Ok(())
+}
 
 async fn test_unicast_impl(
     switch: &Switch,
@@ -138,22 +211,15 @@ async fn test_updated_unicast() -> TestResult {
     let ingress = PhysPort(10);
     let egress = PhysPort(15);
 
-    let router_new_ip = "fd00:1122:3344:0100::2";
-    let router_mac = MacAddr::random();
-
-    common::add_neighbor_ipv6(switch, router_new_ip, router_mac).await?;
-    common::set_route_ipv6(
-        switch,
-        "fd00:1122:3344:0100::/56",
-        egress,
-        router_new_ip,
-    )
-    .await?;
+    let router =
+        Router::new(15, "fd00:1122:3344:0100::2", "02:78:39:45:b9:01", None);
+    config_router(switch, "fd00:1122:3344:0100::1/56".parse()?, &router)
+        .await?;
 
     let (to_send, to_recv) = common::gen_udp_routed_pair(
         switch,
         egress,
-        router_mac,
+        router.mac,
         Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0101::4", 3333)
             .unwrap(),
         Endpoint::parse("e0:d5:5e:67:89:ac", "fd00:1122:3344:0101::5", 4444)
@@ -577,15 +643,15 @@ async fn test_create_and_set_semantics_v6() -> TestResult {
     let mut target33 = target47.clone();
     target33.tgt_ip = "fe80::1701:c:2000:33".parse().unwrap();
 
-    let route47 = types::RouteSet {
-        cidr: cidr.into(),
-        target: (&target47).into(),
+    let route47 = types::Ipv6RouteUpdate {
+        cidr,
+        target: target47,
         replace: false,
     };
 
-    let mut route33 = types::RouteSet {
-        cidr: cidr.into(),
-        target: (&target33).into(),
+    let mut route33 = types::Ipv6RouteUpdate {
+        cidr,
+        target: target33.clone(),
         replace: false,
     };
 
@@ -608,5 +674,118 @@ async fn test_create_and_set_semantics_v6() -> TestResult {
     assert_eq!(rt.len(), 1);
     assert_eq!(rt[0].tgt_ip, target33.tgt_ip);
 
+    Ok(())
+}
+
+#[cfg(test)]
+async fn test_multipath(switch: &Switch, routers: &[Router]) -> TestResult {
+    let ingress = 10;
+
+    let src_ip = "fd00:1122:7788:0101::10";
+    let src_port: u16 = 3333;
+    let dst_ip = "fd00:1122:3344:0100::12";
+    let dst_port: u16 = 4444;
+
+    // Replicate the path-selection algorithm used in the sidecar p4 code
+    let mut data = [0u8; 36];
+    data[0..16].copy_from_slice(&dst_ip.parse::<Ipv6Addr>().unwrap().octets());
+    data[16..32].copy_from_slice(&src_ip.parse::<Ipv6Addr>().unwrap().octets());
+    data[32..34].copy_from_slice(&dst_port.to_be_bytes());
+    data[34..36].copy_from_slice(&src_port.to_be_bytes());
+
+    // The tofino CRC8 implementation uses the default polynomial value of 0x07
+    let mut crc8 = crc8::Crc8::create_msb(0x07);
+    let hash = crc8.calc(&data, 36, 0);
+    let expected_egress = (hash & 0x3f) as usize % routers.len();
+
+    let (to_send, mut to_recv) = common::gen_udp_routed_pair(
+        switch,
+        PhysPort(routers[expected_egress].port),
+        routers[expected_egress].mac,
+        Endpoint::parse("e0:d5:5e:67:89:ab", src_ip, src_port).unwrap(),
+        Endpoint::parse("e0:d5:5e:67:89:ac", dst_ip, dst_port).unwrap(),
+    );
+
+    let send = TestPacket {
+        packet: Arc::new(to_send),
+        port: PhysPort(ingress),
+    };
+
+    // Add the VLAN tag to the expected packet
+    if let Some(vlan) = routers[expected_egress].vlan {
+        to_recv.hdrs.eth_hdr.as_mut().unwrap().eth_8021q = Some(EthQHdr {
+            eth_pcp: 0,
+            eth_dei: 0,
+            eth_vlan_tag: vlan,
+        });
+    }
+
+    let expected = TestPacket {
+        packet: Arc::new(to_recv),
+        port: PhysPort(routers[expected_egress].port),
+    };
+    switch.packet_test(vec![send], vec![expected])
+}
+
+/// Attempt to send a packet with 1-32 different possible routes
+#[tokio::test]
+#[ignore]
+async fn test_multipath_traffic() -> TestResult {
+    let switch = &*get_switch().await;
+    let cidr: Ipv6Net = "fd00:1122:3344:0100::/56".parse().unwrap();
+    let routers: Vec<Router> = (0..32)
+        .map(|x| {
+            // Only ports 8-24 have veths attached to them, so we end up
+            // with multiple routes going out each port when the list of 32
+            // routers is fully populated.
+            let port = (x % 16) + 8;
+            Router::new(
+                port,
+                format!("fd00:2211:3333:{x}::1").as_str(),
+                format!("02:78:39:45:b9:{x}").as_str(),
+                None,
+            )
+        })
+        .collect();
+
+    // Incrementally add paths to the multipath set, testing packet transfers
+    // with each subset along the way.
+    for r in 0..routers.len() {
+        config_router(switch, cidr, &routers[r]).await?;
+        test_multipath(switch, &routers[0..r + 1]).await?;
+    }
+    Ok(())
+}
+
+/// Attempt to send a packet with 1-32 different possible routes, each on a
+/// different vlan.
+#[tokio::test]
+#[ignore]
+async fn skip_test_multipath_traffic_vlan() -> TestResult {
+    let switch = &*get_switch().await;
+    let cidr: Ipv6Net = "fd00:1122:3344:0100::/56".parse().unwrap();
+
+    let routers: Vec<Router> = (0..1)
+        .map(|x| {
+            // Only ports 8-24 have veths attached to them, so we end up
+            // with multiple routes going out each port when the list of 32
+            // routers is fully populated.
+            let port = (x % 16) + 8;
+            let vlan = 100 + x;
+            Router::new(
+                port,
+                format!("fd00:2211:3333:{x}::1").as_str(),
+                format!("02:78:39:45:b9:{x}").as_str(),
+                Some(vlan),
+            )
+        })
+        .collect();
+
+    // Incrementally add paths to the multipath set, testing packet transfers
+    // with each subset along the way.
+    for r in 0..routers.len() {
+        config_router(switch, cidr, &routers[r]).await?;
+        test_multipath(switch, &routers[0..r + 1]).await?;
+    }
     Ok(())
 }
