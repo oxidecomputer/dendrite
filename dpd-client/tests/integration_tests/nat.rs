@@ -335,15 +335,15 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
         .await
         .unwrap();
     let cidr = Ipv6Net::new(test.gimlet_ip.parse().unwrap(), 64).unwrap();
-    let route = types::RouteSet {
-        cidr: cidr.into(),
-        target: types::RouteTarget::V6(types::Ipv6Route {
+    let route = types::Ipv6RouteUpdate {
+        cidr,
+        target: types::Ipv6Route {
             tag: switch.client.inner().tag.clone(),
             port_id,
             link_id,
             tgt_ip: test.gimlet_ip.parse().unwrap(),
             vlan_id: None,
-        }),
+        },
         replace: false,
     };
     switch.client.route_ipv6_set(&route).await.unwrap();

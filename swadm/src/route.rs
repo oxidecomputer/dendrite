@@ -12,7 +12,7 @@ use anyhow::bail;
 use anyhow::Context;
 use colored::*;
 use futures::stream::TryStreamExt;
-use oxnet::IpNet;
+use oxnet::{IpNet, Ipv4Net, Ipv6Net};
 use structopt::*;
 use tabwriter::TabWriter;
 
@@ -83,57 +83,44 @@ fn print_route_header(
     .map_err(|e| e.into())
 }
 
-fn print_route(
+fn print_ipv4_route(
     tw: &mut TabWriter<std::io::Stdout>,
-    entry: types::Route,
+    cidr: Ipv4Net,
+    targets: &Vec<types::Ipv4Route>,
 ) -> anyhow::Result<()> {
-    let mut cidr = entry.cidr.to_string();
-    for t in entry.targets {
-        let (port, link, ip, vlan) = match t {
-            types::RouteTarget::V4(tgt) => (
-                tgt.port_id.to_string(),
-                tgt.link_id.to_string(),
-                IpAddr::V4(tgt.tgt_ip),
-                tgt.vlan_id,
-            ),
-            types::RouteTarget::V6(tgt) => (
-                tgt.port_id.to_string(),
-                tgt.link_id.to_string(),
-                IpAddr::V6(tgt.tgt_ip),
-                tgt.vlan_id,
-            ),
-        };
-
-        let vlan = match vlan {
-            None => String::new(),
-            Some(id) => id.to_string(),
-        };
-
-        writeln!(tw, "{cidr}\t{port}\t{link:<}\t{ip}\t{vlan}")?;
+    let mut cidr = cidr.to_string();
+    for t in targets {
+        writeln!(
+            tw,
+            "{}\t{}\t{:<}\t{}\t{}",
+            cidr,
+            t.port_id,
+            t.link_id,
+            t.tgt_ip,
+            t.vlan_id.map_or(String::new(), |id| id.to_string()),
+        )?;
         cidr = String::new();
     }
     Ok(())
 }
 
-async fn route_list_family(
+fn print_ipv6_route(
     tw: &mut TabWriter<std::io::Stdout>,
-    client: &Client,
-    family: IpFamily,
+    cidr: Ipv6Net,
+    targets: &Vec<types::Ipv6Route>,
 ) -> anyhow::Result<()> {
-    let routes: Vec<types::Route> = match family {
-        IpFamily::V4 => client
-            .route_ipv4_list_stream(None)
-            .try_collect()
-            .await
-            .context("failed to get IPv4 routes")?,
-        IpFamily::V6 => client
-            .route_ipv6_list_stream(None)
-            .try_collect()
-            .await
-            .context("failed to get IPv6 routes")?,
-    };
-    for entry in routes {
-        print_route(tw, entry)?;
+    let mut cidr = cidr.to_string();
+    for t in targets {
+        writeln!(
+            tw,
+            "{}\t{}\t{:<}\t{}\t{}",
+            cidr,
+            t.port_id,
+            t.link_id,
+            t.tgt_ip,
+            t.vlan_id.map_or(String::new(), |id| id.to_string()),
+        )?;
+        cidr = String::new();
     }
     Ok(())
 }
@@ -153,38 +140,49 @@ async fn route_list(
     let mut tw = TabWriter::new(stdout());
     print_route_header(&mut tw)?;
     if v4 {
-        route_list_family(&mut tw, client, IpFamily::V4).await?;
+        let routes: Vec<types::Ipv4Routes> = client
+            .route_ipv4_list_stream(None)
+            .try_collect()
+            .await
+            .context("failed to get IPv4 routes")?;
+        for r in routes {
+            print_ipv4_route(&mut tw, r.cidr, &r.targets)?;
+        }
     }
     if v6 {
-        route_list_family(&mut tw, client, IpFamily::V6).await?;
+        let routes: Vec<types::Ipv6Routes> = client
+            .route_ipv6_list_stream(None)
+            .try_collect()
+            .await
+            .context("failed to get IPv6 routes")?;
+        for r in routes {
+            print_ipv6_route(&mut tw, r.cidr, &r.targets)?;
+        }
     }
     tw.flush().map_err(|e| e.into())
 }
 
 async fn route_get(client: &Client, cidr: IpNet) -> anyhow::Result<()> {
-    let targets = match &cidr {
-        IpNet::V4(c) => client
-            .route_ipv4_get(c)
-            .await
-            .context("failed to get IPv4 route")?
-            .into_inner()
-            .iter()
-            .map(|r| types::RouteTarget::V4(r.clone()))
-            .collect(),
-        IpNet::V6(c) => client
-            .route_ipv6_get(c)
-            .await
-            .context("failed to get IPv6 route")?
-            .into_inner()
-            .iter()
-            .map(|r| types::RouteTarget::V6(r.clone()))
-            .collect(),
-    };
-
-    let route = types::Route { cidr, targets };
     let mut tw = TabWriter::new(stdout());
     print_route_header(&mut tw)?;
-    print_route(&mut tw, route)?;
+    match &cidr {
+        IpNet::V4(c) => {
+            let targets = client
+                .route_ipv4_get(c)
+                .await
+                .context("failed to get IPv4 route")?
+                .into_inner();
+            print_ipv4_route(&mut tw, *c, &targets)?;
+        }
+        IpNet::V6(c) => {
+            let targets = client
+                .route_ipv6_get(c)
+                .await
+                .context("failed to get IPv6 route")?
+                .into_inner();
+            print_ipv6_route(&mut tw, *c, &targets)?;
+        }
+    }
     tw.flush().map_err(|e| e.into())
 }
 
@@ -195,35 +193,43 @@ async fn route_add(
     gw: IpAddr,
     vlan_id: Option<u16>,
 ) -> anyhow::Result<()> {
-    match gw {
-        IpAddr::V4(tgt_ip) => client
-            .route_ipv4_add(&types::RouteAdd {
+    match (gw, cidr) {
+        (IpAddr::V4(tgt_ip), IpNet::V4(cidr)) => client
+            .route_ipv4_add(&types::Ipv4RouteUpdate {
                 cidr,
-                target: types::RouteTarget::V4(types::Ipv4Route {
+                target: types::Ipv4Route {
                     tag: client.inner().tag.clone(),
                     port_id: link_path.port_id,
                     link_id: link_path.link_id,
                     tgt_ip,
                     vlan_id,
-                }),
+                },
+                replace: false,
             })
             .await
             .context("adding IPv4 route")
             .map(|_| ()),
-        IpAddr::V6(tgt_ip) => client
-            .route_ipv6_add(&types::RouteAdd {
+        (IpAddr::V6(tgt_ip), IpNet::V6(cidr)) => client
+            .route_ipv6_add(&types::Ipv6RouteUpdate {
                 cidr,
-                target: types::RouteTarget::V6(types::Ipv6Route {
+                target: types::Ipv6Route {
                     tag: client.inner().tag.clone(),
                     port_id: link_path.port_id,
                     link_id: link_path.link_id,
                     tgt_ip,
                     vlan_id,
-                }),
+                },
+                replace: false,
             })
             .await
             .context("adding IPv6 route")
             .map(|_| ()),
+        (IpAddr::V6(_), IpNet::V4(_)) => {
+            Err(anyhow!("cannot have an IPv4 route to an IPv6 address"))
+        }
+        (IpAddr::V4(_), IpNet::V6(_)) => {
+            Err(anyhow!("cannot have an IPv6 route to an IPv4 address"))
+        }
     }
 }
 
