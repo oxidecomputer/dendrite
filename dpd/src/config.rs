@@ -78,6 +78,9 @@ pub struct Config {
 
     /// Nexus address.
     pub nexus_address: Option<SocketAddr>,
+
+    /// MGS address.
+    pub mgs_address: Option<SocketAddr>,
 }
 
 impl Default for Config {
@@ -102,6 +105,7 @@ impl Default for Config {
             asic_config: AsicConfig::default(),
             enable_rpw: false,
             nexus_address: None,
+            mgs_address: None,
         }
     }
 }
@@ -283,6 +287,10 @@ fn update_from_cli(opts: &crate::Opt, config: &mut Config) -> DpdResult<()> {
 
     if let Some(nexus_address) = &opts.nexus_address {
         config.nexus_address = Some(nexus_address.to_owned());
+    }
+
+    if let Some(mgs_address) = &opts.mgs_address {
+        config.mgs_address = Some(mgs_address.to_owned());
     }
 
     config.enable_rpw = opts.enable_rpw;

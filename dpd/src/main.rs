@@ -79,6 +79,7 @@ mod types;
 mod version;
 mod views;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, StructOpt)]
 #[structopt(name = "dpd", about = "dataplane controller for oxide switch")]
 pub(crate) enum Args {
@@ -184,6 +185,9 @@ pub(crate) struct Opt {
 
     #[structopt(long, about = "IP address and port of nexus server.")]
     nexus_address: Option<SocketAddr>,
+
+    #[structopt(long, about = "IP address and port of MGS server.")]
+    mgs_address: Option<SocketAddr>,
 }
 
 /// The main context object for running all of `dpd`.

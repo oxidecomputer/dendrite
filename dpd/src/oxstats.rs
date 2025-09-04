@@ -5,7 +5,7 @@
 // Copyright 2025 Oxide Computer Company
 
 use std::collections::BTreeMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -498,13 +498,6 @@ struct OximeterConfig {
     sled_identifiers: SledIdentifiers,
     /// Identifiers for the Sidecar we're managing.
     switch_identifiers: SwitchIdentifiers,
-}
-
-pub fn is_localhost(addr: &SocketAddr) -> bool {
-    match addr.ip() {
-        IpAddr::V4(ipv4) => ipv4 == Ipv4Addr::LOCALHOST,
-        IpAddr::V6(ipv6) => ipv6 == Ipv6Addr::LOCALHOST,
-    }
 }
 
 // Spin until the switch config is populated with all the information we need
