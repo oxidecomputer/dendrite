@@ -253,25 +253,14 @@ async fn nexus_client_with_resolver(
 ) -> Result<NexusClient> {
     loop {
         {
-            let (listen_address, dns_servers) = {
-                let config = switch
-                    .config
-                    .lock()
-                    .expect("should be able to read switch config");
+            let dns_servers = switch
+                .config
+                .lock()
+                .expect("should be able to read switch config")
+                .dns_servers
+                .to_vec();
 
-                let listen_address = config
-                    .listen_addresses
-                    .iter()
-                    .find(|a| !is_localhost(a))
-                    .copied();
-                let dns_servers = config.dns_servers.to_vec();
-
-                (listen_address, dns_servers)
-            };
-
-            if listen_address.is_none() {
-                debug!(log, "no listen_addresses found");
-            } else if dns_servers.is_empty() {
+            if dns_servers.is_empty() {
                 debug!(log, "no dns server found");
             } else {
                 let resolver =
