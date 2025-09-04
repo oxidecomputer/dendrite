@@ -184,6 +184,9 @@ pub(crate) struct Opt {
 
     #[structopt(long, about = "IP address and port of nexus server.")]
     nexus_address: Option<SocketAddr>,
+
+    #[structopt(long, about = "IP address and port of MGS server.")]
+    mgs_address: Option<SocketAddr>,
 }
 
 /// The main context object for running all of `dpd`.
