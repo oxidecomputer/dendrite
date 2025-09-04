@@ -18,6 +18,7 @@ use tabwriter::TabWriter;
 
 use dpd_client::types;
 use dpd_client::Client;
+use dpd_client::ClientInfo;
 
 use crate::IpFamily;
 use crate::LinkPath;

@@ -37,6 +37,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use anyhow::Result;
 use dpd_client::types;
+use dpd_client::ClientInfo;
 use slog::debug;
 use slog::error;
 use slog::info;

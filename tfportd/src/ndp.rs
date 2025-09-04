@@ -19,6 +19,7 @@ use crate::poll_interval;
 use crate::sidecar;
 use crate::Global;
 use common::network::MacAddr;
+use dpd_client::ClientInfo;
 
 const NDP: &str = "/usr/sbin/ndp";
 
