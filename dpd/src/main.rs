@@ -79,6 +79,7 @@ mod types;
 mod version;
 mod views;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, StructOpt)]
 #[structopt(name = "dpd", about = "dataplane controller for oxide switch")]
 pub(crate) enum Args {
