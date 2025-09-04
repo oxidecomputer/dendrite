@@ -4,6 +4,8 @@
 //
 // Copyright 2025 Oxide Computer Company
 
+//! DPD endpoint definitions.
+
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -1410,23 +1412,29 @@ pub trait DpdApi {
     async fn multicast_group_create_external(
         rqctx: RequestContext<Self::Context>,
         group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
-    ) -> Result<HttpResponseCreated<mcast::MulticastGroupResponse>, HttpError>;
+    ) -> Result<
+        HttpResponseCreated<mcast::MulticastGroupExternalResponse>,
+        HttpError,
+    >;
 
     /**
-     * Create an internal multicast group configuration.
+     * Create an underlay (internal) multicast group configuration.
      *
-     * Internal groups are used for admin-scoped IPv6 multicast traffic that
+     * Underlay groups are used for admin-scoped IPv6 multicast traffic that
      * requires replication infrastructure. These groups support both external
      * and underlay members with full replication capabilities.
      */
     #[endpoint {
         method = POST,
-        path = "/multicast/groups",
+        path = "/multicast/underlay-groups",
     }]
-    async fn multicast_group_create(
+    async fn multicast_group_create_underlay(
         rqctx: RequestContext<Self::Context>,
-        group: TypedBody<mcast::MulticastGroupCreateEntry>,
-    ) -> Result<HttpResponseCreated<mcast::MulticastGroupResponse>, HttpError>;
+        group: TypedBody<mcast::MulticastGroupCreateUnderlayEntry>,
+    ) -> Result<
+        HttpResponseCreated<mcast::MulticastGroupUnderlayResponse>,
+        HttpError,
+    >;
 
     /**
      * Delete a multicast group configuration by IP address.
@@ -1464,20 +1472,37 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError>;
 
     /**
-     * Update an internal multicast group configuration for a given group IP address.
+     * Get an underlay (internal) multicast group configuration by admin-scoped
+     * IPv6 address.
      *
-     * Internal groups are used for admin-scoped IPv6 multicast traffic that
+     * Underlay groups handle admin-scoped IPv6 multicast traffic with
+     * replication infrastructure for external and underlay members.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/multicast/underlay-groups/{group_ip}",
+    }]
+    async fn multicast_group_get_underlay(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastUnderlayGroupIpParam>,
+    ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
+
+    /**
+     * Update an underlay (internal) multicast group configuration for a given
+     * group IP address.
+     *
+     * Underlay groups are used for admin-scoped IPv6 multicast traffic that
      * requires replication infrastructure with external and underlay members.
      */
     #[endpoint {
         method = PUT,
-        path = "/multicast/groups/{group_ip}",
+        path = "/multicast/underlay-groups/{group_ip}",
     }]
-    async fn multicast_group_update(
+    async fn multicast_group_update_underlay(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastGroupIpParam>,
-        group: TypedBody<mcast::MulticastGroupUpdateEntry>,
-    ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError>;
+        path: Path<MulticastUnderlayGroupIpParam>,
+        group: TypedBody<mcast::MulticastGroupUpdateUnderlayEntry>,
+    ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
 
     /**
      * Update an external-only multicast group configuration for a given group IP address.
@@ -1493,7 +1518,10 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
         group: TypedBody<mcast::MulticastGroupUpdateExternalEntry>,
-    ) -> Result<HttpResponseCreated<mcast::MulticastGroupResponse>, HttpError>;
+    ) -> Result<
+        HttpResponseCreated<mcast::MulticastGroupExternalResponse>,
+        HttpError,
+    >;
 
     /**
      * List all multicast groups.
@@ -2031,6 +2059,13 @@ pub struct CounterPath {
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupIpParam {
     pub group_ip: IpAddr,
+}
+
+/// Used to identify an underlay (internal) multicast group by admin-scoped IPv6
+/// address.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MulticastUnderlayGroupIpParam {
+    pub group_ip: mcast::AdminScopedIpv6,
 }
 
 /// Used to identify a multicast group by ID.

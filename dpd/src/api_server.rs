@@ -17,11 +17,13 @@ use dpd_types::fault::Fault;
 use dpd_types::link::LinkFsmCounters;
 use dpd_types::link::LinkId;
 use dpd_types::link::LinkUpCounter;
-use dpd_types::mcast::MulticastGroupCreateEntry;
 use dpd_types::mcast::MulticastGroupCreateExternalEntry;
+use dpd_types::mcast::MulticastGroupCreateUnderlayEntry;
+use dpd_types::mcast::MulticastGroupExternalResponse;
 use dpd_types::mcast::MulticastGroupResponse;
-use dpd_types::mcast::MulticastGroupUpdateEntry;
+use dpd_types::mcast::MulticastGroupUnderlayResponse;
 use dpd_types::mcast::MulticastGroupUpdateExternalEntry;
+use dpd_types::mcast::MulticastGroupUpdateUnderlayEntry;
 use dpd_types::oxstats::OximeterMetadata;
 use dpd_types::port_map::BackplaneLink;
 use dpd_types::route::Ipv4Route;
@@ -1828,7 +1830,8 @@ impl DpdApi for DpdApiImpl {
     async fn multicast_group_create_external(
         rqctx: RequestContext<Arc<Switch>>,
         group: TypedBody<MulticastGroupCreateExternalEntry>,
-    ) -> Result<HttpResponseCreated<MulticastGroupResponse>, HttpError> {
+    ) -> Result<HttpResponseCreated<MulticastGroupExternalResponse>, HttpError>
+    {
         let switch: &Switch = rqctx.context();
         let entry = group.into_inner();
 
@@ -1837,10 +1840,11 @@ impl DpdApi for DpdApiImpl {
             .map_err(HttpError::from)
     }
 
-    async fn multicast_group_create(
+    async fn multicast_group_create_underlay(
         rqctx: RequestContext<Arc<Switch>>,
-        group: TypedBody<MulticastGroupCreateEntry>,
-    ) -> Result<HttpResponseCreated<MulticastGroupResponse>, HttpError> {
+        group: TypedBody<MulticastGroupCreateUnderlayEntry>,
+    ) -> Result<HttpResponseCreated<MulticastGroupUnderlayResponse>, HttpError>
+    {
         let switch: &Switch = rqctx.context();
         let entry = group.into_inner();
 
@@ -1884,26 +1888,27 @@ impl DpdApi for DpdApiImpl {
             .map_err(HttpError::from)
     }
 
-    async fn multicast_group_update(
+    async fn multicast_group_update_underlay(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<MulticastGroupIpParam>,
-        group: TypedBody<MulticastGroupUpdateEntry>,
-    ) -> Result<HttpResponseOk<MulticastGroupResponse>, HttpError> {
+        path: Path<MulticastUnderlayGroupIpParam>,
+        group: TypedBody<MulticastGroupUpdateUnderlayEntry>,
+    ) -> Result<HttpResponseOk<MulticastGroupUnderlayResponse>, HttpError> {
         let switch: &Switch = rqctx.context();
-        let ip = path.into_inner().group_ip;
+        let admin_scoped = path.into_inner().group_ip;
 
-        let ipv6 = match ip {
-            IpAddr::V6(ipv6) => ipv6,
-            IpAddr::V4(_) => {
-                return Err(HttpError::for_bad_request(
-                    None,
-                    "Internal multicast groups must use IPv6 addresses"
-                        .to_string(),
-                ));
-            }
-        };
+        mcast::modify_group_internal(switch, admin_scoped, group.into_inner())
+            .map(HttpResponseOk)
+            .map_err(HttpError::from)
+    }
 
-        mcast::modify_group_internal(switch, ipv6, group.into_inner())
+    async fn multicast_group_get_underlay(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<MulticastUnderlayGroupIpParam>,
+    ) -> Result<HttpResponseOk<MulticastGroupUnderlayResponse>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let admin_scoped = path.into_inner().group_ip;
+
+        mcast::get_group_internal(switch, admin_scoped)
             .map(HttpResponseOk)
             .map_err(HttpError::from)
     }
@@ -1912,7 +1917,8 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
         group: TypedBody<MulticastGroupUpdateExternalEntry>,
-    ) -> Result<HttpResponseCreated<MulticastGroupResponse>, HttpError> {
+    ) -> Result<HttpResponseCreated<MulticastGroupExternalResponse>, HttpError>
+    {
         let switch: &Switch = rqctx.context();
         let entry = group.into_inner();
         let ip = path.into_inner().group_ip;
@@ -1952,7 +1958,7 @@ impl DpdApi for DpdApiImpl {
             entries,
             &EmptyScanParams {},
             |e: &MulticastGroupResponse, _| MulticastGroupIpParam {
-                group_ip: e.group_ip,
+                group_ip: e.ip(),
             },
         )?))
     }
@@ -1988,7 +1994,7 @@ impl DpdApi for DpdApiImpl {
             entries,
             &EmptyScanParams {},
             |e: &MulticastGroupResponse, _| MulticastGroupIpParam {
-                group_ip: e.group_ip,
+                group_ip: e.ip(),
             },
         )?))
     }

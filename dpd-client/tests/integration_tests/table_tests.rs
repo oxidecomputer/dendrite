@@ -459,13 +459,13 @@ async fn test_routev6_full() -> TestResult {
 
 struct MulticastReplicationTableTest {}
 
-impl TableTest<types::MulticastGroupResponse, ()>
+impl TableTest<types::MulticastGroupUnderlayResponse, ()>
     for MulticastReplicationTableTest
 {
     async fn insert_entry(
         switch: &Switch,
         idx: usize,
-    ) -> OpResult<types::MulticastGroupResponse> {
+    ) -> OpResult<types::MulticastGroupUnderlayResponse> {
         let (port_id1, link_id1) = switch.link_id(PhysPort(11)).unwrap();
         let (port_id2, link_id2) = switch.link_id(PhysPort(12)).unwrap();
 
@@ -473,8 +473,8 @@ impl TableTest<types::MulticastGroupResponse, ()>
         let group_ip = gen_ipv6_multicast_addr(idx);
 
         // Admin-scoped IPv6 groups are internal with replication info and members
-        let internal_entry = types::MulticastGroupCreateEntry {
-            group_ip,
+        let internal_entry = types::MulticastGroupCreateUnderlayEntry {
+            group_ip: types::AdminScopedIpv6(group_ip),
             tag: Some(MCAST_TAG.to_string()),
             members: vec![
                 types::MulticastGroupMember {
@@ -489,7 +489,10 @@ impl TableTest<types::MulticastGroupResponse, ()>
                 },
             ],
         };
-        switch.client.multicast_group_create(&internal_entry).await
+        switch
+            .client
+            .multicast_group_create_underlay(&internal_entry)
+            .await
     }
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
@@ -498,7 +501,7 @@ impl TableTest<types::MulticastGroupResponse, ()>
     }
 
     async fn count_entries(switch: &Switch) -> usize {
-        // Count all groups with our test tag
+        // Count only underlay groups with our test tag (since this tests replication table capacity)
         switch
             .client
             .multicast_groups_list_by_tag_stream(MCAST_TAG, None)
@@ -514,7 +517,7 @@ impl TableTest<types::MulticastGroupResponse, ()>
 async fn test_multicast_replication_table_full() -> TestResult {
     test_table_capacity::<
         MulticastReplicationTableTest,
-        types::MulticastGroupResponse,
+        types::MulticastGroupUnderlayResponse,
         (),
     >(MULTICAST_TABLE_SIZE)
     .await

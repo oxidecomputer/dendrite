@@ -88,7 +88,7 @@ trait RollbackOps {
             Err(e) => {
                 debug!(
                     self.switch().log,
-                    "failed {} during rollback: {:?}", operation, e
+                    "failed {operation} during rollback: {e:?}"
                 );
                 true
             }
@@ -105,7 +105,7 @@ trait RollbackOps {
         if let Err(e) = result {
             debug!(
                 self.switch().log,
-                "failed to {} during rollback {}: {:?}", operation, context, e
+                "failed to {operation} during rollback {context}: {e:?}",
             );
         }
     }
@@ -154,6 +154,10 @@ impl RollbackOps for GroupCreateRollbackContext<'_> {
                 added_ports.len()
             );
 
+            let mut first_error = None;
+            let mut failed_port_resolution = Vec::new();
+            let mut failed_port_removal = Vec::new();
+
             for member in added_ports {
                 let group_id = match member.direction {
                     Direction::External => self.external_id,
@@ -172,28 +176,58 @@ impl RollbackOps for GroupCreateRollbackContext<'_> {
                         {
                             error!(
                                 self.switch.log,
-                                "failed to remove port during rollback: port={}, asic_id={}, group={}, error={:?}",
-                                member.port_id,
-                                asic_id,
-                                group_id,
-                                e
+                                r#"failed to remove port during rollback:
+                                   port={}, asic_id={asic_id}, group={group_id}, error={e:?}"#,
+                                member.port_id
                             );
-                            return Err(e.into());
+
+                            first_error.get_or_insert_with(|| e.into());
+
+                            failed_port_removal
+                                .push((member.port_id, member.link_id));
                         }
                     }
                     Err(e) => {
                         error!(
                             self.switch.log,
-                            "failed to resolve port link during rollback: port={}, link={}, error={:?}",
+                            r#"failed to resolve port link during rollback:
+                               port={}, link={}, error={e:?}"#,
                             member.port_id,
-                            member.link_id,
-                            e
+                            member.link_id
                         );
-                        return Err(e);
+
+                        first_error.get_or_insert(e);
+                        failed_port_resolution
+                            .push((member.port_id, member.link_id));
                     }
                 }
             }
-            Ok(())
+
+            // Log summary of any failures
+            if !failed_port_resolution.is_empty() {
+                error!(
+                    self.switch.log,
+                    r#"rollback failed to resolve {} port links: {failed_port_resolution:?}.
+                       These ports may remain in inconsistent state"#,
+                    failed_port_resolution.len()
+                );
+            }
+
+            if !failed_port_removal.is_empty() {
+                error!(
+                    self.switch.log,
+                    r#"rollback failed to remove {} ports from ASIC: {:?}.
+                       These ports may remain in inconsistent state"#,
+                    failed_port_removal.len(),
+                    failed_port_removal
+                );
+            }
+
+            // Return the first error encountered, if any
+            match first_error {
+                Some(e) => Err(e),
+                None => Ok(()),
+            }
         }
     }
 }
@@ -431,12 +465,15 @@ impl RollbackOps for GroupUpdateRollbackContext<'_> {
 
         // Internal group - perform actual port rollback
         debug!(
-                self.switch.log,
-                "rolling back multicast group update: group={}, added_ports={}, removed_ports={}",
-                self.group_ip,
-                added_ports.len(),
-                removed_ports.len()
-            );
+            self.switch.log,
+            "rolling back multicast group update: group={:?}, added_ports={}, removed_ports={}",
+            self.group_ip, added_ports.len(), removed_ports.len()
+        );
+
+        let mut first_error = None;
+        let mut failed_port_resolution = Vec::new();
+        let mut failed_port_removal = Vec::new();
+        let mut failed_port_addition = Vec::new();
 
         // Remove added ports
         for member in added_ports {
@@ -454,25 +491,27 @@ impl RollbackOps for GroupUpdateRollbackContext<'_> {
                         self.switch.asic_hdl.mc_port_remove(group_id, asic_id)
                     {
                         error!(
-                                self.switch.log,
-                                "failed to remove port during rollback: port={}, asic_id={}, group={}, error={:?}",
-                                member.port_id,
-                                asic_id,
-                                group_id,
-                                e
-                            );
-                        return Err(e.into());
+                            self.switch.log,
+                            "failed to remove port during rollback: port={}, asic_id={asic_id}, group={group_id}, error={e:?}",
+                            member.port_id,
+                        );
+
+                        first_error.get_or_insert_with(|| e.into());
+                        failed_port_removal
+                            .push((member.port_id, member.link_id));
                     }
                 }
                 Err(e) => {
                     error!(
-                            self.switch.log,
-                            "failed to resolve port link during rollback: port={}, link={}, error={:?}",
-                            member.port_id,
-                            member.link_id,
-                            e
-                        );
-                    return Err(e);
+                        self.switch.log,
+                        r#"failed to resolve port link during rollback: port={}, link={}, error={e:?}"#,
+                        member.port_id,
+                        member.link_id
+                    );
+
+                    first_error.get_or_insert(e);
+                    failed_port_resolution
+                        .push((member.port_id, member.link_id));
                 }
             }
         }
@@ -496,30 +535,67 @@ impl RollbackOps for GroupUpdateRollbackContext<'_> {
                         replication_info.level1_excl_id,
                     ) {
                         error!(
-                                self.switch.log,
-                                "failed to add port during rollback: port={}, asic_id={}, group={}, error={:?}",
-                                member.port_id,
-                                asic_id,
-                                group_id,
-                                e
-                            );
-                        return Err(e.into());
+                            self.switch.log,
+                            "failed to add port during rollback: port={}, asic_id={asic_id}, group={group_id}, error={e:?}",
+                            member.port_id
+                        );
+
+                        first_error.get_or_insert_with(|| e.into());
+                        failed_port_addition
+                            .push((member.port_id, member.link_id));
                     }
                 }
                 Err(e) => {
                     error!(
-                            self.switch.log,
-                            "failed to resolve port link during rollback: port={}, link={}, error={:?}",
-                            member.port_id,
-                            member.link_id,
-                            e
-                        );
-                    return Err(e);
+                        self.switch.log,
+                        r#"failed to resolve port link during rollback: port={}, link={}, error={e:?}"#,
+                        member.port_id,
+                        member.link_id
+                    );
+
+                    first_error.get_or_insert(e);
+                    failed_port_resolution
+                        .push((member.port_id, member.link_id));
                 }
             }
         }
 
-        Ok(())
+        // Log summary of any failures
+        if !failed_port_resolution.is_empty() {
+            error!(
+                self.switch.log,
+                r#"rollback failed to resolve {} port links: {:?}.
+                   These ports may remain in inconsistent state"#,
+                failed_port_resolution.len(),
+                failed_port_resolution
+            );
+        }
+
+        if !failed_port_removal.is_empty() {
+            error!(
+                self.switch.log,
+                r#"rollback failed to remove {} ports from ASIC: {:?}.
+                   These ports may remain in inconsistent state"#,
+                failed_port_removal.len(),
+                failed_port_removal
+            );
+        }
+
+        if !failed_port_addition.is_empty() {
+            error!(
+                self.switch.log,
+                r#"rollback failed to re-add {} ports to ASIC: {:?}.
+                   These ports may remain in inconsistent state"#,
+                failed_port_addition.len(),
+                failed_port_addition
+            );
+        }
+
+        // Return the first error encountered, if any
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 }
 
@@ -542,9 +618,8 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         if let Err(rollback_err) = self.restore_tables() {
             error!(
                 self.switch.log,
-                "failed to restore tables during rollback: group={}, error={:?}",
-                self.group_ip,
-                rollback_err
+                "failed to restore tables during rollback: group={}, error={rollback_err:?}",
+                self.group_ip
             );
         }
         error
@@ -659,8 +734,7 @@ impl<'a> GroupUpdateRollbackContext<'a> {
                 error!(
                     self.switch.log,
                     "rollback failed for internal group update: group={}, error={:?}",
-                    self.group_ip,
-                    rollback_err
+                    self.group_ip, rollback_err
                 );
             }
         }
