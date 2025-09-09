@@ -108,18 +108,14 @@
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Bound;
 
-use dpd_api::Route;
-use dpd_api::RouteTarget;
 use dpd_types::link::LinkId;
 use dpd_types::route::Ipv4Route;
 use dpd_types::route::Ipv6Route;
 use slog::debug;
-use slog::error;
 use slog::info;
-use slog::warn;
 
 use crate::freemap;
 use crate::types::{DpdError, DpdResult};
@@ -128,24 +124,112 @@ use common::ports::PortId;
 use oxnet::{IpNet, Ipv4Net, Ipv6Net};
 
 // These are the largest numbers of targets supported for a single route
-const MAX_TARGETS_IPV4: usize = 8;
-const MAX_TARGETS_IPV6: usize = 1;
+const MAX_TARGETS_IPV4: usize = 32;
+const MAX_TARGETS_IPV6: usize = 32;
 
-#[derive(Debug, Eq, PartialEq, Clone)]
-struct NextHop<T> {
-    asic_port_id: u16,
-    route: T,
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Route {
+    tag: String,
+    port_id: PortId,
+    link_id: LinkId,
+    tgt_ip: IpAddr,
+    vlan_id: Option<u16>,
+}
+
+impl From<&Route> for Ipv4Route {
+    fn from(r: &Route) -> Self {
+        match r.tgt_ip {
+            IpAddr::V4(tgt_ip) => Ipv4Route {
+                tag: r.tag.clone(),
+                port_id: r.port_id,
+                link_id: r.link_id,
+                tgt_ip,
+                vlan_id: r.vlan_id,
+            },
+            IpAddr::V6(_) => panic!("can't convert v6 route to v4"),
+        }
+    }
+}
+
+impl From<Route> for Ipv4Route {
+    fn from(r: Route) -> Self {
+        (&r).into()
+    }
+}
+
+impl From<&Route> for Ipv6Route {
+    fn from(r: &Route) -> Self {
+        match r.tgt_ip {
+            IpAddr::V6(tgt_ip) => Ipv6Route {
+                tag: r.tag.clone(),
+                port_id: r.port_id,
+                link_id: r.link_id,
+                tgt_ip,
+                vlan_id: r.vlan_id,
+            },
+            IpAddr::V4(_) => panic!("can't convert v4 route to v6"),
+        }
+    }
+}
+
+impl From<Route> for Ipv6Route {
+    fn from(r: Route) -> Self {
+        (&r).into()
+    }
+}
+
+impl From<&Ipv4Route> for Route {
+    fn from(r: &Ipv4Route) -> Self {
+        Route {
+            tag: r.tag.clone(),
+            port_id: r.port_id,
+            link_id: r.link_id,
+            tgt_ip: IpAddr::V4(r.tgt_ip),
+            vlan_id: r.vlan_id,
+        }
+    }
+}
+
+impl From<Ipv4Route> for Route {
+    fn from(r: Ipv4Route) -> Self {
+        (&r).into()
+    }
+}
+
+impl From<&Ipv6Route> for Route {
+    fn from(r: &Ipv6Route) -> Self {
+        Route {
+            tag: r.tag.clone(),
+            port_id: r.port_id,
+            link_id: r.link_id,
+            tgt_ip: IpAddr::V6(r.tgt_ip),
+            vlan_id: r.vlan_id,
+        }
+    }
+}
+
+impl From<Ipv6Route> for Route {
+    fn from(r: Ipv6Route) -> Self {
+        (&r).into()
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-pub struct RouteEntry<T: Clone> {
+struct NextHop {
+    asic_port_id: u16,
+    route: Route,
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct RouteEntry {
+    is_ipv4: bool,
     index: u16,
     slots: u8,
-    targets: Vec<NextHop<T>>,
+    targets: Vec<NextHop>,
 }
 
-impl<T: Clone> RouteEntry<T> {
-    pub fn targets(&self) -> Vec<T> {
+impl RouteEntry {
+    fn targets(&self) -> Vec<Route> {
         self.targets
             .iter()
             .map(|target| target.route.clone())
@@ -206,10 +290,43 @@ impl TryFrom<Ipv6Route> for VlanId {
 }
 
 pub struct RouteData {
-    pub(crate) v4: BTreeMap<Ipv4Net, RouteEntry<Ipv4Route>>,
-    pub(crate) v6: BTreeMap<Ipv6Net, Vec<Ipv6Route>>,
+    v4: BTreeMap<IpNet, RouteEntry>,
+    v6: BTreeMap<IpNet, RouteEntry>,
     v4_freemap: freemap::FreeMap,
     v6_freemap: freemap::FreeMap,
+}
+
+impl RouteData {
+    pub fn insert(
+        &mut self,
+        subnet: impl Into<IpNet>,
+        entry: RouteEntry,
+    ) -> Option<RouteEntry> {
+        let subnet: IpNet = subnet.into();
+        if subnet.is_ipv4() {
+            self.v4.insert(subnet, entry)
+        } else {
+            self.v6.insert(subnet, entry)
+        }
+    }
+
+    pub fn get(&self, subnet: impl Into<IpNet>) -> Option<&RouteEntry> {
+        let subnet: IpNet = subnet.into();
+        if subnet.is_ipv4() {
+            self.v4.get(&subnet)
+        } else {
+            self.v6.get(&subnet)
+        }
+    }
+
+    pub fn remove(&mut self, subnet: impl Into<IpNet>) -> Option<RouteEntry> {
+        let subnet: IpNet = subnet.into();
+        if subnet.is_ipv4() {
+            self.v4.remove(&subnet)
+        } else {
+            self.v6.remove(&subnet)
+        }
+    }
 }
 
 // Remove all the data for a given route from both the route_data and
@@ -218,27 +335,35 @@ pub struct RouteData {
 // Because this may be called from the error-recovery path of a failed add-target
 // operation, not all of the target slots may yet be populated.  Thus we require
 // the caller to explicitly indicate which slots need to be cleared.
-fn cleanup_route_ipv4(
+fn cleanup_route(
     switch: &Switch,
     route_data: &mut RouteData,
-    subnet: Option<Ipv4Net>,
-    entry: RouteEntry<Ipv4Route>,
+    subnet: Option<IpNet>,
+    entry: RouteEntry,
 ) -> DpdResult<()> {
     // Remove the subnet -> index mapping first, so nobody can reach the
     // entries we delete below.
-    if let Some(subnet) = subnet {
-        table::route_ipv4::delete_route_index(switch, &subnet)?;
-    }
+    match subnet {
+        Some(IpNet::V4(subnet)) => {
+            table::route_ipv4::delete_route_index(switch, &subnet)
+        }
+        Some(IpNet::V6(subnet)) => {
+            table::route_ipv6::delete_route_index(switch, &subnet)
+        }
+        None => Ok(()),
+    }?;
 
     let all_clear = entry
         .targets
         .iter()
         .enumerate()
         .map(|(idx, _hop)| {
-            table::route_ipv4::delete_route_target(
-                switch,
-                entry.index + idx as u16,
-            )
+            let x = entry.index + idx as u16;
+            if entry.is_ipv4 {
+                table::route_ipv4::delete_route_target(switch, x)
+            } else {
+                table::route_ipv6::delete_route_target(switch, x)
+            }
         })
         .all(|rval| rval.is_ok());
 
@@ -246,7 +371,11 @@ fn cleanup_route_ipv4(
     // to the FreeMap.  If something went wrong, and there's really no reason it
     // should, then this table space will be leaked.
     if all_clear {
-        route_data.v4_freemap.free(entry.index, entry.slots as u16);
+        if entry.is_ipv4 {
+            route_data.v4_freemap.free(entry.index, entry.slots as u16);
+        } else {
+            route_data.v6_freemap.free(entry.index, entry.slots as u16);
+        }
     }
     Ok(())
 }
@@ -254,27 +383,33 @@ fn cleanup_route_ipv4(
 // Attempt to add the new index to the route_index table.
 //
 // If that fails, free all resources associated with the new set of targets and
-fn finalize_route_ipv4(
+fn finalize_route(
     switch: &Switch,
     route_data: &mut RouteData,
-    subnet: Ipv4Net,
-    entry: Option<RouteEntry<Ipv4Route>>,
+    subnet: IpNet,
+    entry: Option<RouteEntry>,
 ) -> DpdResult<()> {
-    if let Some(entry) = entry {
-        match table::route_ipv4::add_route_index(
+    let Some(entry) = entry else { return Ok(()) };
+
+    match match subnet {
+        IpNet::V4(subnet) => table::route_ipv4::add_route_index(
             switch,
             &subnet,
             entry.index,
             entry.slots,
-        ) {
-            Ok(_) => {
-                route_data.v4.insert(subnet, entry);
-                Ok(())
-            }
-            Err(_) => cleanup_route_ipv4(switch, route_data, None, entry),
+        ),
+        IpNet::V6(subnet) => table::route_ipv6::add_route_index(
+            switch,
+            &subnet,
+            entry.index,
+            entry.slots,
+        ),
+    } {
+        Ok(_) => {
+            route_data.insert(subnet, entry);
+            Ok(())
         }
-    } else {
-        Ok(())
+        Err(_) => cleanup_route(switch, route_data, None, entry),
     }
 }
 
@@ -287,18 +422,29 @@ fn finalize_route_ipv4(
 // freed.  On failure, the new data will be freed and the tables will still
 // contain the old data.  In either case, there should be nothing for the
 // calling routine to do but pass the DpdResult back up the stack.
-fn replace_route_targets_ipv4(
+fn replace_route_targets(
     switch: &Switch,
     route_data: &mut RouteData,
-    subnet: Ipv4Net,
-    targets: Vec<NextHop<Ipv4Route>>,
+    subnet: IpNet,
+    targets: Vec<NextHop>,
 ) -> DpdResult<()> {
     // Remove the old entry from our in-core and on-chip indexes, but don't free
     // the data yet.
-    let old_entry = route_data.v4.remove(&subnet);
+    debug!(
+        switch.log,
+        "replacing targets for {subnet} with: {targets:?}"
+    );
+    let old_entry = route_data.remove(subnet);
     if let Some(ref old) = old_entry {
-        if let Err(e) = table::route_ipv4::delete_route_index(switch, &subnet) {
-            route_data.v4.insert(subnet, old.clone());
+        if let Err(e) = match subnet {
+            IpNet::V4(v4) => table::route_ipv4::delete_route_index(switch, &v4),
+            IpNet::V6(v6) => table::route_ipv6::delete_route_index(switch, &v6),
+        } {
+            debug!(
+                switch.log,
+                "failed to delete route index, restoring internal data"
+            );
+            route_data.insert(subnet, old.clone());
             return Err(e);
         }
     }
@@ -307,21 +453,30 @@ fn replace_route_targets_ipv4(
     // is no new data to insert in either table.
     if targets.is_empty() {
         if let Some(entry) = old_entry {
-            return cleanup_route_ipv4(switch, route_data, None, entry);
+            return cleanup_route(switch, route_data, None, entry);
         }
         return Ok(());
     }
 
     // Allocate space in the p4 table for the new set of targets.
     let slots = targets.len() as u8;
-    let mut new_entry = match route_data.v4_freemap.alloc(slots) {
-        Ok(index) => RouteEntry::<Ipv4Route> {
+    let is_ipv4 = subnet.is_ipv4();
+    let mut new_entry = match match is_ipv4 {
+        true => route_data.v4_freemap.alloc(slots),
+        false => route_data.v6_freemap.alloc(slots),
+    } {
+        Ok(index) => RouteEntry {
+            is_ipv4,
             index,
             slots,
             targets: Vec::with_capacity(slots as usize),
         },
         Err(e) => {
-            let _ = finalize_route_ipv4(switch, route_data, subnet, old_entry);
+            debug!(
+                switch.log,
+                "failed to allocate space for the new target list"
+            );
+            let _ = finalize_route(switch, route_data, subnet, old_entry);
             return Err(e);
         }
     };
@@ -330,15 +485,25 @@ fn replace_route_targets_ipv4(
     let mut idx = new_entry.index;
 
     for target in targets {
-        if let Err(e) = table::route_ipv4::add_route_target(
-            switch,
-            idx,
-            target.asic_port_id,
-            target.route.tgt_ip,
-            target.route.vlan_id,
-        ) {
-            let _ = cleanup_route_ipv4(switch, route_data, None, new_entry);
-            let _ = finalize_route_ipv4(switch, route_data, subnet, old_entry);
+        if let Err(e) = match target.route.tgt_ip {
+            IpAddr::V4(tgt_ip) => table::route_ipv4::add_route_target(
+                switch,
+                idx,
+                target.asic_port_id,
+                tgt_ip,
+                target.route.vlan_id,
+            ),
+            IpAddr::V6(tgt_ip) => table::route_ipv6::add_route_target(
+                switch,
+                idx,
+                target.asic_port_id,
+                tgt_ip,
+                target.route.vlan_id,
+            ),
+        } {
+            debug!(switch.log, "failed to insert {target:?} into route table");
+            let _ = cleanup_route(switch, route_data, None, new_entry);
+            let _ = finalize_route(switch, route_data, subnet, old_entry);
             return Err(e);
         }
         idx += 1;
@@ -346,71 +511,75 @@ fn replace_route_targets_ipv4(
     }
 
     // Insert the new subnet->index mapping
-    match finalize_route_ipv4(
-        switch,
-        route_data,
-        subnet,
-        Some(new_entry.clone()),
-    ) {
+    match finalize_route(switch, route_data, subnet, Some(new_entry.clone())) {
         Ok(()) => {
             // Finally free all of the table space for the original set of
             // targets
             if let Some(entry) = old_entry {
-                let _ = cleanup_route_ipv4(switch, route_data, None, entry);
+                let _ = cleanup_route(switch, route_data, None, entry);
             }
             Ok(())
         }
         Err(e) => {
+            debug!(switch.log, "failed to update index to new target list");
             // We failed to point at the new set of targets.  Free all of the
             // new data and update the route_index table to point at the
             // original set of targets.
-            let _ = cleanup_route_ipv4(switch, route_data, None, new_entry);
-            let _ = finalize_route_ipv4(switch, route_data, subnet, old_entry);
+            let _ = cleanup_route(switch, route_data, None, new_entry);
+            let _ = finalize_route(switch, route_data, subnet, old_entry);
             Err(e)
         }
     }
 }
 
-pub fn add_route_ipv4_locked(
+fn add_route_locked(
     switch: &Switch,
     route_data: &mut RouteData,
-    subnet: Ipv4Net,
-    route: Ipv4Route,
+    subnet: IpNet,
+    route: Route,
     asic_port_id: u16,
 ) -> DpdResult<()> {
     info!(switch.log, "adding route {subnet} -> {:?}", route.tgt_ip);
 
     // Verify that the slot freelist has been initialized
-    route_data
-        .v4_freemap
-        .maybe_init(switch.table_size(table::TableType::RouteFwdIpv4)? as u16);
+    let max_targets;
+    if subnet.is_ipv4() {
+        max_targets = MAX_TARGETS_IPV4;
+        route_data.v4_freemap.maybe_init(
+            switch.table_size(table::TableType::RouteFwdIpv4)? as u16,
+        );
+    } else {
+        max_targets = MAX_TARGETS_IPV6;
+        route_data.v6_freemap.maybe_init(
+            switch.table_size(table::TableType::RouteFwdIpv6)? as u16,
+        );
+    }
 
     // Get the old set of targets that we'll be adding to
     let mut targets = route_data
-        .v4
-        .get(&subnet)
+        .get(subnet)
         .map_or(Vec::new(), |e| e.targets.clone());
     // Add the new target
-    targets.push(NextHop::<Ipv4Route> {
+    targets.push(NextHop {
         asic_port_id,
         route,
     });
 
-    if targets.len() > MAX_TARGETS_IPV4 {
+    if targets.len() > max_targets {
         Err(DpdError::InvalidRoute(format!(
-            "exceeded limit of {MAX_TARGETS_IPV4} targets for one route"
+            "exceeded limit of {max_targets} targets for one route"
         )))
     } else {
-        replace_route_targets_ipv4(switch, route_data, subnet, targets)
+        replace_route_targets(switch, route_data, subnet, targets)
     }
 }
 
 // Add a new multi-path target to an exiting route, or create a new route with
 // just this single target.
-pub async fn add_route_ipv4(
+async fn add_route(
     switch: &Switch,
-    subnet: Ipv4Net,
-    route: Ipv4Route,
+    subnet: IpNet,
+    route: Route,
 ) -> DpdResult<()> {
     let asic_port_id =
         switch.link_asic_port_id(route.port_id, route.link_id)?;
@@ -418,12 +587,12 @@ pub async fn add_route_ipv4(
     let mut route_data = switch.routes.lock().await;
 
     // Adding the same route multiple times is a harmless no-op
-    if let Some(entry) = route_data.v4.get(&subnet) {
+    if let Some(entry) = route_data.get(subnet) {
         if entry.targets.iter().any(|hop| hop.route == route) {
             return Ok(());
         }
     }
-    add_route_ipv4_locked(switch, &mut route_data, subnet, route, asic_port_id)
+    add_route_locked(switch, &mut route_data, subnet, route, asic_port_id)
 }
 
 // Create a new single-path route.
@@ -432,17 +601,17 @@ pub async fn add_route_ipv4(
 // replace flag is set) or return an Exists() error (if the replace flag is not
 // set).  If there is no existing route, the replace flag is not examined.  That
 // is, it is not an error to "replace" a non- existent route.
-pub async fn set_route_ipv4(
+async fn set_route(
     switch: &Switch,
-    subnet: Ipv4Net,
-    route: Ipv4Route,
+    subnet: IpNet,
+    route: Route,
     replace: bool,
 ) -> DpdResult<()> {
     let asic_port_id =
         switch.link_asic_port_id(route.port_id, route.link_id)?;
 
     let mut route_data = switch.routes.lock().await;
-    if let Some(entry) = route_data.v4.get(&subnet) {
+    if let Some(entry) = route_data.get(subnet) {
         // setting the same route multiple times is a harmless no-op
         if entry.targets.len() == 1 && entry.targets[0].route == route {
             Ok(())
@@ -450,20 +619,14 @@ pub async fn set_route_ipv4(
             Err(DpdError::Exists("route {cidr} already exists".into()))
         } else {
             info!(switch.log, "replacing subnet {subnet}");
-            let target = vec![NextHop::<Ipv4Route> {
+            let target = vec![NextHop {
                 asic_port_id,
                 route,
             }];
-            replace_route_targets_ipv4(switch, &mut route_data, subnet, target)
+            replace_route_targets(switch, &mut route_data, subnet, target)
         }
     } else {
-        add_route_ipv4_locked(
-            switch,
-            &mut route_data,
-            subnet,
-            route,
-            asic_port_id,
-        )
+        add_route_locked(switch, &mut route_data, subnet, route, asic_port_id)
     }
 }
 
@@ -472,75 +635,39 @@ pub async fn set_route_ipv4(
 // If this route has multiple targets, this call will remove at most one of
 // them.  If the route only has a single target, this call will remove the
 // entire route.
-pub(crate) fn delete_route_target_ipv4_locked(
+fn delete_route_target_locked(
     switch: &Switch,
     route_data: &mut RouteData,
-    subnet: Ipv4Net,
-    route: Ipv4Route,
+    subnet: IpNet,
+    route: Route,
 ) -> DpdResult<()> {
     info!(switch.log, "deleting route {subnet} -> {}", route.tgt_ip);
 
     // Get set of targets remaining after we remove this entry
-    let entry = route_data
-        .v4
-        .get(&subnet)
-        .ok_or(DpdError::Missing("no such route".into()))?;
-    let targets: Vec<NextHop<Ipv4Route>> = entry
+    let entry = route_data.get(subnet).ok_or({
+        debug!(switch.log, "No such route");
+        DpdError::Missing("no such route".into())
+    })?;
+    let targets: Vec<NextHop> = entry
         .targets
         .iter()
-        .filter(|t| t.route != route)
+        .filter(|t| t.route.tgt_ip != route.tgt_ip)
         .cloned()
         .collect();
     if targets.len() == entry.targets.len() {
+        debug!(switch.log, "target not found");
         Err(DpdError::Missing("no such route".into()))
     } else {
-        replace_route_targets_ipv4(switch, route_data, subnet, targets)
+        replace_route_targets(switch, route_data, subnet, targets)
     }
 }
 
-pub fn add_route_ipv6_locked(
+pub async fn add_route_ipv4(
     switch: &Switch,
-    route_data: &mut RouteData,
-    subnet: Ipv6Net,
-    route: Ipv6Route,
-    asic_port_id: u16,
+    subnet: Ipv4Net,
+    route: Ipv4Route,
 ) -> DpdResult<()> {
-    let targets = route_data
-        .v6
-        .entry(subnet)
-        .or_insert_with_key(|_| Vec::new());
-
-    if targets.iter().any(|hop| *hop == route) {
-        return Ok(());
-    }
-
-    if targets.len() > MAX_TARGETS_IPV6 {
-        return Err(DpdError::InvalidRoute(format!(
-            "exceeded limit of {MAX_TARGETS_IPV6} target(s) for one route"
-        )));
-    }
-
-    // If we can add the new entry to the ASIC table, we also add the target to
-    // the route's target vector.  If the add fails, and the vector was created
-    // just for this new target, we remove the route from the RouteData map.
-    match table::route_ipv6::add_route_entry(
-        switch,
-        &subnet,
-        asic_port_id,
-        route.tgt_ip,
-        route.vlan_id,
-    ) {
-        Ok(_) => {
-            targets.push(route.clone());
-            Ok(())
-        }
-        Err(e) => {
-            if targets.is_empty() {
-                route_data.v6.remove(&subnet);
-            }
-            Err(e)
-        }
-    }
+    add_route(switch, IpNet::V4(subnet), route.into()).await
 }
 
 pub async fn add_route_ipv6(
@@ -548,11 +675,16 @@ pub async fn add_route_ipv6(
     subnet: Ipv6Net,
     route: Ipv6Route,
 ) -> DpdResult<()> {
-    let mut route_data = switch.routes.lock().await;
-    let asic_port_id =
-        switch.link_asic_port_id(route.port_id, route.link_id)?;
+    add_route(switch, IpNet::V6(subnet), route.into()).await
+}
 
-    add_route_ipv6_locked(switch, &mut route_data, subnet, route, asic_port_id)
+pub async fn set_route_ipv4(
+    switch: &Switch,
+    subnet: Ipv4Net,
+    route: Ipv4Route,
+    replace: bool,
+) -> DpdResult<()> {
+    set_route(switch, IpNet::V4(subnet), route.into(), replace).await
 }
 
 pub async fn set_route_ipv6(
@@ -561,25 +693,7 @@ pub async fn set_route_ipv6(
     route: Ipv6Route,
     replace: bool,
 ) -> DpdResult<()> {
-    let asic_port_id =
-        switch.link_asic_port_id(route.port_id, route.link_id)?;
-
-    let mut route_data = switch.routes.lock().await;
-    if let Some(targets) = route_data.v6.get(&subnet) {
-        // setting the same route multiple times is a harmless no-op
-        if targets.len() == 1 && targets[0] == route {
-            return Ok(());
-        }
-
-        if !replace {
-            return Err(DpdError::Exists("route {cidr} already exists".into()));
-        }
-
-        table::route_ipv6::delete_entry(switch, &subnet)?;
-        route_data.v6.remove(&subnet);
-    }
-
-    add_route_ipv6_locked(switch, &mut route_data, subnet, route, asic_port_id)
+    set_route(switch, IpNet::V6(subnet), route.into(), replace).await
 }
 
 pub async fn get_route_ipv4(
@@ -587,10 +701,10 @@ pub async fn get_route_ipv4(
     subnet: Ipv4Net,
 ) -> DpdResult<Vec<Ipv4Route>> {
     let route_data = switch.routes.lock().await;
-    match route_data.v4.get(&subnet) {
+    match route_data.get(IpNet::V4(subnet)) {
         None => Err(DpdError::Missing("no such route".into())),
         Some(entry) => {
-            Ok(entry.targets.iter().map(|t| t.route.clone()).collect())
+            Ok(entry.targets.iter().map(|t| (&t.route).into()).collect())
         }
     }
 }
@@ -600,25 +714,25 @@ pub async fn get_route_ipv6(
     subnet: Ipv6Net,
 ) -> DpdResult<Vec<Ipv6Route>> {
     let route_data = switch.routes.lock().await;
-
-    match route_data.v6.get(&subnet) {
+    match route_data.get(IpNet::V6(subnet)) {
         None => Err(DpdError::Missing("no such route".into())),
-        Some(entry) => Ok(entry.clone()),
+        Some(entry) => {
+            Ok(entry.targets.iter().map(|t| (&t.route).into()).collect())
+        }
     }
 }
 
-pub fn delete_route_ipv4_locked(
+fn delete_route_locked(
     switch: &Switch,
     route_data: &mut RouteData,
-    subnet: Ipv4Net,
+    subnet: IpNet,
 ) -> DpdResult<()> {
     // Get set of targets remaining after we remove this entry
     let entry = route_data
-        .v4
-        .remove(&subnet)
+        .remove(subnet)
         .ok_or(DpdError::Missing("no such route".into()))?;
 
-    cleanup_route_ipv4(switch, route_data, Some(subnet), entry)
+    cleanup_route(switch, route_data, Some(subnet), entry)
 }
 
 // Delete a route and all of its targets
@@ -628,7 +742,17 @@ pub async fn delete_route_ipv4(
 ) -> DpdResult<()> {
     let mut route_data = switch.routes.lock().await;
 
-    delete_route_ipv4_locked(switch, &mut route_data, subnet)
+    delete_route_locked(switch, &mut route_data, IpNet::V4(subnet))
+}
+
+// Delete a route and all of its targets
+pub async fn delete_route_ipv6(
+    switch: &Switch,
+    subnet: Ipv6Net,
+) -> DpdResult<()> {
+    let mut route_data = switch.routes.lock().await;
+
+    delete_route_locked(switch, &mut route_data, IpNet::V6(subnet))
 }
 
 // Delete a specific target from a route, removing the route if this is the last
@@ -640,60 +764,76 @@ pub async fn delete_route_target_ipv4(
     link_id: LinkId,
     tgt_ip: Ipv4Addr,
 ) -> DpdResult<()> {
-    let mut route_data = switch.routes.lock().await;
-
-    let route = Ipv4Route {
+    let route = Route {
         tag: String::new(),
         port_id,
         link_id,
-        tgt_ip,
+        tgt_ip: IpAddr::V4(tgt_ip),
         vlan_id: None,
     };
 
-    delete_route_target_ipv4_locked(switch, &mut route_data, subnet, route)
+    let mut route_data = switch.routes.lock().await;
+    delete_route_target_locked(
+        switch,
+        &mut route_data,
+        IpNet::V4(subnet),
+        route,
+    )
 }
 
-pub async fn delete_route_ipv6(
+// Delete a specific target from a route, removing the route if this is the last
+// target.
+pub async fn delete_route_target_ipv6(
     switch: &Switch,
     subnet: Ipv6Net,
+    port_id: PortId,
+    link_id: LinkId,
+    tgt_ip: Ipv6Addr,
 ) -> DpdResult<()> {
-    let mut route_data = switch.routes.lock().await;
+    let route = Route {
+        tag: String::new(),
+        port_id,
+        link_id,
+        tgt_ip: IpAddr::V6(tgt_ip),
+        vlan_id: None,
+    };
 
-    match route_data.v6.remove(&subnet) {
-        Some(routes) => {
-            if routes.len() > 1 {
-                warn!(switch.log, "found IPv6 route with too many targets. {subnet} -> {routes:?}");
-            }
-            table::route_ipv6::delete_entry(switch, &subnet)
-        }
-        None => Err(DpdError::Missing("no such route".into())),
-    }
+    let mut route_data = switch.routes.lock().await;
+    delete_route_target_locked(
+        switch,
+        &mut route_data,
+        IpNet::V6(subnet),
+        route,
+    )
 }
 
 pub async fn get_range_ipv4(
     switch: &Switch,
     last: Option<Ipv4Net>,
     max: u32,
-) -> DpdResult<Vec<Route>> {
+) -> DpdResult<Vec<dpd_api::Ipv4Routes>> {
     let route_data = switch.routes.lock().await;
     let lower = match last {
         None => Bound::Unbounded,
-        Some(last) => Bound::Excluded(last),
+        Some(last) => Bound::Excluded(IpNet::V4(last)),
     };
 
     let mut routes = Vec::new();
-    for (subnet, entry) in route_data
+    for (subnet, target_list) in route_data
         .v4
         .range((lower, Bound::Unbounded))
         .take(usize::try_from(max).expect("invalid usize"))
     {
-        routes.push(Route {
-            cidr: IpNet::V4(*subnet),
-            targets: entry
-                .targets()
-                .iter()
-                .map(|r| RouteTarget::V4(r.clone()))
-                .collect(),
+        routes.push(dpd_api::Ipv4Routes {
+            cidr: match subnet {
+                IpNet::V4(n) => *n,
+                IpNet::V6(_) => {
+                    panic!(
+                        "only v4 subnets should be found in the v4 route data"
+                    )
+                }
+            },
+            targets: target_list.targets().iter().map(|r| r.into()).collect(),
         })
     }
 
@@ -704,12 +844,11 @@ pub async fn get_range_ipv6(
     switch: &Switch,
     last: Option<Ipv6Net>,
     max: u32,
-) -> DpdResult<Vec<Route>> {
+) -> DpdResult<Vec<dpd_api::Ipv6Routes>> {
     let route_data = switch.routes.lock().await;
-
     let lower = match last {
         None => Bound::Unbounded,
-        Some(last) => Bound::Excluded(last),
+        Some(last) => Bound::Excluded(IpNet::V6(last)),
     };
 
     let mut routes = Vec::new();
@@ -718,19 +857,26 @@ pub async fn get_range_ipv6(
         .range((lower, Bound::Unbounded))
         .take(usize::try_from(max).expect("invalid usize"))
     {
-        for target in target_list {
-            routes.push(Route {
-                cidr: IpNet::V6(*subnet),
-                targets: vec![RouteTarget::V6(target.clone())],
-            })
-        }
+        routes.push(dpd_api::Ipv6Routes {
+            cidr: match subnet {
+                IpNet::V6(n) => *n,
+                IpNet::V4(_) => {
+                    panic!(
+                        "only v6 subnets should be found in the v6 route data"
+                    )
+                }
+            },
+            targets: target_list.targets().iter().map(|r| r.into()).collect(),
+        })
     }
 
     Ok(routes)
 }
 
-pub async fn reset_ipv4_tag(switch: &Switch, tag: &str) {
+async fn reset_tag(switch: &Switch, tag: &str, ipv4: bool) {
     let mut route_data = switch.routes.lock().await;
+
+    debug!(switch.log, "Resetting routes with tag: {tag}");
 
     // Iterate over all the routes, building a list of targets for each route
     // with the appropriately tagged entries removed.  If that list of targets
@@ -738,72 +884,31 @@ pub async fn reset_ipv4_tag(switch: &Switch, tag: &str) {
     // perform any updates after scanning everything to avoid updating the
     // route_data BTreeMap while we're iterating over it.
     let mut to_replace = BTreeMap::new();
-    for (subnet, entry) in &route_data.v4 {
-        let new_targets: Vec<NextHop<Ipv4Route>> = entry
+    let data = if ipv4 { &route_data.v4 } else { &route_data.v6 };
+    for (subnet, entry) in data {
+        let new_targets: Vec<NextHop> = entry
             .targets
             .iter()
             .filter(|t| t.route.tag != tag)
             .cloned()
             .collect();
-        debug!(
-            switch.log,
-            "original subnets for {subnet}: {:?}",
-            entry.targets()
-        );
         if new_targets.len() != entry.targets.len() {
-            debug!(switch.log, "new subnets for {subnet}: {new_targets:?}");
             to_replace.insert(*subnet, new_targets);
         }
     }
 
     for (subnet, targets) in to_replace {
-        let _ = replace_route_targets_ipv4(
-            switch,
-            &mut route_data,
-            subnet,
-            targets,
-        );
+        debug!(switch.log, "new subnets for {subnet}: {targets:?}");
+        let _ = replace_route_targets(switch, &mut route_data, subnet, targets);
     }
 }
 
+pub async fn reset_ipv4_tag(switch: &Switch, tag: &str) {
+    reset_tag(switch, tag, true).await
+}
+
 pub async fn reset_ipv6_tag(switch: &Switch, tag: &str) {
-    let mut route_data = switch.routes.lock().await;
-
-    let mut vlans: Vec<VlanId> = Vec::new();
-    // For each route, remove all of the targets associated with this tag
-    for targets in route_data.v6.values_mut() {
-        let mut target_delete: Vec<usize> = targets
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.tag == tag)
-            .map(|(idx, _)| idx)
-            .collect();
-        while let Some(idx) = target_delete.pop() {
-            vlans.push(targets.remove(idx).try_into().unwrap());
-
-            // XXX: When we have multipath support at the table level, we
-            // will remove the (route, tgt_ip) tuple entry here.  For now, we
-            // assume there is only a single target, so the entry gets cleaned
-            // up in the delete loop below.
-        }
-    }
-
-    // Prepare to delete all of the routes that have no remaining targets
-    let delete: Vec<Ipv6Net> = route_data
-        .v6
-        .iter()
-        .filter(|(_, targets)| targets.is_empty())
-        .map(|(route, _)| *route)
-        .collect();
-
-    for subnet in delete {
-        let _ = route_data.v6.remove(&subnet);
-        // XXX: this should be done automatically by the table code
-        if let Err(e) = table::route_ipv6::delete_entry(switch, &subnet) {
-            error!(switch.log, "failed to remove route: {e:?}";
-			"subnet" => subnet.to_string());
-        }
-    }
+    reset_tag(switch, tag, false).await
 }
 
 pub async fn reset(switch: &Switch) -> DpdResult<()> {

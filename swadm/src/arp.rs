@@ -17,6 +17,7 @@ use tabwriter::TabWriter;
 use common::network::MacAddr;
 use dpd_client::types;
 use dpd_client::Client;
+use dpd_client::ClientInfo;
 
 use crate::IpFamily;
 

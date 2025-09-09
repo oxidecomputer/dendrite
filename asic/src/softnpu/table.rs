@@ -25,7 +25,8 @@ pub struct Table {
 // soft-npu table names
 const ROUTER_V4_RT: &str = "ingress.router.v4_route.rtr";
 const ROUTER_V4_IDX: &str = "ingress.router.v4_idx.rtr";
-const ROUTER_V6: &str = "ingress.router.v6.rtr";
+const ROUTER_V6_RT: &str = "ingress.router.v6_route.rtr";
+const ROUTER_V6_IDX: &str = "ingress.router.v6_idx.rtr";
 const LOCAL_V6: &str = "ingress.local.local_v6";
 const LOCAL_V4: &str = "ingress.local.local_v4";
 const NAT_V4: &str = "ingress.nat.nat_v4";
@@ -44,7 +45,10 @@ const ROUTER4_LOOKUP_RT: &str =
     "pipe.Ingress.l3_router.Router4.lookup_idx.route";
 const ROUTER4_LOOKUP_IDX: &str =
     "pipe.Ingress.l3_router.Router4.lookup_idx.lookup";
-const ROUTER6_LOOKUP: &str = "pipe.Ingress.l3_router.Router6.lookup.tbl";
+const ROUTER6_LOOKUP_RT: &str =
+    "pipe.Ingress.l3_router.Router6.lookup_idx.route";
+const ROUTER6_LOOKUP_IDX: &str =
+    "pipe.Ingress.l3_router.Router6.lookup_idx.lookup";
 const NDP: &str = "pipe.Ingress.l3_router.Router6.Ndp.tbl";
 const ARP: &str = "pipe.Ingress.l3_router.Router4.Arp.tbl";
 const DPD_MAC_REWRITE: &str = "pipe.Ingress.mac_rewrite.mac_rewrite";
@@ -65,8 +69,11 @@ impl TableOps<Handle> for Table {
             ROUTER4_LOOKUP_IDX => {
                 (Some(ROUTER_V4_IDX.into()), Some(ROUTER4_LOOKUP_IDX.into()))
             }
-            ROUTER6_LOOKUP => {
-                (Some(ROUTER_V6.into()), Some(ROUTER6_LOOKUP.into()))
+            ROUTER6_LOOKUP_RT => {
+                (Some(ROUTER_V6_RT.into()), Some(ROUTER6_LOOKUP_RT.into()))
+            }
+            ROUTER6_LOOKUP_IDX => {
+                (Some(ROUTER_V6_IDX.into()), Some(ROUTER6_LOOKUP_IDX.into()))
             }
             SWITCH_ADDR4 => (Some(LOCAL_V4.into()), Some(SWITCH_ADDR4.into())),
             SWITCH_ADDR6 => (Some(LOCAL_V6.into()), Some(SWITCH_ADDR6.into())),
@@ -225,20 +232,51 @@ impl TableOps<Handle> for Table {
                 }
                 ("forward_vlan", params)
             }
-            (ROUTER6_LOOKUP, "forward") => {
+            (ROUTER6_LOOKUP_IDX, "index") => {
                 let mut params = Vec::new();
                 for arg in action_data.args.iter() {
                     match &arg.value {
-                        ValueTypes::U64(v) => match arg.name.as_str() {
-                            "port" => {
-                                params.extend_from_slice(
-                                    &(*v as u16).to_le_bytes(),
-                                );
+                        ValueTypes::U64(v) => {
+                            // 16 bit index
+                            // 8 bit slot count
+                            match arg.name.as_str() {
+                                "idx" => {
+                                    let v = *v as u16;
+                                    params.extend_from_slice(&v.to_le_bytes());
+                                }
+                                "slots" => {
+                                    let v = *v as u8;
+                                    params.extend_from_slice(&v.to_le_bytes());
+                                }
+                                x => {
+                                    error!(hdl.log, "unexpected parameter: {dpd_table}::index {x}")
+                                }
                             }
-                            x => {
-                                error!(hdl.log, "unexpected parameter: {dpd_table}::forward {x}")
+                        }
+                        ValueTypes::Ptr(v) => {
+                            params.extend_from_slice(v.as_slice());
+                        }
+                    }
+                }
+                ("index", params)
+            }
+            (ROUTER6_LOOKUP_RT, "forward") => {
+                let mut params = Vec::new();
+                for arg in action_data.args.iter() {
+                    match &arg.value {
+                        ValueTypes::U64(v) => {
+                            // 16 bit port
+                            match arg.name.as_str() {
+                                "port" => {
+                                    params.extend_from_slice(
+                                        &(*v as u16).to_le_bytes(),
+                                    );
+                                }
+                                x => {
+                                    error!(hdl.log, "unexpected parameter: {dpd_table}::forward {x}")
+                                }
                             }
-                        },
+                        }
                         ValueTypes::Ptr(v) => {
                             let mut buf = v.clone();
                             buf.reverse();
@@ -248,25 +286,29 @@ impl TableOps<Handle> for Table {
                 }
                 ("forward", params)
             }
-            (ROUTER6_LOOKUP, "forward_vlan") => {
+            (ROUTER6_LOOKUP_RT, "forward_vlan") => {
                 let mut params = Vec::new();
                 for arg in action_data.args.iter() {
                     match &arg.value {
-                        ValueTypes::U64(v) => match arg.name.as_str() {
-                            "port" => {
-                                params.extend_from_slice(
-                                    &(*v as u16).to_le_bytes(),
-                                );
+                        ValueTypes::U64(v) => {
+                            // 16 bit port
+                            // 12 bit vlan
+                            match arg.name.as_str() {
+                                "vlan_id" => {
+                                    params.extend_from_slice(
+                                        &(*v as u16).to_le_bytes(),
+                                    );
+                                }
+                                "port" => {
+                                    params.extend_from_slice(
+                                        &(*v as u16).to_le_bytes(),
+                                    );
+                                }
+                                x => {
+                                    error!(hdl.log, "unexpected parameter: {dpd_table}::forward_vlan {x}")
+                                }
                             }
-                            "vlan_id" => {
-                                params.extend_from_slice(
-                                    &(*v as u16).to_le_bytes(),
-                                );
-                            }
-                            x => {
-                                error!(hdl.log, "unexpected parameter: {dpd_table}::forward_vlan {x}")
-                            }
-                        },
+                        }
                         ValueTypes::Ptr(v) => {
                             let mut buf = v.clone();
                             buf.reverse();

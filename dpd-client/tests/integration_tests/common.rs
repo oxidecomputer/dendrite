@@ -13,7 +13,6 @@ use std::time::Duration;
 use std::{fmt, thread};
 
 use anyhow::anyhow;
-use oxnet::IpNet;
 use oxnet::Ipv4Net;
 use oxnet::Ipv6Net;
 use slog::Drain;
@@ -21,6 +20,7 @@ use slog::Drain;
 use ::common::network::MacAddr;
 use dpd_client::types;
 use dpd_client::Client;
+use dpd_client::ClientInfo;
 use dpd_client::ClientState;
 use packet::arp;
 use packet::eth;
@@ -1089,15 +1089,15 @@ async fn set_route_ipv6_common(
     let cidr = subnet.parse::<Ipv6Net>()?;
     let tgt_ip: Ipv6Addr = gw.parse()?;
 
-    let route = types::RouteSet {
-        cidr: IpNet::V6(cidr),
-        target: types::RouteTarget::V6(types::Ipv6Route {
+    let route = types::Ipv6RouteUpdate {
+        cidr,
+        target: types::Ipv6Route {
             port_id: port_id.clone(),
             link_id: link_id.clone(),
             tgt_ip,
             tag: switch.client.inner().tag.clone(),
             vlan_id,
-        }),
+        },
         replace: false,
     };
     switch
@@ -1195,15 +1195,15 @@ async fn set_route_ipv4_common(
     let cidr = subnet.parse::<Ipv4Net>()?;
     let tgt_ip: Ipv4Addr = gw.parse()?;
     let (port_id, link_id) = switch.link_id(phys_port).unwrap();
-    let route = types::RouteSet {
-        cidr: IpNet::V4(cidr),
-        target: types::RouteTarget::V4(types::Ipv4Route {
+    let route = types::Ipv4RouteUpdate {
+        cidr,
+        target: types::Ipv4Route {
             port_id: port_id.clone(),
             link_id: link_id.clone(),
             tgt_ip,
             tag: switch.client.inner().tag.clone(),
             vlan_id,
-        }),
+        },
         replace: false,
     };
     switch

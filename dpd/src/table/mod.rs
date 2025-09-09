@@ -27,10 +27,11 @@ pub mod port_nat;
 pub mod route_ipv4;
 pub mod route_ipv6;
 
-const NAME_TO_TYPE: [(&str, TableType); 21] = [
+const NAME_TO_TYPE: [(&str, TableType); 22] = [
     (route_ipv4::INDEX_TABLE_NAME, TableType::RouteIdxIpv4),
     (route_ipv4::FORWARD_TABLE_NAME, TableType::RouteFwdIpv4),
-    (route_ipv6::TABLE_NAME, TableType::RouteIpv6),
+    (route_ipv6::INDEX_TABLE_NAME, TableType::RouteIdxIpv6),
+    (route_ipv6::FORWARD_TABLE_NAME, TableType::RouteFwdIpv6),
     (arp_ipv4::TABLE_NAME, TableType::ArpIpv4),
     (neighbor_ipv6::TABLE_NAME, TableType::NeighborIpv6),
     (port_mac::TABLE_NAME, TableType::PortMac),
@@ -270,7 +271,8 @@ pub fn get_entries(switch: &Switch, name: String) -> DpdResult<views::Table> {
     match TableType::try_from(name.as_str())? {
         TableType::RouteIdxIpv4 => route_ipv4::index_dump(switch),
         TableType::RouteFwdIpv4 => route_ipv4::forward_dump(switch),
-        TableType::RouteIpv6 => route_ipv6::table_dump(switch),
+        TableType::RouteIdxIpv6 => route_ipv6::index_dump(switch),
+        TableType::RouteFwdIpv6 => route_ipv6::forward_dump(switch),
         TableType::NeighborIpv6 => neighbor_ipv6::table_dump(switch),
         TableType::ArpIpv4 => arp_ipv4::table_dump(switch),
         TableType::NatIngressIpv4 => nat::ipv4_table_dump(switch),
@@ -328,7 +330,12 @@ pub fn get_counters(
         TableType::RouteFwdIpv4 => {
             route_ipv4::forward_counter_fetch(switch, force_sync)
         }
-        TableType::RouteIpv6 => route_ipv6::counter_fetch(switch, force_sync),
+        TableType::RouteIdxIpv6 => {
+            route_ipv6::index_counter_fetch(switch, force_sync)
+        }
+        TableType::RouteFwdIpv6 => {
+            route_ipv6::forward_counter_fetch(switch, force_sync)
+        }
         TableType::NeighborIpv6 => {
             neighbor_ipv6::counter_fetch(switch, force_sync)
         }
@@ -384,8 +391,9 @@ pub fn get_counters(
 pub enum TableType {
     RouteIdxIpv4,
     RouteFwdIpv4,
+    RouteIdxIpv6,
+    RouteFwdIpv6,
     RouteIpv4Mcast,
-    RouteIpv6,
     RouteIpv6Mcast,
     ArpIpv4,
     NeighborIpv6,

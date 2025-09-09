@@ -80,7 +80,7 @@ oxide-tokio-rt = "0.1.2"
 parking_lot = "0.12"
 pretty_assertions = "1.4"
 proc-macro2 = "1.0"
-progenitor = "0.9.1"
+progenitor = "0.11"
 rand = "0.9"
 regex = "1.11"
 regress = "0.10"
@@ -95,7 +95,7 @@ slog = { version = "2.7", features = [ "release_max_level_debug", "max_level_tra
 slog-async = "2.8"
 slog-bunyan = "2.5"
 slog-term = "2.9"
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.6", features = ["all"] }
 structopt = "0.3"
 strum = { version = "0.26.3", features = [ "derive" ] }
 syn = { version = "2.0", features = ["extra-traits"]}

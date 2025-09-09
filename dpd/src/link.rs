@@ -35,7 +35,6 @@ use common::ports::PortPrbsMode;
 use common::ports::PortSpeed;
 use common::ports::TxEq;
 use dpd_api::LinkCreate;
-use dpd_types::fault;
 use dpd_types::link::LinkFsmCounters;
 use dpd_types::link::LinkId;
 use dpd_types::link::LinkState;
@@ -1513,7 +1512,7 @@ impl Switch {
         &self,
         port_id: PortId,
         link_id: LinkId,
-    ) -> DpdResult<Option<fault::Fault>> {
+    ) -> DpdResult<Option<dpd_types::fault::Fault>> {
         self.link_fetch(port_id, link_id, |link| link.link_state.get_fault())
     }
 
@@ -1521,7 +1520,7 @@ impl Switch {
     fn link_set_fault_locked(
         &self,
         link: &mut Link,
-        fault: fault::Fault,
+        fault: dpd_types::fault::Fault,
     ) -> DpdResult<()> {
         if !link.link_state.is_fault() {
             link.link_state = LinkState::Faulted(fault.clone());
@@ -1537,7 +1536,7 @@ impl Switch {
         &self,
         port_id: PortId,
         link_id: LinkId,
-        fault: fault::Fault,
+        fault: dpd_types::fault::Fault,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
             self.link_set_fault_locked(link, fault)

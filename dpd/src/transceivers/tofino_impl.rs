@@ -992,9 +992,6 @@ impl Switch {
             sleep(INTERVAL).await;
             probes::transceiver__monitor__loop__start!(|| ());
 
-            // We'll add unsupported modules to this set as we iterate below.
-            let mut unsupported = ModuleId::empty();
-
             // Acquire the controller.
             //
             // There are a lot of operations we're doing using the controller in
@@ -1079,8 +1076,8 @@ impl Switch {
             //
             // At this point we need to look into the switch port itself, since
             // that stores information about whether a module was disabled or
-            // unsupported. We require an operator to clear these states before
-            // we try to update information about the module again.
+            // faulted. We require an operator to clear these states before we
+            // try to update information about the module again.
             let mut to_check = ModuleId::empty();
             let mut can_change_power = ModuleId::empty();
             for (port_id, port_lock) in self
@@ -1127,18 +1124,23 @@ impl Switch {
                         can_change_power.set(index).unwrap();
                     }
 
-                    // If the module has been marked disabled or unsupported, we
-                    // need to abide by that. The operator needs to remove and
-                    // reinsert the module before we try to operate on it again.
-                    //
-                    // In other cases, we need to go check the module to see if
-                    // it's available and supported.
-                    match &port.as_qsfp().unwrap().transceiver {
-                        Some(Transceiver::Unsupported) => {
-                            unsupported.set(index).unwrap()
-                        }
-                        _ => to_check.set(index).unwrap(),
+                    // Since this transceiver is present and not faulted, we
+                    // definitely want to just check it again. This helps us
+                    // avoid spuriously marking the transceiver as unsupported,
+                    // for example. See
+                    // https://github.com/oxidecomputer/dendrite/issues/111.
+                    if matches!(
+                        port.as_qsfp().unwrap().transceiver,
+                        Some(Transceiver::Unsupported)
+                    ) {
+                        debug!(
+                            log,
+                            "transceiver was previously marked unsupported, \
+                            we'll check again for support automatically";
+                            "port_id" => %port_id,
+                        );
                     }
+                    to_check.set(index).unwrap();
                 }
             }
 
@@ -1184,8 +1186,7 @@ impl Switch {
                 }
             };
             drop(locked_controller);
-            unsupported |= new_modules.unsupported;
-            unsupported &= !new_modules.failed;
+            let unsupported = new_modules.unsupported & !new_modules.failed;
 
             // Update any modules that have been determined as unsupported or
             // failed. The latter set is possibly larger than the set of failed

@@ -32,7 +32,7 @@ use dropshot::{
     HttpResponseOk, HttpResponseUpdatedNoContent, PaginationParams, Path,
     Query, RequestContext, ResultsPage, TypedBody,
 };
-use oxnet::{IpNet, Ipv4Net, Ipv6Net};
+use oxnet::{Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use transceiver_controller::{
@@ -174,8 +174,8 @@ pub trait DpdApi {
     }]
     async fn route_ipv6_list(
         rqctx: RequestContext<Self::Context>,
-        query: Query<PaginationParams<EmptyScanParams, RouteToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Route>>, HttpError>;
+        query: Query<PaginationParams<EmptyScanParams, Ipv6RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Routes>>, HttpError>;
 
     /**
      * Get a single IPv6 route, by its IPv6 CIDR block.
@@ -201,7 +201,7 @@ pub trait DpdApi {
     }]
     async fn route_ipv6_add(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<RouteAdd>,
+        update: TypedBody<Ipv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -216,7 +216,7 @@ pub trait DpdApi {
     }]
     async fn route_ipv6_set(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<RouteSet>,
+        update: TypedBody<Ipv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -232,6 +232,18 @@ pub trait DpdApi {
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
+     * Remove a single target for the given IPv6 subnet
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/route/ipv6/{cidr}/{port_id}/{link_id}/{tgt_ip}",
+    }]
+    async fn route_ipv6_delete_target(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<RouteTargetIpv6Path>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /**
      * Fetch the configured IPv4 routes, mapping IPv4 CIDR blocks to the switch port
      * used for sending out that traffic, and optionally a gateway.
      */
@@ -241,8 +253,8 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_list(
         rqctx: RequestContext<Self::Context>,
-        query: Query<PaginationParams<EmptyScanParams, RouteToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Route>>, HttpError>;
+        query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Routes>>, HttpError>;
 
     /**
      * Get the configured route for the given IPv4 subnet.
@@ -268,7 +280,7 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_add(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<RouteAdd>,
+        update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -283,7 +295,7 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_set(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<RouteSet>,
+        update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -297,8 +309,9 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<RoutePathV4>,
     ) -> Result<HttpResponseDeleted, HttpError>;
+
     /**
-     * Remove a single target for the given subnet
+     * Remove a single target for the given IPv4 subnet
      */
     #[endpoint {
         method = DELETE,
@@ -1638,39 +1651,52 @@ impl TryFrom<RouteTarget> for Ipv6Route {
     }
 }
 
-/// Represents a new or replacement mapping of a subnet to a single RouteTarget
-/// nexthop target.
+/// Represents a new or replacement mapping of a subnet to a single IPv4
+/// RouteTarget nexthop target.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct RouteSet {
+pub struct Ipv4RouteUpdate {
     /// Traffic destined for any address within the CIDR block is routed using
     /// this information.
-    pub cidr: IpNet,
-    /// A single RouteTarget associated with this CIDR
-    pub target: RouteTarget,
+    pub cidr: Ipv4Net,
+    /// A single Route associated with this CIDR
+    pub target: Ipv4Route,
     /// Should this route replace any existing route?  If a route exists and
     /// this parameter is false, then the call will fail.
     pub replace: bool,
 }
 
-/// Represents a single mapping of a subnet to a single RouteTarget
-/// nexthop target.
+/// Represents a new or replacement mapping of a subnet to a single IPv6
+/// RouteTarget nexthop target.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct RouteAdd {
+pub struct Ipv6RouteUpdate {
     /// Traffic destined for any address within the CIDR block is routed using
     /// this information.
-    pub cidr: IpNet,
+    pub cidr: Ipv6Net,
     /// A single RouteTarget associated with this CIDR
-    pub target: RouteTarget,
+    pub target: Ipv6Route,
+    /// Should this route replace any existing route?  If a route exists and
+    /// this parameter is false, then the call will fail.
+    pub replace: bool,
 }
 
-/// Represents all mappings of a subnet to a its nexthop target(s).
+/// Represents all mappings of an IPv4 subnet to a its nexthop target(s).
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct Route {
+pub struct Ipv4Routes {
     /// Traffic destined for any address within the CIDR block is routed using
     /// this information.
-    pub cidr: IpNet,
+    pub cidr: Ipv4Net,
     /// All RouteTargets associated with this CIDR
-    pub targets: Vec<RouteTarget>,
+    pub targets: Vec<Ipv4Route>,
+}
+
+/// Represents all mappings of an IPv6 subnet to a its nexthop target(s).
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct Ipv6Routes {
+    /// Traffic destined for any address within the CIDR block is routed using
+    /// this information.
+    pub cidr: Ipv6Net,
+    /// All RouteTargets associated with this CIDR
+    pub targets: Vec<Ipv6Route>,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -1742,14 +1768,32 @@ pub struct RoutePathV6 {
     pub cidr: Ipv6Net,
 }
 
+/// Represents a single subnet->target route entry
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct RouteTargetIpv6Path {
+    /// The subnet being routed
+    pub cidr: Ipv6Net,
+    /// The switch port to which packets should be sent
+    pub port_id: PortId,
+    /// The link to which packets should be sent
+    pub link_id: LinkId,
+    /// The next hop in the IPv4 route
+    pub tgt_ip: Ipv6Addr,
+}
+
 /**
  * Represents a cursor into a paginated request for the contents of the
  * subnet routing table.  Because we don't (yet) support filtering or arbitrary
  * sorting, it is sufficient to track the last mac address reported.
  */
 #[derive(Deserialize, Serialize, JsonSchema)]
-pub struct RouteToken {
-    pub cidr: IpNet,
+pub struct Ipv4RouteToken {
+    pub cidr: Ipv4Net,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct Ipv6RouteToken {
+    pub cidr: Ipv6Net,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]

@@ -64,7 +64,6 @@ use common::ports::QsfpPort;
 use common::ports::{Ipv4Entry, Ipv6Entry, PortPrbsMode};
 use dpd_api::*;
 use dpd_types::views;
-use oxnet::{IpNet, Ipv4Net, Ipv6Net};
 
 type ApiServer = dropshot::HttpServer<Arc<Switch>>;
 
@@ -254,20 +253,15 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv6_list(
         rqctx: RequestContext<Arc<Switch>>,
-        query: Query<PaginationParams<EmptyScanParams, RouteToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Route>>, HttpError> {
+        query: Query<PaginationParams<EmptyScanParams, Ipv6RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Routes>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let pag_params = query.into_inner();
         let max = rqctx.page_limit(&pag_params)?.get();
 
         let previous = match &pag_params.page {
             WhichPage::First(..) => None,
-            WhichPage::Next(RouteToken { cidr }) => match cidr {
-                IpNet::V6(cidr) => Some(*cidr),
-                IpNet::V4(_) => {
-                    return Err(DpdError::Invalid("bad token".into()).into())
-                }
-            },
+            WhichPage::Next(Ipv6RouteToken { cidr }) => Some(*cidr),
         };
 
         route::get_range_ipv6(switch, previous, max)
@@ -277,7 +271,7 @@ impl DpdApi for DpdApiImpl {
                 ResultsPage::new(
                     entries,
                     &EmptyScanParams {},
-                    |e: &Route, _| RouteToken { cidr: e.cidr },
+                    |e: &Ipv6Routes, _| Ipv6RouteToken { cidr: e.cidr },
                 )
             })
             .map(HttpResponseOk)
@@ -297,13 +291,11 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv6_add(
         rqctx: RequestContext<Arc<Switch>>,
-        update: TypedBody<RouteAdd>,
+        update: TypedBody<Ipv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let route = update.into_inner();
-        let subnet = net_to_v6(route.cidr)?;
-        let target = Ipv6Route::try_from(route.target)?;
-        route::add_route_ipv6(switch, subnet, target)
+        route::add_route_ipv6(switch, route.cidr, route.target)
             .await
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(HttpError::from)
@@ -311,13 +303,11 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv6_set(
         rqctx: RequestContext<Arc<Switch>>,
-        update: TypedBody<RouteSet>,
+        update: TypedBody<Ipv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let route = update.into_inner();
-        let subnet = net_to_v6(route.cidr)?;
-        let target = Ipv6Route::try_from(route.target)?;
-        route::set_route_ipv6(switch, subnet, target, route.replace)
+        route::set_route_ipv6(switch, route.cidr, route.target, route.replace)
             .await
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(HttpError::from)
@@ -335,22 +325,35 @@ impl DpdApi for DpdApiImpl {
             .map_err(HttpError::from)
     }
 
+    async fn route_ipv6_delete_target(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouteTargetIpv6Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        let subnet = path.cidr;
+        let port_id = path.port_id;
+        let link_id = path.link_id;
+        let tgt_ip = path.tgt_ip;
+        route::delete_route_target_ipv6(
+            switch, subnet, port_id, link_id, tgt_ip,
+        )
+        .await
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+    }
+
     async fn route_ipv4_list(
         rqctx: RequestContext<Arc<Switch>>,
-        query: Query<PaginationParams<EmptyScanParams, RouteToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Route>>, HttpError> {
+        query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Routes>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let pag_params = query.into_inner();
         let max = rqctx.page_limit(&pag_params)?.get();
 
         let previous = match &pag_params.page {
             WhichPage::First(..) => None,
-            WhichPage::Next(RouteToken { cidr }) => match cidr {
-                IpNet::V6(_) => {
-                    return Err(DpdError::Invalid("bad token".into()).into())
-                }
-                IpNet::V4(cidr) => Some(*cidr),
-            },
+            WhichPage::Next(Ipv4RouteToken { cidr }) => Some(*cidr),
         };
 
         route::get_range_ipv4(switch, previous, max)
@@ -360,7 +363,7 @@ impl DpdApi for DpdApiImpl {
                 ResultsPage::new(
                     entries,
                     &EmptyScanParams {},
-                    |e: &Route, _| RouteToken { cidr: e.cidr },
+                    |e: &Ipv4Routes, _| Ipv4RouteToken { cidr: e.cidr },
                 )
             })
             .map(HttpResponseOk)
@@ -380,14 +383,12 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv4_add(
         rqctx: RequestContext<Arc<Switch>>,
-        update: TypedBody<RouteAdd>,
+        update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let route = update.into_inner();
-        let subnet = net_to_v4(route.cidr)?;
-        let target = Ipv4Route::try_from(route.target)?;
 
-        route::add_route_ipv4(switch, subnet, target)
+        route::add_route_ipv4(switch, route.cidr, route.target)
             .await
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(HttpError::from)
@@ -395,13 +396,11 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv4_set(
         rqctx: RequestContext<Arc<Switch>>,
-        update: TypedBody<RouteSet>,
+        update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let route = update.into_inner();
-        let subnet = net_to_v4(route.cidr)?;
-        let target = Ipv4Route::try_from(route.target)?;
-        route::set_route_ipv4(switch, subnet, target, route.replace)
+        route::set_route_ipv4(switch, route.cidr, route.target, route.replace)
             .await
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(HttpError::from)
@@ -2030,20 +2029,6 @@ fn path_to_qsfp(path: Path<PortIdPathParams>) -> Result<QsfpPort, HttpError> {
     } else {
         Err(HttpError::from(DpdError::NotAQsfpPort { port_id }))
     }
-}
-
-fn net_to_v6(net: IpNet) -> Result<Ipv6Net, HttpError> {
-    let IpNet::V6(subnet) = net else {
-        return Err(client_error(format!("{} is IPv4", net)));
-    };
-    Ok(subnet)
-}
-
-fn net_to_v4(net: IpNet) -> Result<Ipv4Net, HttpError> {
-    let IpNet::V4(subnet) = net else {
-        return Err(client_error(format!("{} is IPv6", net)));
-    };
-    Ok(subnet)
 }
 
 fn build_info() -> BuildInfo {

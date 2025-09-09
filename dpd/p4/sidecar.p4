@@ -659,9 +659,6 @@ control NatIngress (
 	table ingress_hit {
 		key = {
 			meta.nat_ingress_hit : exact;
-			meta.nat_egress_hit : ternary;
-			meta.is_mcast : ternary;
-			meta.is_link_local_mcastv6 : ternary;
 			hdr.tcp.isValid() : ternary;
 			hdr.udp.isValid() : ternary;
 			hdr.icmp.isValid() : ternary;
@@ -674,15 +671,13 @@ control NatIngress (
 		}
 
 		const entries = {
-			( true, _, _, _, true, false, false ) : set_inner_tcp;
-			( true, _, _, _, false, true, false  ) : set_inner_udp;
-			( true, _, _, _, false, false, true ) : set_inner_icmp;
-			( true, _, _, _, _, _, _ ) : NoAction;
+			( true, true, false, false ) : set_inner_tcp;
+			( true, false, true, false  ) : set_inner_udp;
+			( true, false, false, true ) : set_inner_icmp;
 		}
-
-		const size = 8;
+		default_action = NoAction;
+		const size = 3;
 	}
-
 
 	apply {
 		icmp_dst_port.apply();
@@ -865,18 +860,12 @@ control NatEgress (
 	}
 }
 
-control RouterLookup6(
+control RouterLookupIndex6(
 	inout sidecar_headers_t hdr,
-	out   route6_result_t res
+	inout route6_result_t res
 ) {
-	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ctr;
-
-	action unreachable() {
-		res.port = 0;
-		res.nexthop = 0;
-		res.is_hit = false;
-		ctr.count();
-	}
+	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) index_ctr;
+	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) forward_ctr;
 
 	action forward_vlan(PortId_t port, ipv6_addr_t nexthop, bit<12> vlan_id) {
 		hdr.vlan.setValid();
@@ -888,29 +877,85 @@ control RouterLookup6(
 		hdr.ethernet.ether_type = ETHERTYPE_VLAN;
 		res.port = port;
 		res.nexthop = nexthop;
-		res.is_hit = true;
-		ctr.count();
+		forward_ctr.count();
 	}
 
 	action forward(PortId_t port, ipv6_addr_t nexthop) {
 		res.port = port;
 		res.nexthop = nexthop;
-		res.is_hit = true;
-		ctr.count();
+		forward_ctr.count();
 	}
 
-	table tbl {
+	/*
+	 * The table size is reduced by one here just to allow the integration
+	 * test to pass.  We want the lookup and forward tables to have the same
+	 * capacity from dpd's perspective, and the "default" entry consumes a
+	 * slot in the lookup table.
+	 */
+	table route {
+		key             = { res.idx: exact; }
+		actions         = { forward; forward_vlan; }
+		const size      = IPV6_LPM_SIZE - 1;
+		counters        = forward_ctr;
+	}
+
+	action unreachable() {
+		res.is_hit = false;
+		res.idx = 0;
+		res.slots = 0;
+		res.slot = 0;
+		res.port = 0;
+		res.nexthop = 0;
+		index_ctr.count();
+	}
+	
+	/*
+	 * The select_route table contains 2048 pre-computed entries.
+	 * It lives in another file just to keep this one manageable.
+	 */
+	#include <route_selector.p4>
+
+	action index(bit<16> idx, bit<8> slots) {
+		res.is_hit = true;
+
+		res.idx = idx;
+		res.slots = slots;
+		res.slot = 0;
+
+		// The rest of this data is extracted from the target table at
+		// entry `res.idx`.
+		res.port = 0;
+		res.nexthop = 0;
+		index_ctr.count();
+	}
+
+	table lookup {
 		key             = { hdr.ipv6.dst_addr: lpm; }
-		actions         = { forward; forward_vlan; unreachable; }
+		actions         = { index; unreachable; }
 		default_action  = unreachable;
 		// The table size is incremented by one here just to allow the
 		// integration tests to pass, as this is used by the multicast
 		// implementation as well
 		const size      = IPV6_LPM_SIZE + 1;
-		counters        = ctr;
+		counters        = index_ctr;
 	}
 
-	apply { tbl.apply(); }
+	apply {
+		lookup.apply();
+
+		if (res.is_hit) {
+			/*
+			 * Select which of the possible targets to use for this
+			 * packet.  This is simply (flow_hash % target_count).
+			 * Since the tofino p4 implementation doesn't support
+			 * the mod operator, we precalculate the possible
+			 * values and stick them in the select_route table.
+			 */
+			select_route.apply();
+			res.idx = res.idx + res.slot;
+			route.apply();
+		}
+	}
 }
 
 control RouterLookupIndex4(
@@ -1138,12 +1183,16 @@ control Router4 (
 		fwd.idx = 0;
 		fwd.slots = 0;
 		fwd.slot = 0;
-		fwd.hash = index_hash.get({
+		// Our route selection table is 11 bits wide, and we need 5 bits
+		// of that for our "slot count" index.  Thus, we only need 6
+		// bits of the 8-bit hash calculated here to complete the 11-bit
+		// index.
+		fwd.ecmp_hash = index_hash.get({
 			hdr.ipv4.dst_addr,
 			hdr.ipv4.src_addr,
 			meta.l4_dst_port,
 			meta.l4_src_port
-		});
+		}) & 0x3f;
 
 		lookup_idx.apply(hdr, fwd);
 
@@ -1252,7 +1301,8 @@ control Router6 (
 	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
-	RouterLookup6() lookup;
+	RouterLookupIndex6() lookup_idx;
+	Hash<bit<8>>(HashAlgorithm_t.CRC8) index_hash;
 
 	action icmp_error(bit<8> type, bit<8> code) {
 		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
@@ -1269,7 +1319,23 @@ control Router6 (
 	apply {
 		route6_result_t fwd;
 		fwd.nexthop = 0;
-		lookup.apply(hdr, fwd);
+		fwd.port = 0;
+		fwd.is_hit = false;
+		fwd.idx = 0;
+		fwd.slots = 0;
+		fwd.slot = 0;
+		// Our route selection table is 11 bits wide, and we need 5 bits
+		// of that for our "slot count" index.  Thus, we only need 6
+		// bits of the 8-bit hash calculated here to complete the 11-bit
+		// index.
+		fwd.ecmp_hash = index_hash.get({
+			hdr.ipv6.dst_addr,
+			hdr.ipv6.src_addr,
+			meta.l4_dst_port,
+			meta.l4_src_port
+		}) & 0x3f;
+
+		lookup_idx.apply(hdr, fwd);
 
 		if (!fwd.is_hit) {
 			icmp_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);
