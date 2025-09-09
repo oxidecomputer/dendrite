@@ -19,13 +19,13 @@ use std::sync::Mutex;
 
 use crate::table;
 use crate::types::{DpdError, DpdResult};
-use crate::views;
 use crate::Switch;
 use aal::MatchParse;
 use aal_macros::*;
 use asic::Handle;
 
 use anyhow::Context;
+use dpd_types::views;
 
 // Counters in an indirect table are accessed by their index number rather than
 // a key.  Still, we define a key anyway to allow us to use the direct counter

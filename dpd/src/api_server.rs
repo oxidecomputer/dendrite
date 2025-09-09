@@ -13,7 +13,23 @@ use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
-use dropshot::endpoint;
+use dpd_types::fault::Fault;
+use dpd_types::link::LinkFsmCounters;
+use dpd_types::link::LinkId;
+use dpd_types::link::LinkUpCounter;
+use dpd_types::mcast::MulticastGroupCreateEntry;
+use dpd_types::mcast::MulticastGroupCreateExternalEntry;
+use dpd_types::mcast::MulticastGroupResponse;
+use dpd_types::mcast::MulticastGroupUpdateEntry;
+use dpd_types::mcast::MulticastGroupUpdateExternalEntry;
+use dpd_types::oxstats::OximeterMetadata;
+use dpd_types::port_map::BackplaneLink;
+use dpd_types::route::Ipv4Route;
+use dpd_types::route::Ipv6Route;
+use dpd_types::switch_identifiers::SwitchIdentifiers;
+use dpd_types::switch_port::Led;
+use dpd_types::switch_port::ManagementMode;
+use dpd_types::transceivers::Transceiver;
 use dropshot::ClientErrorStatusCode;
 use dropshot::EmptyScanParams;
 use dropshot::HttpError;
@@ -28,176 +44,44 @@ use dropshot::RequestContext;
 use dropshot::ResultsPage;
 use dropshot::TypedBody;
 use dropshot::WhichPage;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use slog::{debug, error, info, o};
 use transceiver_controller::Datapath;
 use transceiver_controller::Monitors;
 
 use crate::counters;
-use crate::fault::Fault;
-use crate::link::LinkFsmCounters;
-use crate::link::LinkId;
-use crate::link::LinkUpCounter;
 use crate::mcast;
 use crate::oxstats;
-use crate::port_map::BackplaneLink;
-use crate::route::Ipv4Route;
-use crate::route::Ipv6Route;
 use crate::rpw::Task;
-use crate::switch_identifiers::SwitchIdentifiers;
 use crate::switch_port::FixedSideDevice;
-use crate::switch_port::Led;
 use crate::switch_port::LedState;
-use crate::switch_port::ManagementMode;
 use crate::transceivers::PowerState;
-use crate::transceivers::Transceiver;
 use crate::types::DpdError;
-use crate::views;
 use crate::{arp, loopback, nat, ports, route, Switch};
 use common::nat::{Ipv4Nat, Ipv6Nat, NatTarget};
 use common::network::MacAddr;
-use common::ports::PortFec;
 use common::ports::PortId;
-use common::ports::PortSpeed;
 use common::ports::QsfpPort;
-use common::ports::TxEq;
 use common::ports::{Ipv4Entry, Ipv6Entry, PortPrbsMode};
-use oxnet::{Ipv4Net, Ipv6Net};
+use dpd_api::*;
+use dpd_types::views;
 
 type ApiServer = dropshot::HttpServer<Arc<Switch>>;
 
-// Temporary module to provide an indent and avoid destroying blame.
-mod imp {
-    use super::*;
+// Generate a 400 client error with the provided message.
+fn client_error(message: impl ToString) -> HttpError {
+    HttpError::for_client_error(
+        None,
+        ClientErrorStatusCode::BAD_REQUEST,
+        message.to_string(),
+    )
+}
 
-    /// Parameter used to create a port.
-    #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-    pub struct PortCreateParams {
-        /// The name of the port. This should be a string like `"3:0"`.
-        pub name: String,
-        /// The speed at which to configure the port.
-        pub speed: PortSpeed,
-        /// The forward error-correction scheme for the port.
-        pub fec: PortFec,
-    }
+pub enum DpdApiImpl {}
 
-    /// Represents the free MAC channels on a single physical port.
-    #[derive(Deserialize, Serialize, JsonSchema, Debug)]
-    pub struct FreeChannels {
-        /// The switch port.
-        pub port_id: PortId,
-        /// The Tofino connector for this port.
-        ///
-        /// This describes the set of electrical connections representing this port
-        /// object, which are defined by the pinout and board design of the Sidecar.
-        pub connector: String,
-        /// The set of available channels (lanes) on this connector.
-        pub channels: Vec<u8>,
-    }
+impl DpdApi for DpdApiImpl {
+    type Context = Arc<Switch>;
 
-    /// Represents the mapping of an IP address to a MAC address.
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    pub struct ArpEntry {
-        /// A tag used to associate this entry with a client.
-        pub tag: String,
-        /// The IP address for the entry.
-        pub ip: IpAddr,
-        /// The MAC address to which `ip` maps.
-        pub mac: MacAddr,
-        /// The time the entry was updated
-        pub update: String,
-    }
-
-    /// Represents a new or replacement mapping of a subnet to a single IPv4
-    /// RouteTarget nexthop target.
-    #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-    pub struct Ipv4RouteUpdate {
-        /// Traffic destined for any address within the CIDR block is routed using
-        /// this information.
-        pub cidr: Ipv4Net,
-        /// A single Route associated with this CIDR
-        pub target: Ipv4Route,
-        /// Should this route replace any existing route?  If a route exists and
-        /// this parameter is false, then the call will fail.
-        pub replace: bool,
-    }
-
-    /// Represents a new or replacement mapping of a subnet to a single IPv6
-    /// RouteTarget nexthop target.
-    #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-    pub struct Ipv6RouteUpdate {
-        /// Traffic destined for any address within the CIDR block is routed using
-        /// this information.
-        pub cidr: Ipv6Net,
-        /// A single RouteTarget associated with this CIDR
-        pub target: Ipv6Route,
-        /// Should this route replace any existing route?  If a route exists and
-        /// this parameter is false, then the call will fail.
-        pub replace: bool,
-    }
-
-    /// Represents all mappings of an IPv4 subnet to a its nexthop target(s).
-    #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-    pub struct Ipv4Routes {
-        /// Traffic destined for any address within the CIDR block is routed using
-        /// this information.
-        pub cidr: Ipv4Net,
-        /// All RouteTargets associated with this CIDR
-        pub targets: Vec<Ipv4Route>,
-    }
-
-    /// Represents all mappings of an IPv6 subnet to a its nexthop target(s).
-    #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-    pub struct Ipv6Routes {
-        /// Traffic destined for any address within the CIDR block is routed using
-        /// this information.
-        pub cidr: Ipv6Net,
-        /// All RouteTargets associated with this CIDR
-        pub targets: Vec<Ipv6Route>,
-    }
-
-    // Generate a 400 client error with the provided message.
-    fn client_error(message: impl ToString) -> HttpError {
-        HttpError::for_client_error(
-            None,
-            ClientErrorStatusCode::BAD_REQUEST,
-            message.to_string(),
-        )
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct Ipv6ArpParam {
-        ip: Ipv6Addr,
-    }
-
-    /**
-     * Represents a cursor into a paginated request for the contents of an ARP table
-     */
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct ArpToken {
-        ip: IpAddr,
-    }
-
-    /**
-     * Represents a potential fault condtion on a link
-     */
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct FaultCondition {
-        fault: Option<Fault>,
-    }
-
-    /**
-     * Fetch the IPv6 NDP table entries.
-     *
-     * This returns a paginated list of all IPv6 neighbors directly connected to the
-     * switch.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/ndp",
-    }]
-    pub(super) async fn ndp_list(
+    async fn ndp_list(
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<PaginationParams<EmptyScanParams, ArpToken>>,
     ) -> Result<HttpResponseOk<ResultsPage<ArpEntry>>, HttpError> {
@@ -227,14 +111,7 @@ mod imp {
         )?))
     }
 
-    /**
-     * Remove all entries in the the IPv6 NDP tables.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/ndp"
-    }]
-    pub(super) async fn ndp_reset(
+    async fn ndp_reset(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
@@ -245,14 +122,7 @@ mod imp {
         }
     }
 
-    /**
-     * Get a single IPv6 NDP table entry, by its IPv6 address.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/ndp/{ip}",
-    }]
-    pub(super) async fn ndp_get(
+    async fn ndp_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<Ipv6ArpParam>,
     ) -> Result<HttpResponseOk<ArpEntry>, HttpError> {
@@ -270,14 +140,7 @@ mod imp {
         }
     }
 
-    /**
-     * Add an IPv6 NDP entry, mapping an IPv6 address to a MAC address.
-     */
-    #[endpoint {
-        method = POST,
-        path = "/ndp",
-    }]
-    pub(super) async fn ndp_create(
+    async fn ndp_create(
         rqctx: RequestContext<Arc<Switch>>,
         update: TypedBody<ArpEntry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -292,14 +155,7 @@ mod imp {
         }
     }
 
-    /**
-     * Remove an IPv6 NDP entry, by its IPv6 address.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/ndp/{ip}",
-    }]
-    pub(super) async fn ndp_delete(
+    async fn ndp_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<Ipv6ArpParam>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -310,37 +166,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct Ipv4ArpParam {
-        ip: Ipv4Addr,
-    }
-
-    /**
-     * Represents a cursor into a paginated request for the contents of an
-     * Ipv4-indexed table.
-     */
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct Ipv4Token {
-        ip: Ipv4Addr,
-    }
-
-    /**
-     * Represents a cursor into a paginated request for the contents of an
-     * IPv6-indexed table.
-     */
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct Ipv6Token {
-        ip: Ipv6Addr,
-    }
-
-    /**
-     * Fetch the configured IPv4 ARP table entries.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/arp",
-    }]
-    pub(super) async fn arp_list(
+    async fn arp_list(
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<PaginationParams<EmptyScanParams, ArpToken>>,
     ) -> Result<HttpResponseOk<ResultsPage<ArpEntry>>, HttpError> {
@@ -370,14 +196,7 @@ mod imp {
         )?))
     }
 
-    /**
-     * Remove all entries in the IPv4 ARP tables.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/arp",
-    }]
-    pub(super) async fn arp_reset(
+    async fn arp_reset(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
@@ -388,14 +207,7 @@ mod imp {
         }
     }
 
-    /**
-     * Get a single IPv4 ARP table entry, by its IPv4 address.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/arp/{ip}",
-    }]
-    pub(super) async fn arp_get(
+    async fn arp_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<Ipv4ArpParam>,
     ) -> Result<HttpResponseOk<ArpEntry>, HttpError> {
@@ -413,14 +225,7 @@ mod imp {
         }
     }
 
-    /**
-     * Add an IPv4 ARP table entry, mapping an IPv4 address to a MAC address.
-     */
-    #[endpoint {
-        method = POST,
-        path = "/arp",
-    }]
-    pub(super) async fn arp_create(
+    async fn arp_create(
         rqctx: RequestContext<Arc<Switch>>,
         update: TypedBody<ArpEntry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -435,14 +240,7 @@ mod imp {
         }
     }
 
-    /**
-     * Remove a single IPv4 ARP entry, by its IPv4 address.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/arp/{ip}",
-    }]
-    pub(super) async fn arp_delete(
+    async fn arp_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<Ipv4ArpParam>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -453,67 +251,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct RoutePathV4 {
-        /// The IPv4 subnet in CIDR notation whose route entry is returned.
-        cidr: Ipv4Net,
-    }
-
-    /// Represents a single subnet->target route entry
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct RouteTargetIpv4Path {
-        /// The subnet being routed
-        cidr: Ipv4Net,
-        /// The switch port to which packets should be sent
-        port_id: PortId,
-        /// The link to which packets should be sent
-        link_id: LinkId,
-        /// The next hop in the IPv4 route
-        tgt_ip: Ipv4Addr,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct RoutePathV6 {
-        /// The IPv6 subnet in CIDR notation whose route entry is returned.
-        cidr: Ipv6Net,
-    }
-
-    /// Represents a single subnet->target route entry
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct RouteTargetIpv6Path {
-        /// The subnet being routed
-        cidr: Ipv6Net,
-        /// The switch port to which packets should be sent
-        port_id: PortId,
-        /// The link to which packets should be sent
-        link_id: LinkId,
-        /// The next hop in the IPv4 route
-        tgt_ip: Ipv6Addr,
-    }
-
-    /**
-     * Represents a cursor into a paginated request for the contents of the
-     * subnet routing table.  Because we don't (yet) support filtering or arbitrary
-     * sorting, it is sufficient to track the last mac address reported.
-     */
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct Ipv4RouteToken {
-        cidr: Ipv4Net,
-    }
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct Ipv6RouteToken {
-        cidr: Ipv6Net,
-    }
-
-    /**
-     * Fetch the configured IPv6 routes, mapping IPv6 CIDR blocks to the switch port
-     * used for sending out that traffic, and optionally a gateway.
-     */
-    #[endpoint {
-    method = GET,
-    path = "/route/ipv6",
-}]
-    pub(super) async fn route_ipv6_list(
+    async fn route_ipv6_list(
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<PaginationParams<EmptyScanParams, Ipv6RouteToken>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv6Routes>>, HttpError> {
@@ -539,14 +277,7 @@ mod imp {
             .map(HttpResponseOk)
     }
 
-    /**
-     * Get a single IPv6 route, by its IPv6 CIDR block.
-     */
-    #[endpoint {
-    method = GET,
-    path = "/route/ipv6/{cidr}",
-}]
-    pub(super) async fn route_ipv6_get(
+    async fn route_ipv6_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<RoutePathV6>,
     ) -> Result<HttpResponseOk<Vec<Ipv6Route>>, HttpError> {
@@ -558,17 +289,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Route an IPv6 subnet to a link and a nexthop gateway.
-     *
-     * This call can be used to create a new single-path route or to add new targets
-     * to a multipath route.
-     */
-    #[endpoint {
-    method = POST,
-    path = "/route/ipv6",
-}]
-    pub(super) async fn route_ipv6_add(
+    async fn route_ipv6_add(
         rqctx: RequestContext<Arc<Switch>>,
         update: TypedBody<Ipv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -580,17 +301,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Route an IPv6 subnet to a link and a nexthop gateway.
-     *
-     * This call can be used to create a new single-path route or to replace any
-     * existing routes with a new single-path route.
-     */
-    #[endpoint {
-    method = PUT,
-    path = "/route/ipv6",
-}]
-    pub(super) async fn route_ipv6_set(
+    async fn route_ipv6_set(
         rqctx: RequestContext<Arc<Switch>>,
         update: TypedBody<Ipv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -602,14 +313,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Remove an IPv6 route, by its IPv6 CIDR block.
-     */
-    #[endpoint {
-    method = DELETE,
-    path = "/route/ipv6/{cidr}",
-}]
-    pub(super) async fn route_ipv6_delete(
+    async fn route_ipv6_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<RoutePathV6>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -620,14 +324,8 @@ mod imp {
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
     }
-    /**
-     * Remove a single target for the given IPv6 subnet
-     */
-    #[endpoint {
-    method = DELETE,
-    path = "/route/ipv6/{cidr}/{port_id}/{link_id}/{tgt_ip}",
-}]
-    pub(super) async fn route_ipv6_delete_target(
+
+    async fn route_ipv6_delete_target(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<RouteTargetIpv6Path>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -645,15 +343,7 @@ mod imp {
         .map_err(HttpError::from)
     }
 
-    /**
-     * Fetch the configured IPv4 routes, mapping IPv4 CIDR blocks to the switch port
-     * used for sending out that traffic, and optionally a gateway.
-     */
-    #[endpoint {
-    method = GET,
-    path = "/route/ipv4",
-}]
-    pub(super) async fn route_ipv4_list(
+    async fn route_ipv4_list(
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv4Routes>>, HttpError> {
@@ -679,14 +369,7 @@ mod imp {
             .map(HttpResponseOk)
     }
 
-    /**
-     * Get the configured route for the given IPv4 subnet.
-     */
-    #[endpoint {
-    method = GET,
-    path = "/route/ipv4/{cidr}",
-}]
-    pub(super) async fn route_ipv4_get(
+    async fn route_ipv4_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<RoutePathV4>,
     ) -> Result<HttpResponseOk<Vec<Ipv4Route>>, HttpError> {
@@ -698,17 +381,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Route an IPv4 subnet to a link and a nexthop gateway.
-     *
-     * This call can be used to create a new single-path route or to add new targets
-     * to a multipath route.
-     */
-    #[endpoint {
-    method = POST,
-    path = "/route/ipv4",
-}]
-    pub(super) async fn route_ipv4_add(
+    async fn route_ipv4_add(
         rqctx: RequestContext<Arc<Switch>>,
         update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -721,17 +394,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Route an IPv4 subnet to a link and a nexthop gateway.
-     *
-     * This call can be used to create a new single-path route or to replace any
-     * existing routes with a new single-path route.
-     */
-    #[endpoint {
-    method = PUT,
-    path = "/route/ipv4",
-}]
-    pub(super) async fn route_ipv4_set(
+    async fn route_ipv4_set(
         rqctx: RequestContext<Arc<Switch>>,
         update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -743,14 +406,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Remove all targets for the given subnet
-     */
-    #[endpoint {
-    method = DELETE,
-    path = "/route/ipv4/{cidr}",
-}]
-    pub(super) async fn route_ipv4_delete(
+    async fn route_ipv4_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<RoutePathV4>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -761,14 +417,8 @@ mod imp {
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
     }
-    /**
-     * Remove a single target for the given IPv4 subnet
-     */
-    #[endpoint {
-    method = DELETE,
-    path = "/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}",
-}]
-    pub(super) async fn route_ipv4_delete_target(
+
+    async fn route_ipv4_delete_target(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<RouteTargetIpv4Path>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -786,129 +436,7 @@ mod imp {
         .map_err(HttpError::from)
     }
 
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct PortIpv4Path {
-        port: String,
-        ipv4: Ipv4Addr,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct PortIpv6Path {
-        port: String,
-        ipv6: Ipv6Addr,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct LoopbackIpv4Path {
-        ipv4: Ipv4Addr,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct LoopbackIpv6Path {
-        ipv6: Ipv6Addr,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct NatIpv6Path {
-        ipv6: Ipv6Addr,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct NatIpv6PortPath {
-        ipv6: Ipv6Addr,
-        low: u16,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct NatIpv6RangePath {
-        ipv6: Ipv6Addr,
-        low: u16,
-        high: u16,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct NatIpv4Path {
-        ipv4: Ipv4Addr,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct NatIpv4PortPath {
-        ipv4: Ipv4Addr,
-        low: u16,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct NatIpv4RangePath {
-        ipv4: Ipv4Addr,
-        low: u16,
-        high: u16,
-    }
-
-    /**
-     * Represents a cursor into a paginated request for all NAT data.
-     */
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct NatToken {
-        port: u16,
-    }
-
-    /**
-     * Represents a cursor into a paginated request for all port data.  Because we
-     * don't (yet) support filtering or arbitrary sorting, it is sufficient to
-     * track the last port returned.
-     */
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct PortToken {
-        port: u16,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct PortIdPathParams {
-        /// The switch port on which to operate.
-        port_id: PortId,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct PortSettingsTag {
-        /// Restrict operations on this port to the provided tag.
-        tag: Option<String>,
-    }
-
-    /// Identifies a logical link on a physical port.
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    pub(crate) struct LinkPath {
-        /// The switch port on which to operate.
-        pub port_id: PortId,
-        /// The link in the switch port on which to operate.
-        pub link_id: LinkId,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct LinkIpv4Path {
-        /// The switch port on which to operate.
-        port_id: PortId,
-        /// The link in the switch port on which to operate.
-        link_id: LinkId,
-        /// The IPv4 address on which to operate.
-        address: Ipv4Addr,
-    }
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct LinkIpv6Path {
-        /// The switch port on which to operate.
-        port_id: PortId,
-        /// The link in the switch port on which to operate.
-        link_id: LinkId,
-        /// The IPv6 address on which to operate.
-        address: Ipv6Addr,
-    }
-
-    /// List all switch ports on the system.
-    #[endpoint {
-        method = GET,
-        path = "/ports",
-    }]
-    pub(super) async fn port_list(
+    async fn port_list(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<PortId>>, HttpError> {
         Ok(HttpResponseOk(
@@ -922,16 +450,7 @@ mod imp {
         ))
     }
 
-    /// Get the set of available channels for all ports.
-    ///
-    /// This returns the unused MAC channels for each physical switch port. This can
-    /// be used to determine how many additional links can be crated on a physical
-    /// switch port.
-    #[endpoint {
-        method = GET,
-        path = "/channels",
-    }]
-    pub(super) async fn channels_list(
+    async fn channels_list(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<FreeChannels>>, HttpError> {
         let switch: &Switch = rqctx.context();
@@ -958,12 +477,7 @@ mod imp {
         Ok(HttpResponseOk(rval))
     }
 
-    /// Return information about a single switch port.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}",
-    }]
-    pub(super) async fn port_get(
+    async fn port_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
     ) -> Result<HttpResponseOk<views::SwitchPort>, HttpError> {
@@ -982,12 +496,7 @@ mod imp {
         )))
     }
 
-    /// Return the current management mode of a QSFP switch port.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/management-mode",
-    }]
-    pub(super) async fn management_mode_get(
+    async fn management_mode_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
     ) -> Result<HttpResponseOk<ManagementMode>, HttpError> {
@@ -1007,12 +516,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /// Set the current management mode of a QSFP switch port.
-    #[endpoint {
-        method = PUT,
-        path = "/ports/{port_id}/management-mode",
-    }]
-    pub(super) async fn management_mode_set(
+    async fn management_mode_set(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
         body: TypedBody<ManagementMode>,
@@ -1047,12 +551,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /// Return the current state of the attention LED on a front-facing QSFP port.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/led",
-    }]
-    pub(super) async fn led_get(
+    async fn led_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
     ) -> Result<HttpResponseOk<Led>, HttpError> {
@@ -1065,21 +564,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /// Override the current state of the attention LED on a front-facing QSFP port.
-    ///
-    /// The attention LED normally follows the state of the port itself. For
-    /// example, if a transceiver is powered and operating normally, then the LED is
-    /// solid on. An unexpected power fault would then be reflected by powering off
-    /// the LED.
-    ///
-    /// The client may override this behavior, explicitly setting the LED to a
-    /// specified state. This can be undone, sending the LED back to its default
-    /// policy, with the endpoint `/ports/{port_id}/led/auto`.
-    #[endpoint {
-        method = PUT,
-        path = "/ports/{port_id}/led",
-    }]
-    pub(super) async fn led_set(
+    async fn led_set(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
         body: TypedBody<LedState>,
@@ -1094,16 +579,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /// Return the full backplane map.
-    ///
-    /// This returns the entire mapping of all cubbies in a rack, through the cabled
-    /// backplane, and into the Sidecar main board. It also includes the Tofino
-    /// "connector", which is included in some contexts such as reporting counters.
-    #[endpoint {
-        method = GET,
-        path = "/backplane-map",
-    }]
-    pub(super) async fn backplane_map(
+    async fn backplane_map(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<BTreeMap<PortId, BackplaneLink>>, HttpError>
     {
@@ -1120,12 +596,7 @@ mod imp {
         ))
     }
 
-    /// Return the backplane mapping for a single switch port.
-    #[endpoint {
-        method = GET,
-        path = "/backplane-map/{port_id}",
-    }]
-    pub(super) async fn port_backplane_link(
+    async fn port_backplane_link(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
     ) -> Result<HttpResponseOk<BackplaneLink>, HttpError> {
@@ -1141,12 +612,7 @@ mod imp {
         }
     }
 
-    /// Return the state of all attention LEDs on the Sidecar QSFP ports.
-    #[endpoint {
-        method = GET,
-        path = "/leds",
-    }]
-    pub(super) async fn leds_list(
+    async fn leds_list(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<BTreeMap<PortId, Led>>, HttpError> {
         let switch = rqctx.context();
@@ -1157,15 +623,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /// Set the LED policy to automatic.
-    ///
-    /// The automatic LED policy ensures that the state of the LED follows the state
-    /// of the switch port itself.
-    #[endpoint {
-        method = PUT,
-        path = "/ports/{port_id}/led/auto",
-    }]
-    pub(super) async fn led_set_auto(
+    async fn led_set_auto(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -1178,12 +636,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /// Return information about all QSFP transceivers.
-    #[endpoint {
-        method = GET,
-        path = "/transceivers",
-    }]
-    pub(super) async fn transceivers_list(
+    async fn transceivers_list(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<BTreeMap<PortId, Transceiver>>, HttpError> {
         let switch = rqctx.context();
@@ -1199,19 +652,7 @@ mod imp {
         Ok(HttpResponseOk(out))
     }
 
-    /// Return the information about a port's transceiver.
-    ///
-    /// This returns the status (presence, power state, etc) of the transceiver
-    /// along with its identifying information. If the port is an optical switch
-    /// port, but has no transceiver, then the identifying information is empty.
-    ///
-    /// If the switch port is not a QSFP port, and thus could never have a
-    /// transceiver, then "Not Found" is returned.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/transceiver",
-    }]
-    pub(super) async fn transceiver_get(
+    async fn transceiver_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
     ) -> Result<HttpResponseOk<Transceiver>, HttpError> {
@@ -1245,15 +686,7 @@ mod imp {
         }
     }
 
-    /// Effect a module-level reset of a QSFP transceiver.
-    ///
-    /// If the QSFP port has no transceiver or is not a QSFP port, then a client
-    /// error is returned.
-    #[endpoint {
-        method = POST,
-        path = "/ports/{port_id}/transceiver/reset",
-    }]
-    pub(super) async fn transceiver_reset(
+    async fn transceiver_reset(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -1266,12 +699,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /// Control the power state of a transceiver.
-    #[endpoint {
-        method = PUT,
-        path = "/ports/{port_id}/transceiver/power",
-    }]
-    pub(super) async fn transceiver_power_set(
+    async fn transceiver_power_set(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
         state: TypedBody<PowerState>,
@@ -1286,12 +714,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /// Return the power state of a transceiver.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/transceiver/power",
-    }]
-    pub(super) async fn transceiver_power_get(
+    async fn transceiver_power_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
     ) -> Result<HttpResponseOk<PowerState>, HttpError> {
@@ -1304,12 +727,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /// Fetch the monitored environmental information for the provided transceiver.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/transceiver/monitors",
-    }]
-    pub(super) async fn transceiver_monitors_get(
+    async fn transceiver_monitors_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
     ) -> Result<HttpResponseOk<Monitors>, HttpError> {
@@ -1322,12 +740,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /// Fetch the state of the datapath for the provided transceiver.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/transceiver/datapath"
-    }]
-    pub(super) async fn transceiver_datapath_get(
+    async fn transceiver_datapath_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
     ) -> Result<HttpResponseOk<Datapath>, HttpError> {
@@ -1340,61 +753,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    // Convert a port ID path into a `QsfpPort` if possible. This is generally used
-    // for endpoints which only apply to the QSFP ports, such as transceiver
-    // management.
-    fn path_to_qsfp(
-        path: Path<PortIdPathParams>,
-    ) -> Result<QsfpPort, HttpError> {
-        let port_id = path.into_inner().port_id;
-        if let PortId::Qsfp(qsfp_port) = port_id {
-            Ok(qsfp_port)
-        } else {
-            Err(HttpError::from(DpdError::NotAQsfpPort { port_id }))
-        }
-    }
-
-    /// Parameters used to create a link on a switch port.
-    #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-    pub struct LinkCreate {
-        /// The first lane of the port to use for the new link
-        pub lane: Option<LinkId>,
-        /// The requested speed of the link.
-        pub speed: PortSpeed,
-        /// The requested forward-error correction method.  If this is None, the
-        /// standard FEC for the underlying media will be applied if it can be
-        /// determined.
-        pub fec: Option<PortFec>,
-        /// Whether the link is configured to autonegotiate with its peer during
-        /// link training.
-        ///
-        /// This is generally only true for backplane links, and defaults to
-        /// `false`.
-        #[serde(default)]
-        pub autoneg: bool,
-        /// Whether the link is configured in KR mode, an electrical specification
-        /// generally only true for backplane link.
-        ///
-        /// This defaults to `false`.
-        #[serde(default)]
-        pub kr: bool,
-
-        /// Transceiver equalization adjustment parameters.
-        /// This defaults to `None`.
-        #[serde(default)]
-        pub tx_eq: Option<TxEq>,
-    }
-
-    /// Create a link on a switch port.
-    ///
-    /// Create an interface that can be used for sending Ethernet frames on the
-    /// provided switch port. This will use the first available lanes in the
-    /// physical port to create an interface of the desired speed, if possible.
-    #[endpoint {
-        method = POST,
-        path = "/ports/{port_id}/links"
-    }]
-    pub(super) async fn link_create(
+    async fn link_create(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
         params: TypedBody<LinkCreate>,
@@ -1408,12 +767,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Get an existing link by ID.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links/{link_id}"
-    }]
-    pub(super) async fn link_get(
+    async fn link_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<views::Link>, HttpError> {
@@ -1425,12 +779,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Delete a link from a switch port.
-    #[endpoint {
-        method = DELETE,
-        path = "/ports/{port_id}/links/{link_id}",
-    }]
-    pub(super) async fn link_delete(
+    async fn link_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -1442,12 +791,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// List the links within a single switch port.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links",
-    }]
-    pub(super) async fn link_list(
+    async fn link_list(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
     ) -> Result<HttpResponseOk<Vec<views::Link>>, HttpError> {
@@ -1459,20 +803,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    #[derive(Clone, Debug, Deserialize, JsonSchema)]
-    pub struct LinkFilter {
-        /// Filter links to those whose name contains the provided string.
-        ///
-        /// If not provided, then all links are returned.
-        filter: Option<String>,
-    }
-
-    /// List all links, on all switch ports.
-    #[endpoint {
-        method = GET,
-        path = "/links",
-    }]
-    pub(super) async fn link_list_all(
+    async fn link_list_all(
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<LinkFilter>,
     ) -> Result<HttpResponseOk<Vec<views::Link>>, HttpError> {
@@ -1481,12 +812,7 @@ mod imp {
         Ok(HttpResponseOk(switch.list_all_links(filter.as_deref())))
     }
 
-    /// Return whether the link is enabled.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links/{link_id}/enabled",
-    }]
-    pub(super) async fn link_enabled_get(
+    async fn link_enabled_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError> {
@@ -1500,12 +826,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Enable or disable a link.
-    #[endpoint {
-        method = PUT,
-        path = "/ports/{port_id}/links/{link_id}/enabled",
-    }]
-    pub(super) async fn link_enabled_set(
+    async fn link_enabled_set(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         body: TypedBody<bool>,
@@ -1521,12 +842,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Return whether the link is configured to act as an IPv6 endpoint
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links/{link_id}/ipv6_enabled",
-    }]
-    pub(super) async fn link_ipv6_enabled_get(
+    async fn link_ipv6_enabled_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError> {
@@ -1540,12 +856,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Set whether a port is configured to act as an IPv6 endpoint
-    #[endpoint {
-        method = PUT,
-        path = "/ports/{port_id}/links/{link_id}/ipv6_enabled",
-    }]
-    pub(super) async fn link_ipv6_enabled_set(
+    async fn link_ipv6_enabled_set(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         body: TypedBody<bool>,
@@ -1561,19 +872,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Return whether the link is in KR mode.
-    ///
-    /// "KR" refers to the Ethernet standard for the link, which are defined in
-    /// various clauses of the IEEE 802.3 specification. "K" is used to denote a
-    /// link over an electrical cabled backplane, and "R" refers to "scrambled
-    /// encoding", a 64B/66B bit-encoding scheme.
-    ///
-    /// Thus this should be true iff a link is on the cabled backplane.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links/{link_id}/kr",
-    }]
-    pub(super) async fn link_kr_get(
+    async fn link_kr_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError> {
@@ -1587,12 +886,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Enable or disable a link.
-    #[endpoint {
-        method = PUT,
-        path = "/ports/{port_id}/links/{link_id}/kr",
-    }]
-    pub(super) async fn link_kr_set(
+    async fn link_kr_set(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         body: TypedBody<bool>,
@@ -1608,13 +902,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Return whether the link is configured to use autonegotiation with its peer
-    /// link.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links/{link_id}/autoneg",
-    }]
-    pub(super) async fn link_autoneg_get(
+    async fn link_autoneg_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError> {
@@ -1628,12 +916,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Set whether a port is configured to use autonegotation with its peer link.
-    #[endpoint {
-        method = PUT,
-        path = "/ports/{port_id}/links/{link_id}/autoneg",
-    }]
-    pub(super) async fn link_autoneg_set(
+    async fn link_autoneg_set(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         body: TypedBody<bool>,
@@ -1649,12 +932,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Set a link's PRBS speed and mode.
-    #[endpoint {
-        method = PUT,
-        path = "/ports/{port_id}/links/{link_id}/prbs",
-    }]
-    pub(super) async fn link_prbs_set(
+    async fn link_prbs_set(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         body: TypedBody<PortPrbsMode>,
@@ -1670,16 +948,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Return the link's PRBS speed and mode.
-    ///
-    /// During link training, a pseudorandom bit sequence (PRBS) is used to allow
-    /// each side to synchronize their clocks and set various parameters on the
-    /// underlying circuitry (such as filter gains).
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links/{link_id}/prbs",
-    }]
-    pub(super) async fn link_prbs_get(
+    async fn link_prbs_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<PortPrbsMode>, HttpError> {
@@ -1693,12 +962,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Return whether a link is up.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links/{link_id}/linkup",
-    }]
-    pub(super) async fn link_linkup_get(
+    async fn link_linkup_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError> {
@@ -1712,12 +976,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Return any fault currently set on this link
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links/{link_id}/fault",
-    }]
-    pub(super) async fn link_fault_get(
+    async fn link_fault_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<FaultCondition>, HttpError> {
@@ -1731,12 +990,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Clear any fault currently set on this link
-    #[endpoint {
-        method = DELETE,
-        path = "/ports/{port_id}/links/{link_id}/fault",
-    }]
-    pub(super) async fn link_fault_clear(
+    async fn link_fault_clear(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -1750,12 +1004,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Inject a fault on this link
-    #[endpoint {
-        method = POST,
-        path = "/ports/{port_id}/links/{link_id}/fault",
-    }]
-    pub(super) async fn link_fault_inject(
+    async fn link_fault_inject(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         entry: TypedBody<String>,
@@ -1775,12 +1024,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// List the IPv4 addresses associated with a link.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links/{link_id}/ipv4",
-    }]
-    pub(super) async fn link_ipv4_list(
+    async fn link_ipv4_list(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         query: Query<PaginationParams<EmptyScanParams, Ipv4Token>>,
@@ -1810,12 +1054,7 @@ mod imp {
         .map(HttpResponseOk)
     }
 
-    /// Add an IPv4 address to a link.
-    #[endpoint {
-        method = POST,
-        path = "/ports/{port_id}/links/{link_id}/ipv4",
-    }]
-    pub(super) async fn link_ipv4_create(
+    async fn link_ipv4_create(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         entry: TypedBody<Ipv4Entry>,
@@ -1831,12 +1070,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Clear all IPv4 addresses from a link.
-    #[endpoint {
-        method = DELETE,
-        path = "/ports/{port_id}/links/{link_id}/ipv4",
-    }]
-    pub(super) async fn link_ipv4_reset(
+    async fn link_ipv4_reset(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -1850,12 +1084,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Remove an IPv4 address from a link.
-    #[endpoint {
-        method = DELETE,
-        path = "/ports/{port_id}/links/{link_id}/ipv4/{address}",
-    }]
-    pub(super) async fn link_ipv4_delete(
+    async fn link_ipv4_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkIpv4Path>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -1870,12 +1099,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// List the IPv6 addresses associated with a link.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links/{link_id}/ipv6",
-    }]
-    pub(super) async fn link_ipv6_list(
+    async fn link_ipv6_list(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         query: Query<PaginationParams<EmptyScanParams, Ipv6Token>>,
@@ -1905,12 +1129,7 @@ mod imp {
         .map(HttpResponseOk)
     }
 
-    /// Add an IPv6 address to a link.
-    #[endpoint {
-        method = POST,
-        path = "/ports/{port_id}/links/{link_id}/ipv6",
-    }]
-    pub(super) async fn link_ipv6_create(
+    async fn link_ipv6_create(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         entry: TypedBody<Ipv6Entry>,
@@ -1926,12 +1145,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Clear all IPv6 addresses from a link.
-    #[endpoint {
-        method = DELETE,
-        path = "/ports/{port_id}/links/{link_id}/ipv6",
-    }]
-    pub(super) async fn link_ipv6_reset(
+    async fn link_ipv6_reset(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -1945,12 +1159,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Remove an IPv6 address from a link.
-    #[endpoint {
-        method = DELETE,
-        path = "/ports/{port_id}/links/{link_id}/ipv6/{address}",
-    }]
-    pub(super) async fn link_ipv6_delete(
+    async fn link_ipv6_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkIpv6Path>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -1965,12 +1174,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Get a link's MAC address.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links/{link_id}/mac",
-    }]
-    pub(super) async fn link_mac_get(
+    async fn link_mac_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<MacAddr>, HttpError> {
@@ -1984,12 +1188,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Set a link's MAC address.
-    #[endpoint {
-        method = PUT,
-        path = "/ports/{port_id}/links/{link_id}/mac",
-    }]
-    pub(super) async fn link_mac_set(
+    async fn link_mac_set(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         body: TypedBody<MacAddr>,
@@ -2005,12 +1204,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Return whether the link is configured to drop non-nat traffic
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links/{link_id}/nat_only",
-    }]
-    pub(super) async fn link_nat_only_get(
+    async fn link_nat_only_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError> {
@@ -2024,12 +1218,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Set whether a port is configured to use drop non-nat traffic
-    #[endpoint {
-        method = PUT,
-        path = "/ports/{port_id}/links/{link_id}/nat_only",
-    }]
-    pub(super) async fn link_nat_only_set(
+    async fn link_nat_only_set(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         body: TypedBody<bool>,
@@ -2045,12 +1234,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Get the event history for the given link.
-    #[endpoint {
-        method = GET,
-        path = "/ports/{port_id}/links/{link_id}/history",
-    }]
-    pub(super) async fn link_history_get(
+    async fn link_history_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<views::LinkHistory>, HttpError> {
@@ -2064,14 +1248,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /**
-     * Get loopback IPv4 addresses.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/loopback/ipv4",
-    }]
-    pub(super) async fn loopback_ipv4_list(
+    async fn loopback_ipv4_list(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<Ipv4Entry>>, HttpError> {
         let switch: &Switch = rqctx.context();
@@ -2084,14 +1261,7 @@ mod imp {
         Ok(HttpResponseOk(addrs))
     }
 
-    /**
-     * Add a loopback IPv4.
-     */
-    #[endpoint {
-        method = POST,
-        path = "/loopback/ipv4",
-    }]
-    pub(super) async fn loopback_ipv4_create(
+    async fn loopback_ipv4_create(
         rqctx: RequestContext<Arc<Switch>>,
         val: TypedBody<Ipv4Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -2103,14 +1273,7 @@ mod imp {
         Ok(HttpResponseUpdatedNoContent {})
     }
 
-    /**
-     * Remove one loopback IPv4 address.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/loopback/ipv4/{ipv4}",
-    }]
-    pub(super) async fn loopback_ipv4_delete(
+    async fn loopback_ipv4_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LoopbackIpv4Path>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -2121,14 +1284,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Get loopback IPv6 addresses.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/loopback/ipv6",
-    }]
-    pub(super) async fn loopback_ipv6_list(
+    async fn loopback_ipv6_list(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<Ipv6Entry>>, HttpError> {
         let switch: &Switch = rqctx.context();
@@ -2141,14 +1297,7 @@ mod imp {
         Ok(HttpResponseOk(addrs))
     }
 
-    /**
-     * Add a loopback IPv6.
-     */
-    #[endpoint {
-        method = POST,
-        path = "/loopback/ipv6",
-    }]
-    pub(super) async fn loopback_ipv6_create(
+    async fn loopback_ipv6_create(
         rqctx: RequestContext<Arc<Switch>>,
         val: TypedBody<Ipv6Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -2160,14 +1309,7 @@ mod imp {
         Ok(HttpResponseUpdatedNoContent {})
     }
 
-    /**
-     * Remove one loopback IPv6 address.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/loopback/ipv6/{ipv6}",
-    }]
-    pub(super) async fn loopback_ipv6_delete(
+    async fn loopback_ipv6_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LoopbackIpv6Path>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -2178,14 +1320,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Get all of the external addresses in use for NAT mappings.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/nat/ipv6",
-    }]
-    pub(super) async fn nat_ipv6_addresses_list(
+    async fn nat_ipv6_addresses_list(
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<PaginationParams<EmptyScanParams, Ipv6Token>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv6Addr>>, HttpError> {
@@ -2211,14 +1346,7 @@ mod imp {
         )?))
     }
 
-    /**
-     * Get all of the external->internal NAT mappings for a given address.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/nat/ipv6/{ipv6}",
-    }]
-    pub(super) async fn nat_ipv6_list(
+    async fn nat_ipv6_list(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv6Path>,
         query: Query<PaginationParams<EmptyScanParams, NatToken>>,
@@ -2246,15 +1374,7 @@ mod imp {
         )?))
     }
 
-    /**
-     * Get the external->internal NAT mapping for the given address and starting L3
-     * port.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/nat/ipv6/{ipv6}/{low}",
-    }]
-    pub(super) async fn nat_ipv6_get(
+    async fn nat_ipv6_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv6PortPath>,
     ) -> Result<HttpResponseOk<NatTarget>, HttpError> {
@@ -2267,24 +1387,7 @@ mod imp {
         }
     }
 
-    /**
-     * Add an external->internal NAT mapping for the given address and L3 port
-     * range.
-     *
-     * This maps an external IPv6 address and L3 port range to:
-     *  - A gimlet's IPv6 address
-     *  - A gimlet's MAC address
-     *  - A Geneve VNI
-     *
-     * These identify the gimlet on which a guest is running, and gives OPTE the
-     * information it needs to  identify the guest VM that uses the external IPv6
-     * and port range when making connections outside of an Oxide rack.
-     */
-    #[endpoint {
-        method = PUT,
-        path = "/nat/ipv6/{ipv6}/{low}/{high}"
-    }]
-    pub(super) async fn nat_ipv6_create(
+    async fn nat_ipv6_create(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv6RangePath>,
         target: TypedBody<NatTarget>,
@@ -2303,14 +1406,7 @@ mod imp {
         }
     }
 
-    /**
-     * Delete the NAT mapping for an IPv6 address and starting L3 port.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/nat/ipv6/{ipv6}/{low}"
-    }]
-    pub(super) async fn nat_ipv6_delete(
+    async fn nat_ipv6_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv6PortPath>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -2321,14 +1417,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Clear all IPv6 NAT mappings.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/nat/ipv6"
-    }]
-    pub(super) async fn nat_ipv6_reset(
+    async fn nat_ipv6_reset(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
@@ -2339,14 +1428,7 @@ mod imp {
         }
     }
 
-    /**
-     * Get all of the external addresses in use for IPv4 NAT mappings.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/nat/ipv4",
-    }]
-    pub(super) async fn nat_ipv4_addresses_list(
+    async fn nat_ipv4_addresses_list(
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<PaginationParams<EmptyScanParams, Ipv4Token>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv4Addr>>, HttpError> {
@@ -2372,14 +1454,7 @@ mod imp {
         )?))
     }
 
-    /**
-     * Get all of the external->internal NAT mappings for a given IPv4 address.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/nat/ipv4/{ipv4}",
-    }]
-    pub(super) async fn nat_ipv4_list(
+    async fn nat_ipv4_list(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv4Path>,
         query: Query<PaginationParams<EmptyScanParams, NatToken>>,
@@ -2408,14 +1483,7 @@ mod imp {
         )?))
     }
 
-    /**
-     * Get the external->internal NAT mapping for the given address/port
-     */
-    #[endpoint {
-        method = GET,
-        path = "/nat/ipv4/{ipv4}/{low}",
-    }]
-    pub(super) async fn nat_ipv4_get(
+    async fn nat_ipv4_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv4PortPath>,
     ) -> Result<HttpResponseOk<NatTarget>, HttpError> {
@@ -2428,24 +1496,7 @@ mod imp {
         }
     }
 
-    /**
-     * Add an external->internal NAT mapping for the given address/port range
-     *
-     * This maps an external IPv6 address and L3 port range to:
-     *  - A gimlet's IPv6 address
-     *  - A gimlet's MAC address
-     *  - A Geneve VNI
-     *
-     * These identify the gimlet on which a guest is running, and gives OPTE the
-     * information it needs to  identify the guest VM that uses the external IPv6
-     * and port range when making connections outside of an Oxide rack.
-     */
-
-    #[endpoint {
-        method = PUT,
-        path = "/nat/ipv4/{ipv4}/{low}/{high}"
-    }]
-    pub(super) async fn nat_ipv4_create(
+    async fn nat_ipv4_create(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv4RangePath>,
         target: TypedBody<NatTarget>,
@@ -2464,14 +1515,7 @@ mod imp {
         }
     }
 
-    /**
-     * Clear the NAT mappings for an IPv4 address and starting L3 port.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/nat/ipv4/{ipv4}/{low}"
-    }]
-    pub(super) async fn nat_ipv4_delete(
+    async fn nat_ipv4_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv4PortPath>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -2482,14 +1526,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Clear all IPv4 NAT mappings.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/nat/ipv4"
-    }]
-    pub(super) async fn nat_ipv4_reset(
+    async fn nat_ipv4_reset(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
@@ -2500,26 +1537,7 @@ mod imp {
         }
     }
 
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct TagPath {
-        tag: String,
-    }
-
-    /**
-     * Clear all settings associated with a specific tag.
-     *
-     * This removes:
-     *
-     * - All ARP or NDP table entries.
-     * - All routes
-     * - All links on all switch ports
-     */
-    // TODO-security: This endpoint should probably not exist.
-    #[endpoint {
-        method = DELETE,
-        path = "/all-settings/{tag}",
-    }]
-    pub(super) async fn reset_all_tagged(
+    async fn reset_all_tagged(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<TagPath>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -2538,17 +1556,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /**
-     * Clear all settings.
-     *
-     * This removes all data entirely.
-     */
-    // TODO-security: This endpoint should probably not exist.
-    #[endpoint {
-        method = DELETE,
-        path = "/all-settings"
-    }]
-    pub(super) async fn reset_all(
+    async fn reset_all(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
@@ -2590,12 +1598,7 @@ mod imp {
         }
     }
 
-    /// Get the LinkUp counters for all links.
-    #[endpoint {
-        method = GET,
-        path = "/counters/linkup",
-    }]
-    pub(super) async fn link_up_counters_list(
+    async fn link_up_counters_list(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<LinkUpCounter>>, HttpError> {
         let switch: &Switch = rqctx.context();
@@ -2604,12 +1607,7 @@ mod imp {
         ))
     }
 
-    /// Get the LinkUp counters for the given link.
-    #[endpoint {
-        method = GET,
-        path = "/counters/linkup/{port_id}/{link_id}",
-    }]
-    pub(super) async fn link_up_counters_get(
+    async fn link_up_counters_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<LinkUpCounter>, HttpError> {
@@ -2623,12 +1621,7 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Get the autonegotiation FSM counters for the given link.
-    #[endpoint {
-        method = GET,
-        path = "/counters/fsm/{port_id}/{link_id}",
-    }]
-    pub(super) async fn link_fsm_counters_get(
+    async fn link_fsm_counters_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<LinkFsmCounters>, HttpError> {
@@ -2642,75 +1635,19 @@ mod imp {
             .map_err(|e| e.into())
     }
 
-    /// Detailed build information about `dpd`.
-    #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-    pub struct BuildInfo {
-        pub version: String,
-        pub git_sha: String,
-        pub git_commit_timestamp: String,
-        pub git_branch: String,
-        pub rustc_semver: String,
-        pub rustc_channel: String,
-        pub rustc_host_triple: String,
-        pub rustc_commit_sha: String,
-        pub cargo_triple: String,
-        pub debug: bool,
-        pub opt_level: u8,
-        pub sde_commit_sha: String,
-    }
-
-    impl Default for BuildInfo {
-        fn default() -> Self {
-            Self {
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                git_sha: env!("VERGEN_GIT_SHA").to_string(),
-                git_commit_timestamp: env!("VERGEN_GIT_COMMIT_TIMESTAMP")
-                    .to_string(),
-                git_branch: env!("VERGEN_GIT_BRANCH").to_string(),
-                rustc_semver: env!("VERGEN_RUSTC_SEMVER").to_string(),
-                rustc_channel: env!("VERGEN_RUSTC_CHANNEL").to_string(),
-                rustc_host_triple: env!("VERGEN_RUSTC_HOST_TRIPLE").to_string(),
-                rustc_commit_sha: env!("VERGEN_RUSTC_COMMIT_HASH").to_string(),
-                cargo_triple: env!("VERGEN_CARGO_TARGET_TRIPLE").to_string(),
-                debug: env!("VERGEN_CARGO_DEBUG").parse().unwrap(),
-                opt_level: env!("VERGEN_CARGO_OPT_LEVEL").parse().unwrap(),
-                sde_commit_sha: env!("SDE_COMMIT_SHA").to_string(),
-            }
-        }
-    }
-
-    /// Return detailed build information about the `dpd` server itself.
-    #[endpoint {
-        method = GET,
-        path = "/build-info",
-    }]
-    pub(super) async fn build_info(
+    async fn build_info(
         _rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<BuildInfo>, HttpError> {
-        Ok(HttpResponseOk(BuildInfo::default()))
+        Ok(HttpResponseOk(build_info()))
     }
 
-    /**
-     * Return the version of the `dpd` server itself.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/dpd-version",
-    }]
-    pub(super) async fn dpd_version(
+    async fn dpd_version(
         _rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<String>, HttpError> {
         Ok(HttpResponseOk(crate::version::version()))
     }
 
-    /**
-     * Return the server uptime.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/dpd-uptime",
-    }]
-    pub(super) async fn dpd_uptime(
+    async fn dpd_uptime(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<i64>, HttpError> {
         let switch: &Switch = rqctx.context();
@@ -2720,111 +1657,14 @@ mod imp {
         Ok(HttpResponseOk(uptime))
     }
 
-    /// Used to request the metadata used to identify this dpd instance and its
-    /// data with oximeter.
-    #[endpoint {
-        method = GET,
-        path = "/oximeter-metadata",
-        unpublished = true,
-    }]
-    pub(super) async fn oximeter_collect_meta_endpoint(
+    async fn oximeter_collect_meta_endpoint(
         rqctx: RequestContext<Arc<Switch>>,
-    ) -> Result<HttpResponseOk<Option<oxstats::OximeterMetadata>>, HttpError>
-    {
+    ) -> Result<HttpResponseOk<Option<OximeterMetadata>>, HttpError> {
         let switch: &Switch = rqctx.context();
         Ok(HttpResponseOk(oxstats::oximeter_meta(switch)))
     }
 
-    /// A port settings transaction object. When posted to the
-    /// `/port-settings/{port_id}` API endpoint, these settings will be applied
-    /// holistically, and to the extent possible atomically to a given port.
-    #[derive(Default, Clone, Debug, Deserialize, JsonSchema, Serialize)]
-    pub struct PortSettings {
-        /// The link settings to apply to the port on a per-link basis. Any links
-        /// not in this map that are resident on the switch port will be removed.
-        /// Any links that are in this map that are not resident on the switch port
-        /// will be added. Any links that are resident on the switch port and in
-        /// this map, and are different, will be modified. Links are indexed by
-        /// spatial index within the port.
-        pub links: HashMap<u8, LinkSettings>,
-    }
-
-    /// An object with link settings used in concert with [`PortSettings`].
-    #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-    pub struct LinkSettings {
-        pub params: LinkCreate,
-        pub addrs: HashSet<IpAddr>,
-    }
-
-    impl From<&crate::link::Link> for LinkSettings {
-        fn from(l: &crate::link::Link) -> Self {
-            let mut addrs: HashSet<IpAddr> = HashSet::new();
-            for a in &l.ipv4 {
-                addrs.insert(a.addr.into());
-            }
-            for a in &l.ipv6 {
-                addrs.insert(a.addr.into());
-            }
-            LinkSettings {
-                params: LinkCreate {
-                    lane: Some(l.link_id),
-                    speed: l.config.speed,
-                    fec: l.config.fec,
-                    autoneg: l.config.autoneg,
-                    kr: l.config.kr,
-                    tx_eq: l.tx_eq,
-                },
-                addrs,
-            }
-        }
-    }
-
-    /// An object with IPv4 route settings used in concert with [`PortSettings`].
-    #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-    pub struct RouteSettingsV4 {
-        pub link_id: u8,
-        pub nexthop: Ipv4Addr,
-    }
-
-    impl From<&crate::route::Ipv4Route> for RouteSettingsV4 {
-        fn from(r: &crate::route::Ipv4Route) -> Self {
-            Self {
-                link_id: r.link_id.0,
-                nexthop: r.tgt_ip,
-            }
-        }
-    }
-
-    /// An object with IPV6 route settings used in concert with [`PortSettings`].
-    #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-    pub struct RouteSettingsV6 {
-        pub link_id: u8,
-        pub nexthop: Ipv6Addr,
-    }
-
-    impl From<&crate::route::Ipv6Route> for RouteSettingsV6 {
-        fn from(r: &crate::route::Ipv6Route) -> Self {
-            Self {
-                link_id: r.link_id.0,
-                nexthop: r.tgt_ip,
-            }
-        }
-    }
-
-    /**
-     * Apply port settings atomically.
-     *
-     * These settings will be applied holistically, and to the extent possible
-     * atomically to a given port. In the event of a failure a rollback is
-     * attempted. If the rollback fails there will be inconsistent state. This
-     * failure mode returns the error code "rollback failure". For more details see
-     * the docs on the [`PortSettings`] type.
-     */
-    #[endpoint {
-        method = POST,
-        path = "/port/{port_id}/settings"
-    }]
-    pub(super) async fn port_settings_apply(
+    async fn port_settings_apply(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
         query: Query<PortSettingsTag>,
@@ -2843,14 +1683,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Clear port settings atomically.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/port/{port_id}/settings"
-    }]
-    pub(super) async fn port_settings_clear(
+    async fn port_settings_clear(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
         query: Query<PortSettingsTag>,
@@ -2867,14 +1700,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Get port settings atomically.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/port/{port_id}/settings"
-    }]
-    pub(super) async fn port_settings_get(
+    async fn port_settings_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
         query: Query<PortSettingsTag>,
@@ -2891,15 +1717,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /// Get switch identifiers.
-    ///
-    /// This endpoint returns the switch identifiers, which can be used for
-    /// consistent field definitions across oximeter time series schemas.
-    #[endpoint {
-        method = GET,
-        path = "/switch/identifiers",
-    }]
-    pub(super) async fn switch_identifiers(
+    async fn switch_identifiers(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<SwitchIdentifiers>, HttpError> {
         let switch = &rqctx.context();
@@ -2910,29 +1728,14 @@ mod imp {
             .map(HttpResponseOk)
     }
 
-    /// Collect the link data consumed by `tfportd`.  This app-specific convenience
-    /// routine is meant to reduce the time and traffic expended on this once-per-
-    /// second operation, by consolidating multiple per-link requests into a single
-    /// per-switch request.
-    #[endpoint {
-        method = GET,
-        path = "/links/tfport_data",
-    }]
-    pub(super) async fn tfport_data(
+    async fn tfport_data(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<views::TfportData>>, HttpError> {
         let switch = &rqctx.context();
         Ok(HttpResponseOk(switch.all_tfport_data()))
     }
 
-    /**
-     * Get NATv4 generation number
-     */
-    #[endpoint {
-        method = GET,
-        path = "/rpw/nat/ipv4/gen"
-    }]
-    pub(super) async fn ipv4_nat_generation(
+    async fn ipv4_nat_generation(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<i64>, HttpError> {
         let switch = rqctx.context();
@@ -2940,14 +1743,7 @@ mod imp {
         Ok(HttpResponseOk(nat::get_ipv4_nat_generation(switch)))
     }
 
-    /**
-     * Trigger NATv4 Reconciliation
-     */
-    #[endpoint {
-        method = POST,
-        path = "/rpw/nat/ipv4/trigger"
-    }]
-    pub(super) async fn ipv4_nat_trigger_update(
+    async fn ipv4_nat_trigger_update(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<()>, HttpError> {
         let switch = rqctx.context();
@@ -2961,35 +1757,14 @@ mod imp {
         }
     }
 
-    /**
-     * Get the list of P4 tables
-     */
-    #[endpoint {
-        method = GET,
-        path = "/table"
-    }]
-    pub(super) async fn table_list(
+    async fn table_list(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<String>>, HttpError> {
         let switch: &Switch = rqctx.context();
         Ok(HttpResponseOk(crate::table::list(switch)))
     }
 
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct TableParam {
-        table: String,
-    }
-
-    /**
-     * Get the contents of a single P4 table.
-     * The name of the table should match one of those returned by the
-     * `table_list()` call.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/table/{table}/dump"
-    }]
-    pub(super) async fn table_dump(
+    async fn table_dump(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<TableParam>,
     ) -> Result<HttpResponseOk<views::Table>, HttpError> {
@@ -3000,22 +1775,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct CounterSync {
-        /// Force a sync of the counters from the ASIC to memory, even if the
-        /// default refresh timeout hasn't been reached.
-        force_sync: bool,
-    }
-    /**
-     * Get any counter data from a single P4 match-action table.
-     * The name of the table should match one of those returned by the
-     * `table_list()` call.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/table/{table}/counters"
-    }]
-    pub(super) async fn table_counters(
+    async fn table_counters(
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<CounterSync>,
         path: Path<TableParam>,
@@ -3028,14 +1788,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Get a list of all the available p4-defined counters.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/counters/p4",
-    }]
-    pub(super) async fn counter_list(
+    async fn counter_list(
         _rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<String>>, HttpError> {
         match counters::get_counter_names() {
@@ -3044,21 +1797,7 @@ mod imp {
         }
     }
 
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct CounterPath {
-        counter: String,
-    }
-
-    /**
-     * Reset a single p4-defined counter.
-     * The name of the counter should match one of those returned by the
-     * `counter_list()` call.
-     */
-    #[endpoint {
-        method = POST,
-        path = "/counters/p4/{counter}/reset",
-    }]
-    pub(super) async fn counter_reset(
+    async fn counter_reset(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<CounterPath>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
@@ -3071,16 +1810,7 @@ mod imp {
         }
     }
 
-    /**
-     * Get the values for a given counter.
-     * The name of the counter should match one of those returned by the
-     * `counter_list()` call.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/counters/p4/{counter}",
-    }]
-    pub(super) async fn counter_get(
+    async fn counter_get(
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<CounterSync>,
         path: Path<CounterPath>,
@@ -3095,37 +1825,10 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /// Used to identify a multicast group by IP address, the main
-    /// identifier for a multicast group.
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    pub struct MulticastGroupIpParam {
-        pub group_ip: IpAddr,
-    }
-
-    /// Used to identify a multicast group by ID.
-    ///
-    /// If not provided, it will return all multicast groups.
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    pub struct MulticastGroupIdParam {
-        pub group_id: Option<mcast::MulticastGroupId>,
-    }
-
-    /**
-     * Create an external-only multicast group configuration.
-     *
-     * External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast
-     * traffic that doesn't require replication infrastructure. These groups use
-     * simple forwarding tables and require a NAT target.
-     */
-    #[endpoint {
-        method = POST,
-        path = "/multicast/external-groups",
-    }]
-    pub(super) async fn multicast_group_create_external(
+    async fn multicast_group_create_external(
         rqctx: RequestContext<Arc<Switch>>,
-        group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
-    ) -> Result<HttpResponseCreated<mcast::MulticastGroupResponse>, HttpError>
-    {
+        group: TypedBody<MulticastGroupCreateExternalEntry>,
+    ) -> Result<HttpResponseCreated<MulticastGroupResponse>, HttpError> {
         let switch: &Switch = rqctx.context();
         let entry = group.into_inner();
 
@@ -3134,22 +1837,10 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Create an internal multicast group configuration.
-     *
-     * Internal groups are used for admin-scoped IPv6 multicast traffic that
-     * requires replication infrastructure. These groups support both external
-     * and underlay members with full replication capabilities.
-     */
-    #[endpoint {
-        method = POST,
-        path = "/multicast/groups",
-    }]
-    pub(super) async fn multicast_group_create(
+    async fn multicast_group_create(
         rqctx: RequestContext<Arc<Switch>>,
-        group: TypedBody<mcast::MulticastGroupCreateEntry>,
-    ) -> Result<HttpResponseCreated<mcast::MulticastGroupResponse>, HttpError>
-    {
+        group: TypedBody<MulticastGroupCreateEntry>,
+    ) -> Result<HttpResponseCreated<MulticastGroupResponse>, HttpError> {
         let switch: &Switch = rqctx.context();
         let entry = group.into_inner();
 
@@ -3158,14 +1849,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Delete a multicast group configuration by IP address.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/multicast/groups/{group_ip}",
-    }]
-    pub(super) async fn multicast_group_delete(
+    async fn multicast_group_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -3177,14 +1861,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Reset all multicast group configurations.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/multicast/groups",
-    }]
-    pub(super) async fn multicast_reset(
+    async fn multicast_reset(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
@@ -3194,17 +1871,10 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Get the multicast group configuration for a given group IP address.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/multicast/groups/{group_ip}",
-    }]
-    pub(super) async fn multicast_group_get(
+    async fn multicast_group_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
-    ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError> {
+    ) -> Result<HttpResponseOk<MulticastGroupResponse>, HttpError> {
         let switch: &Switch = rqctx.context();
         let ip = path.into_inner().group_ip;
 
@@ -3214,21 +1884,11 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Update an internal multicast group configuration for a given group IP address.
-     *
-     * Internal groups are used for admin-scoped IPv6 multicast traffic that
-     * requires replication infrastructure with external and underlay members.
-     */
-    #[endpoint {
-        method = PUT,
-        path = "/multicast/groups/{group_ip}",
-    }]
-    pub(super) async fn multicast_group_update(
+    async fn multicast_group_update(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
-        group: TypedBody<mcast::MulticastGroupUpdateEntry>,
-    ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError> {
+        group: TypedBody<MulticastGroupUpdateEntry>,
+    ) -> Result<HttpResponseOk<MulticastGroupResponse>, HttpError> {
         let switch: &Switch = rqctx.context();
         let ip = path.into_inner().group_ip;
 
@@ -3248,22 +1908,11 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Update an external-only multicast group configuration for a given group IP address.
-     *
-     * External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast
-     * traffic that doesn't require replication infrastructure.
-     */
-    #[endpoint {
-        method = PUT,
-        path = "/multicast/external-groups/{group_ip}",
-    }]
-    pub(super) async fn multicast_group_update_external(
+    async fn multicast_group_update_external(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
-        group: TypedBody<mcast::MulticastGroupUpdateExternalEntry>,
-    ) -> Result<HttpResponseCreated<mcast::MulticastGroupResponse>, HttpError>
-    {
+        group: TypedBody<MulticastGroupUpdateExternalEntry>,
+    ) -> Result<HttpResponseCreated<MulticastGroupResponse>, HttpError> {
         let switch: &Switch = rqctx.context();
         let entry = group.into_inner();
         let ip = path.into_inner().group_ip;
@@ -3273,22 +1922,13 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * List all multicast groups.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/multicast/groups",
-    }]
-    pub(super) async fn multicast_groups_list(
+    async fn multicast_groups_list(
         rqctx: RequestContext<Arc<Switch>>,
         query_params: Query<
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
-    ) -> Result<
-        HttpResponseOk<ResultsPage<mcast::MulticastGroupResponse>>,
-        HttpError,
-    > {
+    ) -> Result<HttpResponseOk<ResultsPage<MulticastGroupResponse>>, HttpError>
+    {
         let switch: &Switch = rqctx.context();
 
         // If a group ID is provided, get the group by ID
@@ -3314,29 +1954,20 @@ mod imp {
         Ok(HttpResponseOk(ResultsPage::new(
             entries,
             &EmptyScanParams {},
-            |e: &mcast::MulticastGroupResponse, _| MulticastGroupIpParam {
-                group_ip: e.ip(),
+            |e: &MulticastGroupResponse, _| MulticastGroupIpParam {
+                group_ip: e.group_ip,
             },
         )?))
     }
 
-    /**
-     * List all multicast groups with a given tag.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/multicast/tags/{tag}",
-    }]
-    pub(super) async fn multicast_groups_list_by_tag(
+    async fn multicast_groups_list_by_tag(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<TagPath>,
         query_params: Query<
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
-    ) -> Result<
-        HttpResponseOk<ResultsPage<mcast::MulticastGroupResponse>>,
-        HttpError,
-    > {
+    ) -> Result<HttpResponseOk<ResultsPage<MulticastGroupResponse>>, HttpError>
+    {
         let switch: &Switch = rqctx.context();
         let tag = path.into_inner().tag;
 
@@ -3359,20 +1990,13 @@ mod imp {
         Ok(HttpResponseOk(ResultsPage::new(
             entries,
             &EmptyScanParams {},
-            |e: &mcast::MulticastGroupResponse, _| MulticastGroupIpParam {
-                group_ip: e.ip(),
+            |e: &MulticastGroupResponse, _| MulticastGroupIpParam {
+                group_ip: e.group_ip,
             },
         )?))
     }
 
-    /**
-     * Delete all multicast groups (and associated routes) with a given tag.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/multicast/tags/{tag}",
-    }]
-    pub(super) async fn multicast_reset_by_tag(
+    async fn multicast_reset_by_tag(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<TagPath>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -3384,14 +2008,7 @@ mod imp {
             .map_err(HttpError::from)
     }
 
-    /**
-     * Delete all multicast groups (and associated routes) without a tag.
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/multicast/untagged",
-    }]
-    pub(super) async fn multicast_reset_untagged(
+    async fn multicast_reset_untagged(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
@@ -3402,149 +2019,63 @@ mod imp {
     }
 }
 
-pub use imp::*;
+// Convert a port ID path into a `QsfpPort` if possible. This is generally used
+// for endpoints which only apply to the QSFP ports, such as transceiver
+// management.
+fn path_to_qsfp(path: Path<PortIdPathParams>) -> Result<QsfpPort, HttpError> {
+    let port_id = path.into_inner().port_id;
+    if let PortId::Qsfp(qsfp_port) = port_id {
+        Ok(qsfp_port)
+    } else {
+        Err(HttpError::from(DpdError::NotAQsfpPort { port_id }))
+    }
+}
+
+fn build_info() -> BuildInfo {
+    BuildInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        git_sha: env!("VERGEN_GIT_SHA").to_string(),
+        git_commit_timestamp: env!("VERGEN_GIT_COMMIT_TIMESTAMP").to_string(),
+        git_branch: env!("VERGEN_GIT_BRANCH").to_string(),
+        rustc_semver: env!("VERGEN_RUSTC_SEMVER").to_string(),
+        rustc_channel: env!("VERGEN_RUSTC_CHANNEL").to_string(),
+        rustc_host_triple: env!("VERGEN_RUSTC_HOST_TRIPLE").to_string(),
+        rustc_commit_sha: env!("VERGEN_RUSTC_COMMIT_HASH").to_string(),
+        cargo_triple: env!("VERGEN_CARGO_TARGET_TRIPLE").to_string(),
+        debug: env!("VERGEN_CARGO_DEBUG").parse().unwrap(),
+        opt_level: env!("VERGEN_CARGO_OPT_LEVEL").parse().unwrap(),
+        sde_commit_sha: env!("SDE_COMMIT_SHA").to_string(),
+    }
+}
+
+impl From<&crate::link::Link> for LinkSettings {
+    fn from(l: &crate::link::Link) -> Self {
+        let mut addrs: HashSet<IpAddr> = HashSet::new();
+        for a in &l.ipv4 {
+            addrs.insert(a.addr.into());
+        }
+        for a in &l.ipv6 {
+            addrs.insert(a.addr.into());
+        }
+        LinkSettings {
+            params: LinkCreate {
+                lane: Some(l.link_id),
+                speed: l.config.speed,
+                fec: l.config.fec,
+                autoneg: l.config.autoneg,
+                kr: l.config.kr,
+                tx_eq: l.tx_eq,
+            },
+            addrs,
+        }
+    }
+}
 
 pub fn http_api() -> dropshot::ApiDescription<Arc<Switch>> {
-    let mut api = dropshot::ApiDescription::new();
-    api.register(build_info).unwrap();
-    api.register(dpd_version).unwrap();
-    api.register(dpd_uptime).unwrap();
-    api.register(reset_all).unwrap();
-    api.register(reset_all_tagged).unwrap();
-    api.register(table_list).unwrap();
-    api.register(table_dump).unwrap();
-    api.register(table_counters).unwrap();
-    api.register(counter_list).unwrap();
-    api.register(counter_get).unwrap();
-    api.register(counter_reset).unwrap();
-    api.register(arp_list).unwrap();
-    api.register(arp_reset).unwrap();
-    api.register(arp_get).unwrap();
-    api.register(arp_create).unwrap();
-    api.register(arp_delete).unwrap();
-    api.register(ndp_list).unwrap();
-    api.register(ndp_reset).unwrap();
-    api.register(ndp_get).unwrap();
-    api.register(ndp_create).unwrap();
-    api.register(ndp_delete).unwrap();
-    api.register(route_ipv4_list).unwrap();
-    api.register(route_ipv4_get).unwrap();
-    api.register(route_ipv4_add).unwrap();
-    api.register(route_ipv4_set).unwrap();
-    api.register(route_ipv4_delete).unwrap();
-    api.register(route_ipv4_delete_target).unwrap();
-    api.register(route_ipv6_list).unwrap();
-    api.register(route_ipv6_get).unwrap();
-    api.register(route_ipv6_add).unwrap();
-    api.register(route_ipv6_set).unwrap();
-    api.register(route_ipv6_delete).unwrap();
-    api.register(route_ipv6_delete_target).unwrap();
+    #[allow(unused_mut)]
+    let mut api = dpd_api_mod::api_description::<DpdApiImpl>().unwrap();
 
-    api.register(backplane_map).unwrap();
-    api.register(port_backplane_link).unwrap();
-
-    api.register(channels_list).unwrap();
-    api.register(port_list).unwrap();
-    api.register(port_get).unwrap();
-
-    api.register(management_mode_get).unwrap();
-    api.register(management_mode_set).unwrap();
-    api.register(led_get).unwrap();
-    api.register(led_set).unwrap();
-    api.register(led_set_auto).unwrap();
-    api.register(leds_list).unwrap();
-
-    api.register(transceivers_list).unwrap();
-    api.register(transceiver_get).unwrap();
-    api.register(transceiver_reset).unwrap();
-    api.register(transceiver_power_set).unwrap();
-    api.register(transceiver_power_get).unwrap();
-    api.register(transceiver_monitors_get).unwrap();
-    api.register(transceiver_datapath_get).unwrap();
-
-    api.register(link_create).unwrap();
-    api.register(link_get).unwrap();
-    api.register(link_delete).unwrap();
-    api.register(link_list).unwrap();
-    api.register(link_list_all).unwrap();
-
-    api.register(link_enabled_get).unwrap();
-    api.register(link_enabled_set).unwrap();
-    api.register(link_ipv6_enabled_get).unwrap();
-    api.register(link_ipv6_enabled_set).unwrap();
-    api.register(link_kr_get).unwrap();
-    api.register(link_kr_set).unwrap();
-    api.register(link_autoneg_set).unwrap();
-    api.register(link_autoneg_get).unwrap();
-    api.register(link_prbs_set).unwrap();
-    api.register(link_prbs_get).unwrap();
-    api.register(link_linkup_get).unwrap();
-    api.register(link_up_counters_list).unwrap();
-    api.register(link_up_counters_get).unwrap();
-    api.register(link_fsm_counters_get).unwrap();
-    api.register(link_fault_get).unwrap();
-    api.register(link_fault_clear).unwrap();
-    api.register(link_fault_inject).unwrap();
-    api.register(link_ipv4_list).unwrap();
-    api.register(link_ipv4_create).unwrap();
-    api.register(link_ipv4_reset).unwrap();
-    api.register(link_ipv4_delete).unwrap();
-    api.register(link_ipv6_list).unwrap();
-    api.register(link_ipv6_create).unwrap();
-    api.register(link_ipv6_delete).unwrap();
-    api.register(link_ipv6_reset).unwrap();
-    api.register(link_nat_only_set).unwrap();
-    api.register(link_nat_only_get).unwrap();
-    api.register(link_mac_get).unwrap();
-    // TODO-correctness: A link's MAC address should be determined by the FRUID
-    // data, not under the control of the client. We really only need this for
-    // the integration tests in `dpd-client`. We should consider removing it for
-    // production.
-    api.register(link_mac_set).unwrap();
-    api.register(link_history_get).unwrap();
-
-    api.register(loopback_ipv4_list).unwrap();
-    api.register(loopback_ipv4_create).unwrap();
-    api.register(loopback_ipv4_delete).unwrap();
-    api.register(loopback_ipv6_list).unwrap();
-    api.register(loopback_ipv6_create).unwrap();
-    api.register(loopback_ipv6_delete).unwrap();
-
-    api.register(nat_ipv6_addresses_list).unwrap();
-    api.register(nat_ipv6_list).unwrap();
-    api.register(nat_ipv6_get).unwrap();
-    api.register(nat_ipv6_create).unwrap();
-    api.register(nat_ipv6_delete).unwrap();
-    api.register(nat_ipv6_reset).unwrap();
-    api.register(nat_ipv4_addresses_list).unwrap();
-    api.register(nat_ipv4_list).unwrap();
-    api.register(nat_ipv4_get).unwrap();
-    api.register(nat_ipv4_create).unwrap();
-    api.register(nat_ipv4_delete).unwrap();
-    api.register(nat_ipv4_reset).unwrap();
-    api.register(oximeter_collect_meta_endpoint).unwrap();
-
-    api.register(port_settings_apply).unwrap();
-    api.register(port_settings_clear).unwrap();
-    api.register(port_settings_get).unwrap();
-    api.register(switch_identifiers).unwrap();
-    api.register(tfport_data).unwrap();
-
-    api.register(ipv4_nat_generation).unwrap();
-    api.register(ipv4_nat_trigger_update).unwrap();
-
-    api.register(multicast_group_create).unwrap();
-    api.register(multicast_group_create_external).unwrap();
-    api.register(multicast_reset).unwrap();
-    api.register(multicast_group_delete).unwrap();
-    api.register(multicast_group_update).unwrap();
-    api.register(multicast_group_update_external).unwrap();
-    api.register(multicast_group_get).unwrap();
-    api.register(multicast_groups_list).unwrap();
-    api.register(multicast_groups_list_by_tag).unwrap();
-    api.register(multicast_reset_by_tag).unwrap();
-    api.register(multicast_reset_untagged).unwrap();
-
+    // TODO: need to move these into dpd-api
     #[cfg(feature = "tofino_asic")]
     crate::tofino_api_server::init(&mut api);
     #[cfg(feature = "softnpu")]
@@ -3649,12 +2180,12 @@ pub async fn api_server_manager(
 
 #[cfg(test)]
 mod tests {
-    use super::BuildInfo;
+    use super::build_info;
     use std::process::Command;
 
     #[test]
     fn test_build_info() {
-        let info = BuildInfo::default();
+        let info = build_info();
         println!("{info:#?}");
         let out = Command::new("git")
             .arg("rev-parse")

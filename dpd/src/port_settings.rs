@@ -4,10 +4,7 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use crate::api_server::LinkSettings;
-use crate::api_server::PortSettings;
 use crate::link::Link;
-use crate::link::LinkId;
 use crate::link::LinkParams;
 use crate::DpdError;
 use crate::DpdResult;
@@ -19,6 +16,9 @@ use common::ports::PortFec;
 use common::ports::PortId;
 use common::ports::PortSpeed;
 use common::ports::TxEq;
+use dpd_api::LinkSettings;
+use dpd_api::PortSettings;
+use dpd_types::link::LinkId;
 use slog::debug;
 use slog::error;
 use slog::trace;

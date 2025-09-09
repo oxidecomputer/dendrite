@@ -14,12 +14,12 @@ use dropshot::Path;
 use dropshot::RequestContext;
 use dropshot::TypedBody;
 
-use crate::api_server::LinkPath;
 use crate::types::DpdError;
 use crate::Switch;
 use aal::AsicOps;
 use common::ports::TxEq;
 use common::ports::TxEqSwHw;
+use dpd_api::LinkPath;
 
 /// Get the per-lane tx eq settings for each lane on this link
 #[endpoint {

@@ -6,10 +6,10 @@
 
 use std::collections::BTreeSet;
 
+use dpd_types::link::LinkId;
 use slog::debug;
 use slog::o;
 
-use crate::link::LinkId;
 use crate::types::DpdError;
 use crate::types::DpdResult;
 use crate::Switch;
@@ -22,13 +22,13 @@ use common::ports::PORT_COUNT_REAR;
 cfg_if::cfg_if! {
     if #[cfg(feature = "tofino_asic")] {
         use std::convert::TryFrom;
-        use crate::api_server::LinkCreate;
         use crate::table::mcast;
         use crate::table::port_mac;
         use crate::table::MacOps;
         use common::ports::PortFec;
         use common::ports::PortSpeed;
         use common::ports::InternalPort;
+        use dpd_api::LinkCreate;
         use transceiver_controller::Error as TransceiverError;
     }
 }
@@ -529,7 +529,6 @@ fn mac_offset(port_id: PortId, link_id: LinkId) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::mac_offset;
-    use crate::link::LinkId;
     use crate::macaddrs::BaseMac;
     use crate::macaddrs::MacManagement;
     use common::network::MacAddr;
@@ -537,6 +536,7 @@ mod tests {
     use common::ports::PortId;
     use common::ports::QsfpPort;
     use common::ports::RearPort;
+    use dpd_types::link::LinkId;
     use slog::Drain;
     use std::convert::TryFrom;
 

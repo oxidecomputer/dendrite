@@ -41,15 +41,10 @@
 // both in some conditions. Regardless, the controller must always be acquired
 // first to avoid deadlocks.
 
-use crate::link::LinkState;
 use crate::port_map::PortMap;
-use crate::switch_port::LedPolicy;
 use crate::switch_port::LedState;
-use crate::switch_port::ManagementMode;
 use crate::switch_port::SwitchPort;
 use crate::switch_port::SwitchPorts;
-use crate::transceivers::FaultReason;
-use crate::transceivers::Transceiver;
 use crate::types::DpdError;
 use crate::types::DpdResult;
 use crate::Switch;
@@ -61,6 +56,11 @@ use asic::tofino_asic::qsfp::SdeTransceiverResponse;
 use asic::tofino_asic::qsfp::WriteRequest;
 use common::ports::PortId;
 use common::ports::QsfpPort;
+use dpd_types::link::LinkState;
+use dpd_types::switch_port::LedPolicy;
+use dpd_types::switch_port::ManagementMode;
+use dpd_types::transceivers::FaultReason;
+use dpd_types::transceivers::Transceiver;
 use slog::debug;
 use slog::error;
 use slog::info;

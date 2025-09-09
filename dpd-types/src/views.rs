@@ -6,25 +6,20 @@
 
 //! Public API view types, exposing the internal Dendrite data in a manner
 //! suitable for API clients.
-//!
-use std::collections::BTreeMap;
-use std::net::Ipv6Addr;
 
+use std::{collections::BTreeMap, net::Ipv6Addr};
+
+use common::{
+    network::MacAddr,
+    ports::{PortFec, PortId, PortMedia, PortPrbsMode, PortSpeed},
+};
 use schemars::JsonSchema;
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-use crate::link::LinkId;
-use crate::link::LinkState;
-use crate::switch_port;
-use crate::switch_port::FixedSideDevice;
-use crate::transceivers::QsfpDevice;
-use common::network::MacAddr;
-use common::ports::PortFec;
-use common::ports::PortId;
-use common::ports::PortMedia;
-use common::ports::PortPrbsMode;
-use common::ports::PortSpeed;
+use crate::{
+    link::{LinkId, LinkState},
+    transceivers::QsfpDevice,
+};
 
 /// A physical port on the Sidecar switch.
 //
@@ -37,19 +32,6 @@ pub struct SwitchPort {
     /// switch ports.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub qsfp_device: Option<QsfpDevice>,
-}
-
-impl From<&switch_port::SwitchPort> for SwitchPort {
-    fn from(p: &switch_port::SwitchPort) -> Self {
-        let qsfp_device = match &p.fixed_side {
-            FixedSideDevice::Qsfp { device, .. } => Some(device.clone()),
-            _ => None,
-        };
-        Self {
-            port_id: p.port_id(),
-            qsfp_device,
-        }
-    }
 }
 
 /// An Ethernet-capable link within a switch port.
@@ -98,72 +80,6 @@ impl std::fmt::Display for Link {
     }
 }
 
-impl From<&crate::link::Link> for Link {
-    fn from(m: &crate::link::Link) -> Self {
-        Self {
-            port_id: m.port_id,
-            link_id: m.link_id,
-            tofino_connector: m.port_hdl.connector.as_u16(),
-            asic_id: m.asic_port_id,
-            presence: m.presence,
-            fsm_state: m.fsm_state.to_string(),
-            media: m.media,
-            link_state: m.link_state.clone(),
-            ipv6_enabled: m.ipv6_enabled,
-            enabled: m.config.enabled,
-            prbs: m.config.prbs,
-            speed: m.config.speed,
-            fec: m.get_fec(),
-            kr: m.config.kr,
-            autoneg: m.config.autoneg,
-            address: m.config.mac,
-        }
-    }
-}
-
-impl From<crate::link::Link> for Link {
-    fn from(m: crate::link::Link) -> Self {
-        Self::from(&m)
-    }
-}
-
-/// The per-link data consumed by tfportd
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct TfportData {
-    /// The switch port ID for this link.
-    pub port_id: PortId,
-    /// The link ID for this link.
-    pub link_id: LinkId,
-    /// The lower-level ASIC ID used to refer to this object in the switch
-    /// driver software.
-    pub asic_id: u16,
-    /// The MAC address for the link.
-    pub mac: MacAddr,
-    /// Is ipv6 enabled for this link
-    pub ipv6_enabled: bool,
-    /// The IPv6 link-local address of the link, if it exists.
-    pub link_local: Option<Ipv6Addr>,
-}
-
-impl From<&crate::link::Link> for TfportData {
-    fn from(m: &crate::link::Link) -> Self {
-        Self {
-            port_id: m.port_id,
-            link_id: m.link_id,
-            asic_id: m.asic_port_id,
-            mac: m.config.mac,
-            ipv6_enabled: m.ipv6_enabled,
-            link_local: m.link_local(),
-        }
-    }
-}
-
-impl From<crate::link::Link> for TfportData {
-    fn from(m: crate::link::Link) -> Self {
-        Self::from(&m)
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 pub struct LinkEvent {
     /// Time the event occurred.  The time is represented in milliseconds,
@@ -187,6 +103,24 @@ pub struct LinkHistory {
     pub timestamp: i64,
     /// The set of historical events recorded
     pub events: Vec<LinkEvent>,
+}
+
+/// The per-link data consumed by tfportd
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+pub struct TfportData {
+    /// The switch port ID for this link.
+    pub port_id: PortId,
+    /// The link ID for this link.
+    pub link_id: LinkId,
+    /// The lower-level ASIC ID used to refer to this object in the switch
+    /// driver software.
+    pub asic_id: u16,
+    /// The MAC address for the link.
+    pub mac: MacAddr,
+    /// Is ipv6 enabled for this link
+    pub ipv6_enabled: bool,
+    /// The IPv6 link-local address of the link, if it exists.
+    pub link_local: Option<Ipv6Addr>,
 }
 
 /// Each entry in a P4 table is addressed by matching against a set of key
