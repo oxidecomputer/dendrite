@@ -19,6 +19,7 @@ use crate::netsupport;
 use crate::Global;
 use common::illumos;
 use dpd_client::types;
+use dpd_client::ClientInfo;
 
 const ICMP6_RA_TYPE: u8 = 134;
 const ICMP6_RA_CODE: u8 = 0;

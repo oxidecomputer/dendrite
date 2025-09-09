@@ -14,6 +14,7 @@ use oxnet::Ipv6Net;
 use ::common::nat::Vni;
 use ::common::network::MacAddr;
 use dpd_client::types;
+use dpd_client::ClientInfo;
 use packet::eth;
 use packet::geneve;
 use packet::icmp;

@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use ::common::network::MacAddr;
 use dpd_client::types;
+use dpd_client::ClientInfo;
 use packet::eth;
 use packet::icmp;
 use packet::ipv4;

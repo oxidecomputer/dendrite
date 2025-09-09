@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use ::common::network::MacAddr;
 use dpd_client::types::Ipv4Entry;
+use dpd_client::ClientInfo;
 use packet::{eth, icmp, ipv4, sidecar, Endpoint};
 
 use crate::integration_tests::common;

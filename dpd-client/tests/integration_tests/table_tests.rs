@@ -16,6 +16,7 @@ use reqwest::StatusCode;
 
 use crate::integration_tests::common::prelude::*;
 use dpd_client::types;
+use dpd_client::ClientInfo;
 use dpd_client::ResponseValue;
 
 // The expected sizes of each table.  The values are copied from constants.p4.
