@@ -1105,7 +1105,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MulticastGroupResponse"
+                  "$ref": "#/components/schemas/MulticastGroupExternalResponse"
                 }
               }
             }
@@ -1151,7 +1151,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MulticastGroupResponse"
+                  "$ref": "#/components/schemas/MulticastGroupExternalResponse"
                 }
               }
             }
@@ -1213,39 +1213,6 @@
           "required": []
         }
       },
-      "post": {
-        "summary": "Create an internal multicast group configuration.",
-        "description": "Internal groups are used for admin-scoped IPv6 multicast traffic that requires replication infrastructure. These groups support both external and underlay members with full replication capabilities.",
-        "operationId": "multicast_group_create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MulticastGroupCreateEntry"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "successful creation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MulticastGroupResponse"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      },
       "delete": {
         "summary": "Reset all multicast group configurations.",
         "operationId": "multicast_reset",
@@ -1277,50 +1244,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "description": "successful operation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MulticastGroupResponse"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      },
-      "put": {
-        "summary": "Update an internal multicast group configuration for a given group IP address.",
-        "description": "Internal groups are used for admin-scoped IPv6 multicast traffic that requires replication infrastructure with external and underlay members.",
-        "operationId": "multicast_group_update",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "group_ip",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "ip"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MulticastGroupUpdateEntry"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "description": "successful operation",
@@ -1439,6 +1362,119 @@
         "responses": {
           "204": {
             "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/multicast/underlay-groups": {
+      "post": {
+        "summary": "Create an underlay (internal) multicast group configuration.",
+        "description": "Underlay groups are used for admin-scoped IPv6 multicast traffic that requires replication infrastructure. These groups support both external and underlay members with full replication capabilities.",
+        "operationId": "multicast_group_create_underlay",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MulticastGroupCreateUnderlayEntry"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "successful creation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MulticastGroupUnderlayResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/multicast/underlay-groups/{group_ip}": {
+      "get": {
+        "summary": "Get an underlay (internal) multicast group configuration by admin-scoped",
+        "description": "IPv6 address.\n\nUnderlay groups handle admin-scoped IPv6 multicast traffic with replication infrastructure for external and underlay members.",
+        "operationId": "multicast_group_get_underlay",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_ip",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AdminScopedIpv6"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MulticastGroupUnderlayResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update an underlay (internal) multicast group configuration for a given",
+        "description": "group IP address.\n\nUnderlay groups are used for admin-scoped IPv6 multicast traffic that requires replication infrastructure with external and underlay members.",
+        "operationId": "multicast_group_update_underlay",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_ip",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AdminScopedIpv6"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MulticastGroupUpdateUnderlayEntry"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MulticastGroupUnderlayResponse"
+                }
+              }
+            }
           },
           "4XX": {
             "$ref": "#/components/responses/Error"
@@ -5206,6 +5242,11 @@
   },
   "components": {
     "schemas": {
+      "AdminScopedIpv6": {
+        "description": "A validated admin-scoped IPv6 multicast address.\n\nAdmin-scoped addresses are ff04::/16, ff05::/16, or ff08::/16. These are used for internal/underlay multicast groups.",
+        "type": "string",
+        "format": "ipv6"
+      },
       "AnLtStatus": {
         "description": "A collection of the data involved in the autonegiation/link-training process",
         "type": "object",
@@ -7668,25 +7709,49 @@
           }
         }
       },
-      "MulticastGroupCreateEntry": {
-        "description": "A multicast group configuration for POST requests for internal (to the rack) groups.",
+      "MulticastGroupCreateExternalEntry": {
+        "description": "A multicast group configuration for POST requests for external (to the rack) groups.",
         "type": "object",
         "properties": {
+          "external_forwarding": {
+            "$ref": "#/components/schemas/ExternalForwarding"
+          },
           "group_ip": {
             "type": "string",
-            "format": "ipv6"
+            "format": "ip"
           },
-          "members": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MulticastGroupMember"
-            }
+          "internal_forwarding": {
+            "$ref": "#/components/schemas/InternalForwarding"
           },
           "sources": {
             "nullable": true,
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/IpSrc"
+            }
+          },
+          "tag": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "external_forwarding",
+          "group_ip",
+          "internal_forwarding"
+        ]
+      },
+      "MulticastGroupCreateUnderlayEntry": {
+        "description": "A multicast group configuration for POST requests for internal (to the rack) groups.",
+        "type": "object",
+        "properties": {
+          "group_ip": {
+            "$ref": "#/components/schemas/AdminScopedIpv6"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MulticastGroupMember"
             }
           },
           "tag": {
@@ -7699,16 +7764,24 @@
           "members"
         ]
       },
-      "MulticastGroupCreateExternalEntry": {
-        "description": "A multicast group configuration for POST requests for external (to the rack) groups.",
+      "MulticastGroupExternalResponse": {
+        "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin IPv6 multicast via NAT targets.",
         "type": "object",
         "properties": {
+          "external_forwarding": {
+            "$ref": "#/components/schemas/ExternalForwarding"
+          },
+          "external_group_id": {
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
           "group_ip": {
             "type": "string",
             "format": "ip"
           },
-          "nat_target": {
-            "$ref": "#/components/schemas/NatTarget"
+          "internal_forwarding": {
+            "$ref": "#/components/schemas/InternalForwarding"
           },
           "sources": {
             "nullable": true,
@@ -7720,17 +7793,13 @@
           "tag": {
             "nullable": true,
             "type": "string"
-          },
-          "vlan_id": {
-            "nullable": true,
-            "type": "integer",
-            "format": "uint16",
-            "minimum": 0
           }
         },
         "required": [
+          "external_forwarding",
+          "external_group_id",
           "group_ip",
-          "nat_target"
+          "internal_forwarding"
         ]
       },
       "MulticastGroupMember": {
@@ -7754,54 +7823,95 @@
         ]
       },
       "MulticastGroupResponse": {
-        "description": "Response structure for multicast group operations.",
-        "type": "object",
-        "properties": {
-          "ext_fwding": {
-            "$ref": "#/components/schemas/ExternalForwarding"
+        "description": "Unified response type for operations that return mixed group types.",
+        "oneOf": [
+          {
+            "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-scoped IPv6 multicast with full replication.",
+            "type": "object",
+            "properties": {
+              "external_group_id": {
+                "type": "integer",
+                "format": "uint16",
+                "minimum": 0
+              },
+              "group_ip": {
+                "$ref": "#/components/schemas/AdminScopedIpv6"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "underlay"
+                ]
+              },
+              "members": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MulticastGroupMember"
+                }
+              },
+              "tag": {
+                "nullable": true,
+                "type": "string"
+              },
+              "underlay_group_id": {
+                "type": "integer",
+                "format": "uint16",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "external_group_id",
+              "group_ip",
+              "kind",
+              "members",
+              "underlay_group_id"
+            ]
           },
-          "external_group_id": {
-            "nullable": true,
-            "type": "integer",
-            "format": "uint16",
-            "minimum": 0
-          },
-          "group_ip": {
-            "type": "string",
-            "format": "ip"
-          },
-          "int_fwding": {
-            "$ref": "#/components/schemas/InternalForwarding"
-          },
-          "members": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MulticastGroupMember"
-            }
-          },
-          "sources": {
-            "nullable": true,
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/IpSrc"
-            }
-          },
-          "tag": {
-            "nullable": true,
-            "type": "string"
-          },
-          "underlay_group_id": {
-            "nullable": true,
-            "type": "integer",
-            "format": "uint16",
-            "minimum": 0
+          {
+            "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin IPv6 multicast via NAT targets.",
+            "type": "object",
+            "properties": {
+              "external_forwarding": {
+                "$ref": "#/components/schemas/ExternalForwarding"
+              },
+              "external_group_id": {
+                "type": "integer",
+                "format": "uint16",
+                "minimum": 0
+              },
+              "group_ip": {
+                "type": "string",
+                "format": "ip"
+              },
+              "internal_forwarding": {
+                "$ref": "#/components/schemas/InternalForwarding"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "external"
+                ]
+              },
+              "sources": {
+                "nullable": true,
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/IpSrc"
+                }
+              },
+              "tag": {
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "external_forwarding",
+              "external_group_id",
+              "group_ip",
+              "internal_forwarding",
+              "kind"
+            ]
           }
-        },
-        "required": [
-          "ext_fwding",
-          "group_ip",
-          "int_fwding",
-          "members"
         ]
       },
       "MulticastGroupResponseResultsPage": {
@@ -7825,7 +7935,69 @@
           "items"
         ]
       },
-      "MulticastGroupUpdateEntry": {
+      "MulticastGroupUnderlayResponse": {
+        "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-scoped IPv6 multicast with full replication.",
+        "type": "object",
+        "properties": {
+          "external_group_id": {
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "group_ip": {
+            "$ref": "#/components/schemas/AdminScopedIpv6"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MulticastGroupMember"
+            }
+          },
+          "tag": {
+            "nullable": true,
+            "type": "string"
+          },
+          "underlay_group_id": {
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "external_group_id",
+          "group_ip",
+          "members",
+          "underlay_group_id"
+        ]
+      },
+      "MulticastGroupUpdateExternalEntry": {
+        "description": "A multicast group update entry for PUT requests for external (to the rack) groups.",
+        "type": "object",
+        "properties": {
+          "external_forwarding": {
+            "$ref": "#/components/schemas/ExternalForwarding"
+          },
+          "internal_forwarding": {
+            "$ref": "#/components/schemas/InternalForwarding"
+          },
+          "sources": {
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IpSrc"
+            }
+          },
+          "tag": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "external_forwarding",
+          "internal_forwarding"
+        ]
+      },
+      "MulticastGroupUpdateUnderlayEntry": {
         "description": "Represents a multicast replication entry for PUT requests for internal (to the rack) groups.",
         "type": "object",
         "properties": {
@@ -7835,13 +8007,6 @@
               "$ref": "#/components/schemas/MulticastGroupMember"
             }
           },
-          "sources": {
-            "nullable": true,
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/IpSrc"
-            }
-          },
           "tag": {
             "nullable": true,
             "type": "string"
@@ -7849,35 +8014,6 @@
         },
         "required": [
           "members"
-        ]
-      },
-      "MulticastGroupUpdateExternalEntry": {
-        "description": "A multicast group update entry for PUT requests for external (to the rack) groups.",
-        "type": "object",
-        "properties": {
-          "nat_target": {
-            "$ref": "#/components/schemas/NatTarget"
-          },
-          "sources": {
-            "nullable": true,
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/IpSrc"
-            }
-          },
-          "tag": {
-            "nullable": true,
-            "type": "string"
-          },
-          "vlan_id": {
-            "nullable": true,
-            "type": "integer",
-            "format": "uint16",
-            "minimum": 0
-          }
-        },
-        "required": [
-          "nat_target"
         ]
       },
       "NatTarget": {
