@@ -48,8 +48,8 @@ pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
 
     if !internal_nat_ip.is_admin_scoped_multicast() {
         return Err(DpdError::Invalid(format!(
-            r#"NAT target internal IP address {} is not a valid
-               site/admin-local or org-scoped multicast address"#,
+            "NAT target internal IP address {} is not a valid \
+             site/admin-local or org-scoped multicast address",
             nat_target.internal_ip
         )));
     }
@@ -89,8 +89,8 @@ fn validate_ipv4_multicast(
     if is_ssm(addr.into()) {
         if sources.is_none() || sources.unwrap().is_empty() {
             return Err(DpdError::Invalid(format!(
-                r#"{addr} is a Source-Specific Multicast address and
-                   requires at least one source to be defined"#,
+                "{addr} is a Source-Specific Multicast address and \
+                 requires at least one source to be defined",
             )));
         }
         // If sources are defined for an SSM address, it's valid
@@ -152,8 +152,8 @@ fn validate_ipv6_multicast(
     if is_ssm(addr.into()) {
         if sources.is_none() || sources.unwrap().is_empty() {
             return Err(DpdError::Invalid(format!(
-                r#"{addr} is an IPv6 Source-Specific Multicast address (ff3x::/32)
-                   and requires at least one source to be defined"#,
+                "{addr} is an IPv6 Source-Specific Multicast address (ff3x::/32) \
+                 and requires at least one source to be defined",
             )));
         }
         // If sources are defined for an IPv6 SSM address, it's valid
@@ -193,8 +193,8 @@ pub(crate) fn validate_not_admin_scoped_ipv6(addr: IpAddr) -> DpdResult<()> {
         if oxnet::Ipv6Net::new_unchecked(ipv6, 128).is_admin_scoped_multicast()
         {
             return Err(DpdError::Invalid(format!(
-                r#"{addr} is an admin-scoped multicast address and
-                   must be created via the internal multicast API"#,
+                "{addr} is an admin-scoped multicast address and \
+                 must be created via the internal multicast API",
             )));
         }
     }
@@ -239,8 +239,8 @@ fn validate_exact_source_address(ip: IpAddr) -> DpdResult<()> {
 fn validate_ipv4_source_address(ipv4: Ipv4Addr) -> DpdResult<()> {
     if ipv4.is_loopback() || ipv4.is_broadcast() || ipv4.is_unspecified() {
         return Err(DpdError::Invalid(format!(
-            r#"Source IP {ipv4} is not a valid source address
-               (loopback, broadcast, and unspecified addresses are not allowed)"#,
+            "Source IP {ipv4} is not a valid source address \
+             (loopback, broadcast, and unspecified addresses are not allowed)",
         )));
     }
     Ok(())
@@ -250,8 +250,8 @@ fn validate_ipv4_source_address(ipv4: Ipv4Addr) -> DpdResult<()> {
 fn validate_ipv6_source_address(ipv6: Ipv6Addr) -> DpdResult<()> {
     if ipv6.is_loopback() || ipv6.is_unspecified() {
         return Err(DpdError::Invalid(format!(
-            r#"Source IP {ipv6} is not a valid source address
-               (loopback and unspecified addresses are not allowed)"#,
+            "Source IP {ipv6} is not a valid source address \
+             (loopback and unspecified addresses are not allowed)",
         )));
     }
     Ok(())
@@ -271,8 +271,8 @@ fn validate_ipv4_source_subnet(subnet: Ipv4Net) -> DpdResult<()> {
     // Reject subnets with loopback or broadcast addresses
     if addr.is_loopback() || addr.is_broadcast() {
         return Err(DpdError::Invalid(format!(
-            r#"Source subnet {subnet} contains invalid address types
-               (loopback/broadcast) for source filtering"#,
+            "Source subnet {subnet} contains invalid address types \
+             (loopback/broadcast) for source filtering",
         )));
     }
 

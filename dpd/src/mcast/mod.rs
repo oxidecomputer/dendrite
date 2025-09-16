@@ -329,8 +329,8 @@ pub(crate) fn add_group_external(
     let internal_group =
         mcast.groups.get(&internal_group_ip).ok_or_else(|| {
             DpdError::Invalid(format!(
-                r#"multicast group for IP address {group_ip} must have a NAT target
-                   that is also a tracked multicast group"#,
+                "multicast group for IP address {group_ip} must have a NAT target \
+                 that is also a tracked multicast group",
             ))
         })?;
 
@@ -947,14 +947,16 @@ fn perform_vlan_propagation(
 ) -> DpdResult<()> {
     debug!(
         s.log,
-        r#"external group with VLAN references internal group, propagating VLAN:
-           external_group={group_ip}, vlan={vlan_id}, internal_group={internal_ip}"#
+        "external group with VLAN references internal group, propagating VLAN";
+        "external_group" => %group_ip,
+        "vlan" => vlan_id,
+        "internal_group" => %internal_ip,
     );
 
     let internal_group = mcast.groups.get(&internal_ip).ok_or_else(|| {
         DpdError::McastGroupFailure(format!(
-            r#"internal group not found during VLAN propagation:
-               internal_group={internal_ip}, external_group={group_ip}"#
+            "internal group not found during VLAN propagation: \
+             internal_group={internal_ip}, external_group={group_ip}"
         ))
     })?;
 
@@ -1194,8 +1196,10 @@ fn delete_multicast_groups(
     if let Err(e) = s.asic_hdl.mc_group_destroy(external_id) {
         warn!(
             s.log,
-            r#"failed to delete external multicast group:
-               IP={group_ip}, ID={external_id}, error={e:?}"#
+            "failed to delete external multicast group";
+            "IP" => %group_ip,
+            "ID" => external_id,
+            "error" => ?e,
         );
     }
 
@@ -1203,8 +1207,10 @@ fn delete_multicast_groups(
     if let Err(e) = s.asic_hdl.mc_group_destroy(underlay_id) {
         warn!(
             s.log,
-            r#"failed to delete underlay multicast group:
-               IP={group_ip}, ID={underlay_id}, error={e:?}"#
+            "failed to delete underlay multicast group";
+            "IP" => %group_ip,
+            "ID" => underlay_id,
+            "error" => ?e,
         );
     }
 
@@ -1220,8 +1226,8 @@ fn create_asic_group(
         .mc_group_create(group_id)
         .map_err(|e: AsicError| {
             DpdError::McastGroupFailure(format!(
-                r#"failed to create multicast group for IP {group_ip} with ID
-                   {group_id}: {e:?}"#
+                "failed to create multicast group for IP {group_ip} with ID \
+                 {group_id}: {e:?}"
             ))
         })
 }

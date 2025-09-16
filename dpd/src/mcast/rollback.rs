@@ -88,7 +88,9 @@ trait RollbackOps {
             Err(e) => {
                 debug!(
                     self.switch().log,
-                    "failed {operation} during rollback: {e:?}"
+                    "failed operation during rollback";
+                    "operation" => operation,
+                    "error" => ?e,
                 );
                 true
             }
@@ -105,7 +107,10 @@ trait RollbackOps {
         if let Err(e) = result {
             debug!(
                 self.switch().log,
-                "failed to {operation} during rollback {context}: {e:?}",
+                "failed operation during rollback";
+                "operation" => operation,
+                "context" => context,
+                "error" => ?e,
             );
         }
     }
@@ -149,9 +154,9 @@ impl RollbackOps for GroupCreateRollbackContext<'_> {
         } else {
             debug!(
                 self.switch.log,
-                "rolling back multicast group creation: group={}, ports={}",
-                self.group_ip,
-                added_ports.len()
+                "rolling back multicast group creation";
+                "group" => %self.group_ip,
+                "ports" => added_ports.len(),
             );
 
             let mut first_error = None;
@@ -176,9 +181,11 @@ impl RollbackOps for GroupCreateRollbackContext<'_> {
                         {
                             error!(
                                 self.switch.log,
-                                r#"failed to remove port during rollback:
-                                   port={}, asic_id={asic_id}, group={group_id}, error={e:?}"#,
-                                member.port_id
+                                "failed to remove port during rollback";
+                                "port" => %member.port_id,
+                                "asic_id" => asic_id,
+                                "group" => group_id,
+                                "error" => ?e,
                             );
 
                             first_error.get_or_insert_with(|| e.into());
@@ -190,10 +197,10 @@ impl RollbackOps for GroupCreateRollbackContext<'_> {
                     Err(e) => {
                         error!(
                             self.switch.log,
-                            r#"failed to resolve port link during rollback:
-                               port={}, link={}, error={e:?}"#,
-                            member.port_id,
-                            member.link_id
+                            "failed to resolve port link during rollback";
+                            "port" => %member.port_id,
+                            "link" => %member.link_id,
+                            "error" => ?e,
                         );
 
                         first_error.get_or_insert(e);
@@ -207,19 +214,20 @@ impl RollbackOps for GroupCreateRollbackContext<'_> {
             if !failed_port_resolution.is_empty() {
                 error!(
                     self.switch.log,
-                    r#"rollback failed to resolve {} port links: {failed_port_resolution:?}.
-                       These ports may remain in inconsistent state"#,
-                    failed_port_resolution.len()
+                    "rollback failed to resolve port links";
+                    "count" => failed_port_resolution.len(),
+                    "ports" => ?failed_port_resolution,
+                    "warning" => "These ports may remain in inconsistent state",
                 );
             }
 
             if !failed_port_removal.is_empty() {
                 error!(
                     self.switch.log,
-                    r#"rollback failed to remove {} ports from ASIC: {:?}.
-                       These ports may remain in inconsistent state"#,
-                    failed_port_removal.len(),
-                    failed_port_removal
+                    "rollback failed to remove ports from ASIC";
+                    "count" => failed_port_removal.len(),
+                    "ports" => ?failed_port_removal,
+                    "warning" => "These ports may remain in inconsistent state",
                 );
             }
 
@@ -281,9 +289,9 @@ impl<'a> GroupCreateRollbackContext<'a> {
         {
             error!(
                 self.switch.log,
-                "rollback failed for group creation: group={}, error={:?}",
-                self.group_ip,
-                rollback_err
+                "rollback failed for group creation";
+                "group" => %self.group_ip,
+                "error" => ?rollback_err,
             );
         }
         error
@@ -359,68 +367,101 @@ impl<'a> GroupCreateRollbackContext<'a> {
                     for src in srcs {
                         match src {
                             IpSrc::Exact(IpAddr::V4(src)) => {
-                                let _ =
+                                self.log_rollback_error(
+                                    "delete IPv4 source filter entry",
+                                    &format!("for source {src} and group {ipv4}"),
                                     table::mcast::mcast_src_filter::del_ipv4_entry(
                                         self.switch,
                                         Ipv4Net::new(*src, 32).unwrap(),
                                         ipv4,
-                                    );
+                                    ),
+                                );
                             }
                             IpSrc::Subnet(subnet) => {
-                                let _ =
+                                self.log_rollback_error(
+                                    "delete IPv4 source filter subnet entry",
+                                    &format!("for subnet {subnet} and group {ipv4}"),
                                     table::mcast::mcast_src_filter::del_ipv4_entry(
                                         self.switch, *subnet, ipv4,
-                                    );
+                                    ),
+                                );
                             }
                             _ => {}
                         }
                     }
                 }
                 if self.nat_target.is_some() {
-                    let _ = table::mcast::mcast_nat::del_ipv4_entry(
-                        self.switch,
-                        ipv4,
+                    self.log_rollback_error(
+                        "delete IPv4 NAT entry",
+                        &format!("for group {ipv4}"),
+                        table::mcast::mcast_nat::del_ipv4_entry(
+                            self.switch,
+                            ipv4,
+                        ),
                     );
                 }
-                let _ = table::mcast::mcast_route::del_ipv4_entry(
-                    self.switch,
-                    ipv4,
+                self.log_rollback_error(
+                    "delete IPv4 route entry",
+                    &format!("for group {ipv4}"),
+                    table::mcast::mcast_route::del_ipv4_entry(
+                        self.switch,
+                        ipv4,
+                    ),
                 );
             }
             IpAddr::V6(ipv6) => {
                 // Clean up external bitmap entry only if both external and underlay groups exist
                 // (bitmap entries are only created for internal groups with both group types)
-                let _ = table::mcast::mcast_egress::del_bitmap_entry(
-                    self.switch,
-                    self.external_id,
+                self.log_rollback_error(
+                    "delete IPv6 egress bitmap entry",
+                    &format!("for external group {}", self.external_id),
+                    table::mcast::mcast_egress::del_bitmap_entry(
+                        self.switch,
+                        self.external_id,
+                    ),
                 );
 
-                let _ = table::mcast::mcast_replication::del_ipv6_entry(
-                    self.switch,
-                    ipv6,
+                self.log_rollback_error(
+                    "delete IPv6 replication entry",
+                    &format!("for group {ipv6}"),
+                    table::mcast::mcast_replication::del_ipv6_entry(
+                        self.switch,
+                        ipv6,
+                    ),
                 );
 
                 if let Some(srcs) = self.sources {
                     for src in srcs {
                         if let IpSrc::Exact(IpAddr::V6(src)) = src {
-                            let _ =
+                            self.log_rollback_error(
+                                "delete IPv6 source filter entry",
+                                &format!("for source {src} and group {ipv6}"),
                                 table::mcast::mcast_src_filter::del_ipv6_entry(
                                     self.switch,
                                     *src,
                                     ipv6,
-                                );
+                                ),
+                            );
                         }
                     }
                 }
                 if self.nat_target.is_some() {
-                    let _ = table::mcast::mcast_nat::del_ipv6_entry(
-                        self.switch,
-                        ipv6,
+                    self.log_rollback_error(
+                        "delete IPv6 NAT entry",
+                        &format!("for group {ipv6}"),
+                        table::mcast::mcast_nat::del_ipv6_entry(
+                            self.switch,
+                            ipv6,
+                        ),
                     );
                 }
-                let _ = table::mcast::mcast_route::del_ipv6_entry(
-                    self.switch,
-                    ipv6,
+                self.log_rollback_error(
+                    "delete IPv6 route entry",
+                    &format!("for group {ipv6}"),
+                    table::mcast::mcast_route::del_ipv6_entry(
+                        self.switch,
+                        ipv6,
+                    ),
                 );
             }
         }
@@ -466,8 +507,10 @@ impl RollbackOps for GroupUpdateRollbackContext<'_> {
         // Internal group - perform actual port rollback
         debug!(
             self.switch.log,
-            "rolling back multicast group update: group={:?}, added_ports={}, removed_ports={}",
-            self.group_ip, added_ports.len(), removed_ports.len()
+            "rolling back multicast group update";
+            "group" => ?self.group_ip,
+            "added_ports" => added_ports.len(),
+            "removed_ports" => removed_ports.len(),
         );
 
         let mut first_error = None;
@@ -492,8 +535,11 @@ impl RollbackOps for GroupUpdateRollbackContext<'_> {
                     {
                         error!(
                             self.switch.log,
-                            "failed to remove port during rollback: port={}, asic_id={asic_id}, group={group_id}, error={e:?}",
-                            member.port_id,
+                            "failed to remove port during rollback";
+                            "port" => %member.port_id,
+                            "asic_id" => asic_id,
+                            "group" => group_id,
+                            "error" => ?e,
                         );
 
                         first_error.get_or_insert_with(|| e.into());
@@ -504,9 +550,10 @@ impl RollbackOps for GroupUpdateRollbackContext<'_> {
                 Err(e) => {
                     error!(
                         self.switch.log,
-                        r#"failed to resolve port link during rollback: port={}, link={}, error={e:?}"#,
-                        member.port_id,
-                        member.link_id
+                        "failed to resolve port link during rollback";
+                        "port" => %member.port_id,
+                        "link" => %member.link_id,
+                        "error" => ?e,
                     );
 
                     first_error.get_or_insert(e);
@@ -536,8 +583,11 @@ impl RollbackOps for GroupUpdateRollbackContext<'_> {
                     ) {
                         error!(
                             self.switch.log,
-                            "failed to add port during rollback: port={}, asic_id={asic_id}, group={group_id}, error={e:?}",
-                            member.port_id
+                            "failed to add port during rollback";
+                            "port" => %member.port_id,
+                            "asic_id" => asic_id,
+                            "group" => group_id,
+                            "error" => ?e,
                         );
 
                         first_error.get_or_insert_with(|| e.into());
@@ -548,9 +598,10 @@ impl RollbackOps for GroupUpdateRollbackContext<'_> {
                 Err(e) => {
                     error!(
                         self.switch.log,
-                        r#"failed to resolve port link during rollback: port={}, link={}, error={e:?}"#,
-                        member.port_id,
-                        member.link_id
+                        "failed to resolve port link during rollback";
+                        "port" => %member.port_id,
+                        "link" => %member.link_id,
+                        "error" => ?e,
                     );
 
                     first_error.get_or_insert(e);
@@ -564,30 +615,30 @@ impl RollbackOps for GroupUpdateRollbackContext<'_> {
         if !failed_port_resolution.is_empty() {
             error!(
                 self.switch.log,
-                r#"rollback failed to resolve {} port links: {:?}.
-                   These ports may remain in inconsistent state"#,
-                failed_port_resolution.len(),
-                failed_port_resolution
+                "rollback failed to resolve port links";
+                "count" => failed_port_resolution.len(),
+                "ports" => ?failed_port_resolution,
+                "warning" => "These ports may remain in inconsistent state",
             );
         }
 
         if !failed_port_removal.is_empty() {
             error!(
                 self.switch.log,
-                r#"rollback failed to remove {} ports from ASIC: {:?}.
-                   These ports may remain in inconsistent state"#,
-                failed_port_removal.len(),
-                failed_port_removal
+                "rollback failed to remove ports from ASIC";
+                "count" => failed_port_removal.len(),
+                "ports" => ?failed_port_removal,
+                "warning" => "These ports may remain in inconsistent state",
             );
         }
 
         if !failed_port_addition.is_empty() {
             error!(
                 self.switch.log,
-                r#"rollback failed to re-add {} ports to ASIC: {:?}.
-                   These ports may remain in inconsistent state"#,
-                failed_port_addition.len(),
-                failed_port_addition
+                "rollback failed to re-add ports to ASIC";
+                "count" => failed_port_addition.len(),
+                "ports" => ?failed_port_addition,
+                "warning" => "These ports may remain in inconsistent state",
             );
         }
 
@@ -618,8 +669,9 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         if let Err(rollback_err) = self.restore_tables() {
             error!(
                 self.switch.log,
-                "failed to restore tables during rollback: group={}, error={rollback_err:?}",
-                self.group_ip
+                "failed to restore tables during rollback";
+                "group" => %self.group_ip,
+                "error" => ?rollback_err,
             );
         }
         error
@@ -733,8 +785,9 @@ impl<'a> GroupUpdateRollbackContext<'a> {
             ) {
                 error!(
                     self.switch.log,
-                    "rollback failed for internal group update: group={}, error={:?}",
-                    self.group_ip, rollback_err
+                    "rollback failed for internal group update";
+                    "group" => %self.group_ip,
+                    "error" => ?rollback_err,
                 );
             }
         }

@@ -30,16 +30,6 @@ const GIMLET_MAC: &str = "11:22:33:44:55:66";
 const GIMLET_IP: Ipv6Addr =
     Ipv6Addr::new(0xfd00, 0x1122, 0x7788, 0x0101, 0, 0, 0, 4);
 
-trait ToIpAddr {
-    fn to_ip_addr(&self) -> IpAddr;
-}
-
-impl ToIpAddr for types::AdminScopedIpv6 {
-    fn to_ip_addr(&self) -> IpAddr {
-        IpAddr::V6(self.0)
-    }
-}
-
 async fn check_counter_incremented(
     switch: &Switch,
     counter_name: &str,
@@ -120,11 +110,8 @@ async fn create_test_multicast_group(
             }
         }
         IpAddr::V6(ipv6) => {
-            if oxnet::Ipv6Net::new_unchecked(ipv6, 128)
-                .is_admin_scoped_multicast()
-            {
+            if let Ok(admin_scoped_ip) = types::AdminScopedIpv6::new(ipv6) {
                 // Admin-scoped IPv6 groups are internal
-                let admin_scoped_ip = types::AdminScopedIpv6(ipv6);
                 let internal_entry = types::MulticastGroupCreateUnderlayEntry {
                     group_ip: admin_scoped_ip,
                     tag: tag.map(String::from),
@@ -190,7 +177,7 @@ async fn cleanup_test_group(switch: &Switch, group_ip: IpAddr) -> TestResult {
 fn get_group_ip(response: &types::MulticastGroupResponse) -> IpAddr {
     match response {
         types::MulticastGroupResponse::Underlay { group_ip, .. } => {
-            group_ip.to_ip_addr()
+            group_ip.into()
         }
         types::MulticastGroupResponse::External { group_ip, .. } => *group_ip,
     }
@@ -606,7 +593,7 @@ async fn test_internal_ipv6_validation() -> TestResult {
 
     assert_eq!(updated.tag, Some("updated_tag".to_string()));
 
-    cleanup_test_group(switch, created.group_ip.to_ip_addr()).await
+    cleanup_test_group(switch, created.group_ip.into()).await
 }
 
 #[tokio::test]
@@ -694,7 +681,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
         "Admin-scoped group bitmap should have VLAN 42 from external group"
     );
 
-    cleanup_test_group(switch, created_admin.group_ip.to_ip_addr())
+    cleanup_test_group(switch, created_admin.group_ip.into())
         .await
         .unwrap();
     cleanup_test_group(switch, created_external.group_ip).await
@@ -1070,7 +1057,7 @@ async fn test_multicast_untagged_groups() {
         .expect("Should list remaining groups");
 
     let remaining_ips: HashSet<_> =
-        remaining_groups.iter().map(|g| get_group_ip(g)).collect();
+        remaining_groups.iter().map(get_group_ip).collect();
     assert!(!remaining_ips.contains(&created_untagged.group_ip));
     assert!(remaining_ips.contains(&created_tagged.group_ip));
 }
@@ -1137,7 +1124,7 @@ async fn test_api_internal_ipv6_bifurcated_replication() -> TestResult {
     assert_eq!(external_members.len(), 1);
     assert_eq!(underlay_members.len(), 1);
 
-    cleanup_test_group(switch, created.group_ip.to_ip_addr()).await
+    cleanup_test_group(switch, created.group_ip.into()).await
 }
 
 #[tokio::test]
@@ -1169,7 +1156,7 @@ async fn test_api_internal_ipv6_underlay_only() -> TestResult {
     assert_eq!(created.members.len(), 1);
     assert_eq!(created.members[0].direction, types::Direction::Underlay);
 
-    cleanup_test_group(switch, created.group_ip.to_ip_addr()).await
+    cleanup_test_group(switch, created.group_ip.into()).await
 }
 
 #[tokio::test]
@@ -1202,7 +1189,7 @@ async fn test_api_internal_ipv6_external_only() -> TestResult {
     assert_eq!(created.members.len(), 1);
     assert_eq!(created.members[0].direction, types::Direction::External);
 
-    cleanup_test_group(switch, created.group_ip.to_ip_addr()).await
+    cleanup_test_group(switch, created.group_ip.into()).await
 }
 
 #[tokio::test]
@@ -3779,7 +3766,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     for group_ip in [
         get_group_ip(&created_group1),
         get_group_ip(&created_group2),
-        created_group2b.group_ip.to_ip_addr(),
+        created_group2b.group_ip.into(),
         get_group_ip(&created_group3),
         get_group_ip(&created_group4),
         internal_multicast_ip,
@@ -4208,7 +4195,7 @@ async fn test_external_group_nat_target_validation() -> TestResult {
         "External group's NAT target should point to the correct internal IP"
     );
 
-    cleanup_test_group(switch, created_admin.group_ip.to_ip_addr())
+    cleanup_test_group(switch, created_admin.group_ip.into())
         .await
         .unwrap();
     cleanup_test_group(switch, created_external.group_ip).await
@@ -4358,22 +4345,22 @@ async fn test_ipv6_multicast_scope_validation() {
 
     switch
         .client
-        .multicast_group_delete(&admin_local_group.group_ip.to_ip_addr())
+        .multicast_group_delete(&admin_local_group.group_ip.into())
         .await
         .ok();
     switch
         .client
-        .multicast_group_delete(&site_local_group.group_ip.to_ip_addr())
+        .multicast_group_delete(&site_local_group.group_ip.into())
         .await
         .ok();
     switch
         .client
-        .multicast_group_delete(&org_local_group.group_ip.to_ip_addr())
+        .multicast_group_delete(&org_local_group.group_ip.into())
         .await
         .ok();
     switch
         .client
-        .multicast_group_delete(&target_group.group_ip.to_ip_addr())
+        .multicast_group_delete(&target_group.group_ip.into())
         .await
         .ok();
 }
@@ -5280,15 +5267,21 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
         .await
         .expect("Should be able to dump bitmap table");
 
-    // Attempt to create external group with invalid data that will cause failure
-    // Use an extremely large VNI that should cause table issues
+    // Attempt to create external group that will cause failure during validation
+    // Use a non-existent internal group IP to trigger "NAT target must be a tracked multicast group" error
+    let invalid_internal_ip = match internal_group_ip {
+        IpAddr::V6(ipv6) => {
+            // Create a different admin-scoped IP that doesn't exist
+            let mut bytes = ipv6.octets();
+            bytes[15] = bytes[15].wrapping_add(1); // Change last byte
+            Ipv6Addr::from(bytes)
+        }
+        _ => panic!("Expected IPv6 address"),
+    };
     let nat_target = types::NatTarget {
-        internal_ip: match internal_group_ip {
-            IpAddr::V6(ipv6) => ipv6,
-            _ => panic!("Expected IPv6 address"),
-        },
+        internal_ip: invalid_internal_ip,
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x02, 0x66).into(),
-        vni: u32::MAX.into(), // This should be problematic
+        vni: 200.into(),
     };
 
     let external_entry = types::MulticastGroupCreateExternalEntry {
@@ -5527,7 +5520,7 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
             _ => panic!("Expected IPv6 address"),
         },
         inner_mac: MacAddr::new(0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF).into(), // Invalid MAC
-        vni: u32::MAX.into(), // Invalid VNI
+        vni: 300.into(), // Valid VNI
     };
 
     let invalid_update = types::MulticastGroupUpdateExternalEntry {
@@ -6109,7 +6102,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
         .into_inner();
 
     // Verify the response matches what we created
-    assert_eq!(retrieved_underlay.group_ip.to_ip_addr(), internal_group_ip);
+    assert_eq!(retrieved_underlay.group_ip.into(), internal_group_ip);
     assert_eq!(
         retrieved_underlay.tag,
         Some("underlay_get_test".to_string())

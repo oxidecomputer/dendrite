@@ -160,11 +160,9 @@ pub struct MulticastGroupExternalResponse {
 
 /// Unified response type for operations that return mixed group types.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(tag = "kind")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MulticastGroupResponse {
-    #[serde(rename = "underlay")]
     Underlay(MulticastGroupUnderlayResponse),
-    #[serde(rename = "external")]
     External(MulticastGroupExternalResponse),
 }
 
