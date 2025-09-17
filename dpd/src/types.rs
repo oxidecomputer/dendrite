@@ -299,3 +299,9 @@ impl convert::From<common::network::VlanError> for DpdError {
         DpdError::Invalid(err.to_string())
     }
 }
+
+impl convert::From<dpd_types::mcast::Error> for DpdError {
+    fn from(err: dpd_types::mcast::Error) -> Self {
+        DpdError::Invalid(err.to_string())
+    }
+}

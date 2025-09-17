@@ -12,6 +12,12 @@ use oxnet::{Ipv4Net, Ipv6Net};
 use super::IpSrc;
 use crate::types::{DpdError, DpdResult};
 
+/// Check if an IP address is unicast (emulating the unstable std::net API).
+/// For IP addresses, unicast means simply "not multicast".
+const fn is_unicast(addr: IpAddr) -> bool {
+    !addr.is_multicast()
+}
+
 /// Validates if a multicast address is allowed for group creation.
 ///
 /// Returns a [`DpdResult`] indicating whether the address is valid or not.
@@ -19,6 +25,10 @@ pub(crate) fn validate_multicast_address(
     addr: IpAddr,
     sources: Option<&[IpSrc]>,
 ) -> DpdResult<()> {
+    // First validate that source addresses are unicast
+    validate_source_addresses(sources)?;
+
+    // Then validate the multicast address itself
     match addr {
         IpAddr::V4(ipv4) => validate_ipv4_multicast(ipv4, sources),
         IpAddr::V6(ipv6) => validate_ipv6_multicast(ipv6, sources),
@@ -38,7 +48,8 @@ pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
 
     if !internal_nat_ip.is_admin_scoped_multicast() {
         return Err(DpdError::Invalid(format!(
-            "NAT target internal IP address {} is not a valid site/admin-local or org-scoped multicast address",
+            "NAT target internal IP address {} is not a valid \
+             site/admin-local or org-scoped multicast address",
             nat_target.internal_ip
         )));
     }
@@ -70,8 +81,7 @@ fn validate_ipv4_multicast(
     // Verify this is actually a multicast address
     if !addr.is_multicast() {
         return Err(DpdError::Invalid(format!(
-            "{} is not a multicast address",
-            addr
+            "{addr} is not a multicast address",
         )));
     }
 
@@ -79,17 +89,16 @@ fn validate_ipv4_multicast(
     if is_ssm(addr.into()) {
         if sources.is_none() || sources.unwrap().is_empty() {
             return Err(DpdError::Invalid(format!(
-                "{} is a Source-Specific Multicast address and requires at least one source to be defined",
-                addr
+                "{addr} is a Source-Specific Multicast address and \
+                 requires at least one source to be defined",
             )));
         }
-        // If we have sources defined for an SSM address, it's valid
+        // If sources are defined for an SSM address, it's valid
         return Ok(());
     } else if sources.is_some() {
         // If this is not SSM but sources are defined, it's invalid
         return Err(DpdError::Invalid(format!(
-            "{} is not a Source-Specific Multicast address but sources were provided",
-            addr
+            "{addr} is not a Source-Specific Multicast address but sources were provided",
         )));
     }
 
@@ -107,8 +116,7 @@ fn validate_ipv4_multicast(
     for subnet in &reserved_subnets {
         if subnet.contains(addr) {
             return Err(DpdError::Invalid(format!(
-                "{} is in the reserved multicast subnet {}",
-                addr, subnet,
+                "{addr} is in the reserved multicast subnet {subnet}",
             )));
         }
     }
@@ -122,8 +130,7 @@ fn validate_ipv4_multicast(
 
     if specific_reserved.contains(&addr) {
         return Err(DpdError::Invalid(format!(
-            "{} is a specifically reserved multicast address",
-            addr
+            "{addr} is a specifically reserved multicast address",
         )));
     }
 
@@ -137,8 +144,7 @@ fn validate_ipv6_multicast(
 ) -> DpdResult<()> {
     if !addr.is_multicast() {
         return Err(DpdError::Invalid(format!(
-            "{} is not a multicast address",
-            addr
+            "{addr} is not a multicast address",
         )));
     }
 
@@ -146,17 +152,16 @@ fn validate_ipv6_multicast(
     if is_ssm(addr.into()) {
         if sources.is_none() || sources.unwrap().is_empty() {
             return Err(DpdError::Invalid(format!(
-                "{} is an IPv6 Source-Specific Multicast address (ff3x::/32) and requires at least one source to be defined",
-                addr
+                "{addr} is an IPv6 Source-Specific Multicast address (ff3x::/32) \
+                 and requires at least one source to be defined",
             )));
         }
-        // If we have sources defined for an IPv6 SSM address, it's valid
+        // If sources are defined for an IPv6 SSM address, it's valid
         return Ok(());
     } else if sources.is_some() {
         // If this is not SSM but sources are defined, it's invalid
         return Err(DpdError::Invalid(format!(
-            "{} is not a Source-Specific Multicast address but sources were provided",
-            addr
+            "{addr} is not a Source-Specific Multicast address but sources were provided",
         )));
     }
 
@@ -174,8 +179,7 @@ fn validate_ipv6_multicast(
     for subnet in &reserved_subnets {
         if subnet.contains(addr) {
             return Err(DpdError::Invalid(format!(
-                "{} is in the reserved multicast subnet {}",
-                addr, subnet
+                "{addr} is in the reserved multicast subnet {subnet}",
             )));
         }
     }
@@ -189,11 +193,89 @@ pub(crate) fn validate_not_admin_scoped_ipv6(addr: IpAddr) -> DpdResult<()> {
         if oxnet::Ipv6Net::new_unchecked(ipv6, 128).is_admin_scoped_multicast()
         {
             return Err(DpdError::Invalid(format!(
-                "{} is an admin-scoped multicast address and must be created via the internal multicast API",
-                addr
+                "{addr} is an admin-scoped multicast address and \
+                 must be created via the internal multicast API",
             )));
         }
     }
+    Ok(())
+}
+
+/// Validates that source IP addresses are unicast.
+pub(crate) fn validate_source_addresses(
+    sources: Option<&[IpSrc]>,
+) -> DpdResult<()> {
+    let sources = match sources {
+        Some(sources) => sources,
+        None => return Ok(()),
+    };
+
+    for source in sources {
+        match source {
+            IpSrc::Exact(ip) => validate_exact_source_address(*ip)?,
+            IpSrc::Subnet(subnet) => validate_ipv4_source_subnet(*subnet)?,
+        }
+    }
+    Ok(())
+}
+
+/// Validates a single exact source IP address.
+fn validate_exact_source_address(ip: IpAddr) -> DpdResult<()> {
+    // First check if it's unicast (excludes multicast)
+    if !is_unicast(ip) {
+        return Err(DpdError::Invalid(format!(
+            "Source IP {ip} must be a unicast address (multicast addresses are not allowed)",
+        )));
+    }
+
+    // Check for other problematic address types
+    match ip {
+        IpAddr::V4(ipv4) => validate_ipv4_source_address(ipv4),
+        IpAddr::V6(ipv6) => validate_ipv6_source_address(ipv6),
+    }
+}
+
+/// Validates IPv4 source addresses for problematic types.
+fn validate_ipv4_source_address(ipv4: Ipv4Addr) -> DpdResult<()> {
+    if ipv4.is_loopback() || ipv4.is_broadcast() || ipv4.is_unspecified() {
+        return Err(DpdError::Invalid(format!(
+            "Source IP {ipv4} is not a valid source address \
+             (loopback, broadcast, and unspecified addresses are not allowed)",
+        )));
+    }
+    Ok(())
+}
+
+/// Validates IPv6 source addresses for problematic types.
+fn validate_ipv6_source_address(ipv6: Ipv6Addr) -> DpdResult<()> {
+    if ipv6.is_loopback() || ipv6.is_unspecified() {
+        return Err(DpdError::Invalid(format!(
+            "Source IP {ipv6} is not a valid source address \
+             (loopback and unspecified addresses are not allowed)",
+        )));
+    }
+    Ok(())
+}
+
+/// Validates IPv4 source subnets for problematic address ranges.
+fn validate_ipv4_source_subnet(subnet: Ipv4Net) -> DpdResult<()> {
+    let addr = subnet.addr();
+
+    // Reject subnets that contain multicast addresses
+    if addr.is_multicast() {
+        return Err(DpdError::Invalid(format!(
+            "Source subnet {subnet} contains multicast addresses and cannot be used as a source filter",
+        )));
+    }
+
+    // Reject subnets with loopback or broadcast addresses
+    if addr.is_loopback() || addr.is_broadcast() {
+        return Err(DpdError::Invalid(format!(
+            "Source subnet {subnet} contains invalid address types \
+             (loopback/broadcast) for source filtering",
+        )));
+    }
+
     Ok(())
 }
 
@@ -456,5 +538,117 @@ mod tests {
         };
 
         assert!(validate_nat_target(mcast_nat_target).is_ok());
+    }
+
+    #[test]
+    fn test_validate_source_addresses() {
+        // Valid unicast IPv4 sources
+        let valid_ipv4_sources = vec![
+            IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
+            IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
+        ];
+        assert!(validate_source_addresses(Some(&valid_ipv4_sources)).is_ok());
+
+        // Valid unicast IPv6 sources
+        let valid_ipv6_sources = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0xdb8, 0, 0, 0, 0, 0, 1,
+        )))];
+        assert!(validate_source_addresses(Some(&valid_ipv6_sources)).is_ok());
+
+        // Valid subnet sources
+        let valid_subnet_sources = vec![
+            IpSrc::Subnet(Ipv4Net::from_str("192.168.1.0/24").unwrap()),
+            IpSrc::Subnet(Ipv4Net::from_str("10.0.0.0/8").unwrap()),
+        ];
+        assert!(validate_source_addresses(Some(&valid_subnet_sources)).is_ok());
+
+        // Invalid multicast IPv4 source
+        let invalid_mcast_ipv4 =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(224, 1, 1, 1)))];
+        assert!(validate_source_addresses(Some(&invalid_mcast_ipv4)).is_err());
+
+        // Invalid multicast IPv6 source
+        let invalid_mcast_ipv6 = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
+            0xff0e, 0, 0, 0, 0, 0, 0, 1,
+        )))];
+        assert!(validate_source_addresses(Some(&invalid_mcast_ipv6)).is_err());
+
+        // Invalid broadcast IPv4 source
+        let invalid_broadcast =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)))];
+        assert!(validate_source_addresses(Some(&invalid_broadcast)).is_err());
+
+        // Invalid loopback IPv4 source
+        let invalid_loopback_ipv4 =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)))];
+        assert!(
+            validate_source_addresses(Some(&invalid_loopback_ipv4)).is_err()
+        );
+
+        // Invalid loopback IPv6 source
+        let invalid_loopback_ipv6 = vec![IpSrc::Exact(IpAddr::V6(
+            Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1),
+        ))];
+        assert!(
+            validate_source_addresses(Some(&invalid_loopback_ipv6)).is_err()
+        );
+
+        // Invalid multicast subnet
+        let invalid_mcast_subnet =
+            vec![IpSrc::Subnet(Ipv4Net::from_str("224.0.0.0/24").unwrap())];
+        assert!(validate_source_addresses(Some(&invalid_mcast_subnet)).is_err());
+
+        // Invalid loopback subnet
+        let invalid_loopback_subnet =
+            vec![IpSrc::Subnet(Ipv4Net::from_str("127.0.0.0/8").unwrap())];
+        assert!(
+            validate_source_addresses(Some(&invalid_loopback_subnet)).is_err()
+        );
+
+        // No sources should be valid
+        assert!(validate_source_addresses(None).is_ok());
+
+        // Empty sources should be valid
+        assert!(validate_source_addresses(Some(&[])).is_ok());
+    }
+
+    #[test]
+    fn test_address_validation_with_source_validation() {
+        // Test that multicast address validation now includes source validation
+
+        // Valid case: SSM address with valid unicast sources
+        let valid_sources =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))];
+        assert!(validate_multicast_address(
+            IpAddr::V4(Ipv4Addr::new(232, 1, 2, 3)),
+            Some(&valid_sources)
+        )
+        .is_ok());
+
+        // Invalid case: SSM address with multicast source (should fail source validation first)
+        let invalid_mcast_sources =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(224, 1, 1, 1)))];
+        let result = validate_multicast_address(
+            IpAddr::V4(Ipv4Addr::new(232, 1, 2, 3)),
+            Some(&invalid_mcast_sources),
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must be a unicast address"));
+
+        // Invalid case: SSM address with loopback source
+        let invalid_loopback_sources =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)))];
+        let result = validate_multicast_address(
+            IpAddr::V4(Ipv4Addr::new(232, 1, 2, 3)),
+            Some(&invalid_loopback_sources),
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("is not a valid source address"));
     }
 }
