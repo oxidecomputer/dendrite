@@ -95,7 +95,7 @@ fn validate_ipv4_multicast(
         }
         // If sources are defined for an SSM address, it's valid
         return Ok(());
-    } else if sources.is_some() {
+    } else if sources.is_some() && !sources.unwrap().is_empty() {
         // If this is not SSM but sources are defined, it's invalid
         return Err(DpdError::Invalid(format!(
             "{addr} is not a Source-Specific Multicast address but sources were provided",
@@ -158,7 +158,7 @@ fn validate_ipv6_multicast(
         }
         // If sources are defined for an IPv6 SSM address, it's valid
         return Ok(());
-    } else if sources.is_some() {
+    } else if sources.is_some() && !sources.unwrap().is_empty() {
         // If this is not SSM but sources are defined, it's invalid
         return Err(DpdError::Invalid(format!(
             "{addr} is not a Source-Specific Multicast address but sources were provided",
@@ -237,10 +237,14 @@ fn validate_exact_source_address(ip: IpAddr) -> DpdResult<()> {
 
 /// Validates IPv4 source addresses for problematic types.
 fn validate_ipv4_source_address(ipv4: Ipv4Addr) -> DpdResult<()> {
-    if ipv4.is_loopback() || ipv4.is_broadcast() || ipv4.is_unspecified() {
+    if ipv4.is_loopback()
+        || ipv4.is_broadcast()
+        || ipv4.is_unspecified()
+        || ipv4.is_link_local()
+    {
         return Err(DpdError::Invalid(format!(
             "Source IP {ipv4} is not a valid source address \
-             (loopback, broadcast, and unspecified addresses are not allowed)",
+             (loopback, broadcast, unspecified, and link-local addresses are not allowed)",
         )));
     }
     Ok(())
@@ -248,10 +252,13 @@ fn validate_ipv4_source_address(ipv4: Ipv4Addr) -> DpdResult<()> {
 
 /// Validates IPv6 source addresses for problematic types.
 fn validate_ipv6_source_address(ipv6: Ipv6Addr) -> DpdResult<()> {
-    if ipv6.is_loopback() || ipv6.is_unspecified() {
+    if ipv6.is_loopback()
+        || ipv6.is_unspecified()
+        || ((ipv6.segments()[0] & 0xffc0) == 0xfe80)
+    {
         return Err(DpdError::Invalid(format!(
             "Source IP {ipv6} is not a valid source address \
-             (loopback and unspecified addresses are not allowed)",
+             (loopback, unspecified, and link-local addresses are not allowed)",
         )));
     }
     Ok(())
@@ -389,6 +396,10 @@ mod tests {
             .is_err());
         assert!(validate_ipv4_multicast(non_ssm_addr, Some(&mixed_sources))
             .is_err());
+
+        // Non-SSM address without sources - should pass
+        assert!(validate_ipv4_multicast(non_ssm_addr, None).is_ok());
+        assert!(validate_ipv4_multicast(non_ssm_addr, Some(&[])).is_ok());
     }
 
     #[test]
@@ -411,6 +422,10 @@ mod tests {
         // Non-SSM address with IPv6 source - should fail
         assert!(validate_ipv6_multicast(non_ssm_global, Some(&ip6_sources))
             .is_err());
+
+        // Non-SSM address without sources - should pass
+        assert!(validate_ipv6_multicast(non_ssm_global, None).is_ok());
+        assert!(validate_ipv6_multicast(non_ssm_global, Some(&[])).is_ok());
     }
 
     #[test]
