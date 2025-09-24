@@ -10,10 +10,10 @@ use std::sync::Arc;
 use slog::debug;
 use slog::error;
 
-use crate::netsupport;
 use crate::Global;
+use crate::netsupport;
 use common::network::MacAddr;
-use packet::{sidecar, Packet};
+use packet::{Packet, sidecar};
 
 // Any packets that were blocked pending an ARP/NDP resolution which completed
 // successfully can now be retransmitted.

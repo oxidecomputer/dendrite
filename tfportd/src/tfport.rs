@@ -7,22 +7,22 @@
 use std::collections::BTreeMap;
 use std::net::Ipv6Addr;
 
-use anyhow::anyhow;
-use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::anyhow;
+use anyhow::bail;
 use slog::debug;
 use slog::error;
 use slog::info;
 use slog::warn;
 
+use crate::Global;
 use crate::linklocal;
 use crate::netsupport;
 use crate::oxstats::link;
 use crate::packet_queue;
 use crate::ports;
 use crate::vlans;
-use crate::Global;
 use common::illumos;
 use common::network::MacAddr;
 
@@ -152,9 +152,10 @@ pub async fn tfport_delete(g: &Global, link: &str) -> anyhow::Result<()> {
     if let Err(e) = vlans::vlans_cleanup(g, link)
         .await
         .context("failed to clean up vlans on {link}")
-        && err.is_none() {
-            err = Some(e);
-        }
+        && err.is_none()
+    {
+        err = Some(e);
+    }
 
     if let Some(asic_id) = g.tfport_to_asic.lock().unwrap().get(link) {
         packet_queue::ensure_queue_removed(g, *asic_id);
@@ -177,9 +178,10 @@ pub async fn tfport_delete(g: &Global, link: &str) -> anyhow::Result<()> {
     if let Err(e) = illumos::tfport_delete(link)
         .await
         .context("failed to delete tport {link}")
-        && err.is_none() {
-            err = Some(e);
-        }
+        && err.is_none()
+    {
+        err = Some(e);
+    }
     match err {
         Some(e) => Err(e),
         None => Ok(()),
@@ -217,9 +219,10 @@ pub async fn tfport_ensure(
 
     // If the tfport is the vlan link, ensure that the vlans are created.
     if let Some(vlan_link) = &g.vlan_link
-        && tfport == vlan_link {
-            vlans::ensure_vlans(g, tfport).await?;
-        }
+        && tfport == vlan_link
+    {
+        vlans::ensure_vlans(g, tfport).await?;
+    }
 
     packet_queue::ensure_queue_exists(g, tfport, link.asic_id);
 
@@ -308,7 +311,9 @@ fn test_parse_tfport() -> Result<()> {
     assert!(parse_tfport_line(r"tfport0:ba\:70\:57\:bf\:a1\:38").is_err());
 
     // Too many fields
-    assert!(parse_tfport_line(r"tfport0:10:10:ba\:70\:57\:bf\:a1\:38").is_err());
+    assert!(
+        parse_tfport_line(r"tfport0:10:10:ba\:70\:57\:bf\:a1\:38").is_err()
+    );
     // Invalid mac addresses
     assert!(
         parse_tfport_line(r"tfport0:10:ba\:70\:57\:bf\:a1\:38\:44").is_err()

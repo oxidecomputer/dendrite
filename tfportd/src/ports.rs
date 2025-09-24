@@ -36,16 +36,16 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use anyhow::Result;
-use dpd_client::types;
 use dpd_client::ClientInfo;
+use dpd_client::types;
 use slog::debug;
 use slog::error;
 use slog::info;
 use slog::warn;
 
+use crate::Global;
 use crate::poll_interval;
 use crate::tfport;
-use crate::Global;
 use common::network::MacAddr;
 
 /// Information about a single link in `dpd`, and its associated `tfport` if it
@@ -236,29 +236,31 @@ async fn illumos_port_update(
 //     would also be very weird.
 async fn ensure_address_match(g: &Global, link: &LinkInfo) -> Result<()> {
     if let Some(addr) = link.dpd_link_local
-        && link.dpd_link_local != link.tfport_link_local {
-            warn!(g.log, "deleting stale dpd address: {addr}");
-            g.client
-                .link_ipv6_delete(&link.port_id, &link.link_id, &addr)
-                .await
-                .context("deleting stale link-local address")?;
-        }
+        && link.dpd_link_local != link.tfport_link_local
+    {
+        warn!(g.log, "deleting stale dpd address: {addr}");
+        g.client
+            .link_ipv6_delete(&link.port_id, &link.link_id, &addr)
+            .await
+            .context("deleting stale link-local address")?;
+    }
 
     if let Some(addr) = link.tfport_link_local
-        && link.dpd_link_local != link.tfport_link_local {
-            info!(g.log, "sending new tfport address: {addr}");
-            g.client
-                .link_ipv6_create(
-                    &link.port_id,
-                    &link.link_id,
-                    &types::Ipv6Entry {
-                        tag: g.client.inner().tag.clone(),
-                        addr,
-                    },
-                )
-                .await
-                .context("sending new link-local address")?;
-        }
+        && link.dpd_link_local != link.tfport_link_local
+    {
+        info!(g.log, "sending new tfport address: {addr}");
+        g.client
+            .link_ipv6_create(
+                &link.port_id,
+                &link.link_id,
+                &types::Ipv6Entry {
+                    tag: g.client.inner().tag.clone(),
+                    addr,
+                },
+            )
+            .await
+            .context("sending new link-local address")?;
+    }
 
     Ok(())
 }

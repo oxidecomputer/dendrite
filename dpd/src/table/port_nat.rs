@@ -8,8 +8,8 @@ use std::convert::TryInto;
 
 use slog::{error, info};
 
-use crate::table::*;
 use crate::Switch;
+use crate::table::*;
 use aal::{ActionParse, MatchParse};
 use aal_macros::*;
 

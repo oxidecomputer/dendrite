@@ -6,16 +6,16 @@
 
 use std::sync::Arc;
 
-use dropshot::endpoint;
 use dropshot::HttpError;
 use dropshot::HttpResponseOk;
 use dropshot::HttpResponseUpdatedNoContent;
 use dropshot::Path;
 use dropshot::RequestContext;
 use dropshot::TypedBody;
+use dropshot::endpoint;
 
-use crate::types::DpdError;
 use crate::Switch;
+use crate::types::DpdError;
 use aal::AsicOps;
 use common::ports::TxEq;
 use common::ports::TxEqSwHw;

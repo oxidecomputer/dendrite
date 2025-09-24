@@ -127,44 +127,44 @@ pub mod tofino_asic;
 
 #[cfg(feature = "tofino_asic")]
 mod plat {
-    pub use super::tofino_asic::stats::AsicLinkStats;
-    pub use super::tofino_asic::table::Table;
     pub use super::tofino_asic::FsmState;
     pub use super::tofino_asic::Handle;
     pub use super::tofino_asic::PortFsmState;
+    pub use super::tofino_asic::stats::AsicLinkStats;
+    pub use super::tofino_asic::table::Table;
 }
 
 #[cfg(feature = "tofino_stub")]
 pub mod tofino_stub;
 #[cfg(feature = "tofino_stub")]
 mod plat {
-    pub use super::tofino_stub::table::Table;
     pub use super::tofino_stub::AsicLinkStats;
     pub use super::tofino_stub::FsmState;
     pub use super::tofino_stub::PortFsmState;
     pub use super::tofino_stub::StubHandle as Handle;
+    pub use super::tofino_stub::table::Table;
 }
 
 #[cfg(feature = "softnpu")]
 pub mod softnpu;
 #[cfg(feature = "softnpu")]
 mod plat {
-    pub use super::softnpu::table::Table;
     pub use super::softnpu::AsicLinkStats;
     pub use super::softnpu::FsmState;
     pub use super::softnpu::Handle;
     pub use super::softnpu::PortFsmState;
+    pub use super::softnpu::table::Table;
 }
 
 #[cfg(feature = "chaos")]
 pub mod chaos;
 #[cfg(feature = "chaos")]
 mod plat {
-    pub use super::chaos::table::Table;
     pub use super::chaos::AsicLinkStats;
     pub use super::chaos::FsmState;
     pub use super::chaos::Handle;
     pub use super::chaos::PortFsmState;
+    pub use super::chaos::table::Table;
 }
 
 pub use plat::AsicLinkStats;

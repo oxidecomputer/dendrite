@@ -246,9 +246,10 @@ pub fn get_ipv6_mapping(
 ) -> DpdResult<NatTarget> {
     let nat = switch.nat.lock().unwrap();
     if let Some(v) = nat.ipv6_mappings.get(&nat_ip)
-        && let Some(idx) = find_first_mapping(v, low, high) {
-            return Ok(v[idx].tgt);
-        }
+        && let Some(idx) = find_first_mapping(v, low, high)
+    {
+        return Ok(v[idx].tgt);
+    }
     Err(DpdError::Missing("no mapping".into()))
 }
 
@@ -316,25 +317,24 @@ pub fn clear_ipv6_mapping(
     trace!(switch.log, "clearing nat entry {}/{}-{}", nat_ip, low, high);
 
     if let Some(mappings) = nat.ipv6_mappings.get_mut(&nat_ip)
-        && let Some(idx) = find_first_mapping(mappings, low, high) {
-            let ent = mappings.remove(idx);
-            if mappings.is_empty() {
-                nat.ipv6_mappings.remove(&nat_ip);
-            }
-            let full = ipv6_entry(nat_ip, &ent);
-            return match nat::delete_ipv6_entry(
-                switch, nat_ip, ent.low, ent.high,
-            ) {
-                Err(e) => {
-                    error!(switch.log, "failed to clear {}: {:?}", full, e);
-                    Err(e)
-                }
-                _ => {
-                    debug!(switch.log, "cleared nat entry {}", full);
-                    Ok(())
-                }
-            };
+        && let Some(idx) = find_first_mapping(mappings, low, high)
+    {
+        let ent = mappings.remove(idx);
+        if mappings.is_empty() {
+            nat.ipv6_mappings.remove(&nat_ip);
         }
+        let full = ipv6_entry(nat_ip, &ent);
+        return match nat::delete_ipv6_entry(switch, nat_ip, ent.low, ent.high) {
+            Err(e) => {
+                error!(switch.log, "failed to clear {}: {:?}", full, e);
+                Err(e)
+            }
+            _ => {
+                debug!(switch.log, "cleared nat entry {}", full);
+                Ok(())
+            }
+        };
+    }
 
     Ok(())
 }
@@ -406,9 +406,10 @@ pub fn get_ipv4_mapping(
 ) -> DpdResult<NatTarget> {
     let nat = switch.nat.lock().unwrap();
     if let Some(v) = nat.ipv4_mappings.get(&nat_ip)
-        && let Some(idx) = find_first_mapping(v, low, high) {
-            return Ok(v[idx].tgt);
-        }
+        && let Some(idx) = find_first_mapping(v, low, high)
+    {
+        return Ok(v[idx].tgt);
+    }
     Err(DpdError::Missing("no mapping".into()))
 }
 
@@ -479,25 +480,24 @@ pub fn clear_ipv4_mapping(
     );
 
     if let Some(mappings) = nat.ipv4_mappings.get_mut(&nat_ip)
-        && let Some(idx) = find_first_mapping(mappings, low, high) {
-            let ent = mappings.remove(idx);
-            if mappings.is_empty() {
-                nat.ipv4_mappings.remove(&nat_ip);
-            }
-            let full = ipv4_entry(nat_ip, &ent);
-            return match nat::delete_ipv4_entry(
-                switch, nat_ip, ent.low, ent.high,
-            ) {
-                Err(e) => {
-                    error!(switch.log, "failed to clear {}: {:?}", full, e);
-                    Err(e)
-                }
-                _ => {
-                    debug!(switch.log, "cleared nat entry {}", full);
-                    Ok(())
-                }
-            };
+        && let Some(idx) = find_first_mapping(mappings, low, high)
+    {
+        let ent = mappings.remove(idx);
+        if mappings.is_empty() {
+            nat.ipv4_mappings.remove(&nat_ip);
         }
+        let full = ipv4_entry(nat_ip, &ent);
+        return match nat::delete_ipv4_entry(switch, nat_ip, ent.low, ent.high) {
+            Err(e) => {
+                error!(switch.log, "failed to clear {}: {:?}", full, e);
+                Err(e)
+            }
+            _ => {
+                debug!(switch.log, "cleared nat entry {}", full);
+                Ok(())
+            }
+        };
+    }
 
     Ok(())
 }

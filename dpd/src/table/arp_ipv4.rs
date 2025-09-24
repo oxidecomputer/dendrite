@@ -7,8 +7,8 @@
 use std::convert::TryInto;
 use std::net::Ipv4Addr;
 
-use crate::table::*;
 use crate::Switch;
+use crate::table::*;
 use aal_macros::*;
 use common::network::MacAddr;
 

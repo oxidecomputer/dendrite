@@ -17,9 +17,9 @@ use std::convert::TryInto;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use crate::Switch;
 use crate::table;
 use crate::types::{DpdError, DpdResult};
-use crate::Switch;
 use aal::MatchParse;
 use aal_macros::*;
 use asic::Handle;

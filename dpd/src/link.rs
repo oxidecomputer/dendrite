@@ -918,9 +918,9 @@ impl Switch {
                     if old_state == LinkState::Down
                         && let Some(fault) =
                             link.linkup_tracker.process_event(&())
-                        {
-                            self.link_set_fault_locked(&mut link, fault)?;
-                        }
+                    {
+                        self.link_set_fault_locked(&mut link, fault)?;
+                    }
                 } else if !old_state.is_fault() {
                     // If we are in a faulted state, we stay there until the
                     // fault is cleared or the link comes up.  Put another way,
@@ -1824,11 +1824,10 @@ async fn reconcile_link(
         false
     };
 
-    if destroy
-        && let Err(e) = unplumb_link(switch, &log, &mut link) {
-            error!(log, "failed to unplumb link: {e:?}");
-            return;
-        }
+    if destroy && let Err(e) = unplumb_link(switch, &log, &mut link) {
+        error!(log, "failed to unplumb link: {e:?}");
+        return;
+    }
 
     if link.config.delete_me {
         switch.free_mac_address(link.config.mac);
@@ -1840,22 +1839,20 @@ async fn reconcile_link(
     drop(links);
 
     if !link.plumbed.link_created
-        && let Err(e) = plumb_link(switch, &log, &mut link, &mpn) {
-            error!(log, "Failed to plumb link: {e:?}");
-            record_plumb_failure(
-                switch,
-                &mut link,
-                "configuring link in the switch asic",
-                &e,
-            );
-            if let Err(e) = unplumb_link(switch, &log, &mut link) {
-                error!(
-                    log,
-                    "Failed to clean up following plumb failure: {e:?}"
-                );
-            }
-            return;
+        && let Err(e) = plumb_link(switch, &log, &mut link, &mpn)
+    {
+        error!(log, "Failed to plumb link: {e:?}");
+        record_plumb_failure(
+            switch,
+            &mut link,
+            "configuring link in the switch asic",
+            &e,
+        );
+        if let Err(e) = unplumb_link(switch, &log, &mut link) {
+            error!(log, "Failed to clean up following plumb failure: {e:?}");
         }
+        return;
+    }
 
     let asic_id = link.asic_port_id;
     if link.config.nat_only != link.plumbed.nat_only {

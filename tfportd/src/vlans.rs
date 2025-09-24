@@ -8,16 +8,16 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::net::Ipv6Addr;
 
+use anyhow::Context;
 use anyhow::anyhow;
 use anyhow::bail;
-use anyhow::Context;
 use serde::Deserialize;
 use slog::error;
 use slog::info;
 
+use crate::Global;
 use crate::linklocal;
 use crate::oxstats::link;
-use crate::Global;
 use common::illumos;
 
 #[derive(Debug, Deserialize)]
@@ -128,11 +128,12 @@ pub async fn ensure_vlans(g: &Global, link: &str) -> anyhow::Result<()> {
         existing_vlans.keys().cloned().collect::<BTreeSet<String>>();
     for expected_vlan in &g.vlans {
         if let Some(current_vlan) = existing_vlans.get(&expected_vlan.name)
-            && current_vlan.vid == expected_vlan.vid {
-                // This vlan has the right name and ID, so we leave it alone
-                let _ = to_delete.remove(&expected_vlan.name);
-                continue;
-            }
+            && current_vlan.vid == expected_vlan.vid
+        {
+            // This vlan has the right name and ID, so we leave it alone
+            let _ = to_delete.remove(&expected_vlan.name);
+            continue;
+        }
         to_create.insert(expected_vlan.name.to_string(), expected_vlan.vid);
     }
 

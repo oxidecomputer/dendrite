@@ -4,10 +4,10 @@
 //
 // Copyright 2025 Oxide Computer Company
 
+use crate::FsmStats;
 use crate::tofino_asic::genpd::*;
 use crate::tofino_asic::ports;
 use crate::tofino_asic::{CheckError, Handle, PortFsmState};
-use crate::FsmStats;
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};

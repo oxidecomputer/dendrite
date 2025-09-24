@@ -13,13 +13,13 @@ use anyhow::anyhow;
 use futures::TryStreamExt;
 use slog::{debug, error, info};
 
+use crate::Global;
 use crate::poll_interval;
 use crate::sidecar;
-use crate::Global;
 use common::network::MacAddr;
-use dpd_client::types;
 use dpd_client::Client;
 use dpd_client::ClientInfo;
+use dpd_client::types;
 
 const ARP: &str = "/usr/sbin/arp";
 const DEFAULT_IPV4_MASK: Ipv4Addr = Ipv4Addr::new(255, 255, 255, 255);

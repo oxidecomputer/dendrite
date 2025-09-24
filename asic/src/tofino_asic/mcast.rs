@@ -10,8 +10,8 @@ use slog::{debug, error, info};
 
 use crate::tofino_asic::bf_wrapper::*;
 use crate::tofino_asic::genpd::*;
-use crate::tofino_asic::{CheckError, Handle};
 use crate::tofino_asic::{BF_MC_LAG_ARRAY_SIZE, BF_MC_PORT_ARRAY_SIZE};
+use crate::tofino_asic::{CheckError, Handle};
 
 use aal::{AsicError, AsicResult};
 
@@ -318,7 +318,9 @@ pub fn domain_remove_port(
     let mc = match domain.ports.remove(&port) {
         Some(n) => n,
         None => {
-            return Err(AsicError::InvalidArg("port not in domain".to_string()))
+            return Err(AsicError::InvalidArg(
+                "port not in domain".to_string(),
+            ));
         }
     };
 

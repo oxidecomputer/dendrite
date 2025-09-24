@@ -4,7 +4,7 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::net::IpAddr;
 
 use anyhow::Context;
@@ -15,9 +15,9 @@ use tabwriter::TabWriter;
 
 use dpd_client::Client;
 
-use crate::misc_err;
 use crate::LinkName;
 use crate::LinkPath;
+use crate::misc_err;
 
 #[derive(Debug, Subcommand)]
 /// address management
@@ -188,7 +188,7 @@ async fn addr_list_all(
                 return Err(misc_err(
                     "must specify -4 or -6 for parseable output".to_string(),
                 )
-                .into())
+                .into());
             }
         };
         if !addrs.is_empty() {

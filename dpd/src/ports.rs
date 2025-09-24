@@ -19,8 +19,8 @@ use aal::AsicOps;
 use aal::Connector;
 use aal::PortHdl;
 
-use crate::types::DpdResult;
 use crate::Switch;
+use crate::types::DpdResult;
 use common::ports::PortId;
 
 /// Represents a specific administrative action taken on a link

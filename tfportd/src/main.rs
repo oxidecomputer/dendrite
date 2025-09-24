@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::net::Ipv6Addr;
 use std::net::SocketAddrV6;
-use std::sync::{atomic, Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic};
 use std::thread;
 use std::time::Duration;
 

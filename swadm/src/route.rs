@@ -4,21 +4,21 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::net::IpAddr;
 
+use anyhow::Context;
 use anyhow::anyhow;
 use anyhow::bail;
-use anyhow::Context;
 use clap::Subcommand;
 use colored::*;
 use futures::stream::TryStreamExt;
 use oxnet::{IpNet, Ipv4Net, Ipv6Net};
 use tabwriter::TabWriter;
 
-use dpd_client::types;
 use dpd_client::Client;
 use dpd_client::ClientInfo;
+use dpd_client::types;
 
 use crate::IpFamily;
 use crate::LinkPath;

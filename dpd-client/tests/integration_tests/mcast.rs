@@ -14,10 +14,10 @@ use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
 use ::common::network::MacAddr;
 use anyhow::anyhow;
-use dpd_client::{types, Error};
+use dpd_client::{Error, types};
 use futures::TryStreamExt;
 use oxnet::{Ipv4Net, MulticastMac};
-use packet::{eth, geneve, ipv4, ipv6, udp, Endpoint};
+use packet::{Endpoint, eth, geneve, ipv4, ipv6, udp};
 
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
 const MULTICAST_TEST_IPV6: Ipv6Addr =
@@ -448,9 +448,15 @@ async fn test_nonexisting_group() {
 
     match res {
         Error::ErrorResponse(inner) => {
-            assert_eq!(inner.status(), 404, "Expected 404 Not Found status code");
-        },
-        _ => panic!("Expected ErrorResponse when getting a non-existent multicast group"),
+            assert_eq!(
+                inner.status(),
+                404,
+                "Expected 404 Not Found status code"
+            );
+        }
+        _ => panic!(
+            "Expected ErrorResponse when getting a non-existent multicast group"
+        ),
     }
 }
 
@@ -536,7 +542,8 @@ async fn test_group_creation_with_validation() -> TestResult {
         .into_inner();
 
     assert_eq!(
-        get_external_group_id(&internal_group), created.external_group_id,
+        get_external_group_id(&internal_group),
+        created.external_group_id,
         "External group should reference the same external group ID as the internal group"
     );
 
@@ -1817,8 +1824,8 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_encapped_multicast_geneve_mcast_tag_to_external_members(
-) -> TestResult {
+async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
+-> TestResult {
     let switch = &*get_switch().await;
 
     // Define test ports
@@ -1959,8 +1966,8 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members(
 
 #[tokio::test]
 #[ignore]
-async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members(
-) -> TestResult {
+async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
+-> TestResult {
     let switch = &*get_switch().await;
 
     // Define test ports
@@ -2098,8 +2105,8 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members(
 
 #[tokio::test]
 #[ignore]
-async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_members(
-) -> TestResult {
+async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_members()
+-> TestResult {
     let switch = &*get_switch().await;
 
     // Define test ports

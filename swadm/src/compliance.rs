@@ -4,7 +4,7 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 
 use anyhow::Context;
 use clap::Subcommand;
@@ -12,8 +12,8 @@ use colored::*;
 use tabwriter::TabWriter;
 
 use common::ports::{PortFec, PortSpeed};
-use dpd_client::types;
 use dpd_client::Client;
+use dpd_client::types;
 
 #[derive(Debug, Subcommand)]
 /// Commands for compliance testing
@@ -372,8 +372,15 @@ async fn compliance_ports_setup(
 
     let port_type = if all { "all" } else { "qsfp" };
     let fec_display = fec.map_or("default".to_string(), |f| f.to_string());
-    println!("Creating links on {} {} switch ports with speed={}, fec={}, autoneg={}, kr={}",
-        switch_ports.len(), port_type, speed, fec_display, autoneg, kr);
+    println!(
+        "Creating links on {} {} switch ports with speed={}, fec={}, autoneg={}, kr={}",
+        switch_ports.len(),
+        port_type,
+        speed,
+        fec_display,
+        autoneg,
+        kr
+    );
 
     let mut created_count = 0;
     let mut error_count = 0;

@@ -58,7 +58,7 @@ use crate::switch_port::FixedSideDevice;
 use crate::switch_port::LedState;
 use crate::transceivers::PowerState;
 use crate::types::DpdError;
-use crate::{arp, loopback, nat, ports, route, Switch};
+use crate::{Switch, arp, loopback, nat, ports, route};
 use common::nat::{Ipv4Nat, Ipv6Nat, NatTarget};
 use common::network::MacAddr;
 use common::ports::PortId;
@@ -96,7 +96,7 @@ impl DpdApi for DpdApiImpl {
             WhichPage::Next(ArpToken { ip }) => match ip {
                 IpAddr::V6(ip) => Some(ip),
                 IpAddr::V4(_) => {
-                    return Err(DpdError::Invalid("bad token".into()).into())
+                    return Err(DpdError::Invalid("bad token".into()).into());
                 }
             },
         };
@@ -180,7 +180,7 @@ impl DpdApi for DpdApiImpl {
             WhichPage::First(..) => None,
             WhichPage::Next(ArpToken { ip }) => match ip {
                 IpAddr::V6(_) => {
-                    return Err(DpdError::Invalid("bad token".into()).into())
+                    return Err(DpdError::Invalid("bad token".into()).into());
                 }
                 IpAddr::V4(ip) => Some(ip),
             },

@@ -12,8 +12,8 @@ use slog::debug;
 use aal::{ActionParse, MatchParse};
 use aal_macros::*;
 
-use crate::table::*;
 use crate::Switch;
+use crate::table::*;
 use common::network::MacAddr;
 
 pub const TABLE_NAME: &str = "pipe.Ingress.l3_router.Router6.Ndp.tbl";

@@ -370,7 +370,7 @@ fn get_fields<'a>(
                     return Err(Error::new(
                         f.span(),
                         format!("unrecognized key type: {x}"),
-                    ))
+                    ));
                 }
             },
         };

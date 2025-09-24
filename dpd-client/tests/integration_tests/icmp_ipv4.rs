@@ -8,12 +8,12 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use ::common::network::MacAddr;
-use dpd_client::types;
 use dpd_client::ClientInfo;
+use dpd_client::types;
+use packet::Endpoint;
 use packet::eth;
 use packet::icmp;
 use packet::ipv4;
-use packet::Endpoint;
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;

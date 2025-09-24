@@ -250,9 +250,9 @@ pub fn validate_vlan(id: impl Into<u16>) -> Result<(), VlanError> {
 
 #[cfg(test)]
 mod tests {
-    use super::generate_ipv6_link_local;
     use super::Ipv6Addr;
     use super::MacAddr;
+    use super::generate_ipv6_link_local;
 
     #[test]
     fn test_into() {

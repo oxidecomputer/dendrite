@@ -283,7 +283,7 @@ fn infer_p4_dir() -> AsicResult<String> {
         _ => {
             return Err(AsicError::P4Missing(
                 "dpd not in a workspace or dist package".into(),
-            ))
+            ));
         }
     };
     Ok(exe_path
@@ -360,18 +360,19 @@ impl BfRt {
         }
 
         if let Some(data) = &t.data
-            && !data.is_empty() {
-                println!("  data:");
-                for d in data {
-                    let s = &d.singleton;
-                    println!(
-                        "    {} {} {}",
-                        s.name,
-                        s.id,
-                        s.dtype.as_ref().unwrap().dtype
-                    );
-                }
+            && !data.is_empty()
+        {
+            println!("  data:");
+            for d in data {
+                let s = &d.singleton;
+                println!(
+                    "    {} {} {}",
+                    s.name,
+                    s.id,
+                    s.dtype.as_ref().unwrap().dtype
+                );
             }
+        }
     }
 
     pub fn get_table(
@@ -383,7 +384,7 @@ impl BfRt {
             None => {
                 return Err(AsicError::InvalidArg(format!(
                     "no such table: {name}"
-                )))
+                )));
             }
         };
 

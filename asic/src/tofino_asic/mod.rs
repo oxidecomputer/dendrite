@@ -10,8 +10,8 @@ use std::sync::{Mutex, MutexGuard};
 use slog::{error, info, o};
 use tofino::fuse::ChipId;
 
-use crate::tofino_common;
 use crate::Identifiers;
+use crate::tofino_common;
 use aal::PortUpdate;
 use common::ports::*;
 

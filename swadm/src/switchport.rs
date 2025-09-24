@@ -5,20 +5,20 @@
 // Copyright 2025 Oxide Computer Company
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::str::FromStr;
 
-use anyhow::bail;
 use anyhow::Context;
+use anyhow::bail;
 use clap::{Subcommand, ValueEnum};
 use colored::*;
 use tabwriter::TabWriter;
 
+use dpd_client::Client;
 use dpd_client::types::{
     self, CmisDatapath, CmisLaneStatus, PortId, Sff8636Datapath,
     SffComplianceCode,
 };
-use dpd_client::Client;
 
 use crate::LinkPath;
 use crate::{parse_port_id, parse_qsfp_port_id};
@@ -393,11 +393,7 @@ fn print_supported_transceiver_row(
             |m| {
                 m.software_override.map(
                     |t| {
-                        if t {
-                            "Software"
-                        } else {
-                            "Hardware"
-                        }
+                        if t { "Software" } else { "Hardware" }
                     },
                 )
             }
@@ -954,9 +950,10 @@ pub async fn switch_cmd(
         SwitchPort::List { name } => {
             for p in client.port_list().await?.into_inner() {
                 if let Some(name) = name.as_ref()
-                    && !p.to_string().contains(name) {
-                        continue;
-                    }
+                    && !p.to_string().contains(name)
+                {
+                    continue;
+                }
                 println!("{}", p)
             }
         }

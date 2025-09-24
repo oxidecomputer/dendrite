@@ -7,7 +7,7 @@
 //! Metrics produced by tfport and vlan links for collection by oximeter.
 
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry},
     net::{Ipv6Addr, SocketAddr},
     sync::{Arc, RwLock},
     time::Duration,
@@ -24,7 +24,7 @@ use omicron_common::api::internal::{
     shared::SledIdentifiers,
 };
 use omicron_common::backoff::{
-    retry_notify, retry_policy_internal_service_aggressive, BackoffError,
+    BackoffError, retry_notify, retry_policy_internal_service_aggressive,
 };
 use oximeter::types::ProducerRegistry;
 use oximeter_instruments::kstat::{CollectionDetails, KstatSampler, TargetId};
@@ -522,7 +522,8 @@ async fn fetch_switch_identifiers(
                 return Ok(idents);
             }
             Err(e) => {
-                error!(g.log,
+                error!(
+                    g.log,
                     "failed to fetch switch identifiers from dpd-client: {e:?}, \
                      will retry",
                 )

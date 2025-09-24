@@ -15,11 +15,11 @@ use slog::{error, info, warn};
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::time::sleep;
 
-use crate::netsupport;
 use crate::Global;
+use crate::netsupport;
 use common::illumos;
-use dpd_client::types;
 use dpd_client::ClientInfo;
+use dpd_client::types;
 
 const ICMP6_RA_TYPE: u8 = 134;
 const ICMP6_RA_CODE: u8 = 0;

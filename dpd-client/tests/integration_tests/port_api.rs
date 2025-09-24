@@ -14,9 +14,9 @@ use reqwest::StatusCode;
 
 use ::common::ports::Ipv4Entry;
 use ::common::ports::Ipv6Entry;
-use dpd_client::types;
 use dpd_client::ClientInfo;
 use dpd_client::Error;
+use dpd_client::types;
 use types::PortId;
 
 use crate::integration_tests::common::prelude::*;
@@ -382,13 +382,15 @@ async fn test_ipv6_clear() -> TestResult {
         .link_ipv6_delete(&port_id, &link_id, &c)
         .await
         .unwrap();
-    assert!(switch
-        .client
-        .link_ipv6_list_stream(&port_id, &link_id, None)
-        .try_collect::<Vec<_>>()
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        switch
+            .client
+            .link_ipv6_list_stream(&port_id, &link_id, None)
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap()
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -686,8 +688,8 @@ async fn test_create_existing_ipv6_address_fails() -> TestResult {
 // The same tests as above, but adding the IP address to a _different_ link.
 #[tokio::test]
 #[ignore]
-async fn test_create_existing_ipv4_address_on_different_link_fails(
-) -> TestResult {
+async fn test_create_existing_ipv4_address_on_different_link_fails()
+-> TestResult {
     let switch = &*get_switch().await;
 
     let entry = types::Ipv4Entry {
@@ -719,8 +721,8 @@ async fn test_create_existing_ipv4_address_on_different_link_fails(
 
 #[tokio::test]
 #[ignore]
-async fn test_create_existing_ipv6_address_on_different_link_fails(
-) -> TestResult {
+async fn test_create_existing_ipv6_address_on_different_link_fails()
+-> TestResult {
     let switch = &*get_switch().await;
 
     let entry = types::Ipv6Entry {

@@ -4,20 +4,20 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
-use std::io::stdout;
+use std::collections::btree_map::Entry;
 use std::io::Write;
+use std::io::stdout;
 
 use clap::Subcommand;
 use colored::Colorize;
 use tabwriter::TabWriter;
 
-use dpd_client::types;
 use dpd_client::Client;
+use dpd_client::types;
 
-use crate::counters::get_counter_type;
 use crate::counters::CounterType;
+use crate::counters::get_counter_type;
 
 #[derive(Debug, Subcommand)]
 /// Access the raw contents of the tables used by the P4 program.
@@ -116,9 +116,10 @@ async fn table_dump(
     }
     for entry in &t.entries {
         if let Some(filter) = &action_filter
-            && &entry.action != filter {
-                continue;
-            }
+            && &entry.action != filter
+        {
+            continue;
+        }
 
         let keys: Vec<String> = schema
             .keys

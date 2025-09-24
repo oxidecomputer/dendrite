@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use crate::{table::*, Switch};
+use crate::{Switch, table::*};
 
 use aal::{ActionParse, MatchParse};
 use aal_macros::*;

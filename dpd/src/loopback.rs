@@ -4,7 +4,7 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use crate::{table, DpdError, DpdResult, Switch};
+use crate::{DpdError, DpdResult, Switch, table};
 use aal::AsicError;
 use common::ports::{Ipv4Entry, Ipv6Entry};
 use slog::debug;

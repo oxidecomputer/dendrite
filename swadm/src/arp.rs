@@ -4,7 +4,7 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::net::IpAddr;
 
 use anyhow::Context;
@@ -15,9 +15,9 @@ use futures::stream::TryStreamExt;
 use tabwriter::TabWriter;
 
 use common::network::MacAddr;
-use dpd_client::types;
 use dpd_client::Client;
 use dpd_client::ClientInfo;
+use dpd_client::types;
 
 use crate::IpFamily;
 

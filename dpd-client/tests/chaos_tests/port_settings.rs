@@ -9,19 +9,19 @@ use super::harness::{
     new_dpd_client, run_dpd,
 };
 use super::util::{link_list_ipv4, link_list_ipv6};
-use asic::chaos::{table, AsicConfig, Chaos, TableChaos};
+use asic::chaos::{AsicConfig, Chaos, TableChaos, table};
 use asic::table_chaos;
 use dpd_client::types::{
     LinkCreate, LinkId, LinkSettings, PortFec, PortId, PortSettings, PortSpeed,
 };
 use dpd_client::{Client, ROLLBACK_FAILURE_ERROR_CODE};
 use http::status::StatusCode;
-use pretty_assertions::{assert_eq, Comparison};
+use pretty_assertions::{Comparison, assert_eq};
 use rand::Rng;
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use tokio::time::Duration;
 
 const TESTING_RADIX: usize = 33;
@@ -499,9 +499,10 @@ fn is_rollback_error(e: &dpd_client::Error<dpd_client::types::Error>) -> bool {
         return false;
     }
     if let dpd_client::Error::ErrorResponse(err) = e
-        && err.error_code == Some(ROLLBACK_FAILURE_ERROR_CODE.into()) {
-            return true;
-        }
+        && err.error_code == Some(ROLLBACK_FAILURE_ERROR_CODE.into())
+    {
+        return true;
+    }
     false
 }
 

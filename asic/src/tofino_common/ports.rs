@@ -296,7 +296,7 @@ impl PhysPort {
             x => {
                 return Err(AsicError::InvalidArg(format!(
                     "unsupported speed: {x:?}",
-                )))
+                )));
             }
         };
         if let Some(lane) = lane {

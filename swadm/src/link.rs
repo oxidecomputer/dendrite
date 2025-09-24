@@ -399,6 +399,34 @@ pub enum Link {
         #[command(subcommand)]
         cmd: Serdes,
     },
+
+    /// Use the mechanism omicron uses to set up a link
+    Apply {
+        /// The first lane of the port to use for the new link
+        lane: Option<types::LinkId>,
+        /// The requested speed of the link.
+        speed: PortSpeed,
+        /// The requested forward-error correction method.  If this is None, the
+        /// standard FEC for the underlying media will be applied if it can be
+        /// determined.
+        fec: Option<PortFec>,
+        /// Whether the link is configured to autonegotiate with its peer during
+        /// link training.
+        ///
+        /// This is generally only true for backplane links, and defaults to
+        autoneg: bool,
+        /// Whether the link is configured in KR mode, an electrical specification
+        /// generally only true for backplane link.
+        ///
+        kr: bool,
+
+        /// Transceiver equalization adjustment parameters.
+        tx_eq_pre2: Option<i32>,
+        tx_eq_pre1: Option<i32>,
+        tx_eq_main: Option<i32>,
+        tx_eq_post1: Option<i32>,
+        tx_eq_post2: Option<i32>,
+    },
 }
 
 #[derive(Debug, Parser)]
@@ -1923,6 +1951,21 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 }
             },
         },
+
+        Link::Apply {
+            lane: _,
+            speed: _,
+            fec: _,
+            autoneg: _,
+            kr: _,
+            tx_eq_pre2: _,
+            tx_eq_pre1: _,
+            tx_eq_main: _,
+            tx_eq_post1: _,
+            tx_eq_post2: _,
+        } => {
+            todo!()
+        }
     }
     Ok(())
 }

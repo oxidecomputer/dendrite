@@ -247,7 +247,9 @@ fn update_from_cli(
             .iter()
             .all(|addr| addr.ip().is_loopback())
         {
-            eprintln!("No non-localhost IPv6 addresses found in provided listen_addresses");
+            eprintln!(
+                "No non-localhost IPv6 addresses found in provided listen_addresses"
+            );
         }
     }
 

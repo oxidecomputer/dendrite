@@ -7,14 +7,14 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use slog::{o, Logger};
+use slog::{Logger, o};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use crate::Identifiers;
 pub use crate::faux_fsm::FsmState;
 pub use crate::faux_fsm::FsmType;
 pub use crate::faux_fsm::PortFsmState;
-use crate::Identifiers;
 
 use aal::{
     AsicError, AsicId, AsicOps, AsicResult, Connector, PortHdl, PortUpdate,
@@ -118,7 +118,7 @@ impl Handle {
                 None => {
                     return Err(AsicError::InvalidArg(
                         "softnpu unix domain socket missing".to_string(),
-                    ))
+                    ));
                 }
             },
         };
@@ -280,11 +280,12 @@ impl AsicOps for Handle {
         _fec: PortFec,
     ) -> AsicResult<(PortHdl, u16)> {
         if let Some(link_id) = lane
-            && link_id > 0 {
-                return Err(AsicError::InvalidArg(
-                    "softnpu only supports lane 0".into(),
-                ));
-            }
+            && link_id > 0
+        {
+            return Err(AsicError::InvalidArg(
+                "softnpu only supports lane 0".into(),
+            ));
+        }
         let mut ports = self.ports.lock().unwrap();
         // Each switch port / connector only supports a single channel, and so a
         // maximum of a single logical MAC. Convert the connector to a PortHdl,

@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 
 /// Describes the ASIC the p4 program was built for

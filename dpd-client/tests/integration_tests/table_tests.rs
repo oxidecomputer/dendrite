@@ -15,9 +15,9 @@ use oxnet::Ipv6Net;
 use reqwest::StatusCode;
 
 use crate::integration_tests::common::prelude::*;
-use dpd_client::types;
 use dpd_client::ClientInfo;
 use dpd_client::ResponseValue;
+use dpd_client::types;
 
 // The expected sizes of each table.  The values are copied from constants.p4.
 //

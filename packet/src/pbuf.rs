@@ -6,9 +6,9 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use crate::parse_error;
 use crate::MacAddr;
 use crate::PacketResult;
+use crate::parse_error;
 
 pub struct ParseBuffer<'a> {
     data: &'a [u8],
