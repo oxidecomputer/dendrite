@@ -279,13 +279,12 @@ impl AsicOps for Handle {
         _speed: PortSpeed,
         _fec: PortFec,
     ) -> AsicResult<(PortHdl, u16)> {
-        if let Some(link_id) = lane {
-            if link_id > 0 {
+        if let Some(link_id) = lane
+            && link_id > 0 {
                 return Err(AsicError::InvalidArg(
                     "softnpu only supports lane 0".into(),
                 ));
             }
-        }
         let mut ports = self.ports.lock().unwrap();
         // Each switch port / connector only supports a single channel, and so a
         // maximum of a single logical MAC. Convert the connector to a PortHdl,
