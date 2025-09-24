@@ -370,7 +370,7 @@ pub extern "C" fn bf_pltfm_qsfp_init(_: *mut c_void) -> c_int {
 
 /// Platform-specific initialization of the QSFP modules.
 #[cfg(target_os = "linux")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_qsfp_init(_: *mut c_void) -> c_int {
     slog::warn!(
         get_logger(),
@@ -771,21 +771,23 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_presence_mask(
     port_1_32: *mut u32,
     port_33_64: *mut u32,
     cpu_port: *mut u32,
-) -> c_int { unsafe {
-    let Some((backplane, qsfp)) =
-        send_bitmask_request(SdeTransceiverRequest::PresenceMask)
-    else {
-        return -1;
-    };
+) -> c_int {
+    unsafe {
+        let Some((backplane, qsfp)) =
+            send_bitmask_request(SdeTransceiverRequest::PresenceMask)
+        else {
+            return -1;
+        };
 
-    // Invert the presence bits. We use 1 to indicate presence, the SDE uses 0.
-    *port_1_32 = !backplane;
-    *port_33_64 = !qsfp;
+        // Invert the presence bits. We use 1 to indicate presence, the SDE uses 0.
+        *port_1_32 = !backplane;
+        *port_33_64 = !qsfp;
 
-    // CPU port is always present.
-    *cpu_port = !0;
-    0
-}}
+        // CPU port is always present.
+        *cpu_port = !0;
+        0
+    }
+}
 
 /// Return the interrupt status of each QSFP module.
 ///
@@ -800,21 +802,23 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_int_mask(
     port_1_32: *mut u32,
     port_33_64: *mut u32,
     cpu_port: *mut u32,
-) -> c_int { unsafe {
-    let Some((backplane, qsfp)) =
-        send_bitmask_request(SdeTransceiverRequest::InterruptMask)
-    else {
-        return -1;
-    };
+) -> c_int {
+    unsafe {
+        let Some((backplane, qsfp)) =
+            send_bitmask_request(SdeTransceiverRequest::InterruptMask)
+        else {
+            return -1;
+        };
 
-    // Invert the interrupt bits. We use 1 to indicate a pending interrupt, the
-    // SDE uses 0.
-    *port_1_32 = !backplane;
-    *port_33_64 = !qsfp;
-    // Never interrupts on CPU port.
-    *cpu_port = !0;
-    0
-}}
+        // Invert the interrupt bits. We use 1 to indicate a pending interrupt, the
+        // SDE uses 0.
+        *port_1_32 = !backplane;
+        *port_33_64 = !qsfp;
+        // Never interrupts on CPU port.
+        *cpu_port = !0;
+        0
+    }
+}
 
 /// Return the low-power mode of each QSFP module.
 ///
@@ -829,21 +833,23 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_lpmode_mask(
     port_1_32: *mut u32,
     port_33_64: *mut u32,
     cpu_port: *mut u32,
-) -> c_int { unsafe {
-    let Some((backplane, qsfp)) =
-        send_bitmask_request(SdeTransceiverRequest::LpModeMask)
-    else {
-        return -1;
-    };
+) -> c_int {
+    unsafe {
+        let Some((backplane, qsfp)) =
+            send_bitmask_request(SdeTransceiverRequest::LpModeMask)
+        else {
+            return -1;
+        };
 
-    // We don't need to invert this mask. A 1 means the module is _in_ low-power
-    // mode, which is what we report in the messaging protocol.
-    *port_1_32 = backplane;
-    *port_33_64 = qsfp;
-    // CPU port is always in high-power mode.
-    *cpu_port = 0;
-    0
-}}
+        // We don't need to invert this mask. A 1 means the module is _in_ low-power
+        // mode, which is what we report in the messaging protocol.
+        *port_1_32 = backplane;
+        *port_33_64 = qsfp;
+        // CPU port is always in high-power mode.
+        *cpu_port = 0;
+        0
+    }
+}
 
 /// Set the low-power mode of a QSFP module.
 ///
