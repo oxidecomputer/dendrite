@@ -189,15 +189,14 @@ fn validate_ipv6_multicast(
 
 /// Validates that IPv6 addresses are not admin-scoped for external group creation.
 pub(crate) fn validate_not_admin_scoped_ipv6(addr: IpAddr) -> DpdResult<()> {
-    if let IpAddr::V6(ipv6) = addr {
-        if oxnet::Ipv6Net::new_unchecked(ipv6, 128).is_admin_scoped_multicast()
+    if let IpAddr::V6(ipv6) = addr
+        && oxnet::Ipv6Net::new_unchecked(ipv6, 128).is_admin_scoped_multicast()
         {
             return Err(DpdError::Invalid(format!(
                 "{addr} is an admin-scoped multicast address and \
                  must be created via the internal multicast API",
             )));
         }
-    }
     Ok(())
 }
 

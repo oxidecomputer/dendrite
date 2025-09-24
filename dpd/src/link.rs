@@ -915,13 +915,12 @@ impl Switch {
                     // We count transitions from down->up, but ignore any
                     // up->up events.  In practice those shouldn't happen,
                     // but there is no guarantee.
-                    if old_state == LinkState::Down {
-                        if let Some(fault) =
+                    if old_state == LinkState::Down
+                        && let Some(fault) =
                             link.linkup_tracker.process_event(&())
                         {
                             self.link_set_fault_locked(&mut link, fault)?;
                         }
-                    }
                 } else if !old_state.is_fault() {
                     // If we are in a faulted state, we stay there until the
                     // fault is cleared or the link comes up.  Put another way,
@@ -1825,12 +1824,11 @@ async fn reconcile_link(
         false
     };
 
-    if destroy {
-        if let Err(e) = unplumb_link(switch, &log, &mut link) {
+    if destroy
+        && let Err(e) = unplumb_link(switch, &log, &mut link) {
             error!(log, "failed to unplumb link: {e:?}");
             return;
         }
-    }
 
     if link.config.delete_me {
         switch.free_mac_address(link.config.mac);
@@ -1841,8 +1839,8 @@ async fn reconcile_link(
     }
     drop(links);
 
-    if !link.plumbed.link_created {
-        if let Err(e) = plumb_link(switch, &log, &mut link, &mpn) {
+    if !link.plumbed.link_created
+        && let Err(e) = plumb_link(switch, &log, &mut link, &mpn) {
             error!(log, "Failed to plumb link: {e:?}");
             record_plumb_failure(
                 switch,
@@ -1858,7 +1856,6 @@ async fn reconcile_link(
             }
             return;
         }
-    }
 
     let asic_id = link.asic_port_id;
     if link.config.nat_only != link.plumbed.nat_only {

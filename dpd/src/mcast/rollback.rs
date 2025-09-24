@@ -777,8 +777,8 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         removed_ports: &[MulticastGroupMember],
     ) -> E {
         // Get replication info from original group
-        if let Some(replication_info) = &self.original_group.replication_info {
-            if let Err(rollback_err) = self.rollback_internal_update(
+        if let Some(replication_info) = &self.original_group.replication_info
+            && let Err(rollback_err) = self.rollback_internal_update(
                 added_ports,
                 removed_ports,
                 replication_info,
@@ -790,7 +790,6 @@ impl<'a> GroupUpdateRollbackContext<'a> {
                     "error" => ?rollback_err,
                 );
             }
-        }
         error
     }
 }

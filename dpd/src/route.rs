@@ -107,7 +107,6 @@
 
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
-use std::convert::TryInto;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Bound;
 
@@ -119,7 +118,7 @@ use slog::info;
 
 use crate::freemap;
 use crate::types::{DpdError, DpdResult};
-use crate::{table, Switch};
+use crate::{Switch, table};
 use common::ports::PortId;
 use oxnet::{IpNet, Ipv4Net, Ipv6Net};
 
@@ -234,58 +233,6 @@ impl RouteEntry {
             .iter()
             .map(|target| target.route.clone())
             .collect()
-    }
-}
-
-/// A Vlan identifier, made up of a port, link, and vlan tag.
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone)]
-struct VlanId {
-    // The switch port out which routed traffic is sent.
-    port_id: PortId,
-    // The link out which routed traffic is sent.
-    link_id: LinkId,
-    // Vlan tag - 0 for an untagged network
-    vlan_id: u16,
-}
-
-impl VlanId {
-    fn new(port_id: PortId, link_id: LinkId, vlan_id: u16) -> DpdResult<Self> {
-        if vlan_id > 0 {
-            common::network::validate_vlan(vlan_id)?;
-        }
-        Ok(VlanId {
-            port_id,
-            link_id,
-            vlan_id,
-        })
-    }
-}
-
-impl TryFrom<&Ipv4Route> for VlanId {
-    type Error = DpdError;
-    fn try_from(route: &Ipv4Route) -> DpdResult<Self> {
-        VlanId::new(route.port_id, route.link_id, route.vlan_id.unwrap_or(0))
-    }
-}
-
-impl TryFrom<Ipv4Route> for VlanId {
-    type Error = DpdError;
-    fn try_from(route: Ipv4Route) -> DpdResult<Self> {
-        (&route).try_into()
-    }
-}
-
-impl TryFrom<&Ipv6Route> for VlanId {
-    type Error = DpdError;
-    fn try_from(route: &Ipv6Route) -> DpdResult<Self> {
-        VlanId::new(route.port_id, route.link_id, route.vlan_id.unwrap_or(0))
-    }
-}
-
-impl TryFrom<Ipv6Route> for VlanId {
-    type Error = DpdError;
-    fn try_from(route: Ipv6Route) -> DpdResult<Self> {
-        (&route).try_into()
     }
 }
 
@@ -435,18 +382,18 @@ fn replace_route_targets(
         "replacing targets for {subnet} with: {targets:?}"
     );
     let old_entry = route_data.remove(subnet);
-    if let Some(ref old) = old_entry {
-        if let Err(e) = match subnet {
+    if let Some(ref old) = old_entry
+        && let Err(e) = match subnet {
             IpNet::V4(v4) => table::route_ipv4::delete_route_index(switch, &v4),
             IpNet::V6(v6) => table::route_ipv6::delete_route_index(switch, &v6),
-        } {
-            debug!(
-                switch.log,
-                "failed to delete route index, restoring internal data"
-            );
-            route_data.insert(subnet, old.clone());
-            return Err(e);
         }
+    {
+        debug!(
+            switch.log,
+            "failed to delete route index, restoring internal data"
+        );
+        route_data.insert(subnet, old.clone());
+        return Err(e);
     }
 
     // If the new set of targets is empty, the route has been deleted and there
@@ -587,10 +534,10 @@ async fn add_route(
     let mut route_data = switch.routes.lock().await;
 
     // Adding the same route multiple times is a harmless no-op
-    if let Some(entry) = route_data.get(subnet) {
-        if entry.targets.iter().any(|hop| hop.route == route) {
-            return Ok(());
-        }
+    if let Some(entry) = route_data.get(subnet)
+        && entry.targets.iter().any(|hop| hop.route == route)
+    {
+        return Ok(());
     }
     add_route_locked(switch, &mut route_data, subnet, route, asic_port_id)
 }

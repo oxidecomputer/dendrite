@@ -8,19 +8,19 @@ use std::sync::Arc;
 
 use dpd_api::LinkPath;
 use dpd_types::link::LinkId;
-use dropshot::endpoint;
 use dropshot::HttpError;
 use dropshot::HttpResponseOk;
 use dropshot::HttpResponseUpdatedNoContent;
 use dropshot::Path;
 use dropshot::RequestContext;
 use dropshot::TypedBody;
+use dropshot::endpoint;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::types::DpdError;
 use crate::PortId;
 use crate::Switch;
+use crate::types::DpdError;
 use asic::tofino_asic::serdes;
 use asic::tofino_asic::stats;
 use common::counters::FecRSCounters;
@@ -29,20 +29,6 @@ use common::counters::RMonCounters;
 use common::counters::RMonCountersAll;
 use common::ports::TxEq;
 use common::ports::TxEqSwHw;
-
-/// A logical lane within a link
-pub(crate) type LaneId = u8;
-
-/// Identifies a single logical lane within a link
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub(crate) struct LanePath {
-    /// The switch port on which to operate.
-    pub port_id: PortId,
-    /// The link in the switch port on which to operate.
-    pub link_id: LinkId,
-    /// The lane within the link on which to operate.
-    pub lane_id: LaneId,
-}
 
 /// The FEC counters for a specific link, including its link ID.
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

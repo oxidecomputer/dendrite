@@ -32,8 +32,8 @@ use slog::debug;
 use slog::error;
 use slog::info;
 use tokio::sync::Mutex as TokioMutex;
-use tokio::time::sleep;
 use tokio::time::Duration;
+use tokio::time::sleep;
 
 use crate::macaddrs::BaseMac;
 use crate::port_map::SidecarRevision;
@@ -315,7 +315,7 @@ impl Switch {
     pub fn table_get(
         &self,
         id: table::TableType,
-    ) -> DpdResult<MutexGuard<Table>> {
+    ) -> DpdResult<MutexGuard<'_, Table>> {
         match self.tables.get(&id) {
             Some(table) => Ok(table.lock().unwrap()),
             None => Err("no such table".into()),

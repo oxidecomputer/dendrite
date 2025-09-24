@@ -1956,7 +1956,9 @@ impl Switch {
     /// transceivers.
     ///
     /// If the controller isn't available, an error is returned.
-    pub async fn transceiver_controller(&self) -> DpdResult<LockedController> {
+    pub async fn transceiver_controller(
+        &self,
+    ) -> DpdResult<LockedController<'_>> {
         LockedController::new(&self.transceivers.controller).await
     }
 
@@ -1979,7 +1981,7 @@ impl Switch {
     pub async fn acquire_transceiver_resources(
         &self,
         qsfp_port: QsfpPort,
-    ) -> DpdResult<(LockedController, MutexGuard<SwitchPort>)> {
+    ) -> DpdResult<(LockedController<'_>, MutexGuard<'_, SwitchPort>)> {
         let port_id = PortId::from(qsfp_port);
         let port_lock = self
             .switch_ports

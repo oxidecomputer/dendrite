@@ -13,13 +13,13 @@
 //!
 //! There are two types of multicast groups:
 //! - **External (Overlay) groups**: Entry points for overlay traffic,
-//!     have NAT targets, VLAN IDs, and no direct members. External groups
-//!     reference internal groups via NAT targets to perform the
-//!     actual packet replication and forwarding.
+//!   have NAT targets, VLAN IDs, and no direct members. External groups
+//!   reference internal groups via NAT targets to perform the
+//!   actual packet replication and forwarding.
 //!
 //! - **Internal (Underlay) groups**: Handle actual packet replication to
-//!     members, containing ALL members (either direction - overlay or
-//!     underlay).
+//!   members, containing ALL members (either direction - overlay or
+//!   underlay).
 //!
 //! ### Member Directions
 //!
@@ -76,9 +76,8 @@ use oxnet::Ipv4Net;
 use slog::{debug, error, warn};
 
 use crate::{
-    table,
+    Switch, table,
     types::{DpdError, DpdResult},
-    Switch,
 };
 
 mod rollback;
@@ -97,12 +96,11 @@ impl Drop for ScopedIdInner {
     /// Only return to free pool if not taken and if the free pool still
     /// exists.
     fn drop(&mut self) {
-        if self.0 != 0 {
-            if let Some(free_ids) = self.1.upgrade() {
-                if let Ok(mut pool) = free_ids.lock() {
-                    pool.push(self.0);
-                }
-            }
+        if self.0 != 0
+            && let Some(free_ids) = self.1.upgrade()
+            && let Ok(mut pool) = free_ids.lock()
+        {
+            pool.push(self.0);
         }
     }
 }
@@ -116,7 +114,7 @@ struct ScopedGroupId(Arc<ScopedIdInner>);
 impl ScopedGroupId {
     /// Get the underlying group ID value.
     fn id(&self) -> MulticastGroupId {
-        self.0 .0
+        self.0.0
     }
 }
 
@@ -651,11 +649,9 @@ pub(crate) fn modify_group_external(
                 )
             }
             Some(_) => Ok(()), // Internal group exists but has no replication
-            None => {
-                Err(DpdError::Invalid(format!(
-                    "internal group not found when updating bitmap: internal_ip={internal_ip}, external_group={group_ip}",
-                )))
-            }
+            None => Err(DpdError::Invalid(format!(
+                "internal group not found when updating bitmap: internal_ip={internal_ip}, external_group={group_ip}",
+            ))),
         };
 
         if let Err(e) = bitmap_result {
@@ -881,11 +877,7 @@ pub(crate) fn reset_untagged(s: &Switch) -> DpdResult<()> {
             .iter()
             .filter_map(
                 |(ip, group)| {
-                    if group.tag.is_none() {
-                        Some(*ip)
-                    } else {
-                        None
-                    }
+                    if group.tag.is_none() { Some(*ip) } else { None }
                 },
             )
             .collect::<Vec<_>>()
@@ -1914,8 +1906,8 @@ mod tests {
         // Pool should have all IDs back (minus any that might still be in use)
         let pool_size = {
             let data = mcast_data.lock().unwrap();
-            let pool_len = data.free_group_ids.lock().unwrap().len();
-            pool_len
+
+            data.free_group_ids.lock().unwrap().len()
         };
 
         // Should have close to the original number of IDs
