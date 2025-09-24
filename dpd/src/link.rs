@@ -250,7 +250,7 @@ pub struct Link {
     pub config: LinkConfig,
 
     /// The state of the link as it actually exists in the ASIC layer
-    plumbed: LinkPlumbed,
+    pub(crate) plumbed: LinkPlumbed,
 }
 
 impl From<&Link> for views::Link {
@@ -341,7 +341,7 @@ pub struct LinkConfig {
 // This struct represents the state of the link as it actually exists in the
 // ASIC layer configuration and table entries.
 #[derive(Debug, Clone)]
-struct LinkPlumbed {
+pub(crate) struct LinkPlumbed {
     // Has the link been successfully configured at the ASIC layer?
     link_created: bool,
     // Have we asked the ASIC layer to enable the link
@@ -1803,6 +1803,9 @@ async fn reconcile_link(
                 link.config.autoneg,
                 link.plumbed.autoneg
             );
+            true
+        } else if !link.plumbed.tx_eq_pushed {
+            debug!(log, "tx-eq needs an update, tearing down link",);
             true
         } else {
             false
