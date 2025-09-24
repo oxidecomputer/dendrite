@@ -62,7 +62,7 @@ pub enum Compliance {
 #[derive(Debug, Subcommand)]
 pub enum PortAction {
     /// List links with their enabled status and operational state
-    #[clap(alias = "ls")]
+    #[clap(visible_alias = "ls")]
     List {
         /// Link pattern to match. Can be specific link like "rear0/0", or substring pattern
         pattern: Option<String>,
@@ -71,7 +71,7 @@ pub enum PortAction {
         all: bool,
     },
     /// Enable links (bring them up)
-    #[clap(alias = "on")]
+    #[clap(visible_alias = "on")]
     Up {
         /// Link pattern to match. Can be specific link like "rear0/0", or substring pattern
         pattern: Option<String>,
@@ -80,7 +80,7 @@ pub enum PortAction {
         all: bool,
     },
     /// Disable links (bring them down)
-    #[clap(alias = "off")]
+    #[clap(visible_alias = "off")]
     Down {
         /// Link pattern to match. Can be specific link like "rear0/0", or substring pattern
         pattern: Option<String>,

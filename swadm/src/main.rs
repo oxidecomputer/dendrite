@@ -46,7 +46,7 @@ struct GlobalOpts {
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Print detailed build information about the `dpd` server.
-    #[clap(alias = "build-info")]
+    #[clap(visible_alias = "build-info")]
     DpdBuildInfo,
     Arp {
         #[command(subcommand)]
@@ -68,7 +68,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: counters::P4Counters,
     },
-    #[clap(alias = "sp")]
+    #[clap(visible_alias = "sp")]
     SwitchPort {
         #[command(subcommand)]
         cmd: switchport::SwitchPort,

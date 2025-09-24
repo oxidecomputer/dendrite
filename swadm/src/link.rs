@@ -150,7 +150,7 @@ pub enum Fault {
 #[derive(Debug, Subcommand)]
 pub enum GetSerdes {
     /// Fetch the logical->physical lane mappings for this port
-    #[clap(alias = "map")]
+    #[clap(visible_alias = "map")]
     LaneMap {
         /// The link path, specified as `switch_port/link`.
         ///
@@ -158,7 +158,7 @@ pub enum GetSerdes {
         link_path: LinkPath,
     },
     /// Fetch the speed and encoding configuration for each lane in this port
-    #[clap(alias = "enc")]
+    #[clap(visible_alias = "enc")]
     EncSpeed {
         /// The link path, specified as `switch_port/link`.
         ///
@@ -166,7 +166,7 @@ pub enum GetSerdes {
         link_path: LinkPath,
     },
     /// Fetch the combined autonegotiation / link-training state for this port
-    #[clap(alias = "anlt")]
+    #[clap(visible_alias = "anlt")]
     AnLt {
         /// The link path, specified as `switch_port/link`.
         ///
@@ -181,7 +181,7 @@ pub enum GetSerdes {
         link_path: LinkPath,
     },
     /// Fetch the rx adaptation counts for this port
-    #[clap(alias = "adapt")]
+    #[clap(visible_alias = "adapt")]
     RxAdapt {
         /// The link path, specified as `switch_port/link`.
         ///
@@ -191,7 +191,7 @@ pub enum GetSerdes {
     /// Fetch the tx equalization settings for this port.  This displays both
     /// the initial software setting followed by the current hardware setting in
     /// parenthesis.
-    #[clap(alias = "txeq")]
+    #[clap(visible_alias = "txeq")]
     TxEq {
         /// The link path, specified as `switch_port/link`.
         ///
@@ -199,7 +199,7 @@ pub enum GetSerdes {
         link_path: LinkPath,
     },
     /// Fetch the rx signal info for this port
-    #[clap(alias = "rxsig")]
+    #[clap(visible_alias = "rxsig")]
     RxSig {
         /// The link path, specified as `switch_port/link`.
         ///
@@ -214,7 +214,7 @@ pub enum SetSerdes {
     /// Update the tx equalization settings for this port.  Only the main setting is
     /// required.  All others will default to 0. Note: to set a negative value,
     /// you must use the "=" option syntax.  e.g., "--pre1=-1"
-    #[clap(alias = "txeq")]
+    #[clap(visible_alias = "txeq")]
     TxEq {
         /// The link path, specified as `switch_port/link`.
         ///
@@ -301,7 +301,7 @@ pub enum Link {
     },
 
     /// Delete a link on a switch port.
-    #[clap(alias = "del")]
+    #[clap(visible_alias = "del")]
     Delete {
         /// The link path, specified as `switch_port/link`.
         ///
@@ -310,7 +310,7 @@ pub enum Link {
     },
 
     /// List all links on all switch ports.
-    #[clap(alias = "ls")]
+    #[clap(visible_alias = "ls")]
     ListAll {
         /// Provide machine-parseable output.
         #[clap(short, long, requires("fields"))]
@@ -372,7 +372,7 @@ pub enum Link {
         /// The link to get the history of.
         link: LinkPath,
         /// Display raw timestamps rather than relative
-        #[clap(long, alias = "R")]
+        #[clap(long, visible_alias = "R")]
         raw: bool,
         /// Display history from oldest event to newest event
         #[clap(long, short)]
@@ -389,13 +389,13 @@ pub enum Link {
     },
 
     /// Display counters related to the link.
-    #[clap(aliases = ["ctr", "co"])]
+    #[clap(visible_aliases = ["ctr", "co"])]
     Counters {
         #[command(subcommand)]
         cmd: LinkCounters,
     },
 
-    #[clap(alias = "sd")]
+    #[clap(visible_alias = "sd")]
     Serdes {
         #[command(subcommand)]
         cmd: Serdes,
@@ -404,46 +404,57 @@ pub enum Link {
     /// Use the mechanism omicron uses to set up a link
     Apply {
         /// The link path
+        #[clap(long)]
         link: LinkPath,
         /// Dpd tag to use
+        #[clap(long)]
         tag: String,
         /// The first lane of the port to use for the new link
+        #[clap(long)]
         lane: Option<types::LinkId>,
         /// The requested speed of the link.
+        #[clap(long)]
         speed: PortSpeed,
         /// The requested forward-error correction method.  If this is None, the
         /// standard FEC for the underlying media will be applied if it can be
         /// determined.
+        #[clap(long)]
         fec: Option<PortFec>,
         /// Whether the link is configured to autonegotiate with its peer during
         /// link training.
         ///
         /// This is generally only true for backplane links, and defaults to
+        #[clap(long)]
         autoneg: bool,
         /// Whether the link is configured in KR mode, an electrical specification
         /// generally only true for backplane link.
         ///
+        #[clap(long)]
         kr: bool,
 
-        /// Transmit equalization precursor 1.
+        /// Uniform equalization parameter to apply to all cursors.
         #[clap(long)]
-        tx_eq_pre1: Option<i32>,
+        tx_eq: Option<i32>,
+
+        /// Transmit equalization precursor 1.
+        #[clap(long, conflicts_with = "tx_eq")]
+        pre1: Option<i32>,
 
         /// Transmit equalization precursor 2.
-        #[clap(long)]
-        tx_eq_pre2: Option<i32>,
+        #[clap(long, conflicts_with = "tx_eq")]
+        pre2: Option<i32>,
 
         /// Transmit equalization main precursor.
-        #[clap(long)]
-        tx_eq_main: Option<i32>,
+        #[clap(long, conflicts_with = "tx_eq")]
+        main: Option<i32>,
 
         /// Transmit equalization postcursor 1.
-        #[clap(long)]
-        tx_eq_post1: Option<i32>,
+        #[clap(long, conflicts_with = "tx_eq")]
+        post1: Option<i32>,
 
         /// Transmit equalization postcursor 2.
-        #[clap(long)]
-        tx_eq_post2: Option<i32>,
+        #[clap(long, conflicts_with = "tx_eq")]
+        post2: Option<i32>,
     },
 }
 
@@ -489,12 +500,12 @@ pub enum LinkProp {
     /// The error-correction scheme for the link.
     Fec,
     /// Fetch whether autonegotiation is enabled for the link.
-    #[clap(alias = "an")]
+    #[clap(visible_alias = "an")]
     Autoneg,
     /// Fetch whether nat-only restrictions are enabled for the link.
     NatOnly,
     /// Fetch whether the link is enabled.
-    #[clap(alias = "ena")]
+    #[clap(visible_alias = "ena")]
     Enabled,
     /// Fetch the link state.
     State,
@@ -504,7 +515,7 @@ pub enum LinkProp {
         family: Option<IpFamily>,
     },
     /// Fetch whether the link is configured for IPv6
-    #[clap(alias = "ipv6")]
+    #[clap(visible_alias = "ipv6")]
     Ipv6Enabled,
     /// Fetch the PRBS mode for the link.
     Prbs,
@@ -517,17 +528,17 @@ pub enum SetLinkProp {
     /// Set the KR mode for the link.
     Kr { kr: bool },
     /// Set whether autonegotiation is enabled for the link.
-    #[clap(alias = "an")]
+    #[clap(visible_alias = "an")]
     Autoneg { autoneg: bool },
     /// Set whether nat-only restrictions are enabled for the link.
     NatOnly { nat_only: bool },
     /// Set whether the link is enabled.
-    #[clap(alias = "ena")]
+    #[clap(visible_alias = "ena")]
     Enabled { enabled: bool },
     /// Assign an IP address to the link.
     Ip { ip: IpAddr },
     /// Set  whether the link is configured for IPv6
-    #[clap(alias = "ipv6")]
+    #[clap(visible_alias = "ipv6")]
     Ipv6Enabled { enabled: bool },
     /// Set the PRBS mode for the link. (7, 9, 11, 15, 23, 31, or mission/off)
     Prbs { prbs: PortPrbsMode },
@@ -1978,31 +1989,38 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
             fec,
             autoneg,
             kr,
-            tx_eq_pre1,
-            tx_eq_pre2,
-            tx_eq_main,
-            tx_eq_post1,
-            tx_eq_post2,
+            tx_eq,
+            pre1,
+            pre2,
+            main,
+            post1,
+            post2,
         } => {
             let port_id = &link.port_id;
             let mut body = types::PortSettings {
                 links: HashMap::default(),
             };
 
-            let tx_eq = if tx_eq_pre1.is_none()
-                && tx_eq_pre2.is_none()
-                && tx_eq_main.is_none()
-                && tx_eq_post1.is_none()
-                && tx_eq_post2.is_none()
+            let txeq = if pre1.is_none()
+                && pre2.is_none()
+                && main.is_none()
+                && post1.is_none()
+                && post2.is_none()
             {
-                None
+                tx_eq.map(|x| types::TxEq {
+                    pre1: Some(x),
+                    pre2: Some(x),
+                    main: Some(x),
+                    post1: Some(x),
+                    post2: Some(x),
+                })
             } else {
                 Some(types::TxEq {
-                    pre1: tx_eq_pre1,
-                    pre2: tx_eq_pre2,
-                    main: tx_eq_main,
-                    post1: tx_eq_post1,
-                    post2: tx_eq_post2,
+                    pre1,
+                    pre2,
+                    main,
+                    post1,
+                    post2,
                 })
             };
             body.links.insert(
@@ -2015,7 +2033,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                         kr,
                         lane,
                         speed: speed.into(),
-                        tx_eq,
+                        tx_eq: txeq,
                     },
                 },
             );

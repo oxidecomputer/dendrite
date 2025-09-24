@@ -27,7 +27,7 @@ use crate::LinkPath;
 /// manage the L3 routing table
 pub enum Route {
     /// list all routes
-    #[clap(alias = "ls")]
+    #[clap(visible_alias = "ls")]
     List {
         /// IPv4 or IPv6
         family: Option<IpFamily>,
@@ -54,7 +54,7 @@ pub enum Route {
         gw: IpAddr,
         /// If specified, this indicates the VLAN tag that will be applied to
         /// packets forwarded across this route.
-        #[clap(alias = "vlan")]
+        #[clap(visible_alias = "vlan")]
         vlan_id: Option<u16>,
     },
     /// delete one route

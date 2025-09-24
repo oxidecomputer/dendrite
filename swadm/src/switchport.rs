@@ -147,7 +147,7 @@ fn print_backplane_map_fields() {
 #[derive(Debug, Subcommand)]
 pub enum SwitchPort {
     /// List all switch ports.
-    #[clap(alias = "ls")]
+    #[clap(visible_alias = "ls")]
     List {
         /// Limit output to those ports containing the provided name.
         ///
@@ -156,10 +156,10 @@ pub enum SwitchPort {
         name: Option<String>,
     },
     /// Fetch the free MAC lanes in the port.
-    #[clap(alias = "avail")]
+    #[clap(visible_alias = "avail")]
     Free,
     /// Manage the Sidecar QSFP transceivers.
-    #[clap(aliases = ["xcvr", "txr"])]
+    #[clap(visible_aliases = ["xcvr", "txr"])]
     Transceiver {
         #[command(subcommand)]
         cmd: Transceiver,
@@ -179,7 +179,7 @@ pub enum SwitchPort {
     /// Modules may be turned to manual management mode, which allows the
     /// operator to explicitly control their power. The software will not change
     /// the power of such a module automatically.
-    #[clap(aliases = ["mgmt", "mode"])]
+    #[clap(visible_aliases = ["mgmt", "mode"])]
     ManagementMode {
         /// The QSFP port to operate on.
         #[clap(value_parser = parse_qsfp_port_id)]
@@ -188,7 +188,7 @@ pub enum SwitchPort {
     /// Set the management mode for a switch port's transceiver.
     ///
     /// See the help for `management-mode` for details.
-    #[clap(aliases = ["set-mgmt", "set-mode"])]
+    #[clap(visible_aliases = ["set-mgmt", "set-mode"])]
     SetManagementMode {
         /// The QSFP port to operate on.
         #[clap(value_parser = parse_qsfp_port_id)]
@@ -231,7 +231,7 @@ impl From<ManagementMode> for types::ManagementMode {
 #[derive(Debug, Subcommand, Clone)]
 pub enum Transceiver {
     /// List basic transceiver information.
-    #[clap(alias = "ls")]
+    #[clap(visible_alias = "ls")]
     List,
     /// Get basic transceiver information about one transceiver.
     Get {
@@ -260,12 +260,14 @@ pub enum Transceiver {
         state: types::PowerState,
     },
     /// Fetch the environmental monitoring data for a transceiver.
+    #[clap(visible_alias = "mon")]
     Monitors {
         /// The QSFP port to fetch the transceiver monitoring data from.
         #[clap(value_parser = parse_port_id)]
         port_id: PortId,
     },
     /// Fetch the state of the datapath for a transceiver.
+    #[clap(visible_alias = "dp")]
     Datapath {
         /// The QSFP port to fetch the transceiver datapath from.
         #[clap(value_parser = parse_port_id)]
@@ -277,7 +279,7 @@ pub enum Transceiver {
 #[derive(Debug, Subcommand)]
 pub enum Led {
     /// List the state of all LEDs.
-    #[clap(alias = "ls")]
+    #[clap(visible_alias = "ls")]
     List,
     /// Get the state of a single LED.
     Get {

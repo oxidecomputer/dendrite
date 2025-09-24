@@ -23,7 +23,7 @@ use dpd_client::types;
 /// manage NAT reservations
 pub enum Nat {
     /// list all NAT reservations
-    #[clap(alias = "ls")]
+    #[clap(visible_alias = "ls")]
     List {
         /// limit to the given external IP address",
         #[clap(short = 'e')]

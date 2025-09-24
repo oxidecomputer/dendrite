@@ -22,7 +22,7 @@ use crate::counters::get_counter_type;
 #[derive(Debug, Subcommand)]
 /// Access the raw contents of the tables used by the P4 program.
 pub enum Table {
-    #[clap(alias = "ls")]
+    #[clap(visible_alias = "ls")]
     /// List the names of the dynamic p4 tables.
     List,
     /// Fetch the data programmed into the specified table.
@@ -42,7 +42,7 @@ pub enum Table {
         name: String,
     },
     /// Fetch any counter data associated with the specified table.
-    #[clap(alias = "ctrs")]
+    #[clap(visible_alias = "ctrs")]
     Counters {
         #[clap(short = 'p')]
         /// Display the data in a parseable format rather then user-friendly.
