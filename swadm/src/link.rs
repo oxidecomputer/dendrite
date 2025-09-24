@@ -4,6 +4,7 @@
 //
 // Copyright 2025 Oxide Computer Company
 
+use std::collections::HashMap;
 use std::io::{Write, stdout};
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -402,6 +403,10 @@ pub enum Link {
 
     /// Use the mechanism omicron uses to set up a link
     Apply {
+        /// The link path
+        link: LinkPath,
+        /// Dpd tag to use
+        tag: String,
         /// The first lane of the port to use for the new link
         lane: Option<types::LinkId>,
         /// The requested speed of the link.
@@ -420,11 +425,24 @@ pub enum Link {
         ///
         kr: bool,
 
-        /// Transceiver equalization adjustment parameters.
-        tx_eq_pre2: Option<i32>,
+        /// Transmit equalization precursor 1.
+        #[clap(long)]
         tx_eq_pre1: Option<i32>,
+
+        /// Transmit equalization precursor 2.
+        #[clap(long)]
+        tx_eq_pre2: Option<i32>,
+
+        /// Transmit equalization main precursor.
+        #[clap(long)]
         tx_eq_main: Option<i32>,
+
+        /// Transmit equalization postcursor 1.
+        #[clap(long)]
         tx_eq_post1: Option<i32>,
+
+        /// Transmit equalization postcursor 2.
+        #[clap(long)]
         tx_eq_post2: Option<i32>,
     },
 }
@@ -1953,18 +1971,58 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
         },
 
         Link::Apply {
-            lane: _,
-            speed: _,
-            fec: _,
-            autoneg: _,
-            kr: _,
-            tx_eq_pre2: _,
-            tx_eq_pre1: _,
-            tx_eq_main: _,
-            tx_eq_post1: _,
-            tx_eq_post2: _,
+            link,
+            tag,
+            lane,
+            speed,
+            fec,
+            autoneg,
+            kr,
+            tx_eq_pre1,
+            tx_eq_pre2,
+            tx_eq_main,
+            tx_eq_post1,
+            tx_eq_post2,
         } => {
-            todo!()
+            let port_id = &link.port_id;
+            let mut body = types::PortSettings {
+                links: HashMap::default(),
+            };
+
+            let tx_eq = if tx_eq_pre1.is_none()
+                && tx_eq_pre2.is_none()
+                && tx_eq_main.is_none()
+                && tx_eq_post1.is_none()
+                && tx_eq_post2.is_none()
+            {
+                None
+            } else {
+                Some(types::TxEq {
+                    pre1: tx_eq_pre1,
+                    pre2: tx_eq_pre2,
+                    main: tx_eq_main,
+                    post1: tx_eq_post1,
+                    post2: tx_eq_post2,
+                })
+            };
+            body.links.insert(
+                String::from("0"),
+                types::LinkSettings {
+                    addrs: Vec::default(),
+                    params: types::LinkCreate {
+                        autoneg,
+                        fec: fec.map(|f| f.into()),
+                        kr,
+                        lane,
+                        speed: speed.into(),
+                        tx_eq,
+                    },
+                },
+            );
+            client
+                .port_settings_apply(port_id, Some(tag.as_str()), &body)
+                .await
+                .context("port settings apply failed")?;
         }
     }
     Ok(())
