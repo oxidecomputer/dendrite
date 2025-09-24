@@ -10,9 +10,9 @@ use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::ops::Bound;
 
+use crate::Switch;
 use crate::table::nat;
 use crate::types::{DpdError, DpdResult};
-use crate::Switch;
 use common::nat::{Ipv4Nat, Ipv6Nat, NatTarget};
 
 trait PortRange {
@@ -280,8 +280,7 @@ pub fn set_ipv6_mapping(
                 None => {
                     trace!(
                         switch.log,
-                        "unable to add nat entry {}: conflicting mapping",
-                        full
+                        "unable to add nat entry {}: conflicting mapping", full
                     );
                     return Err(DpdError::Exists("conflicting mapping".into()));
                 }
@@ -479,10 +478,7 @@ pub fn clear_ipv4_mapping(
     let mut nat = switch.nat.lock().unwrap();
     trace!(
         switch.log,
-        "clearing nat entry covering {}/{}-{}",
-        nat_ip,
-        low,
-        high
+        "clearing nat entry covering {}/{}-{}", nat_ip, low, high
     );
 
     if let Some(mappings) = nat.ipv4_mappings.get_mut(&nat_ip) {
@@ -521,10 +517,7 @@ pub fn clear_overlapping_ipv4_mappings(
     let mut nat = switch.nat.lock().unwrap();
     trace!(
         switch.log,
-        "clearing all nat entries overlapping with {}/{}-{}",
-        nat_ip,
-        low,
-        high
+        "clearing all nat entries overlapping with {}/{}-{}", nat_ip, low, high
     );
 
     if let Some(mappings) = nat.ipv4_mappings.get_mut(&nat_ip) {
@@ -579,11 +572,11 @@ pub fn reset_ipv4(switch: &Switch) -> DpdResult<()> {
     }
 }
 
-pub fn set_ipv4_nat_generation(switch: &Switch, gen: i64) {
+pub fn set_ipv4_nat_generation(switch: &Switch, r#gen: i64) {
     let mut nat = switch.nat.lock().unwrap();
 
     debug!(switch.log, "setting nat generation");
-    nat.ipv4_generation = gen;
+    nat.ipv4_generation = r#gen;
 }
 
 pub fn get_ipv4_nat_generation(switch: &Switch) -> i64 {

@@ -771,7 +771,7 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_presence_mask(
     port_1_32: *mut u32,
     port_33_64: *mut u32,
     cpu_port: *mut u32,
-) -> c_int {
+) -> c_int { unsafe {
     let Some((backplane, qsfp)) =
         send_bitmask_request(SdeTransceiverRequest::PresenceMask)
     else {
@@ -785,7 +785,7 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_presence_mask(
     // CPU port is always present.
     *cpu_port = !0;
     0
-}
+}}
 
 /// Return the interrupt status of each QSFP module.
 ///
@@ -800,7 +800,7 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_int_mask(
     port_1_32: *mut u32,
     port_33_64: *mut u32,
     cpu_port: *mut u32,
-) -> c_int {
+) -> c_int { unsafe {
     let Some((backplane, qsfp)) =
         send_bitmask_request(SdeTransceiverRequest::InterruptMask)
     else {
@@ -814,7 +814,7 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_int_mask(
     // Never interrupts on CPU port.
     *cpu_port = !0;
     0
-}
+}}
 
 /// Return the low-power mode of each QSFP module.
 ///
@@ -829,7 +829,7 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_lpmode_mask(
     port_1_32: *mut u32,
     port_33_64: *mut u32,
     cpu_port: *mut u32,
-) -> c_int {
+) -> c_int { unsafe {
     let Some((backplane, qsfp)) =
         send_bitmask_request(SdeTransceiverRequest::LpModeMask)
     else {
@@ -843,7 +843,7 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_lpmode_mask(
     // CPU port is always in high-power mode.
     *cpu_port = 0;
     0
-}
+}}
 
 /// Set the low-power mode of a QSFP module.
 ///

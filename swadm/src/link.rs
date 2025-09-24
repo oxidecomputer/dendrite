@@ -4,12 +4,12 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::net::IpAddr;
 use std::str::FromStr;
 
-use anyhow::bail;
 use anyhow::Context;
+use anyhow::bail;
 use clap::{Parser, Subcommand};
 use colored::*;
 use futures::stream::TryStreamExt;
@@ -21,13 +21,13 @@ use common::ports::PortFec;
 use common::ports::PortMedia;
 use common::ports::PortPrbsMode;
 use common::ports::PortSpeed;
-use dpd_client::types;
 use dpd_client::Client;
+use dpd_client::types;
 
-use crate::parse_port_id;
-use crate::switchport::SwitchId;
 use crate::IpFamily;
 use crate::LinkPath;
+use crate::parse_port_id;
+use crate::switchport::SwitchId;
 
 #[derive(Debug, Subcommand)]
 /// Link-specific statistics
@@ -492,11 +492,13 @@ async fn link_pcs_counters(
     maybe_link: Option<LinkPath>,
 ) -> anyhow::Result<()> {
     let counters = if let Some(link) = maybe_link {
-        vec![client
-            .pcs_counters_get(&link.port_id, &link.link_id)
-            .await
-            .context("failed to get PCS counters")
-            .map(|r| r.into_inner())?]
+        vec![
+            client
+                .pcs_counters_get(&link.port_id, &link.link_id)
+                .await
+                .context("failed to get PCS counters")
+                .map(|r| r.into_inner())?,
+        ]
     } else {
         let mut counters = client
             .pcs_counters_list()
@@ -534,7 +536,7 @@ async fn link_pcs_counters(
             .bip_errors_per_pcs_lane
             .iter()
             .enumerate()
-            .filter(|(_, &cnt)| cnt > 0)
+            .filter(|&(_, &cnt)| cnt > 0)
             .map(|(i, cnt)| format!("{i}: {cnt}"))
             .collect();
         let bip = match non_zero.len() {
@@ -635,11 +637,13 @@ async fn link_up_counters(
     maybe_link: Option<LinkPath>,
 ) -> anyhow::Result<()> {
     let counters = if let Some(link) = maybe_link {
-        vec![client
-            .link_up_counters_get(&link.port_id, &link.link_id)
-            .await
-            .map(|r| r.into_inner())
-            .context("failed to get link-up counters")?]
+        vec![
+            client
+                .link_up_counters_get(&link.port_id, &link.link_id)
+                .await
+                .map(|r| r.into_inner())
+                .context("failed to get link-up counters")?,
+        ]
     } else {
         client
             .link_up_counters_list()

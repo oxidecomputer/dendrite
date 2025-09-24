@@ -370,11 +370,10 @@ impl TryFrom<&ValueTypes> for u32 {
     fn try_from(v: &ValueTypes) -> Result<Self, Self::Error> {
         let mask = (1u64 << 32) - 1;
 
-        if let ValueTypes::U64(v) = v {
-            if v & mask == *v {
+        if let ValueTypes::U64(v) = v
+            && v & mask == *v {
                 return Ok((v & mask) as u32);
             }
-        }
 
         Err("value not 32 bits")
     }
@@ -400,11 +399,10 @@ impl TryFrom<&ValueTypes> for u8 {
     fn try_from(v: &ValueTypes) -> Result<Self, Self::Error> {
         let mask = (1u64 << 8) - 1;
 
-        if let ValueTypes::U64(v) = v {
-            if v & mask == *v {
+        if let ValueTypes::U64(v) = v
+            && v & mask == *v {
                 return Ok((v & mask) as u8);
             }
-        }
 
         Err("value not 8 bits")
     }

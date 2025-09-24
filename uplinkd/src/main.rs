@@ -100,11 +100,10 @@ fn interface_vlan_id(iface: &str) -> (String, Option<u16>) {
     let fields: Vec<&str> = iface.split('.').collect();
 
     let mut rval = None;
-    if fields.len() == 2 {
-        if let Ok(Some(vlan_id)) = parse_vlan_id(fields[1]) {
+    if fields.len() == 2
+        && let Ok(Some(vlan_id)) = parse_vlan_id(fields[1]) {
             rval = Some(vlan_id);
         }
-    }
     (fields[0].to_string(), rval)
 }
 
@@ -467,8 +466,8 @@ async fn reconcile_interfaces(g: &mut Global) {
     // listed in SMF.  We create any missing vlan links.
     let desired_ifaces: Vec<String> = g.desired.keys().cloned().collect();
     for iface in &desired_ifaces {
-        if let Entry::Vacant(e) = g.current.entry(iface.to_string()) {
-            if let (link, Some(vlan_id)) = interface_vlan_id(iface) {
+        if let Entry::Vacant(e) = g.current.entry(iface.to_string())
+            && let (link, Some(vlan_id)) = interface_vlan_id(iface) {
                 info!(g.log, "creating vlan link {iface}");
                 if let Err(e) =
                     illumos::vlan_create(&link, vlan_id, iface).await
@@ -484,7 +483,6 @@ async fn reconcile_interfaces(g: &mut Global) {
                 // fail.
                 e.insert(BTreeMap::new());
             }
-        }
     }
 }
 
@@ -505,13 +503,11 @@ async fn reconcile(g: &mut Global) {
         let mut max_uplink = 0;
         let uplink_prefix = format!("{iface}/uplink");
         for addrobj in current_addrs.keys() {
-            if let Some(idx) = addrobj.strip_prefix(&uplink_prefix) {
-                if let Ok(idx) = idx.parse::<u32>() {
-                    if idx > max_uplink {
+            if let Some(idx) = addrobj.strip_prefix(&uplink_prefix)
+                && let Ok(idx) = idx.parse::<u32>()
+                    && idx > max_uplink {
                         max_uplink = idx;
                     }
-                }
-            }
         }
 
         // Iterate over all of the addresses assigned to this interface.

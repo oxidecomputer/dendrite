@@ -953,11 +953,10 @@ pub async fn switch_cmd(
     match switch_port {
         SwitchPort::List { name } => {
             for p in client.port_list().await?.into_inner() {
-                if let Some(name) = name.as_ref() {
-                    if !p.to_string().contains(name) {
+                if let Some(name) = name.as_ref()
+                    && !p.to_string().contains(name) {
                         continue;
                     }
-                }
                 println!("{}", p)
             }
         }

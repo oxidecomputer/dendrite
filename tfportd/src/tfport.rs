@@ -152,11 +152,9 @@ pub async fn tfport_delete(g: &Global, link: &str) -> anyhow::Result<()> {
     if let Err(e) = vlans::vlans_cleanup(g, link)
         .await
         .context("failed to clean up vlans on {link}")
-    {
-        if err.is_none() {
+        && err.is_none() {
             err = Some(e);
         }
-    }
 
     if let Some(asic_id) = g.tfport_to_asic.lock().unwrap().get(link) {
         packet_queue::ensure_queue_removed(g, *asic_id);
@@ -179,11 +177,9 @@ pub async fn tfport_delete(g: &Global, link: &str) -> anyhow::Result<()> {
     if let Err(e) = illumos::tfport_delete(link)
         .await
         .context("failed to delete tport {link}")
-    {
-        if err.is_none() {
+        && err.is_none() {
             err = Some(e);
         }
-    }
     match err {
         Some(e) => Err(e),
         None => Ok(()),
@@ -220,11 +216,10 @@ pub async fn tfport_ensure(
     }
 
     // If the tfport is the vlan link, ensure that the vlans are created.
-    if let Some(vlan_link) = &g.vlan_link {
-        if tfport == vlan_link {
+    if let Some(vlan_link) = &g.vlan_link
+        && tfport == vlan_link {
             vlans::ensure_vlans(g, tfport).await?;
         }
-    }
 
     packet_queue::ensure_queue_exists(g, tfport, link.asic_id);
 

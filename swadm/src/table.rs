@@ -115,11 +115,10 @@ async fn table_dump(
         .unwrap();
     }
     for entry in &t.entries {
-        if let Some(filter) = &action_filter {
-            if &entry.action != filter {
+        if let Some(filter) = &action_filter
+            && &entry.action != filter {
                 continue;
             }
-        }
 
         let keys: Vec<String> = schema
             .keys

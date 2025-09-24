@@ -329,7 +329,7 @@ pub fn register_handler(
         None => Err(AsicError::Uninitialized(
             "register_handler() called with no callback state".into(),
         )),
-        Some(ref mut cb) => {
+        Some(cb) => {
             cb.update_tx = Some(update_tx);
             Ok(())
         }

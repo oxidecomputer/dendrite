@@ -64,17 +64,17 @@ use libc::c_int;
 use libc::c_uint;
 use libc::c_void;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_qsfp_init(_: *mut c_void) -> c_int {
     panic!();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_detect_qsfp(_module: c_uint) -> bool {
     panic!();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_qsfp_read_module(
     _module: c_uint,
     _offset: c_int,
@@ -84,7 +84,7 @@ pub extern "C" fn bf_pltfm_qsfp_read_module(
     panic!();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_qsfp_write_module(
     _module: c_uint,
     _offset: c_int,
@@ -94,7 +94,7 @@ pub extern "C" fn bf_pltfm_qsfp_write_module(
     panic!();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bf_pltfm_qsfp_get_presence_mask(
     _port_1_32: *mut u32,
     _port_33_64: *mut u32,
@@ -103,7 +103,7 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_presence_mask(
     panic!()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bf_pltfm_qsfp_get_int_mask(
     _port_1_32: *mut u32,
     _port_33_64: *mut u32,
@@ -112,7 +112,7 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_int_mask(
     panic!();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bf_pltfm_qsfp_get_lpmode_mask(
     _port_1_32: *mut u32,
     _port_33_64: *mut u32,
@@ -121,7 +121,7 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_lpmode_mask(
     panic!()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_qsfp_set_lpmode(
     _module: c_int,
     _lp_mode: bool,
@@ -129,7 +129,7 @@ pub extern "C" fn bf_pltfm_qsfp_set_lpmode(
     panic!();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_qsfp_module_reset(
     _module: c_int,
     _reset: bool,

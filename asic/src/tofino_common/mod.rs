@@ -359,8 +359,8 @@ impl BfRt {
             }
         }
 
-        if let Some(data) = &t.data {
-            if !data.is_empty() {
+        if let Some(data) = &t.data
+            && !data.is_empty() {
                 println!("  data:");
                 for d in data {
                     let s = &d.singleton;
@@ -372,7 +372,6 @@ impl BfRt {
                     );
                 }
             }
-        }
     }
 
     pub fn get_table(

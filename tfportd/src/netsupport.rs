@@ -9,7 +9,7 @@ use std::net::{IpAddr, Ipv6Addr};
 
 use anyhow::anyhow;
 
-extern "C" {
+unsafe extern "C" {
     pub fn link_local_get(
         ifname: *const ::std::os::raw::c_char,
         addr: *mut u8,
