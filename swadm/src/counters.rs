@@ -4,23 +4,24 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::io::stdout;
 use std::io::Write;
+use std::io::stdout;
 
-use anyhow::anyhow;
 use anyhow::Context;
+use anyhow::anyhow;
 use clap::Subcommand;
 use colored::*;
 use tabwriter::TabWriter;
 
-use dpd_client::types;
 use dpd_client::Client;
+use dpd_client::types;
 
 #[derive(Debug, Subcommand)]
-/// Report counter data collected by the P4 program.  These counters are
-/// primarily intended to be used to debug the P4 code rather than diagnosing
-/// run-time issues with a connected sidecar.  For non-development debugging,
-/// you probably want "swadm link counters".
+/// Report counter data collected by the P4 program.
+///
+/// These counters are primarily intended to be used to debug the P4 code
+/// rather than diagnosing run-time issues with a connected sidecar. For
+/// non-development debugging, you probably want "swadm link counters".
 pub enum P4Counters {
     /// list all available counters
     List,

@@ -12,10 +12,10 @@ use anyhow::Context;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use dpd_client::default_port;
-use dpd_client::types;
 use dpd_client::Client;
 use dpd_client::ClientState;
+use dpd_client::default_port;
+use dpd_client::types;
 
 mod addr;
 mod arp;
@@ -27,17 +27,16 @@ mod route;
 mod switchport;
 mod table;
 
+/// provides a command-line interface to the Oxide Switch Controller
 #[derive(Debug, Parser)]
-#[command(
-    name = "swadm",
-    about = "provides a command-line interface to the Oxide Switch Controller",
-    version = "0.0.1"
-)]
+#[command(name = "swadm", version = "0.0.1")]
 struct GlobalOpts {
-    #[arg(short, long, help = "switch controller's hostname or IP address")]
+    /// switch controller's hostname or IP address
+    #[arg(long)]
     host: Option<String>,
 
-    #[arg(help = "switch controller's TCP port", short, long)]
+    /// switch controller's TCP port
+    #[arg(long)]
     port: Option<u16>,
 
     #[command(subcommand)]

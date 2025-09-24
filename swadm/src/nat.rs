@@ -5,7 +5,7 @@
 // Copyright 2025 Oxide Computer Company
 
 use std::convert::TryFrom;
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use anyhow::Context;
@@ -16,8 +16,8 @@ use tabwriter::TabWriter;
 
 use common::nat;
 use common::network::MacAddr;
-use dpd_client::types;
 use dpd_client::Client;
+use dpd_client::types;
 
 #[derive(Debug, Subcommand)]
 /// manage NAT reservations
@@ -47,7 +47,7 @@ pub enum Nat {
         #[clap(short = 'l')]
         low: u16,
         /// end of external port range
-        #[clap(short = 'h')]
+        #[clap(short = 'H')]
         high: u16,
         /// internal IP address
         #[clap(short = 'i')]

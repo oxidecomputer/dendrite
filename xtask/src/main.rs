@@ -11,7 +11,7 @@ use std::io::Read;
 use std::path::Path;
 use std::str::FromStr;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod codegen;
@@ -59,8 +59,9 @@ struct Xtasks {
     subcommand: XtaskCommands,
 }
 
+/// dendrite xtask support
 #[derive(Debug, Subcommand)]
-#[clap(name = "xtask", about = "dendrite xtask support")]
+#[clap(name = "xtask")]
 enum XtaskCommands {
     /// compile a p4 program
     Codegen {

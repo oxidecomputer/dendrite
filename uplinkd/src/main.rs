@@ -27,17 +27,17 @@
 //
 // TODO: get repeated log messages under control.
 
-use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::btree_map::Entry;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::anyhow;
 use clap::Parser;
 use libc::c_int;
 use oxnet::IpNet;
@@ -76,12 +76,9 @@ struct Opt {
     log_file: Option<String>,
 
     /// log format
-    #[clap(
-        long,
-        short = 'l',
-        default_value = "human",
-        help = "format logs for 'human' or 'json' consumption"
-    )]
+    ///
+    /// format logs for 'human' or 'json' consumption
+    #[clap(long, short = 'l', default_value = "human")]
     log_format: common::logging::LogFormat,
 }
 
@@ -101,9 +98,10 @@ fn interface_vlan_id(iface: &str) -> (String, Option<u16>) {
 
     let mut rval = None;
     if fields.len() == 2
-        && let Ok(Some(vlan_id)) = parse_vlan_id(fields[1]) {
-            rval = Some(vlan_id);
-        }
+        && let Ok(Some(vlan_id)) = parse_vlan_id(fields[1])
+    {
+        rval = Some(vlan_id);
+    }
     (fields[0].to_string(), rval)
 }
 
@@ -189,9 +187,10 @@ fn refresh_smf_config(g: &mut Global) -> Result<()> {
             let (addr, vlan_id) = match parse_uplink_property(&s) {
                 Ok(a) => a,
                 Err(e) => {
-                    error!(g.log,
+                    error!(
+                        g.log,
                         "failed to parse {s} as an uplink address for {link}: {e:?}"
-                        );
+                    );
                     continue;
                 }
             };
@@ -467,22 +466,21 @@ async fn reconcile_interfaces(g: &mut Global) {
     let desired_ifaces: Vec<String> = g.desired.keys().cloned().collect();
     for iface in &desired_ifaces {
         if let Entry::Vacant(e) = g.current.entry(iface.to_string())
-            && let (link, Some(vlan_id)) = interface_vlan_id(iface) {
-                info!(g.log, "creating vlan link {iface}");
-                if let Err(e) =
-                    illumos::vlan_create(&link, vlan_id, iface).await
-                {
-                    error!(g.log, "failed to create vlan link {iface}: {e:?}");
-                }
-
-                // Even if the vlan link creation failed, we will still attempt
-                // to create the desired addresses.  In the best case, the
-                // creation failed because it already exists, so we definitely
-                // want to set up the addresses.  In the worst case, the link
-                // doesn't exist, and the subsequent address creation will also
-                // fail.
-                e.insert(BTreeMap::new());
+            && let (link, Some(vlan_id)) = interface_vlan_id(iface)
+        {
+            info!(g.log, "creating vlan link {iface}");
+            if let Err(e) = illumos::vlan_create(&link, vlan_id, iface).await {
+                error!(g.log, "failed to create vlan link {iface}: {e:?}");
             }
+
+            // Even if the vlan link creation failed, we will still attempt
+            // to create the desired addresses.  In the best case, the
+            // creation failed because it already exists, so we definitely
+            // want to set up the addresses.  In the worst case, the link
+            // doesn't exist, and the subsequent address creation will also
+            // fail.
+            e.insert(BTreeMap::new());
+        }
     }
 }
 
@@ -505,9 +503,10 @@ async fn reconcile(g: &mut Global) {
         for addrobj in current_addrs.keys() {
             if let Some(idx) = addrobj.strip_prefix(&uplink_prefix)
                 && let Ok(idx) = idx.parse::<u32>()
-                    && idx > max_uplink {
-                        max_uplink = idx;
-                    }
+                && idx > max_uplink
+            {
+                max_uplink = idx;
+            }
         }
 
         // Iterate over all of the addresses assigned to this interface.
