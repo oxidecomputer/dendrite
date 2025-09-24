@@ -2,7 +2,7 @@
 name = "dpd"
 version = "0.2.0"
 authors = ["nils <nils@oxide.computer>"]
-edition = "2021"
+edition = "2024"
 
 [features]
 tofino_asic = ["asic/tofino_asic"]

@@ -146,7 +146,7 @@ impl fmt::Display for BfSdeLogModule {
 
 /// An FFI-compatible routine that the SDE's C code can call when it has a
 /// message to be logged.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_sys_log_callback(
     module: ::core::ffi::c_uint,
     level: ::core::ffi::c_uint,

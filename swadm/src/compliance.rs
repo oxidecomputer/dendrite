@@ -311,9 +311,9 @@ async fn get_matching_links(
         .into_inner();
 
     // Apply client-side filtering if needed
-    let filtered_links = if !all && pattern.is_some() {
+    let filtered_links = if !all && let Some(user_pattern) = pattern {
         // Filter the qsfp links by user's pattern
-        let user_pattern = pattern.unwrap();
+        //let user_pattern = pattern.unwrap();
         links
             .into_iter()
             .filter(|link| link.to_string().contains(user_pattern))

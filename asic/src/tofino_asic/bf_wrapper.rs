@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use aal::{AsicError, AsicResult, PortUpdate};
 
 use crate::tofino_asic::genpd::*;
-use crate::tofino_asic::{bf_status_t, CheckError, TofinoFamily};
+use crate::tofino_asic::{CheckError, TofinoFamily, bf_status_t};
 
 // State needed to allow callbacks from the SDE to communicate with the
 // mainline dpd code.
@@ -190,7 +190,7 @@ pub(crate) fn send_port_update(callback: &str, update: PortUpdate) {
 // callback will generally be a no-op.  The only exception would be if somebody
 // were using the bf cli to manipulate ports, at which point all bets are off as
 // to what's happening with the port.
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn port_admin_state_cb(
     dev_id: bf_dev_id_t,
     port: bf_dev_port_t,
@@ -214,7 +214,7 @@ extern "C" fn port_admin_state_cb(
 }
 
 // Called whenever a port's link state changes between up and down.
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn port_status_int_cb(
     dev_id: bf_dev_id_t,
     port: bf_dev_port_t,
@@ -238,7 +238,7 @@ extern "C" fn port_status_int_cb(
 }
 
 // Called whenever a port's presence-detect bit changes
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn port_presence_cb(
     dev_id: bf_dev_id_t,
     port: bf_dev_port_t,
@@ -270,7 +270,7 @@ static mut TOFINO_FAMILY: Option<TofinoFamily> = None;
 // This gets called when a tofino device is added to the bf_switchd
 // infrastructure in the SDE.  This should happen exactly once, when we call
 // bf_drv_init() below.  We take this opportunity to do some basic sanity tests.
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn device_add_cb(
     dev_id: bf_dev_id_t,
     dev_family: bf_dev_family_t,
@@ -406,7 +406,7 @@ pub fn bf_init(
                 return Err(crate::tofino_asic::sde_error(
                     "initializing bf context",
                     rval,
-                ))
+                ));
             }
         }
     };

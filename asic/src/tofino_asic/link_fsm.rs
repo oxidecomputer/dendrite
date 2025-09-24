@@ -7,9 +7,9 @@
 use std::convert::TryFrom;
 use std::fmt;
 
+use crate::tofino_asic::TofinoFamily;
 use crate::tofino_asic::bf_wrapper;
 use crate::tofino_asic::genpd;
-use crate::tofino_asic::TofinoFamily;
 use aal::AsicError;
 use aal::AsicResult;
 
@@ -466,7 +466,7 @@ impl fmt::Display for QsfpChannelFsmState {
 
 /// An FFI-compatible routine that the SDE's C code can call when an FSM
 /// transitions from one state to another.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pm_fsm_transition_callback(
     fsm: genpd::bf_fsm_type_t,
     asic_id: u32,

@@ -12,8 +12,8 @@ use bytes::BytesMut;
 
 use crate::PacketResult;
 use crate::ParseBuffer;
-use crate::{checksum, ipv4, ipv6};
 use crate::{Endpoint, Headers, Packet, Protocol};
+use crate::{checksum, ipv4, ipv6};
 
 const TCP_HDR_SZ: usize = 20; // without options
 
@@ -236,7 +236,7 @@ impl Protocol for TcpHdr {
         Ok(hdrs)
     }
 
-    fn gen(
+    fn r#gen(
         src: Endpoint,
         dst: Endpoint,
         _protos: Vec<u16>,

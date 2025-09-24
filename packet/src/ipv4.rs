@@ -10,8 +10,8 @@ use std::net::Ipv4Addr;
 use bytes::{Buf, BufMut, BytesMut};
 
 use crate::PacketResult;
-use crate::{eth, icmp, sidecar, tcp, udp};
 use crate::{Endpoint, Headers, Packet, Protocol};
+use crate::{eth, icmp, sidecar, tcp, udp};
 
 const IPV4_HDR_SZ: usize = 5 * 4; // 5 words with no options
 
@@ -169,7 +169,7 @@ impl Protocol for Ipv4Hdr {
         Ok(hdrs)
     }
 
-    fn gen(
+    fn r#gen(
         src: Endpoint,
         dst: Endpoint,
         mut protos: Vec<u16>,
@@ -178,9 +178,9 @@ impl Protocol for Ipv4Hdr {
         let proto = protos.pop().unwrap_or_default() as u8;
 
         let mut pkt = match proto {
-            IPPROTO_ICMP => icmp::IcmpHdr::gen(src, dst, protos, body)?,
-            IPPROTO_TCP => tcp::TcpHdr::gen(src, dst, protos, body)?,
-            IPPROTO_UDP => udp::UdpHdr::gen(src, dst, protos, body)?,
+            IPPROTO_ICMP => icmp::IcmpHdr::r#gen(src, dst, protos, body)?,
+            IPPROTO_TCP => tcp::TcpHdr::r#gen(src, dst, protos, body)?,
+            IPPROTO_UDP => udp::UdpHdr::r#gen(src, dst, protos, body)?,
             _ => {
                 println!("unsupported ip protocol: {proto}");
                 Packet::new(body)

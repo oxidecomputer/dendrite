@@ -9,8 +9,8 @@ use std::fmt;
 use bytes::{BufMut, BytesMut};
 
 use crate::PacketResult;
-use crate::{udp, Protocol};
 use crate::{Endpoint, Headers, Packet};
+use crate::{Protocol, udp};
 
 pub const GENEVE_UDP_PORT: u16 = 6081;
 const GENEVE_HDR_SZ: usize = 8;
@@ -76,7 +76,7 @@ impl Protocol for GeneveHdr {
         Ok(hdrs)
     }
 
-    fn gen(
+    fn r#gen(
         _src: Endpoint,
         _dst: Endpoint,
         mut protos: Vec<u16>,

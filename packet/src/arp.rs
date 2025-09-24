@@ -10,14 +10,14 @@ use std::net::Ipv4Addr;
 use bytes::BufMut;
 use bytes::BytesMut;
 
-use crate::eth;
-use crate::sidecar;
 use crate::Endpoint;
 use crate::Headers;
 use crate::MacAddr;
 use crate::Packet;
 use crate::PacketResult;
 use crate::Protocol;
+use crate::eth;
+use crate::sidecar;
 
 pub const ARPOP_REQUEST: u16 = 1;
 pub const ARPOP_REPLY: u16 = 2;
@@ -88,7 +88,7 @@ impl Protocol for ArpHdr {
         Ok(hdrs)
     }
 
-    fn gen(
+    fn r#gen(
         src: Endpoint,
         dst: Endpoint,
         mut protos: Vec<u16>,

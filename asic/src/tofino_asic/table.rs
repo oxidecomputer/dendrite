@@ -453,7 +453,7 @@ impl Trigger {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn sync_cb(_tgt: *mut bf_rt_target_t, cookie: *mut c_void) {
     let trigger = unsafe {
         (cookie as *mut Trigger)
@@ -569,7 +569,7 @@ impl Table {
                     break Err(AsicError::Internal(format!(
                         "sync block failed: {:?}",
                         e
-                    )))
+                    )));
                 }
             }
         };
