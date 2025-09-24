@@ -47,6 +47,7 @@ use slog::debug;
 use slog::error;
 use slog::info;
 use slog::o;
+use slog::warn;
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -1652,7 +1653,7 @@ fn plumb_link(
     switch: &Switch,
     log: &slog::Logger,
     link: &mut Link,
-    mpn: &Option<String>,
+    mpn: &str,
 ) -> DpdResult<()> {
     debug!(log, "plumbing link");
     let connector = switch
@@ -1665,12 +1666,7 @@ fn plumb_link(
     // a default value for this transceiver.
     let fec = match link.config.fec {
         Some(fec) => Ok(fec),
-        None => match mpn {
-            None => Err(DpdError::Missing(
-                "Must specify FEC for unrecognized transceiver".to_string(),
-            )),
-            Some(mpn) => switch.qsfp_default_fec(mpn),
-        },
+        None => switch.qsfp_default_fec(mpn),
     }?;
 
     // Create the ASIC-layer's `TofinoPort`.
@@ -1733,7 +1729,7 @@ async fn reconcile_link(
     link_id: LinkId,
 ) {
     let mpn = {
-        let qsfp = switch
+        let qsfp = match switch
             .switch_ports
             .ports
             .get(&port_id)
@@ -1741,11 +1737,21 @@ async fn reconcile_link(
             .lock()
             .await
             .as_qsfp()
-            .cloned();
-        if let Some(qsfp) = qsfp {
-            qsfp_xcvr_mpn(&qsfp).unwrap_or(None)
-        } else {
-            None
+            .cloned()
+        {
+            Some(qsfp) => qsfp,
+            None => {
+                warn!(log, "failed to get qsfp for port {port_id}");
+                return;
+            }
+        };
+
+        match qsfp_xcvr_mpn(&qsfp) {
+            Ok(mpn) => mpn,
+            Err(e) => {
+                warn!(log, "failed to get transceiver MPN {e}");
+                return;
+            }
         }
     };
 

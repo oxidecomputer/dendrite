@@ -326,25 +326,17 @@ impl crate::Switch {
     /// If this port's transceiver has an alternate set of tx_eq default values,
     /// apply them now.  We first check for an explicit override value from the
     /// admin, then for an alternate default for this xcvr type.
-    pub fn push_tx_eq(
-        &self,
-        link: &Link,
-        mpn: &Option<String>,
-    ) -> DpdResult<()> {
+    pub fn push_tx_eq(&self, link: &Link, mpn: &str) -> DpdResult<()> {
         let port_hdl = link.port_hdl;
 
-        if let Some(tx_eq) = match (link.tx_eq, &mpn) {
-            (Some(user_defined), _) => Some(user_defined),
-            (None, Some(mpn)) => self
+        if let Some(tx_eq) = match link.tx_eq {
+            Some(user_defined) => Some(user_defined),
+            None => self
                 .switch_ports
                 .xcvr_defaults
                 .get(mpn)
                 .and_then(|x| x.tx_eq),
-            (_, _) => None,
         } {
-            let mpn = mpn
-                .clone()
-                .unwrap_or_else(|| "unknown transceiver".to_string());
             slog::debug!(
                 self.log,
                 "Applying alternate tx settings for {link} ({mpn}): {tx_eq:?}"

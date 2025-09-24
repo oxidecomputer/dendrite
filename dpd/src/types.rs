@@ -46,7 +46,9 @@ pub enum DpdError {
     NoSuchSwitchPort { port_id: PortId },
     #[error("Link {link_id} does not exist in switch port \"{port_id}\"")]
     NoSuchLink { port_id: PortId, link_id: LinkId },
-    #[error("Address {address} is not associated with port \"{port_id}\" link \"{link_id}\"")]
+    #[error(
+        "Address {address} is not associated with port \"{port_id}\" link \"{link_id}\""
+    )]
     NoSuchAddress {
         port_id: PortId,
         link_id: LinkId,
@@ -77,6 +79,9 @@ pub enum DpdError {
     Transceiver(#[from] TransceiverError),
     #[error("QSFP port \"{qsfp_port}\" has no transceiver")]
     MissingTransceiver { qsfp_port: QsfpPort },
+    /// Usability is currently determined by `check_module_support`.
+    #[error("The transceiver has failed basic operability checks")]
+    UnusableTransciever,
     #[error("Operation only valid in manual management mode")]
     NotInManualMode,
     /// Error encountered while constructing oximter metrics
@@ -209,6 +214,12 @@ impl convert::From<DpdError> for dropshot::HttpError {
             }
             DpdError::Faulted(e) => {
                 dropshot::HttpError::for_bad_request(None, e)
+            }
+            DpdError::UnusableTransciever => {
+                dropshot::HttpError::for_bad_request(
+                    None,
+                    "unusable transciever".to_string(),
+                )
             }
             DpdError::Smf(e) => dropshot::HttpError::for_internal_error(e),
             DpdError::Other(e) => dropshot::HttpError::for_internal_error(e),
