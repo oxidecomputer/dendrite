@@ -498,11 +498,10 @@ fn is_rollback_error(e: &dpd_client::Error<dpd_client::types::Error>) -> bool {
     if e.status() != Some(StatusCode::INTERNAL_SERVER_ERROR) {
         return false;
     }
-    if let dpd_client::Error::ErrorResponse(err) = e {
-        if err.error_code == Some(ROLLBACK_FAILURE_ERROR_CODE.into()) {
+    if let dpd_client::Error::ErrorResponse(err) = e
+        && err.error_code == Some(ROLLBACK_FAILURE_ERROR_CODE.into()) {
             return true;
         }
-    }
     false
 }
 

@@ -117,12 +117,11 @@ impl TableChaos {
         id: &str,
         message: &str,
     ) -> AsicResult<()> {
-        if let Some(value) = self.values.get(id) {
-            if *value >= random() {
+        if let Some(value) = self.values.get(id)
+            && *value >= random() {
                 slog::error!(log, "chaos table error: {}", message);
                 return Err(AsicError::Synthetic(message.into()));
             }
-        }
         Ok(())
     }
 }
