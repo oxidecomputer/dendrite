@@ -19,7 +19,7 @@ fn swadm() -> Command {
 #[ignore]
 fn test_p4_counter_list() {
     let output = swadm()
-        .arg("-h")
+        .arg("-H")
         .arg("[::1]")
         .arg("counters")
         .arg("list")
