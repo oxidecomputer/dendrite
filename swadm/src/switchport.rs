@@ -1171,7 +1171,6 @@ async fn transceivers_cmd(
                                                 .as_ref())
                                     )
                                     .1
-                                    .map(|value| value)
                                     .unwrap_or_else(|| String::from(
                                         UNSUPPORTED
                                     )),
@@ -1184,7 +1183,6 @@ async fn transceivers_cmd(
                                                 .as_ref())
                                     )
                                     .1
-                                    .map(|value| value)
                                     .unwrap_or_else(|| String::from(
                                         UNSUPPORTED
                                     )),
@@ -1197,7 +1195,6 @@ async fn transceivers_cmd(
                                                 .as_ref())
                                     )
                                     .1
-                                    .map(|value| value)
                                     .unwrap_or_else(|| String::from(
                                         UNSUPPORTED
                                     )),
