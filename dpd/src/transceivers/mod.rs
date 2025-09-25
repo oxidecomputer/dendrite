@@ -49,7 +49,7 @@ pub fn qsfp_xcvr_mpn(
                 }
             }
             Some(Transceiver::Unsupported) => {
-                Err(crate::DpdError::UnusableTransciever)
+                Err(crate::DpdError::UnusableTransceiver)
             }
             Some(Transceiver::Faulted(reason)) => {
                 Err(crate::DpdError::Faulted(format!("{reason:?}")))

@@ -81,7 +81,7 @@ pub enum DpdError {
     MissingTransceiver { qsfp_port: QsfpPort },
     /// Usability is currently determined by `check_module_support`.
     #[error("The transceiver has failed basic operability checks")]
-    UnusableTransciever,
+    UnusableTransceiver,
     #[error("Operation only valid in manual management mode")]
     NotInManualMode,
     /// Error encountered while constructing oximter metrics
@@ -215,7 +215,7 @@ impl convert::From<DpdError> for dropshot::HttpError {
             DpdError::Faulted(e) => {
                 dropshot::HttpError::for_bad_request(None, e)
             }
-            DpdError::UnusableTransciever => {
+            DpdError::UnusableTransceiver => {
                 dropshot::HttpError::for_bad_request(
                     None,
                     "unusable transciever".to_string(),
