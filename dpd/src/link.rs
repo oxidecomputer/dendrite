@@ -47,6 +47,7 @@ use slog::debug;
 use slog::error;
 use slog::info;
 use slog::o;
+use slog::warn;
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -1742,8 +1743,18 @@ async fn reconcile_link(
             .await
             .as_qsfp()
             .cloned();
-        if let Some(qsfp) = qsfp {
-            qsfp_xcvr_mpn(&qsfp).unwrap_or(None)
+
+        if let Some(qsfp) = &qsfp {
+            match qsfp_xcvr_mpn(qsfp) {
+                Ok(mpn) => Some(mpn),
+                Err(e) => {
+                    warn!(log, "failed to get MPN for qsfp";
+                        "port" => %port_id,
+                        "error" => %e,
+                    );
+                    return;
+                }
+            }
         } else {
             None
         }

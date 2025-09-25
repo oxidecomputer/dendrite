@@ -28,10 +28,10 @@ cfg_if::cfg_if! {
 /// detected at all, return DpdError::Missing.
 pub fn qsfp_xcvr_mpn(
     #[allow(unused_variables)] qsfp: &QsfpDevice,
-) -> DpdResult<Option<String>> {
+) -> DpdResult<String> {
     #[cfg(feature = "softnpu")]
     {
-        Ok(Some("OXIDESOFTNPU".to_string()))
+        Ok("OXIDESOFTNPU".to_string())
     }
 
     #[cfg(feature = "tofino_asic")]
@@ -41,14 +41,20 @@ pub fn qsfp_xcvr_mpn(
         match &qsfp.transceiver {
             Some(Transceiver::Supported(xcvr_info)) => {
                 if let Some(vendor_info) = &xcvr_info.vendor_info {
-                    Ok(Some(vendor_info.vendor.part.clone()))
+                    Ok(vendor_info.vendor.part.clone())
                 } else {
-                    Ok(None)
+                    Err(crate::DpdError::Missing(
+                        "No vendor data found".to_string(),
+                    ))
                 }
             }
-            // XXX: Is it worth returning different errors for faulted
-            // and/or unsupported transceiver?
-            _ => {
+            Some(Transceiver::Unsupported) => {
+                Err(crate::DpdError::UnusableTransceiver)
+            }
+            Some(Transceiver::Faulted(reason)) => {
+                Err(crate::DpdError::Faulted(format!("{reason:?}")))
+            }
+            None => {
                 Err(crate::DpdError::Missing("no qsfp xcvr found".to_string()))
             }
         }
@@ -56,7 +62,7 @@ pub fn qsfp_xcvr_mpn(
 
     #[cfg(not(any(feature = "tofino_asic", feature = "softnpu",)))]
     {
-        Ok(None)
+        Ok("OXIDEOTHER".to_string())
     }
 }
 
@@ -215,13 +221,13 @@ mod mpn_test {
             transceiver: Some(transceiver),
             management_mode: ManagementMode::Manual,
         };
-        assert_eq!(qsfp_xcvr_mpn(&qsfp).unwrap(), Some("part".to_string()));
+        assert_eq!(qsfp_xcvr_mpn(&qsfp).unwrap(), "part".to_string());
     }
 
     #[test]
     // If a QsfpDevice is found with a transceiver present, but if the VendorInfo
     // has been not yet been sucessfully read from the transceiver, then we would
-    // expect xcvr_mpn() to return Ok(None).
+    // expect xcvr_mpn() to return an error.
     fn test_mpn_missing() {
         let transceiver = Transceiver::Supported(TransceiverInfo {
             vendor_info: None,
@@ -236,7 +242,7 @@ mod mpn_test {
             transceiver: Some(transceiver),
             management_mode: ManagementMode::Manual,
         };
-        assert_eq!(qsfp_xcvr_mpn(&qsfp).unwrap(), None);
+        assert!(qsfp_xcvr_mpn(&qsfp).is_err());
     }
 
     // If a Qsfp port is found without any transceiver detected,
