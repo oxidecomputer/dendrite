@@ -8333,12 +8333,12 @@ dependencies = [
  "anyhow",
  "camino",
  "chrono",
+ "clap 4.5.21",
  "curl",
  "omicron-zone-package",
  "search_path",
  "serde",
  "serde_json",
- "structopt",
  "tokio",
 ]
 
