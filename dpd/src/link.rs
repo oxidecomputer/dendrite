@@ -1748,9 +1748,9 @@ async fn reconcile_link(
             match qsfp_xcvr_mpn(qsfp) {
                 Ok(mpn) => Some(mpn),
                 Err(e) => {
-                    warn!(
-                        log,
-                        "failed to get MPN for qsfp: {e}, port: {port_id}"
+                    warn!(log, "failed to get MPN for qsfp";
+                        "port" => %port_id,
+                        "error" => %e,
                     );
                     return;
                 }

@@ -227,7 +227,7 @@ mod mpn_test {
     #[test]
     // If a QsfpDevice is found with a transceiver present, but if the VendorInfo
     // has been not yet been sucessfully read from the transceiver, then we would
-    // expect xcvr_mpn() to return Ok(None).
+    // expect xcvr_mpn() to return an error.
     fn test_mpn_missing() {
         let transceiver = Transceiver::Supported(TransceiverInfo {
             vendor_info: None,

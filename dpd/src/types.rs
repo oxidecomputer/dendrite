@@ -215,12 +215,10 @@ impl convert::From<DpdError> for dropshot::HttpError {
             DpdError::Faulted(e) => {
                 dropshot::HttpError::for_bad_request(None, e)
             }
-            DpdError::UnusableTransceiver => {
-                dropshot::HttpError::for_bad_request(
-                    None,
-                    "unusable transciever".to_string(),
-                )
-            }
+            DpdError::UnusableTransceiver => dropshot::HttpError::for_unavail(
+                None,
+                "unusable transceiver".to_string(),
+            ),
             DpdError::Smf(e) => dropshot::HttpError::for_internal_error(e),
             DpdError::Other(e) => dropshot::HttpError::for_internal_error(e),
             e @ DpdError::NoSuchSwitchPort { .. } => {
