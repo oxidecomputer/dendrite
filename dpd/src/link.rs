@@ -1969,7 +1969,7 @@ async fn reconcile_link(
             record_plumb_failure(
                 switch,
                 &mut link,
-                &format!("updating PRBS mode to {}", prbs),
+                &format!("updating PRBS mode to {prbs}"),
                 &e,
             );
             error!(log, "Failed to set PRBS: {:?}", e);

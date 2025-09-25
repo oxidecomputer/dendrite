@@ -106,9 +106,9 @@ impl std::fmt::Debug for LinkState {
             LinkState::Up => write!(f, "Up"),
             LinkState::Down => write!(f, "Down"),
             LinkState::ConfigError(detail) => {
-                write!(f, "ConfigError - {:?}", detail)
+                write!(f, "ConfigError - {detail:?}")
             }
-            LinkState::Faulted(reason) => write!(f, "Faulted - {:?}", reason),
+            LinkState::Faulted(reason) => write!(f, "Faulted - {reason:?}"),
             LinkState::Unknown => write!(f, "Unknown"),
         }
     }

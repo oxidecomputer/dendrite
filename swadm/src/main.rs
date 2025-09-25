@@ -157,14 +157,14 @@ pub fn parse_qsfp_port_id(value: &str) -> Result<types::PortId, String> {
     value
         .parse::<types::Qsfp>()
         .map_err(|_| {
-            format!("'{}' is invalid; QSFP ports are named qsfp<0-31>", value)
+            format!("'{value}' is invalid; QSFP ports are named qsfp<0-31>")
         })
         .map(types::PortId::Qsfp)
 }
 
 pub fn parse_port_id(value: &str) -> Result<types::PortId, String> {
     value.parse().map_err(|_| {
-        format!("'{}' is invalid; valid port-ids include qsfp<0-31>, rear<0-31>, or int0", value)
+        format!("'{value}' is invalid; valid port-ids include qsfp<0-31>, rear<0-31>, or int0")
     })
 }
 

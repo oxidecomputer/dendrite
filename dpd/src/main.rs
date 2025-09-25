@@ -263,7 +263,7 @@ impl Switch {
             Err(AsicError::AsicMissing) => {
                 panic!("Unable to find the network switch ASIC")
             }
-            Err(e) => panic!("unable to initialize bf: {:?}", e),
+            Err(e) => panic!("unable to initialize bf: {e:?}"),
         };
 
         let switch_ports = SwitchPorts::new(

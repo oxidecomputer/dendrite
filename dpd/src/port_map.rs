@@ -68,7 +68,7 @@ impl fmt::Display for SidecarRevision {
                 SidecarRevision::A => "A".into(),
                 SidecarRevision::B => "B".into(),
                 SidecarRevision::Soft { front, rear } =>
-                    format!("Soft_{}_{}", front, rear),
+                    format!("Soft_{front}_{rear}"),
                 SidecarRevision::Chaos => "chaos".into(),
             }
         )
@@ -270,7 +270,7 @@ mod tests {
                 panic!();
             };
             let link = BackplaneLink::from_cubby(rear.as_u8()).unwrap();
-            println!("{i} -> {:?} -> {port_id}", link);
+            println!("{i} -> {link:?} -> {port_id}");
         }
     }
 

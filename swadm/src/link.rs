@@ -1269,7 +1269,7 @@ impl FromStr for LinkField {
             "f" | "fec" => LinkField::Fec,
             "m" | "mac" => LinkField::Mac,
             "6" | "ipv6" => LinkField::Ipv6Enabled,
-            _ => bail!("Invalid link field: \"{}\"", s),
+            _ => bail!("Invalid link field: \"{s}\""),
         })
     }
 }
@@ -1445,7 +1445,7 @@ fn print_link_verbose(
                     types::LinkState::Up => "Up".to_string(),
                     types::LinkState::Down => "Down".to_string(),
                     types::LinkState::ConfigError(ref detail) =>
-                        format!("ConfigError({})", detail),
+                        format!("ConfigError({detail})"),
                     types::LinkState::Faulted(_) => "Faulted".to_string(),
                     types::LinkState::Unknown => "Unknown".to_string(),
                 },
@@ -1737,7 +1737,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                         .await
                         .context("failed to fetch PRBS mode")?
                         .into_inner();
-                    println!("{}", prbs);
+                    println!("{prbs}");
                 }
                 _ => {
                     // These properties do not have specific endpoints, so we

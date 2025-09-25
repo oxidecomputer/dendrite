@@ -372,7 +372,7 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
 async fn port_label(switch: &Switch, ctr: u16) -> Option<String> {
     switch
         .asic_port_id_to_port_link(ctr)
-        .map(|(port, link)| format!("{}/{}", port, link))
+        .map(|(port, link)| format!("{port}/{link}"))
         .ok()
 }
 

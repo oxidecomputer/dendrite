@@ -359,8 +359,8 @@ impl fmt::Display for types::TfportData {
 impl fmt::Display for types::SffComplianceCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Extended(ext) => write!(f, "{}", ext),
-            Self::Ethernet(eth) => write!(f, "{}", eth),
+            Self::Extended(ext) => write!(f, "{ext}"),
+            Self::Ethernet(eth) => write!(f, "{eth}"),
         }
     }
 }

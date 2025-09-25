@@ -366,7 +366,7 @@ fn print_faulted_transceiver_row(
     port_id: &PortId,
     reason: &types::FaultReason,
 ) -> anyhow::Result<()> {
-    writeln!(tw, "{}\tfaulted ({:?})\t\t\t\t\t\t\t", port_id, reason)
+    writeln!(tw, "{port_id}\tfaulted ({reason:?})\t\t\t\t\t\t\t")
         .map_err(|e| e.into())
 }
 
@@ -374,7 +374,7 @@ fn print_unsupported_transceiver_row(
     tw: &mut TabWriter<std::io::Stdout>,
     port_id: &PortId,
 ) -> anyhow::Result<()> {
-    writeln!(tw, "{}\tunsupported\t\t\t\t\t\t\t", port_id).map_err(|e| e.into())
+    writeln!(tw, "{port_id}\tunsupported\t\t\t\t\t\t\t").map_err(|e| e.into())
 }
 
 fn print_supported_transceiver_row(
@@ -570,7 +570,7 @@ async fn transceivers_cmd(
                 .await
                 .context("failed to get transceiver monitors")?
                 .into_inner();
-            println!("Port monitors: {}", port_id);
+            println!("Port monitors: {port_id}");
             const UNSUPPORTED: &str = "-";
             const WIDTH: usize = 22;
 
@@ -738,7 +738,7 @@ fn print_sff_datapath(
             .map(|b| if b { "Yes" } else { "No" })
             .collect::<Vec<_>>()
             .join("\t");
-        writeln!(tw, "{:>WIDTH$}: {}", name, cols).unwrap();
+        writeln!(tw, "{name:>WIDTH$}: {cols}").unwrap();
     }
 
     tw.flush().expect("Failed to flush tabwriter");
@@ -871,7 +871,7 @@ fn print_cmis_datapath(
                 .map(getter)
                 .collect::<Vec<_>>()
                 .join("\t");
-            writeln!(tw, "{:>WIDTH$}: {}", name, cols).unwrap();
+            writeln!(tw, "{name:>WIDTH$}: {cols}").unwrap();
         }
         tw.flush().unwrap();
     }
@@ -956,7 +956,7 @@ pub async fn switch_cmd(
                 {
                     continue;
                 }
-                println!("{}", p)
+                println!("{p}")
             }
         }
         SwitchPort::Free => {
@@ -1031,7 +1031,7 @@ pub async fn switch_cmd(
                     for (i, field) in fields.iter().enumerate() {
                         match field {
                             BackplaneMapField::PortId => {
-                                print!("{}", port_id)
+                                print!("{port_id}")
                             }
                             BackplaneMapField::TofinoConnector => {
                                 print!("{:<}", entry.tofino_connector)
@@ -1061,7 +1061,7 @@ pub async fn switch_cmd(
                         }
                         match field {
                             BackplaneMapField::PortId => {
-                                write!(&mut tw, "{}", port_id)?
+                                write!(&mut tw, "{port_id}")?
                             }
                             BackplaneMapField::TofinoConnector => {
                                 write!(&mut tw, "{:<}", entry.tofino_connector)?
@@ -1194,10 +1194,7 @@ mod test {
             assert_eq!(
                 lhs.order_by_id(&rhs),
                 order,
-                "{:?} should be {:?} than {:?}",
-                lhs,
-                order,
-                rhs
+                "{lhs:?} should be {order:?} than {rhs:?}"
             );
         }
     }

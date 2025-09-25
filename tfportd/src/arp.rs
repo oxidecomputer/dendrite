@@ -119,7 +119,7 @@ fn parse_arp(line: &str) -> anyhow::Result<Arp> {
     let last = fields.len() - 1;
 
     if last < 3 {
-        return Err(anyhow!("bad arp line: {}", line));
+        return Err(anyhow!("bad arp line: {line}"));
     }
 
     let iface = fields[0].to_string();

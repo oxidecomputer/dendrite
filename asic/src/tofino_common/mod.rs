@@ -408,7 +408,7 @@ impl BfRt {
                             "uint32" => 4,
                             "uint16" => 2,
                             "uint8" => 1,
-                            _ => panic!("unknown type in {:?}", k),
+                            _ => panic!("unknown type in {k:?}"),
                         },
                     },
                     match_type: match k.match_type.as_str() {
@@ -416,7 +416,7 @@ impl BfRt {
                         "LPM" => MatchType::Lpm,
                         "Ternary" => MatchType::Mask,
                         "Range" => MatchType::Range,
-                        x => panic!("unrecognized match type: {}", x),
+                        x => panic!("unrecognized match type: {x}"),
                     },
                 };
                 keys.insert(get_short(&k.name), f);

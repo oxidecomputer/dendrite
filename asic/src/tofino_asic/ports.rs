@@ -668,7 +668,7 @@ pub fn init(dev_id: i32) -> AsicResult<PortData> {
     let eth_port = match unsafe { bf_eth_cpu_port_get(dev_id) } {
         -1 => None,
         x if x >= 0 && x < BF_PORT_COUNT as i32 => Some(x as PortId),
-        x => panic!("invalid CPU ETH port: {}", x),
+        x => panic!("invalid CPU ETH port: {x}"),
     };
 
     // Iterate over all of the ports the SDE has inventoried, populating our

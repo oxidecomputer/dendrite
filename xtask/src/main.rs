@@ -144,10 +144,10 @@ fn copylinks(dst: &str, links: HashMap<String, String>) -> Result<()> {
     }
 
     for (tgt, orig) in links {
-        println!("-- Linking: {} to {}", tgt, orig);
+        println!("-- Linking: {tgt} to {orig}");
         let link_file = dst_dir.join(&tgt);
         std::os::unix::fs::symlink(&orig, &link_file).with_context(|| {
-            format!("linking {:?} to {:?}", link_file, orig)
+            format!("linking {link_file:?} to {orig:?}")
         })?;
     }
     Ok(())
@@ -160,7 +160,7 @@ fn copyfiles<T: ToString>(src: &str, dst: &str, file: &[T]) -> Result<()> {
     let dst_dir = Path::new(dst);
 
     if !src_dir.is_dir() {
-        return Err(anyhow!("source '{}' isn't a directory", src));
+        return Err(anyhow!("source '{src}' isn't a directory"));
     }
 
     if !dst_dir.is_dir() {
@@ -171,9 +171,9 @@ fn copyfiles<T: ToString>(src: &str, dst: &str, file: &[T]) -> Result<()> {
         let f = f.to_string();
         let src_file = src_dir.join(&f);
         let dst_file = dst_dir.join(&f);
-        println!("-- Installing: {:?}", dst_file);
+        println!("-- Installing: {dst_file:?}");
         fs::copy(src_file, dst_file).with_context(|| {
-            format!("copying {:?} from {} to {}", f, src, dst)
+            format!("copying {f:?} from {src} to {dst}")
         })?;
     }
 
@@ -185,7 +185,7 @@ pub fn copydir(src: &str, dst: &str) -> Result<()> {
     let src_dir = Path::new(src);
 
     if !src_dir.is_dir() {
-        return Err(anyhow!("source '{}' isn't a directory", src));
+        return Err(anyhow!("source '{src}' isn't a directory"));
     }
 
     let mut files = Vec::new();

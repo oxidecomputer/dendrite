@@ -237,7 +237,7 @@ async fn compliance_ports_list(
             Ok(power) => {
                 let state = power.into_inner();
                 // Convert to a cleaner string representation
-                format!("{:?}", state).to_lowercase()
+                format!("{state:?}").to_lowercase()
             }
             Err(_) => "N/A".to_string(),
         };
@@ -245,12 +245,12 @@ async fn compliance_ports_list(
         let links = client
             .link_list(&port_id)
             .await
-            .context(format!("failed to list links for port {}", port_id))?
+            .context(format!("failed to list links for port {port_id}"))?
             .into_inner();
 
         if links.is_empty() {
             // Port has no links
-            writeln!(tw, "{}\t{}\t-\t-\tNo links", port_id, power_state)?;
+            writeln!(tw, "{port_id}\t{power_state}\t-\t-\tNo links")?;
         } else {
             // Port has links - show each link with the same power state
             for link in links {
@@ -401,19 +401,18 @@ async fn compliance_ports_setup(
                 created_count += 1;
             }
             Err(e) => {
-                eprintln!("Failed to create link on {}: {}", port_id, e);
+                eprintln!("Failed to create link on {port_id}: {e}");
                 error_count += 1;
             }
         }
     }
 
     println!(
-        "Setup complete: {} links created, {} errors",
-        created_count, error_count
+        "Setup complete: {created_count} links created, {error_count} errors"
     );
 
     if error_count > 0 {
-        anyhow::bail!("Setup completed with {} errors", error_count);
+        anyhow::bail!("Setup completed with {error_count} errors");
     }
 
     Ok(())
@@ -453,12 +452,11 @@ async fn compliance_ports_teardown(
     }
 
     println!(
-        "Teardown complete: {} links deleted, {} errors",
-        deleted_count, error_count
+        "Teardown complete: {deleted_count} links deleted, {error_count} errors"
     );
 
     if error_count > 0 {
-        anyhow::bail!("Teardown completed with {} errors", error_count);
+        anyhow::bail!("Teardown completed with {error_count} errors");
     }
 
     Ok(())
@@ -513,8 +511,7 @@ async fn compliance_ports_power(
             Ok(mode) => mode.into_inner(),
             Err(e) => {
                 eprintln!(
-                    "Failed to get management mode for {}: {}",
-                    port_id, e
+                    "Failed to get management mode for {port_id}: {e}"
                 );
                 error_count += 1;
                 continue;
@@ -570,12 +567,11 @@ async fn compliance_ports_power(
                 .await
             {
                 Ok(_) => {
-                    println!("Set port {} to manual management mode", port_id);
+                    println!("Set port {port_id} to manual management mode");
                 }
                 Err(e) => {
                     eprintln!(
-                        "Failed to set management mode for {}: {}",
-                        port_id, e
+                        "Failed to set management mode for {port_id}: {e}"
                     );
                     error_count += 1;
                     continue;
@@ -586,13 +582,12 @@ async fn compliance_ports_power(
         // Set the power state
         match client.transceiver_power_set(&port_id, state).await {
             Ok(_) => {
-                println!("Set power {} on port {}", power_state_str, port_id);
+                println!("Set power {power_state_str} on port {port_id}");
                 success_count += 1;
             }
             Err(e) => {
                 eprintln!(
-                    "Failed to set power {} on port {}: {}",
-                    power_state_str, port_id, e
+                    "Failed to set power {power_state_str} on port {port_id}: {e}"
                 );
                 error_count += 1;
             }
@@ -600,12 +595,11 @@ async fn compliance_ports_power(
     }
 
     println!(
-        "Power operation complete: {} ports succeeded, {} errors",
-        success_count, error_count
+        "Power operation complete: {success_count} ports succeeded, {error_count} errors"
     );
 
     if error_count > 0 {
-        anyhow::bail!("Power operation completed with {} errors", error_count);
+        anyhow::bail!("Power operation completed with {error_count} errors");
     }
 
     Ok(())

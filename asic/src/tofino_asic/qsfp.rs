@@ -747,8 +747,7 @@ fn send_bitmask_request(request: SdeTransceiverRequest) -> Option<(u32, u32)> {
                         None
                     }
                     (_, _) => panic!(
-                        "Unexpected messages: request = {:?}, response = {:?}",
-                        request, response
+                        "Unexpected messages: request = {request:?}, response = {response:?}"
                     ),
                 },
             }

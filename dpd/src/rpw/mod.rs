@@ -297,5 +297,5 @@ async fn nexus_client_with_resolver(
 
 // Create nexus client using fixed ip address
 fn nexus_client(address: &str, log: &slog::Logger) -> NexusClient {
-    nexus_client::Client::new(&format!("http://{}", address), log.clone())
+    nexus_client::Client::new(&format!("http://{address}"), log.clone())
 }

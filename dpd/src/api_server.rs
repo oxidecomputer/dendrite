@@ -2208,14 +2208,13 @@ mod tests {
             let re = regex::Regex::new(r"SDE_COMMIT=(\S*)").unwrap();
             let all = re.captures(&config).unwrap();
             if all.len() != 2 {
-                panic!("{} is missing the SDE_COMMIT= line", path);
+                panic!("{path} is missing the SDE_COMMIT= line");
             }
             all[1].to_string()
         };
         if !expected_sde.contains(build_sde) {
             panic!(
-                "dpd built with SDE ({}).  repo configured for SDE ({}).",
-                build_sde, expected_sde
+                "dpd built with SDE ({build_sde}).  repo configured for SDE ({expected_sde})."
             );
         }
     }

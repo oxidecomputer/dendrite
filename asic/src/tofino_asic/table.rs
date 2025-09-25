@@ -567,8 +567,7 @@ impl Table {
                 },
                 Err(e) => {
                     break Err(AsicError::Internal(format!(
-                        "sync block failed: {:?}",
-                        e
+                        "sync block failed: {e:?}"
                     )));
                 }
             }

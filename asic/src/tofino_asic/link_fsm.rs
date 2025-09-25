@@ -134,7 +134,7 @@ pub enum PortFsmState {
 
 impl fmt::Display for PortFsmState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -268,7 +268,7 @@ pub enum MediaFsmState {
 
 impl fmt::Display for MediaFsmState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -350,7 +350,7 @@ pub enum QsfpFsmState {
 
 impl fmt::Display for QsfpFsmState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -460,7 +460,7 @@ impl TryFrom<u32> for QsfpChannelFsmState {
 
 impl fmt::Display for QsfpChannelFsmState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 

@@ -184,7 +184,7 @@ fn generate_manifest(features: &str) -> Result<String> {
         "tofino_asic" => "omicron-asic-manifest.toml",
         "tofino_stub" => "omicron-stub-manifest.toml",
         "softnpu" => "omicron-softnpu-manifest.toml",
-        x => bail!("{} is not a recognized asic type", x),
+        x => bail!("{x} is not a recognized asic type"),
     };
 
     let manifest_path = format!("{}/tools/{}", project_root()?, manifest_file);

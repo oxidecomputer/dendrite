@@ -237,7 +237,7 @@ pub async fn table_cmd(
     match table_cmd {
         Table::List => {
             for t in client.table_list().await?.into_inner() {
-                println!("{}", t)
+                println!("{t}")
             }
             Ok(())
         }

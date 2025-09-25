@@ -62,9 +62,7 @@ fn test_p4_counter_list() {
     for counter in &expected_counters {
         assert!(
             stdout.contains(counter),
-            "Counter list should contain '{}' counter. Output: {}",
-            counter,
-            stdout
+            "Counter list should contain '{counter}' counter. Output: {stdout}"
         );
     }
 }
