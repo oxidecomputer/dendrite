@@ -421,6 +421,9 @@ impl PortSettingsDiff {
         link.config.kr = spec.after.kr;
         link.tx_eq = spec.after.tx_eq;
         link.config.delete_me = false;
+        if spec.before.tx_eq != spec.after.tx_eq {
+            link.plumbed.tx_eq_pushed = false;
+        }
         rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
             let link_lock = ctx.link(link_id)?;
             let mut link = link_lock.lock().unwrap();
