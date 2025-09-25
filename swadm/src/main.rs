@@ -22,6 +22,7 @@ mod compliance;
 mod counters;
 mod link;
 mod nat;
+mod parsable_out;
 mod route;
 mod switchport;
 mod table;
