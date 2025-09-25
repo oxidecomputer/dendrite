@@ -6,21 +6,21 @@
 
 //! Manage logical Ethernet links on the Sidecar switch.
 
+use crate::MacAddr;
+use crate::Switch;
 use crate::fault::AutonegTracker;
 use crate::fault::Faultable;
 use crate::fault::LinkUpTracker;
 use crate::ports::AdminEvent;
 use crate::ports::Event;
+use crate::table::MacOps;
 use crate::table::mcast;
 use crate::table::port_ip;
 use crate::table::port_mac;
 use crate::table::port_nat;
-use crate::table::MacOps;
 use crate::transceivers::qsfp_xcvr_mpn;
 use crate::types::DpdError;
 use crate::types::DpdResult;
-use crate::MacAddr;
-use crate::Switch;
 use aal::AsicId;
 use aal::AsicOps;
 use aal::AsicResult;
@@ -48,9 +48,9 @@ use slog::error;
 use slog::info;
 use slog::o;
 use slog::warn;
-use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::btree_map::Entry;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
