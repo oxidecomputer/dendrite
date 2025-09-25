@@ -345,7 +345,6 @@ impl crate::Switch {
             let mpn = mpn
                 .clone()
                 .unwrap_or_else(|| "unknown transceiver".to_string());
-
             slog::debug!(
                 self.log,
                 "Applying alternate tx settings for {link} ({mpn}): {tx_eq:?}"
