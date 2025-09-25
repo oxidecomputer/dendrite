@@ -1653,7 +1653,7 @@ fn plumb_link(
     switch: &Switch,
     log: &slog::Logger,
     link: &mut Link,
-    mpn: &str,
+    mpn: &Option<String>,
 ) -> DpdResult<()> {
     debug!(log, "plumbing link");
     let connector = switch
@@ -1666,7 +1666,12 @@ fn plumb_link(
     // a default value for this transceiver.
     let fec = match link.config.fec {
         Some(fec) => Ok(fec),
-        None => switch.qsfp_default_fec(mpn),
+        None => match mpn {
+            None => Err(DpdError::Missing(
+                "Must specify FEC for unrecognized transceiver".to_string(),
+            )),
+            Some(mpn) => switch.qsfp_default_fec(mpn),
+        },
     }?;
 
     // Create the ASIC-layer's `TofinoPort`.
@@ -1729,7 +1734,7 @@ async fn reconcile_link(
     link_id: LinkId,
 ) {
     let mpn = {
-        let qsfp = match switch
+        let qsfp = switch
             .switch_ports
             .ports
             .get(&port_id)
@@ -1737,21 +1742,21 @@ async fn reconcile_link(
             .lock()
             .await
             .as_qsfp()
-            .cloned()
-        {
-            Some(qsfp) => qsfp,
-            None => {
-                warn!(log, "failed to get qsfp for port {port_id}");
-                return;
-            }
-        };
+            .cloned();
 
-        match qsfp_xcvr_mpn(&qsfp) {
-            Ok(mpn) => mpn,
-            Err(e) => {
-                warn!(log, "failed to get transceiver MPN {e}");
-                return;
+        if let Some(qsfp) = &qsfp {
+            match qsfp_xcvr_mpn(qsfp) {
+                Ok(mpn) => Some(mpn),
+                Err(e) => {
+                    warn!(
+                        log,
+                        "failed to get MPN for qsfp: {e}, port: {port_id}"
+                    );
+                    return;
+                }
             }
+        } else {
+            None
         }
     };
 
