@@ -1,3 +1,28 @@
+use std::{fmt::Debug, str::FromStr};
+use structopt::StructOpt;
+
+#[derive(Debug, StructOpt)]
+pub struct ParsableArgs<
+    T: Debug + FromStr<Err = E>,
+    E: Debug + ToString = anyhow::Error,
+> {
+    /// Print the output in a parseable format.
+    #[structopt(long, short)]
+    pub parseable: bool,
+
+    /// Select the output fields to be displayed. Fields that are not supported by a module are emitted as empty values.
+    #[structopt(long, short, requires = "parseable")]
+    pub output: Vec<T>,
+
+    /// Character used to separate output fields. (Default: ":")
+    #[structopt(long, requires = "parseable")]
+    pub output_separator: Option<String>,
+
+    /// Omit displaying the output header
+    #[structopt(long)]
+    pub omit_header: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum OutputKind<T> {
     Default {

@@ -21,7 +21,7 @@ use dpd_client::types::{
 };
 use dpd_client::Client;
 
-use crate::parsable_out::OutputKind;
+use crate::parsable_out::{OutputKind, ParsableArgs};
 use crate::LinkPath;
 use crate::{parse_port_id, parse_qsfp_port_id};
 
@@ -216,21 +216,8 @@ pub enum Transceiver {
     /// List basic transceiver information.
     #[structopt(visible_alias = "ls")]
     List {
-        /// Print the output in a parseable format.
-        #[structopt(long, short)]
-        parseable: bool,
-
-        /// Select the output fields to be displayed.
-        #[structopt(long, short, requires = "parseable")]
-        output: Vec<XcvrFields>,
-
-        /// Character used to separate output fields. (Default: :)
-        #[structopt(long, requires = "parseable")]
-        output_separator: Option<String>,
-
-        /// Omit displaying the output header
-        #[structopt(long)]
-        omit_header: bool,
+        #[structopt(flatten)]
+        parse_args: ParsableArgs<XcvrFields>,
     },
     /// Get basic transceiver information about one transceiver.
     Get {
@@ -238,21 +225,8 @@ pub enum Transceiver {
         #[structopt(parse(try_from_str = parse_port_id))]
         port_id: PortId,
 
-        /// Print the output in a parseable format.
-        #[structopt(long, short)]
-        parseable: bool,
-
-        /// Select the output fields to be displayed.
-        #[structopt(long, short, requires = "parseable")]
-        output: Vec<XcvrFields>,
-
-        /// Character used to separate output fields. (Default: :)
-        #[structopt(long, requires = "parseable")]
-        output_separator: Option<String>,
-
-        /// Omit displaying the output header
-        #[structopt(long)]
-        omit_header: bool,
+        #[structopt(flatten)]
+        parse_args: ParsableArgs<XcvrFields>,
     },
     /// Reset a transceiver module.
     Reset {
@@ -266,21 +240,8 @@ pub enum Transceiver {
         #[structopt(parse(try_from_str = parse_port_id))]
         port_id: PortId,
 
-        /// Print the output in a parseable format.
-        #[structopt(long, short)]
-        parseable: bool,
-
-        /// Select the output fields to be displayed.
-        #[structopt(long, short, requires = "parseable")]
-        output: Vec<PowerFields>,
-
-        /// Character used to separate output fields. (Default: :)
-        #[structopt(long, requires = "parseable")]
-        output_separator: Option<String>,
-
-        /// Omit displaying the output header
-        #[structopt(long)]
-        omit_header: bool,
+        #[structopt(flatten)]
+        parse_args: ParsableArgs<PowerFields>,
     },
     /// Set the power state of a transceiver module.
     SetPower {
@@ -296,21 +257,8 @@ pub enum Transceiver {
         #[structopt(parse(try_from_str = parse_port_id))]
         port_id: PortId,
 
-        /// Print the output in a parseable format.
-        #[structopt(long, short)]
-        parseable: bool,
-
-        /// Select the output fields to be displayed.
-        #[structopt(long, short, requires = "parseable")]
-        output: Vec<MonitorFields>,
-
-        /// Character used to separate output fields. (Default: :)
-        #[structopt(long, requires = "parseable")]
-        output_separator: Option<String>,
-
-        /// Omit displaying the output header
-        #[structopt(long)]
-        omit_header: bool,
+        #[structopt(flatten)]
+        parse_args: ParsableArgs<MonitorFields>,
     },
     /// Fetch the state of the datapath for a transceiver.
     Datapath {
@@ -880,10 +828,13 @@ async fn transceivers_cmd(
 ) -> anyhow::Result<()> {
     match xcvr {
         Transceiver::List {
-            parseable,
-            output,
-            output_separator,
-            omit_header,
+            parse_args:
+                ParsableArgs {
+                    parseable,
+                    output,
+                    output_separator,
+                    omit_header,
+                },
         } => {
             let output_fmt = if parseable {
                 OutputKind::parseable(!omit_header, output, output_separator)
@@ -912,10 +863,13 @@ async fn transceivers_cmd(
         }
         Transceiver::Get {
             port_id,
-            parseable,
-            output,
-            output_separator,
-            omit_header,
+            parse_args:
+                ParsableArgs {
+                    parseable,
+                    output,
+                    output_separator,
+                    omit_header,
+                },
         } => {
             let output_fmt = if parseable {
                 OutputKind::parseable(!omit_header, output, output_separator)
@@ -950,10 +904,13 @@ async fn transceivers_cmd(
         }
         Transceiver::Power {
             port_id,
-            parseable,
-            output,
-            output_separator,
-            omit_header,
+            parse_args:
+                ParsableArgs {
+                    parseable,
+                    output,
+                    output_separator,
+                    omit_header,
+                },
         } => {
             let output_fmt = if parseable {
                 OutputKind::parseable(!omit_header, output, output_separator)
@@ -1012,10 +969,13 @@ async fn transceivers_cmd(
         }
         Transceiver::Monitors {
             port_id,
-            parseable,
-            output,
-            output_separator,
-            omit_header,
+            parse_args:
+                ParsableArgs {
+                    parseable,
+                    output,
+                    output_separator,
+                    omit_header,
+                },
         } => {
             const UNSUPPORTED: &str = "-";
             let output_fmt = if parseable {
