@@ -510,9 +510,7 @@ async fn compliance_ports_power(
         let current_mode = match client.management_mode_get(&port_id).await {
             Ok(mode) => mode.into_inner(),
             Err(e) => {
-                eprintln!(
-                    "Failed to get management mode for {port_id}: {e}"
-                );
+                eprintln!("Failed to get management mode for {port_id}: {e}");
                 error_count += 1;
                 continue;
             }
