@@ -107,7 +107,7 @@ impl Protocol for Ipv6Hdr {
         Ok(hdrs)
     }
 
-    fn r#gen(
+    fn generate(
         src: Endpoint,
         dst: Endpoint,
         mut protos: Vec<u16>,
@@ -122,9 +122,9 @@ impl Protocol for Ipv6Hdr {
         })?;
 
         let mut pkt = match proto {
-            IPPROTO_ICMPV6 => icmp::IcmpHdr::r#gen(src, dst, protos, body)?,
-            IPPROTO_TCP => tcp::TcpHdr::r#gen(src, dst, protos, body)?,
-            IPPROTO_UDP => udp::UdpHdr::r#gen(src, dst, protos, body)?,
+            IPPROTO_ICMPV6 => icmp::IcmpHdr::generate(src, dst, protos, body)?,
+            IPPROTO_TCP => tcp::TcpHdr::generate(src, dst, protos, body)?,
+            IPPROTO_UDP => udp::UdpHdr::generate(src, dst, protos, body)?,
             _ => Packet::new(body),
         };
 

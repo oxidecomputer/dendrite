@@ -66,7 +66,7 @@ impl Protocol for SidecarHdr {
         Ok(hdrs)
     }
 
-    fn r#gen(
+    fn generate(
         _src: Endpoint,
         _dst: Endpoint,
         mut protos: Vec<u16>,

@@ -100,7 +100,7 @@ impl crate::Protocol for UdpHdr {
         Ok(hdrs)
     }
 
-    fn r#gen(
+    fn generate(
         src: Endpoint,
         dst: Endpoint,
         protos: Vec<u16>,
@@ -110,7 +110,7 @@ impl crate::Protocol for UdpHdr {
         let udp_dst = L4Endpoint::try_from(dst)?;
         let mut pkt = match udp_dst.port {
             geneve::GENEVE_UDP_PORT => {
-                geneve::GeneveHdr::r#gen(src, dst, protos, body)?
+                geneve::GeneveHdr::generate(src, dst, protos, body)?
             }
             _ => Packet::new(body),
         };

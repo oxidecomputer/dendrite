@@ -169,7 +169,7 @@ impl Protocol for Ipv4Hdr {
         Ok(hdrs)
     }
 
-    fn r#gen(
+    fn generate(
         src: Endpoint,
         dst: Endpoint,
         mut protos: Vec<u16>,
@@ -178,9 +178,9 @@ impl Protocol for Ipv4Hdr {
         let proto = protos.pop().unwrap_or_default() as u8;
 
         let mut pkt = match proto {
-            IPPROTO_ICMP => icmp::IcmpHdr::r#gen(src, dst, protos, body)?,
-            IPPROTO_TCP => tcp::TcpHdr::r#gen(src, dst, protos, body)?,
-            IPPROTO_UDP => udp::UdpHdr::r#gen(src, dst, protos, body)?,
+            IPPROTO_ICMP => icmp::IcmpHdr::generate(src, dst, protos, body)?,
+            IPPROTO_TCP => tcp::TcpHdr::generate(src, dst, protos, body)?,
+            IPPROTO_UDP => udp::UdpHdr::generate(src, dst, protos, body)?,
             _ => {
                 println!("unsupported ip protocol: {proto}");
                 Packet::new(body)

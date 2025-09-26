@@ -840,7 +840,7 @@ pub fn gen_tcp_packet_loaded(
         IpAddr::V6(_) => vec![ipv6::IPPROTO_TCP.into(), eth::ETHER_IPV6],
     };
 
-    Packet::r#gen(src, dst, tcp_stack, Some(body)).unwrap()
+    Packet::generate(src, dst, tcp_stack, Some(body)).unwrap()
 }
 
 // Construct a single UDP packet with an optional payload
@@ -854,7 +854,7 @@ pub fn gen_udp_packet_loaded(
         IpAddr::V6(_) => vec![ipv6::IPPROTO_UDP.into(), eth::ETHER_IPV6],
     };
 
-    Packet::r#gen(src, dst, udp_stack, Some(body)).unwrap()
+    Packet::generate(src, dst, udp_stack, Some(body)).unwrap()
 }
 
 // Construct a single ICMP packet with an optional payload
@@ -868,7 +868,7 @@ pub fn gen_icmp_packet_loaded(
         IpAddr::V6(_) => vec![ipv6::IPPROTO_ICMPV6.into(), eth::ETHER_IPV6],
     };
 
-    Packet::r#gen(src, dst, icmp_stack, Some(body)).unwrap()
+    Packet::generate(src, dst, icmp_stack, Some(body)).unwrap()
 }
 
 // Given an ingressing IP packet, generate a corresponding IP packet egressing
@@ -995,7 +995,7 @@ pub fn gen_geneve_packet(
         }
     };
 
-    let mut pkt = Packet::r#gen(src, dst, udp_stack, Some(payload)).unwrap();
+    let mut pkt = Packet::generate(src, dst, udp_stack, Some(payload)).unwrap();
     let geneve = pkt.hdrs.geneve_hdr.as_mut().unwrap();
     geneve.vni = vni;
 
@@ -1396,7 +1396,7 @@ pub fn gen_ipv4_ping(
 ) -> Packet {
     let type_code: u16 = (icmp_type as u16) << 8 | icmp_code as u16;
 
-    Packet::r#gen(
+    Packet::generate(
         src,
         tgt,
         vec![type_code, ipv4::IPPROTO_ICMP as u16, eth::ETHER_IPV4],
@@ -1406,7 +1406,7 @@ pub fn gen_ipv4_ping(
 }
 
 pub fn gen_arp_reply(src: Endpoint, tgt: Endpoint) -> Packet {
-    Packet::r#gen(src, tgt, vec![arp::ARPOP_REPLY, eth::ETHER_ARP], None)
+    Packet::generate(src, tgt, vec![arp::ARPOP_REPLY, eth::ETHER_ARP], None)
         .unwrap()
 }
 

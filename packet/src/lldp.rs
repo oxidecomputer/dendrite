@@ -85,7 +85,7 @@ impl Protocol for LldpHdr {
         }
     }
 
-    fn r#gen(
+    fn generate(
         _src: Endpoint,
         _dst: Endpoint,
         _protos: Vec<u16>,

@@ -114,7 +114,7 @@ impl Protocol for EthHdr {
         Ok(hdrs)
     }
 
-    fn r#gen(
+    fn generate(
         src: Endpoint,
         dst: Endpoint,
         mut protos: Vec<u16>,
@@ -123,10 +123,10 @@ impl Protocol for EthHdr {
         let eth_type = protos.pop().unwrap_or_default();
 
         let mut pkt = match eth_type {
-            ETHER_LLDP => LldpHdr::r#gen(src, dst, protos, body)?,
-            ETHER_ARP => ArpHdr::r#gen(src, dst, protos, body)?,
-            ETHER_IPV4 => Ipv4Hdr::r#gen(src, dst, protos, body)?,
-            ETHER_IPV6 => Ipv6Hdr::r#gen(src, dst, protos, body)?,
+            ETHER_LLDP => LldpHdr::generate(src, dst, protos, body)?,
+            ETHER_ARP => ArpHdr::generate(src, dst, protos, body)?,
+            ETHER_IPV4 => Ipv4Hdr::generate(src, dst, protos, body)?,
+            ETHER_IPV6 => Ipv6Hdr::generate(src, dst, protos, body)?,
             _ => {
                 println!(
                     "unsupported ethertype: {}",

@@ -236,7 +236,7 @@ impl Protocol for TcpHdr {
         Ok(hdrs)
     }
 
-    fn r#gen(
+    fn generate(
         src: Endpoint,
         dst: Endpoint,
         _protos: Vec<u16>,

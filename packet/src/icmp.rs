@@ -123,7 +123,7 @@ impl Protocol for IcmpHdr {
         Ok(v)
     }
 
-    fn r#gen(
+    fn generate(
         _src: Endpoint,
         dst: Endpoint,
         mut protos: Vec<u16>,

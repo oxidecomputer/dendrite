@@ -88,7 +88,7 @@ impl Protocol for ArpHdr {
         Ok(hdrs)
     }
 
-    fn r#gen(
+    fn generate(
         src: Endpoint,
         dst: Endpoint,
         mut protos: Vec<u16>,

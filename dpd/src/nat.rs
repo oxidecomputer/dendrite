@@ -568,11 +568,11 @@ pub fn reset_ipv4(switch: &Switch) -> DpdResult<()> {
     }
 }
 
-pub fn set_ipv4_nat_generation(switch: &Switch, r#gen: i64) {
+pub fn set_ipv4_nat_generation(switch: &Switch, generation: i64) {
     let mut nat = switch.nat.lock().unwrap();
 
     debug!(switch.log, "setting nat generation");
-    nat.ipv4_generation = r#gen;
+    nat.ipv4_generation = generation;
 }
 
 pub fn get_ipv4_nat_generation(switch: &Switch) -> i64 {
