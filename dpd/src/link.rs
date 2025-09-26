@@ -34,15 +34,12 @@ use common::ports::PortMedia;
 use common::ports::PortPrbsMode;
 use common::ports::PortSpeed;
 use common::ports::TxEq;
-use dpd_api::LinkCreate;
+use dpd_api::{Ber, LinkCreate};
 use dpd_types::link::LinkFsmCounters;
 use dpd_types::link::LinkId;
 use dpd_types::link::LinkState;
 use dpd_types::link::LinkUpCounter;
 use dpd_types::views;
-use schemars::JsonSchema;
-use serde::Deserialize;
-use serde::Serialize;
 use slog::debug;
 use slog::error;
 use slog::info;
@@ -492,24 +489,11 @@ impl Link {
     }
 }
 
-/// Reports the bit-error rate (BER) for a link.
-#[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
-pub struct Ber {
-    /// Counters of symbol errors per-lane.
-    pub symbol_errors: Vec<u64>,
-    /// Estimated BER per-lane.
-    pub ber: Vec<f32>,
-    /// Aggregate BER on the link.
-    pub total_ber: f32,
-}
-
-impl From<aal::Ber> for Ber {
-    fn from(value: aal::Ber) -> Self {
-        Self {
-            symbol_errors: value.symbol_errors,
-            ber: value.ber,
-            total_ber: value.total_ber,
-        }
+fn from_aal_ber(value: aal::Ber) -> Ber {
+    Ber {
+        symbol_errors: value.symbol_errors,
+        ber: value.ber,
+        total_ber: value.total_ber,
     }
 }
 
@@ -1303,7 +1287,7 @@ impl Switch {
             }
             self.asic_hdl
                 .port_ber_get(link.port_hdl)
-                .map(Ber::from)
+                .map(from_aal_ber)
                 .map_err(DpdError::from)
         })?
     }

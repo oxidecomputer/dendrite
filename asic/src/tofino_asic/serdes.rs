@@ -10,40 +10,31 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::convert::{From, TryFrom};
+use std::convert::From;
 
 use crate::tofino_asic::genpd::*;
 use crate::tofino_asic::ports;
 use crate::tofino_asic::{CheckError, Handle};
 use aal::{AsicError, AsicResult, PortHdl};
+use dpd_api::{
+    AnLtStatus, AnStatus, DfeAdaptationState, EncSpeed, LaneEncoding, LaneMap,
+    LaneStatus, LpPages, LtStatus, RxSigInfo, SerdesEye,
+};
 
-/// Signal encoding
-#[derive(PartialEq, Deserialize, Serialize, JsonSchema)]
-pub enum LaneEncoding {
-    /// Pulse Amplitude Modulation 4-level
-    Pam4,
-    /// Non-Return-to-Zero encoding
-    Nrz,
-    /// No encoding selected
-    None,
-}
-
-impl TryFrom<bf_serdes_encoding_mode_t> for LaneEncoding {
-    type Error = AsicError;
-
-    fn try_from(mode: bf_serdes_encoding_mode_t) -> Result<Self, AsicError> {
-        match mode {
-            bf_serdes_encoding_mode_t_BF_SERDES_ENC_MODE_NRZ => {
-                Ok(LaneEncoding::Nrz)
-            }
-            bf_serdes_encoding_mode_t_BF_SERDES_ENC_MODE_PAM4 => {
-                Ok(LaneEncoding::Pam4)
-            }
-            bf_serdes_encoding_mode_t_BF_SERDES_ENC_MODE_NONE => {
-                Ok(LaneEncoding::None)
-            }
-            _ => Err(AsicError::InvalidEncodingMode(mode)),
+fn try_into_lane_encoding(
+    mode: bf_serdes_encoding_mode_t,
+) -> Result<LaneEncoding, AsicError> {
+    match mode {
+        bf_serdes_encoding_mode_t_BF_SERDES_ENC_MODE_NRZ => {
+            Ok(LaneEncoding::Nrz)
         }
+        bf_serdes_encoding_mode_t_BF_SERDES_ENC_MODE_PAM4 => {
+            Ok(LaneEncoding::Pam4)
+        }
+        bf_serdes_encoding_mode_t_BF_SERDES_ENC_MODE_NONE => {
+            Ok(LaneEncoding::None)
+        }
+        _ => Err(AsicError::InvalidEncodingMode(mode)),
     }
 }
 
@@ -53,7 +44,7 @@ fn port_encoding_mode(dev_id: i32, port_id: u16) -> AsicResult<LaneEncoding> {
         bf_port_encoding_mode_get(dev_id, port_id as i32, &mut enc_mode)
             .check_error("getting lane encoding mode")?;
     }
-    LaneEncoding::try_from(enc_mode)
+    try_into_lane_encoding(enc_mode)
 }
 
 /// Get the number of lanes configured for this port
@@ -88,45 +79,6 @@ fn mac_channel(hdl: &Handle, port_id: u16) -> AsicResult<(u32, u32)> {
         .check_error("getting mac block and channel")?;
     }
     Ok((mac, channel))
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-enum Polarity {
-    Normal,
-    Inverted,
-}
-
-impl From<bool> for Polarity {
-    fn from(p: bool) -> Self {
-        match p {
-            true => Polarity::Inverted,
-            false => Polarity::Normal,
-        }
-    }
-}
-
-/// Mapping of the logical lanes in a link to their physical instantiation in
-/// the MAC/serdes interface.
-//
-// For each lane assigned to the port, this captures the mac block, the logical
-// lane within the mac block, the physical rx and tx lanes, and the polarity of
-// each.  All of these values are determined by the physical layout of the
-// board, should be identical across all sidecars with the same board revision,
-// and shouldn't change from run to run.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct LaneMap {
-    /// MAC block in the tofino ASIC
-    mac_block: u32,
-    /// logical lane within the mac block for each lane
-    logical_lane: Vec<u32>,
-    /// Rx logical->physical mapping
-    rx_phys: Vec<u32>,
-    /// Tx logical->physical mapping
-    tx_phys: Vec<u32>,
-    /// Rx polarity
-    rx_polarity: Vec<Polarity>,
-    /// Tx polarity
-    tx_polarity: Vec<Polarity>,
 }
 
 /// Fetch the logical->physical lane mappings for the given port.
@@ -189,17 +141,6 @@ pub fn lane_map_get(hdl: &Handle, port: PortHdl) -> AsicResult<LaneMap> {
         rx_polarity,
         tx_polarity,
     })
-}
-
-/// Per-lane Rx signal information
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct RxSigInfo {
-    /// Rx signal detected
-    pub sig_detect: bool,
-    /// CDR lock achieved
-    pub phy_ready: bool,
-    /// Apparent PPM difference between local and remote
-    pub ppm: i32,
 }
 
 // Fetch the Rx signal information for the given port and logical lane
@@ -405,19 +346,6 @@ pub fn port_tx_eq_set(
     Ok(())
 }
 
-/// Rx DFE adaptation information
-#[derive(Default, Deserialize, Serialize, JsonSchema)]
-pub struct DfeAdaptationState {
-    /// DFE complete
-    pub adapt_done: bool,
-    /// Total DFE attempts
-    pub adapt_cnt: u32,
-    /// DFE attempts since the last read
-    pub readapt_cnt: u32,
-    /// Times the signal was lost since the last read
-    pub link_lost_cnt: u32,
-}
-
 // Fetch the state of the Rx Decision Feedback Equalizer adaptation for the
 // specified port and logical lane
 fn lane_adapt_state_get(
@@ -457,13 +385,6 @@ pub fn port_adapt_state_get(
         rval.push(lane_adapt_state_get(hdl, port, lane)?)
     }
     Ok(rval)
-}
-
-/// Eye height(s) for a single lane in mv
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub enum SerdesEye {
-    Nrz(f32),
-    Pam4 { eye1: f32, eye2: f32, eye3: f32 },
 }
 
 // Returns the eye height(s) for the requested port and virtual lane
@@ -688,13 +609,6 @@ pub fn pam4_ffe_get(
     Ok(ffe)
 }
 
-/// Signal speed and encoding for a single lane
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct EncSpeed {
-    pub encoding: LaneEncoding,
-    pub gigabits: u32,
-}
-
 // Fetch the current encoding and speed for the specified port and logical lane
 fn lane_encoding_speed_get(
     hdl: &Handle,
@@ -715,7 +629,7 @@ fn lane_encoding_speed_get(
             &mut enc,
         )
         .check_error("fetching lane/speed info")?;
-        encoding = LaneEncoding::try_from(enc)?;
+        encoding = try_into_lane_encoding(enc)?;
     }
 
     Ok(EncSpeed { encoding, gigabits })
@@ -755,28 +669,6 @@ pub fn an_done_get(hdl: &Handle, port: PortHdl, lane: u32) -> AsicResult<bool> {
     };
 
     Ok(an_done)
-}
-
-/// State of a single lane during autonegotiation
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct AnStatus {
-    /// Can the link partner perform AN?
-    pub lp_an_ability: bool,
-    /// Allegedly: is the link up?  In practice, this always seems to be false?
-    /// TODO: investigate this
-    pub link_status: bool,
-    /// Are we capable of AN?
-    pub an_ability: bool,
-    /// Remote fault detected
-    pub remote_fault: bool,
-    /// Is autonegotiation complete?
-    pub an_complete: bool,
-    /// has a base page been received?
-    pub page_rcvd: bool,
-    /// Is extended page format supported?
-    pub ext_np_status: bool,
-    /// A fault has been detected via the parallel detection function
-    pub parallel_detect_fault: bool,
 }
 
 /// Fetch the autonegotiation state of a single port and logical lane
@@ -839,14 +731,6 @@ pub fn an_lp_base_page_get(hdl: &Handle, port: PortHdl) -> AsicResult<u64> {
     Ok(base_page)
 }
 
-/// Set of AN pages sent by our link partner
-#[derive(Default, Deserialize, Serialize, JsonSchema)]
-pub struct LpPages {
-    pub base_page: u64,
-    pub next_page1: u64,
-    pub next_page2: u64,
-}
-
 /// Fetch all the AN pages received from the link partner for this port
 pub fn an_lp_pages_get(hdl: &Handle, port: PortHdl) -> AsicResult<LpPages> {
     let port_id = ports::to_asic_id(hdl, port)?;
@@ -898,27 +782,6 @@ pub fn an_hcd_get(hdl: &Handle, port: PortHdl, lane: u32) -> AsicResult<AnHcd> {
     Ok(an_hcd)
 }
 
-/// Link-training status for a single lane
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct LtStatus {
-    /// Readout for frame lock state
-    pub readout_state: u32,
-    /// Frame lock state
-    pub frame_lock: bool,
-    /// Local training finished
-    pub rx_trained: bool,
-    /// Training state readout
-    pub readout_training_state: u32,
-    /// Link training failed
-    pub training_failure: bool,
-    /// TX control to send training pattern
-    pub tx_training_data_en: bool,
-    /// Signal detect for PCS
-    pub sig_det: bool,
-    /// State machine readout for training arbiter
-    pub readout_txstate: u32,
-}
-
 pub fn lt_status_get(
     hdl: &Handle,
     port: PortHdl,
@@ -960,27 +823,6 @@ pub fn lt_status_get(
         sig_det: sig_det != 0,
         readout_txstate,
     })
-}
-
-/// The combined status of a lane, with respect to the autonegotiation /
-/// link-training process.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct LaneStatus {
-    /// Has a lane successfully completed autoneg and link training?
-    pub lane_done: bool,
-    /// Detailed autonegotiation status
-    pub lane_an_status: AnStatus,
-    /// Detailed link-training status
-    pub lane_lt_status: LtStatus,
-}
-
-/// A collection of the data involved in the autonegiation/link-training process
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct AnLtStatus {
-    /// The base and extended pages received from the link partner
-    pub lp_pages: LpPages,
-    /// The per-lane status
-    pub lanes: Vec<LaneStatus>,
 }
 
 /// Collect all of the autonegotiation and link training status for this port.

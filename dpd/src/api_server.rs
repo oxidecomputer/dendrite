@@ -50,6 +50,19 @@ use slog::{debug, error, info, o};
 use transceiver_controller::Datapath;
 use transceiver_controller::Monitors;
 
+#[cfg(feature = "tofino_asic")]
+use asic::tofino_asic::serdes;
+#[cfg(feature = "tofino_asic")]
+use asic::tofino_asic::stats;
+
+#[cfg(feature = "softnpu")]
+use aal::AsicOps;
+#[cfg(feature = "softnpu")]
+use common::ports::TxEq;
+
+#[cfg(any(feature = "softnpu", feature = "tofino_asic"))]
+use common::ports::TxEqSwHw;
+
 use crate::counters;
 use crate::mcast;
 use crate::oxstats;
@@ -2020,6 +2033,506 @@ impl DpdApi for DpdApiImpl {
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
     }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn pcs_counters_list(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<Vec<LinkPcsCounters>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let all_counters = stats::port_get_pcs_counters_all(&switch.asic_hdl)
+            .map_err(|e| HttpError::from(DpdError::from(e)))?;
+        let mut out = Vec::with_capacity(all_counters.len());
+        for counters in all_counters {
+            let port_hdl = counters.port.parse().map_err(|_| {
+                HttpError::for_internal_error(format!(
+                    "failed to parse existing PortHdl: {}",
+                    counters.port,
+                ))
+            })?;
+            let (port_id, link_id) = switch
+                .link_path_from_port_hdl(port_hdl)
+                .await
+                .ok_or(HttpError::for_internal_error(format!(
+                    "failed to lookup port and link ID from \
+                an existing port handle: {port_hdl}"
+                )))?;
+            out.push(LinkPcsCounters {
+                port_id,
+                link_id,
+                counters,
+            });
+        }
+        Ok(HttpResponseOk(out))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn pcs_counters_list(
+        _rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<Vec<LinkPcsCounters>>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn pcs_counters_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LinkPcsCounters>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
+        stats::port_get_pcs_counters(&switch.asic_hdl, port_handle)
+            .map(|counters| {
+                HttpResponseOk(LinkPcsCounters {
+                    port_id,
+                    link_id,
+                    counters,
+                })
+            })
+            .map_err(|e| HttpError::from(DpdError::from(e)))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn pcs_counters_get(
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LinkPcsCounters>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn fec_rs_counters_list(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<Vec<LinkFecRSCounters>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let all_counters =
+            stats::port_get_fec_rs_counters_all(&switch.asic_hdl)
+                .map_err(|e| HttpError::from(DpdError::from(e)))?;
+        let mut out = Vec::with_capacity(all_counters.len());
+        for (port_hdl, counters) in all_counters.into_iter() {
+            let (port_id, link_id) = switch
+                .link_path_from_port_hdl(port_hdl)
+                .await
+                .ok_or(HttpError::for_internal_error(format!(
+                    "failed to lookup port and link ID from \
+                an existing port handle: {port_hdl}"
+                )))?;
+            out.push(LinkFecRSCounters {
+                port_id,
+                link_id,
+                counters,
+            });
+        }
+        Ok(HttpResponseOk(out))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn fec_rs_counters_list(
+        _rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<Vec<LinkFecRSCounters>>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn fec_rs_counters_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LinkFecRSCounters>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
+        stats::port_get_fec_rs_counters(&switch.asic_hdl, port_handle)
+            .map(|counters| {
+                HttpResponseOk(LinkFecRSCounters {
+                    port_id,
+                    link_id,
+                    counters,
+                })
+            })
+            .map_err(|e| HttpError::from(DpdError::from(e)))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn fec_rs_counters_get(
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LinkFecRSCounters>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn rmon_counters_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LinkRMonCounters>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
+        stats::port_get_rmon_counters(&switch.asic_hdl, port_handle)
+            .map(|counters| {
+                HttpResponseOk(LinkRMonCounters {
+                    port_id,
+                    link_id,
+                    counters,
+                })
+            })
+            .map_err(|e| HttpError::from(DpdError::from(e)))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn rmon_counters_get(
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LinkRMonCounters>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn rmon_counters_get_all(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LinkRMonCountersAll>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
+        stats::port_get_rmon_counters_all(&switch.asic_hdl, port_handle)
+            .map(|counters| {
+                HttpResponseOk(LinkRMonCountersAll {
+                    port_id,
+                    link_id,
+                    counters,
+                })
+            })
+            .map_err(|e| HttpError::from(DpdError::from(e)))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn rmon_counters_get_all(
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LinkRMonCountersAll>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn lane_map_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LaneMap>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
+        serdes::lane_map_get(&switch.asic_hdl, port_handle)
+            .map(HttpResponseOk)
+            .map_err(|e| HttpError::from(DpdError::from(e)))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn lane_map_get(
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LaneMap>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn link_tx_eq_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<common::ports::TxEqSwHw>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
+        Ok(HttpResponseOk(
+            serdes::port_tx_eq_get(&switch.asic_hdl, port_handle)
+                .map_err(|e| HttpError::from(DpdError::from(e)))?
+                .into_iter()
+                .map(|t| TxEqSwHw {
+                    sw: t.sw.into(),
+                    hw: t.hw.into(),
+                })
+                .collect(),
+        ))
+    }
+
+    #[cfg(feature = "softnpu")]
+    async fn link_tx_eq_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<common::ports::TxEqSwHw>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
+        let lane_cnt = switch
+            .asic_hdl
+            .port_get_lane_cnt(port_handle)
+            .map_err(|e| HttpError::from(DpdError::from(e)))?;
+
+        let tx_eq = switch
+            .asic_hdl
+            .port_tx_eq_get(port_handle)
+            .map_err(|e| HttpError::from(DpdError::from(e)))?;
+        let softnpu_tx_eq = TxEq {
+            main: Some(tx_eq),
+            ..Default::default()
+        };
+        Ok(HttpResponseOk(
+            (0..lane_cnt)
+                .map(|_| TxEqSwHw {
+                    sw: softnpu_tx_eq,
+                    hw: softnpu_tx_eq,
+                })
+                .collect(),
+        ))
+    }
+
+    #[cfg(not(any(feature = "tofino_asic", feature = "softnpu")))]
+    async fn link_tx_eq_get(
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<common::ports::TxEqSwHw>>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn link_tx_eq_set(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+        args: TypedBody<common::ports::TxEq>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+        let settings = args.into_inner();
+
+        switch
+            .set_link_tx_eq(port_id, link_id, settings)
+            .map(|_| HttpResponseUpdatedNoContent())
+            .map_err(|e| e.into())
+    }
+
+    #[cfg(feature = "softnpu")]
+    async fn link_tx_eq_set(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+        args: TypedBody<common::ports::TxEq>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+
+        let settings = args.into_inner();
+        switch
+            .set_link_tx_eq(port_id, link_id, settings)
+            .map(|_| HttpResponseUpdatedNoContent())
+            .map_err(|e| e.into())
+    }
+
+    #[cfg(not(any(feature = "tofino_asic", feature = "softnpu")))]
+    async fn link_tx_eq_set(
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<LinkPath>,
+        _args: TypedBody<common::ports::TxEq>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn link_rx_sig_info_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<RxSigInfo>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
+        serdes::port_rx_sig_info_get(&switch.asic_hdl, port_handle)
+            .map(HttpResponseOk)
+            .map_err(|e| HttpError::from(DpdError::from(e)))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn link_rx_sig_info_get(
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<RxSigInfo>>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn link_rx_adapt_count_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<DfeAdaptationState>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
+        serdes::port_adapt_state_get(&switch.asic_hdl, port_handle)
+            .map(HttpResponseOk)
+            .map_err(|e| HttpError::from(DpdError::from(e)))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn link_rx_adapt_count_get(
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<DfeAdaptationState>>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn link_eye_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<SerdesEye>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
+        serdes::port_eye_get(&switch.asic_hdl, port_handle)
+            .map(HttpResponseOk)
+            .map_err(|e| HttpError::from(DpdError::from(e)))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn link_eye_get(
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<SerdesEye>>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn link_enc_speed_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<EncSpeed>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
+        serdes::port_encoding_speed_get(&switch.asic_hdl, port_handle)
+            .map(HttpResponseOk)
+            .map_err(|e| HttpError::from(DpdError::from(e)))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn link_enc_speed_get(
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<EncSpeed>>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn link_an_lt_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<AnLtStatus>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let port_id = params.port_id;
+        let link_id = params.link_id;
+        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
+        serdes::an_lt_status_get(&switch.asic_hdl, port_handle)
+            .map(HttpResponseOk)
+            .map_err(|e| HttpError::from(DpdError::from(e)))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn link_an_lt_get(
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<AnLtStatus>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn link_ber_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Ber>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        let port_id = path.port_id;
+        let link_id = path.link_id;
+        switch
+            .link_ber(port_id, link_id)
+            .map(HttpResponseOk)
+            .map_err(|e| e.into())
+    }
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn link_ber_get(
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Ber>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
 }
 
 // Convert a port ID path into a `QsfpPort` if possible. This is generally used
@@ -2077,12 +2590,6 @@ impl From<&crate::link::Link> for LinkSettings {
 pub fn http_api() -> dropshot::ApiDescription<Arc<Switch>> {
     #[allow(unused_mut)]
     let mut api = dpd_api_mod::api_description::<DpdApiImpl>().unwrap();
-
-    // TODO: need to move these into dpd-api
-    #[cfg(feature = "tofino_asic")]
-    crate::tofino_api_server::init(&mut api);
-    #[cfg(feature = "softnpu")]
-    crate::softnpu_api_server::init(&mut api);
 
     api
 }
