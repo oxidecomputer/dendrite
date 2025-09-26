@@ -224,11 +224,15 @@ fn get_sidecar_revision(
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid Sidecar revision: {e}"))
 }
+
+#[cfg(feature = "tofino_stub")]
 fn get_sidecar_revision(
     _config: &config::Config,
 ) -> anyhow::Result<SidecarRevision> {
     Ok(SidecarRevision::B)
 }
+
+#[cfg(feature = "softnpu")]
 fn get_sidecar_revision(
     config: &config::Config,
 ) -> anyhow::Result<SidecarRevision> {
@@ -237,17 +241,13 @@ fn get_sidecar_revision(
         rear: config.asic_config.rear_ports,
     })
 }
+
+#[cfg(feature = "chaos")]
 fn get_sidecar_revision(
     _config: &config::Config,
 ) -> anyhow::Result<SidecarRevision> {
     Ok(SidecarRevision::Chaos)
 }
-
-#[cfg(feature = "tofino_stub")]
-
-#[cfg(feature = "softnpu")]
-
-#[cfg(feature = "chaos")]
 
 impl Switch {
     fn new(
