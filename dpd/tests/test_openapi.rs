@@ -6,31 +6,6 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-// Test that the OpenAPI document matches the one in the repository.
-//
-// Note that we only test the ASIC version, which should be a strict superset
-// of the others, including the counter-related endpoints.
-#[cfg(all(feature = "tofino_asic", test))]
-#[test]
-fn test_dpd_openapi() {
-    let dpd_path = env!("CARGO_BIN_EXE_dpd");
-    let openapi_path =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../openapi/dpd.json");
-    let output = std::process::Command::new(dpd_path)
-        .arg("openapi")
-        .output()
-        .expect("failed to run `dpd`");
-    if !output.status.success() {
-        let mut msg = String::from("\n`dpd openapi` failed!\n\n");
-        for line in String::from_utf8_lossy(&output.stderr).lines() {
-            msg.push_str(&format!("stderr: {line}\n"));
-        }
-        panic!("{}", msg);
-    }
-    let output = std::str::from_utf8(&output.stdout).expect("Non-UTF8 output");
-    expectorate::assert_contents(openapi_path, output);
-}
-
 // NOTE: This is a horrible hack that appears to be necessary.
 //
 // We use a mapfile in the tofino_sde repo to declare the QSFP management

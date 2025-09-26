@@ -15,6 +15,7 @@ use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod codegen;
+mod external;
 
 #[cfg(target_os = "illumos")]
 mod illumos;

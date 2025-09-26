@@ -1269,6 +1269,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dendrite-dropshot-apis"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "camino",
+ "clap",
+ "dpd-api",
+ "dropshot-api-manager",
+ "dropshot-api-manager-types",
+ "semver 1.0.27",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1611,6 +1624,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "dropshot-api-manager"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "787892a99f0a8b8f58b254542cc706526e2b5964638e11c1397a4c0a6acb9cbd"
+dependencies = [
+ "anyhow",
+ "atomicwrites",
+ "camino",
+ "clap",
+ "debug-ignore",
+ "dropshot",
+ "dropshot-api-manager-types",
+ "fs-err",
+ "hex",
+ "indent_write",
+ "newtype_derive",
+ "openapiv3",
+ "owo-colors",
+ "paste",
+ "semver 1.0.27",
+ "serde_json",
+ "sha2",
+ "similar",
+ "supports-color",
+ "textwrap",
+ "thiserror 2.0.16",
+]
+
+[[package]]
+name = "dropshot-api-manager-types"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3d8209403091dfc03d50b260268a36ed9ea7376a64ad4b57c2354f93e2d865d"
+dependencies = [
+ "anyhow",
+ "camino",
+ "paste",
+ "semver 1.0.27",
+ "serde_json",
+]
+
+[[package]]
 name = "dropshot_endpoint"
 version = "0.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1883,6 +1938,15 @@ name = "fragile"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dd6caf6059519a65843af8fe2a3ae298b14b80179855aeb4adc2c1934ee619"
+
+[[package]]
+name = "fs-err"
+version = "3.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44f150ffc8782f35521cec2b23727707cb4045706ba3c854e86bef66b3a8cdbd"
+dependencies = [
+ "autocfg",
+]
 
 [[package]]
 name = "fs_extra"
@@ -2948,6 +3012,12 @@ dependencies = [
  "libc",
  "windows-sys 0.59.0",
 ]
+
+[[package]]
+name = "is_ci"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7655c9839580ee829dfacba1d1278c2b7883e50a277ff7541299489d6bdfdc45"
 
 [[package]]
 name = "is_terminal_polyfill"
@@ -6068,6 +6138,9 @@ name = "similar"
 version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+dependencies = [
+ "bstr",
+]
 
 [[package]]
 name = "siphasher"
@@ -6410,6 +6483,15 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "supports-color"
+version = "3.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c64fc7232dd8d2e4ac5ce4ef302b1d81e0b80d055b9d77c7c4f51f6aa4c867d6"
+dependencies = [
+ "is_ci",
+]
 
 [[package]]
 name = "swadm"
