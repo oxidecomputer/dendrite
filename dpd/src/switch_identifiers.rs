@@ -18,7 +18,7 @@ use aal::{AsicOps, SidecarIdentifiers};
 use omicron_common::{
     address::MGS_PORT,
     backoff::{
-        retry_notify, retry_policy_internal_service_aggressive, BackoffError,
+        BackoffError, retry_notify, retry_policy_internal_service_aggressive,
     },
 };
 

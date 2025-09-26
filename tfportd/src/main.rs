@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::net::Ipv6Addr;
 use std::net::SocketAddrV6;
-use std::sync::{atomic, Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic};
 use std::thread;
 use std::time::Duration;
 
@@ -22,7 +22,7 @@ use signal_hook::consts::signal::*;
 use signal_hook::iterator::Signals;
 use slog::{debug, error, info, warn};
 
-use structopt::StructOpt;
+use clap::Parser;
 use tokio::runtime::Handle;
 use tokio::sync::watch;
 use tokio::task;
@@ -56,42 +56,46 @@ pub fn poll_interval() -> Duration {
     )
 }
 
-#[derive(Debug, Default, StructOpt)]
-#[structopt(name = "tfportd", about = "tfport management daemon")]
+/// tfport management daemon
+#[derive(Debug, Default, Parser)]
+#[clap(name = "tfportd")]
 pub(crate) struct Opt {
-    #[structopt(long, about = "log file")]
+    /// log file
+    #[clap(long)]
     log_file: Option<String>,
 
-    #[structopt(
-        long,
-        short = "l",
-        about = "log format",
-        help = "format logs for 'human' or 'json' consumption"
-    )]
+    /// log format
+    ///
+    /// format logs for 'human' or 'json' consumption
+    #[clap(long, short = 'l')]
     log_format: Option<common::logging::LogFormat>,
 
-    #[structopt(
-        long,
-        help = "IPv6 addresses and ports on which to expose the producer(s)"
-    )]
+    /// IPv6 addresses and ports on which to expose the producer(s)
+    #[clap(long)]
     listen_addresses: Option<Vec<SocketAddrV6>>,
 
-    #[structopt(long, short, about = "packet source to layer tfports over")]
+    /// packet source to layer tfports over
+    #[clap(long, short)]
     pkt_source: Option<String>,
 
-    #[structopt(long, about = "dpd host name/addr")]
+    /// dpd host name/addr
+    #[clap(long)]
     dpd_host: Option<String>,
 
-    #[structopt(long, about = "dpd port number")]
+    /// dpd port number
+    #[clap(long)]
     dpd_port: Option<u16>,
 
-    #[structopt(long, about = "link on which vlans should be created")]
+    /// link on which vlans should be created
+    #[clap(long)]
     vlan_link: Option<String>,
 
-    #[structopt(long, about = "vlan config file")]
+    /// vlan config file
+    #[clap(long)]
     vlan_data: Option<String>,
 
-    #[structopt(long, help = "only run arp/ndp synchronization")]
+    /// only run arp/ndp synchronization
+    #[clap(long)]
     sync_only: bool,
 
     /// Bootstrap prefix to advertise over techport0.
@@ -99,7 +103,7 @@ pub(crate) struct Opt {
     /// If the argument is not provided at all, or it is the exact string
     /// `"none"`, then **NO ADVERTISEMENT** will be done. If provided, this must
     /// be a valid `/64` IPv6 prefix.
-    #[structopt(long)]
+    #[clap(long)]
     techport0_prefix: Option<String>,
 
     /// Bootstrap prefix to advertise over techport1.
@@ -107,7 +111,7 @@ pub(crate) struct Opt {
     /// If the argument is not provided at all, or it is the exact string
     /// `"none"`, then **NO ADVERTISEMENT** will be done. If provided, this must
     /// be a valid `/64` IPv6 prefix.
-    #[structopt(long)]
+    #[clap(long)]
     techport1_prefix: Option<String>,
 }
 
@@ -257,7 +261,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn main_impl() -> anyhow::Result<()> {
-    let opts = Opt::from_args();
+    let opts = Opt::parse();
     let config = config::build_config(&opts)?;
 
     const CLIENT_NAME: &str = "tfportd";

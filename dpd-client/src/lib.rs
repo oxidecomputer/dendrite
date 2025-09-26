@@ -6,11 +6,11 @@
 
 //! Client library for the Dendrite data plane daemon.
 
+pub use common::ROLLBACK_FAILURE_ERROR_CODE;
 use common::counters;
 use common::nat;
 use common::network;
 use common::ports;
-pub use common::ROLLBACK_FAILURE_ERROR_CODE;
 use slog::Logger;
 use std::cmp::Ordering;
 use std::fmt;
@@ -359,8 +359,8 @@ impl fmt::Display for types::TfportData {
 impl fmt::Display for types::SffComplianceCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Extended(ext) => write!(f, "{}", ext),
-            Self::Ethernet(eth) => write!(f, "{}", eth),
+            Self::Extended(ext) => write!(f, "{ext}"),
+            Self::Ethernet(eth) => write!(f, "{eth}"),
         }
     }
 }

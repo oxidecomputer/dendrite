@@ -6,9 +6,9 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use crate::parse_error;
 use crate::MacAddr;
 use crate::PacketResult;
+use crate::parse_error;
 
 pub struct ParseBuffer<'a> {
     data: &'a [u8],
@@ -18,7 +18,7 @@ pub struct ParseBuffer<'a> {
 }
 
 impl ParseBuffer<'_> {
-    pub fn new_from_slice(d: &[u8]) -> ParseBuffer {
+    pub fn new_from_slice(d: &[u8]) -> ParseBuffer<'_> {
         ParseBuffer {
             data: d,
             byte: 0,
@@ -74,11 +74,7 @@ impl ParseBuffer<'_> {
     pub fn bits_left(&mut self) -> usize {
         let consumed = (self.byte * 8) + self.bit;
 
-        if consumed < self.len {
-            self.len - consumed
-        } else {
-            0
-        }
+        self.len.saturating_sub(consumed)
     }
 
     fn get_chunk(&mut self, bits: usize) -> (u32, usize) {

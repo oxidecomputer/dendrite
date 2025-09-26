@@ -17,9 +17,9 @@ use aal::{
 };
 use common::ports::{PortFec, PortId, PortMedia, PortPrbsMode, PortSpeed};
 
+use crate::Identifiers;
 pub use crate::faux_fsm::FsmState;
 pub use crate::faux_fsm::PortFsmState;
-use crate::Identifiers;
 
 pub mod table;
 
@@ -117,11 +117,11 @@ impl TableChaos {
         id: &str,
         message: &str,
     ) -> AsicResult<()> {
-        if let Some(value) = self.values.get(id) {
-            if *value >= random() {
-                slog::error!(log, "chaos table error: {}", message);
-                return Err(AsicError::Synthetic(message.into()));
-            }
+        if let Some(value) = self.values.get(id)
+            && *value >= random()
+        {
+            slog::error!(log, "chaos table error: {}", message);
+            return Err(AsicError::Synthetic(message.into()));
         }
         Ok(())
     }

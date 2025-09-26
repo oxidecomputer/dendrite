@@ -11,8 +11,8 @@ use bytes::BufMut;
 use bytes::BytesMut;
 
 use crate::PacketResult;
-use crate::{ipv4, ipv6};
 use crate::{Endpoint, Headers, Packet, Protocol};
+use crate::{ipv4, ipv6};
 
 pub const ICMP_ECHOREPLY: u8 = 0;
 pub const ICMP_DEST_UNREACH: u8 = 3;
@@ -123,7 +123,7 @@ impl Protocol for IcmpHdr {
         Ok(v)
     }
 
-    fn gen(
+    fn generate(
         _src: Endpoint,
         dst: Endpoint,
         mut protos: Vec<u16>,

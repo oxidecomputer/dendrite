@@ -13,8 +13,8 @@ use slog::debug;
 use aal::{ActionParse, MatchParse, MatchRange};
 use aal_macros::*;
 
-use crate::table::*;
 use crate::Switch;
+use crate::table::*;
 use common::nat::NatTarget;
 use common::network::MacAddr;
 

@@ -4,11 +4,11 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use crate::link::Link;
-use crate::link::LinkParams;
 use crate::DpdError;
 use crate::DpdResult;
 use crate::Switch;
+use crate::link::Link;
+use crate::link::LinkParams;
 use aal::AsicOps;
 use common::ports::Ipv4Entry;
 use common::ports::Ipv6Entry;
@@ -19,10 +19,10 @@ use common::ports::TxEq;
 use dpd_api::LinkSettings;
 use dpd_api::PortSettings;
 use dpd_types::link::LinkId;
+use slog::Logger;
 use slog::debug;
 use slog::error;
 use slog::trace;
-use slog::Logger;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::net::IpAddr;

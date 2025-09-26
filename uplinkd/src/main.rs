@@ -27,17 +27,18 @@
 //
 // TODO: get repeated log messages under control.
 
-use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::btree_map::Entry;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::anyhow;
+use clap::Parser;
 use libc::c_int;
 use oxnet::IpNet;
 use oxnet::Ipv4Net;
@@ -49,7 +50,6 @@ use signal_hook::iterator::Signals;
 use slog::debug;
 use slog::error;
 use slog::info;
-use structopt::StructOpt;
 
 use common::illumos;
 
@@ -63,22 +63,22 @@ struct Global {
     current: BTreeMap<String, BTreeMap<String, IpNet>>,
 }
 
-#[derive(Debug, StructOpt)]
-#[structopt(name = "uplinkd", about = "uplink address management daemon")]
+/// uplink address management daemon
+#[derive(Debug, Parser)]
+#[clap(name = "uplinkd")]
 struct Opt {
-    #[structopt(long, short, about = "use ipadm to establish PtP links")]
+    /// use ipadm to establish PtP links
+    #[clap(long, short)]
     ipadm: bool,
 
-    #[structopt(long, about = "log file")]
+    /// log file
+    #[clap(long)]
     log_file: Option<String>,
 
-    #[structopt(
-        long,
-        short = "l",
-        default_value = "human",
-        about = "log format",
-        help = "format logs for 'human' or 'json' consumption"
-    )]
+    /// log format
+    ///
+    /// format logs for 'human' or 'json' consumption
+    #[clap(long, short = 'l', default_value = "human")]
     log_format: common::logging::LogFormat,
 }
 
@@ -97,10 +97,10 @@ fn interface_vlan_id(iface: &str) -> (String, Option<u16>) {
     let fields: Vec<&str> = iface.split('.').collect();
 
     let mut rval = None;
-    if fields.len() == 2 {
-        if let Ok(Some(vlan_id)) = parse_vlan_id(fields[1]) {
-            rval = Some(vlan_id);
-        }
+    if fields.len() == 2
+        && let Ok(Some(vlan_id)) = parse_vlan_id(fields[1])
+    {
+        rval = Some(vlan_id);
     }
     (fields[0].to_string(), rval)
 }
@@ -187,9 +187,10 @@ fn refresh_smf_config(g: &mut Global) -> Result<()> {
             let (addr, vlan_id) = match parse_uplink_property(&s) {
                 Ok(a) => a,
                 Err(e) => {
-                    error!(g.log,
+                    error!(
+                        g.log,
                         "failed to parse {s} as an uplink address for {link}: {e:?}"
-                        );
+                    );
                     continue;
                 }
             };
@@ -464,23 +465,21 @@ async fn reconcile_interfaces(g: &mut Global) {
     // listed in SMF.  We create any missing vlan links.
     let desired_ifaces: Vec<String> = g.desired.keys().cloned().collect();
     for iface in &desired_ifaces {
-        if let Entry::Vacant(e) = g.current.entry(iface.to_string()) {
-            if let (link, Some(vlan_id)) = interface_vlan_id(iface) {
-                info!(g.log, "creating vlan link {iface}");
-                if let Err(e) =
-                    illumos::vlan_create(&link, vlan_id, iface).await
-                {
-                    error!(g.log, "failed to create vlan link {iface}: {e:?}");
-                }
-
-                // Even if the vlan link creation failed, we will still attempt
-                // to create the desired addresses.  In the best case, the
-                // creation failed because it already exists, so we definitely
-                // want to set up the addresses.  In the worst case, the link
-                // doesn't exist, and the subsequent address creation will also
-                // fail.
-                e.insert(BTreeMap::new());
+        if let Entry::Vacant(e) = g.current.entry(iface.to_string())
+            && let (link, Some(vlan_id)) = interface_vlan_id(iface)
+        {
+            info!(g.log, "creating vlan link {iface}");
+            if let Err(e) = illumos::vlan_create(&link, vlan_id, iface).await {
+                error!(g.log, "failed to create vlan link {iface}: {e:?}");
             }
+
+            // Even if the vlan link creation failed, we will still attempt
+            // to create the desired addresses.  In the best case, the
+            // creation failed because it already exists, so we definitely
+            // want to set up the addresses.  In the worst case, the link
+            // doesn't exist, and the subsequent address creation will also
+            // fail.
+            e.insert(BTreeMap::new());
         }
     }
 }
@@ -502,12 +501,11 @@ async fn reconcile(g: &mut Global) {
         let mut max_uplink = 0;
         let uplink_prefix = format!("{iface}/uplink");
         for addrobj in current_addrs.keys() {
-            if let Some(idx) = addrobj.strip_prefix(&uplink_prefix) {
-                if let Ok(idx) = idx.parse::<u32>() {
-                    if idx > max_uplink {
-                        max_uplink = idx;
-                    }
-                }
+            if let Some(idx) = addrobj.strip_prefix(&uplink_prefix)
+                && let Ok(idx) = idx.parse::<u32>()
+                && idx > max_uplink
+            {
+                max_uplink = idx;
             }
         }
 
@@ -569,7 +567,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn main_impl() -> anyhow::Result<()> {
-    let opts = Opt::from_args();
+    let opts = Opt::parse();
 
     let mut global = Global {
         log: common::logging::init("uplinkd", &opts.log_file, opts.log_format)?,

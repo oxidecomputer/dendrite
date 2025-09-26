@@ -5,61 +5,65 @@
 // Copyright 2025 Oxide Computer Company
 
 use std::convert::TryFrom;
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use anyhow::Context;
+use clap::Subcommand;
 use colored::*;
 use futures::stream::TryStreamExt;
-use structopt::*;
 use tabwriter::TabWriter;
 
 use common::nat;
 use common::network::MacAddr;
-use dpd_client::types;
 use dpd_client::Client;
+use dpd_client::types;
 
-#[derive(Debug, StructOpt)]
-#[structopt(about = "manage NAT reservations")]
+#[derive(Debug, Subcommand)]
+/// manage NAT reservations
 pub enum Nat {
-    #[structopt(about = "list all NAT reservations", alias = "ls")]
+    /// list all NAT reservations
+    #[clap(visible_alias = "ls")]
     List {
-        #[structopt(
-            help = "limit to the given external IP address",
-            short = "e"
-        )]
+        /// limit to the given external IP address",
+        #[clap(short = 'e')]
         external: Option<Ipv4Addr>,
     },
-    #[structopt(about = "get a single NAT reservation")]
+    /// get a single NAT reservation
     Get {
-        #[structopt(help = "external IP address", short = "e")]
+        /// external IP address
+        #[clap(short = 'e')]
         external: IpAddr,
-        #[structopt(
-            help = "any port within the external port range",
-            short = "p"
-        )]
+        /// any port within the external port range
+        #[clap(short = 'p')]
         port: u16,
     },
-    #[structopt(about = "add a new NAT reservation")]
+    /// add a new NAT reservation
     Add {
-        #[structopt(help = "external IP address", short = "e")]
+        /// external IP address
+        #[clap(short = 'e')]
         external: IpAddr,
-        #[structopt(help = "start of external port range", short = "l")]
+        /// start of external port range
+        #[clap(short = 'l')]
         low: u16,
-        #[structopt(help = "end of external port range", short = "h")]
+        /// end of external port range
+        #[clap(short = 'H')]
         high: u16,
-        #[structopt(help = "internal IP address", short = "i")]
+        /// internal IP address
+        #[clap(short = 'i')]
         internal: Ipv6Addr,
-        #[structopt(help = "inner MAC address", short = "m")]
+        /// inner MAC address
+        #[clap(short = 'm')]
         inner: MacAddr,
-        #[structopt(help = "Geneve VNI", short = "v")]
+        /// Geneve VNI
+        #[clap(short = 'v')]
         vni: nat::Vni,
     },
-    #[structopt(about = "delete a single NAT reservation")]
+    /// delete a single NAT reservation
     Del {
-        #[structopt(help = "external IP address")]
+        /// external IP address
         external: IpAddr,
-        #[structopt(help = "low end of external port range")]
+        /// low end of external port range
         port: u16,
     },
 }

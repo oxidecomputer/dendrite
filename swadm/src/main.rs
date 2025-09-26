@@ -9,12 +9,13 @@ use std::io;
 use std::str::FromStr;
 
 use anyhow::Context;
-use structopt::*;
 
-use dpd_client::default_port;
-use dpd_client::types;
+use clap::{Parser, Subcommand, ValueEnum};
+
 use dpd_client::Client;
 use dpd_client::ClientState;
+use dpd_client::default_port;
+use dpd_client::types;
 
 mod addr;
 mod arp;
@@ -26,42 +27,64 @@ mod route;
 mod switchport;
 mod table;
 
-#[derive(Debug, StructOpt)]
-#[structopt(
-    name = "swadm",
-    about = "provides a command-line interface to the Oxide Switch Controller",
-    version = "0.0.1"
-)]
+/// provides a command-line interface to the Oxide Switch Controller
+#[derive(Debug, Parser)]
+#[command(name = "swadm", version = "0.0.1")]
 struct GlobalOpts {
-    #[structopt(
-        short,
-        long,
-        help = "switch controller's hostname or IP address"
-    )]
+    /// switch controller's hostname or IP address
+    #[arg(long)]
     host: Option<String>,
 
-    #[structopt(help = "switch controller's TCP port", short, long)]
+    /// switch controller's TCP port
+    #[arg(long)]
     port: Option<u16>,
 
-    #[structopt(subcommand)]
+    #[command(subcommand)]
     cmd: Commands,
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand)]
 enum Commands {
     /// Print detailed build information about the `dpd` server.
-    #[structopt(visible_alias = "build-info")]
+    #[clap(visible_alias = "build-info")]
     DpdBuildInfo,
-    Arp(arp::Arp),
-    Route(route::Route),
-    Addr(addr::Addr),
-    Nat(nat::Nat),
-    Counters(counters::P4Counters),
-    #[structopt(visible_alias = "sp")]
-    SwitchPort(switchport::SwitchPort),
-    Link(link::Link),
-    Table(table::Table),
-    Compliance(compliance::Compliance),
+    Arp {
+        #[command(subcommand)]
+        cmd: arp::Arp,
+    },
+    Route {
+        #[command(subcommand)]
+        cmd: route::Route,
+    },
+    Addr {
+        #[command(subcommand)]
+        cmd: addr::Addr,
+    },
+    Nat {
+        #[command(subcommand)]
+        cmd: nat::Nat,
+    },
+    Counters {
+        #[command(subcommand)]
+        cmd: counters::P4Counters,
+    },
+    #[clap(visible_alias = "sp")]
+    SwitchPort {
+        #[command(subcommand)]
+        cmd: switchport::SwitchPort,
+    },
+    Link {
+        #[command(subcommand)]
+        cmd: link::Link,
+    },
+    Table {
+        #[command(subcommand)]
+        cmd: table::Table,
+    },
+    Compliance {
+        #[command(subcommand)]
+        cmd: compliance::Compliance,
+    },
 }
 
 // A LinkPath or "loopback", used when either is appropriate.
@@ -87,7 +110,7 @@ impl FromStr for LinkName {
 }
 
 // A "path" to a link, structured as `port_id/link_id`.
-#[derive(Clone, Debug, StructOpt)]
+#[derive(Clone, Debug, Parser)]
 pub struct LinkPath {
     port_id: types::PortId,
     link_id: types::LinkId,
@@ -110,7 +133,7 @@ impl FromStr for LinkPath {
     }
 }
 
-#[derive(Clone, Copy, Debug, StructOpt, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, ValueEnum, Eq, PartialEq)]
 pub enum IpFamily {
     V4,
     V6,
@@ -134,19 +157,19 @@ pub fn parse_qsfp_port_id(value: &str) -> Result<types::PortId, String> {
     value
         .parse::<types::Qsfp>()
         .map_err(|_| {
-            format!("'{}' is invalid; QSFP ports are named qsfp<0-31>", value)
+            format!("'{value}' is invalid; QSFP ports are named qsfp<0-31>")
         })
         .map(types::PortId::Qsfp)
 }
 
 pub fn parse_port_id(value: &str) -> Result<types::PortId, String> {
     value.parse().map_err(|_| {
-        format!("'{}' is invalid; valid port-ids include qsfp<0-31>, rear<0-31>, or int0", value)
+        format!("'{value}' is invalid; valid port-ids include qsfp<0-31>, rear<0-31>, or int0")
     })
 }
 
 pub fn misc_err<T: std::fmt::Display>(msg: T) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, msg.to_string())
+    io::Error::other(msg.to_string())
 }
 
 async fn build_info(client: &Client) -> anyhow::Result<()> {
@@ -178,7 +201,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn main_impl() -> anyhow::Result<()> {
-    let opts = GlobalOpts::from_args();
+    let opts = GlobalOpts::parse();
     let port = opts.port.unwrap_or_else(default_port);
     let host = opts.host.unwrap_or_else(|| "localhost".to_string());
     let log = slog::Logger::root(slog::Discard, slog::o!());
@@ -190,15 +213,19 @@ async fn main_impl() -> anyhow::Result<()> {
 
     match opts.cmd {
         Commands::DpdBuildInfo => build_info(&client).await,
-        Commands::Arp(a) => arp::arp_cmd(&client, a).await,
-        Commands::Route(r) => route::route_cmd(&client, r).await,
-        Commands::Addr(p) => addr::addr_cmd(&client, p).await,
-        Commands::Nat(p) => nat::nat_cmd(&client, p).await,
-        Commands::Counters(c) => counters::ctrs_cmd(&client, c).await,
-        Commands::SwitchPort(p) => switchport::switch_cmd(&client, p).await,
-        Commands::Link(link) => link::link_cmd(&client, link).await,
-        Commands::Table(table) => table::table_cmd(&client, table).await,
-        Commands::Compliance(compliance) => {
+        Commands::Arp { cmd: a } => arp::arp_cmd(&client, a).await,
+        Commands::Route { cmd: r } => route::route_cmd(&client, r).await,
+        Commands::Addr { cmd: p } => addr::addr_cmd(&client, p).await,
+        Commands::Nat { cmd: p } => nat::nat_cmd(&client, p).await,
+        Commands::Counters { cmd: c } => counters::ctrs_cmd(&client, c).await,
+        Commands::SwitchPort { cmd: p } => {
+            switchport::switch_cmd(&client, p).await
+        }
+        Commands::Link { cmd: link } => link::link_cmd(&client, link).await,
+        Commands::Table { cmd: table } => {
+            table::table_cmd(&client, table).await
+        }
+        Commands::Compliance { cmd: compliance } => {
             compliance::compliance_cmd(&client, compliance).await
         }
     }

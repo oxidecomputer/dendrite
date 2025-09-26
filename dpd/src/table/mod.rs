@@ -9,8 +9,8 @@ use std::hash::Hash;
 
 use slog::{debug, error, info};
 
-use crate::types::*;
 use crate::Switch;
+use crate::types::*;
 use aal::ActionParse;
 use aal::MatchParse;
 use aal::TableOps;

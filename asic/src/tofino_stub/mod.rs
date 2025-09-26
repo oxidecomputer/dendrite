@@ -10,8 +10,8 @@ use std::sync::Mutex;
 use slog::{info, o};
 use tokio::sync::mpsc;
 
-use crate::tofino_common::*;
 use crate::Identifiers;
+use crate::tofino_common::*;
 use aal::{
     AsicError, AsicOps, AsicResult, Connector, PortHdl, PortUpdate,
     SidecarIdentifiers,

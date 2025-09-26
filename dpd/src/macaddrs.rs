@@ -10,14 +10,14 @@ use dpd_types::link::LinkId;
 use slog::debug;
 use slog::o;
 
+use crate::Switch;
 use crate::types::DpdError;
 use crate::types::DpdResult;
-use crate::Switch;
 use common::network::MacAddr;
-use common::ports::PortId;
 use common::ports::PORT_COUNT_INTERNAL;
 use common::ports::PORT_COUNT_QSFP;
 use common::ports::PORT_COUNT_REAR;
+use common::ports::PortId;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "tofino_asic")] {
@@ -102,7 +102,7 @@ pub(crate) enum BaseMac {
 
 impl core::fmt::Display for BaseMac {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 

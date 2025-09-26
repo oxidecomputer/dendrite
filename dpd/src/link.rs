@@ -6,21 +6,21 @@
 
 //! Manage logical Ethernet links on the Sidecar switch.
 
+use crate::MacAddr;
+use crate::Switch;
 use crate::fault::AutonegTracker;
 use crate::fault::Faultable;
 use crate::fault::LinkUpTracker;
 use crate::ports::AdminEvent;
 use crate::ports::Event;
+use crate::table::MacOps;
 use crate::table::mcast;
 use crate::table::port_ip;
 use crate::table::port_mac;
 use crate::table::port_nat;
-use crate::table::MacOps;
 use crate::transceivers::qsfp_xcvr_mpn;
 use crate::types::DpdError;
 use crate::types::DpdResult;
-use crate::MacAddr;
-use crate::Switch;
 use aal::AsicId;
 use aal::AsicOps;
 use aal::AsicResult;
@@ -48,9 +48,9 @@ use slog::error;
 use slog::info;
 use slog::o;
 use slog::warn;
-use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::btree_map::Entry;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
@@ -915,12 +915,11 @@ impl Switch {
                     // We count transitions from down->up, but ignore any
                     // up->up events.  In practice those shouldn't happen,
                     // but there is no guarantee.
-                    if old_state == LinkState::Down {
-                        if let Some(fault) =
+                    if old_state == LinkState::Down
+                        && let Some(fault) =
                             link.linkup_tracker.process_event(&())
-                        {
-                            self.link_set_fault_locked(&mut link, fault)?;
-                        }
+                    {
+                        self.link_set_fault_locked(&mut link, fault)?;
                     }
                 } else if !old_state.is_fault() {
                     // If we are in a faulted state, we stay there until the
@@ -1825,11 +1824,9 @@ async fn reconcile_link(
         false
     };
 
-    if destroy {
-        if let Err(e) = unplumb_link(switch, &log, &mut link) {
-            error!(log, "failed to unplumb link: {e:?}");
-            return;
-        }
+    if destroy && let Err(e) = unplumb_link(switch, &log, &mut link) {
+        error!(log, "failed to unplumb link: {e:?}");
+        return;
     }
 
     if link.config.delete_me {
@@ -1841,23 +1838,20 @@ async fn reconcile_link(
     }
     drop(links);
 
-    if !link.plumbed.link_created {
-        if let Err(e) = plumb_link(switch, &log, &mut link, &mpn) {
-            error!(log, "Failed to plumb link: {e:?}");
-            record_plumb_failure(
-                switch,
-                &mut link,
-                "configuring link in the switch asic",
-                &e,
-            );
-            if let Err(e) = unplumb_link(switch, &log, &mut link) {
-                error!(
-                    log,
-                    "Failed to clean up following plumb failure: {e:?}"
-                );
-            }
-            return;
+    if !link.plumbed.link_created
+        && let Err(e) = plumb_link(switch, &log, &mut link, &mpn)
+    {
+        error!(log, "Failed to plumb link: {e:?}");
+        record_plumb_failure(
+            switch,
+            &mut link,
+            "configuring link in the switch asic",
+            &e,
+        );
+        if let Err(e) = unplumb_link(switch, &log, &mut link) {
+            error!(log, "Failed to clean up following plumb failure: {e:?}");
         }
+        return;
     }
 
     let asic_id = link.asic_port_id;
@@ -1975,7 +1969,7 @@ async fn reconcile_link(
             record_plumb_failure(
                 switch,
                 &mut link,
-                &format!("updating PRBS mode to {}", prbs),
+                &format!("updating PRBS mode to {prbs}"),
                 &e,
             );
             error!(log, "Failed to set PRBS: {:?}", e);

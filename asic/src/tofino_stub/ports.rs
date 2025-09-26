@@ -7,11 +7,11 @@
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 
+use crate::tofino_common::ports::CHANNELS_PER_SWITCH_PORT;
 pub use crate::tofino_common::ports::PhysPort;
 pub use crate::tofino_common::ports::PortData;
 pub use crate::tofino_common::ports::PortId;
 pub use crate::tofino_common::ports::TofinoPort;
-use crate::tofino_common::ports::CHANNELS_PER_SWITCH_PORT;
 
 use crate::tofino_stub::FsmType;
 use crate::tofino_stub::PortFsmState;

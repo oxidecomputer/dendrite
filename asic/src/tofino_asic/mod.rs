@@ -10,8 +10,8 @@ use std::sync::{Mutex, MutexGuard};
 use slog::{error, info, o};
 use tofino::fuse::ChipId;
 
-use crate::tofino_common;
 use crate::Identifiers;
+use crate::tofino_common;
 use aal::PortUpdate;
 use common::ports::*;
 
@@ -372,7 +372,7 @@ impl Handle {
         self.board_rev.to_string()
     }
 
-    pub fn bf_get(&self) -> MutexGuard<bf_wrapper::BfCommon> {
+    pub fn bf_get(&self) -> MutexGuard<'_, bf_wrapper::BfCommon> {
         self.bf.lock().unwrap()
     }
 
@@ -461,8 +461,8 @@ pub const BF_PORT_COUNT: u32 = BF_PIPE_PORT_COUNT * BF_PIPE_COUNT; // total port
 pub const BF_LAG_COUNT: u32 = 256; // LAGs in the ASIC
 
 // Sizes of the port and LAG bitmap arrays in a multicast group
-pub const BF_MC_PORT_ARRAY_SIZE: usize = (BF_PORT_COUNT as usize + 7) / 8;
-pub const BF_MC_LAG_ARRAY_SIZE: usize = (BF_LAG_COUNT as usize + 7) / 8;
+pub const BF_MC_PORT_ARRAY_SIZE: usize = (BF_PORT_COUNT as usize).div_ceil(8);
+pub const BF_MC_LAG_ARRAY_SIZE: usize = (BF_LAG_COUNT as usize).div_ceil(8);
 
 #[cfg(test)]
 mod tests {

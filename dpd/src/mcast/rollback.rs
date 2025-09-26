@@ -20,11 +20,11 @@ use slog::{debug, error};
 use common::{nat::NatTarget, ports::PortId};
 
 use super::{
-    add_source_filters, remove_source_filters, update_fwding_tables,
-    update_replication_tables, Direction, IpSrc, LinkId, MulticastGroup,
-    MulticastGroupId, MulticastGroupMember, MulticastReplicationInfo,
+    Direction, IpSrc, LinkId, MulticastGroup, MulticastGroupId,
+    MulticastGroupMember, MulticastReplicationInfo, add_source_filters,
+    remove_source_filters, update_fwding_tables, update_replication_tables,
 };
-use crate::{table, types::DpdResult, Switch};
+use crate::{Switch, table, types::DpdResult};
 
 /// Trait providing shared rollback functionality for multicast group operations.
 ///
@@ -777,19 +777,19 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         removed_ports: &[MulticastGroupMember],
     ) -> E {
         // Get replication info from original group
-        if let Some(replication_info) = &self.original_group.replication_info {
-            if let Err(rollback_err) = self.rollback_internal_update(
+        if let Some(replication_info) = &self.original_group.replication_info
+            && let Err(rollback_err) = self.rollback_internal_update(
                 added_ports,
                 removed_ports,
                 replication_info,
-            ) {
-                error!(
-                    self.switch.log,
-                    "rollback failed for internal group update";
-                    "group" => %self.group_ip,
-                    "error" => ?rollback_err,
-                );
-            }
+            )
+        {
+            error!(
+                self.switch.log,
+                "rollback failed for internal group update";
+                "group" => %self.group_ip,
+                "error" => ?rollback_err,
+            );
         }
         error
     }

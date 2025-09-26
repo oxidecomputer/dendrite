@@ -11,8 +11,8 @@ use std::net::Ipv6Addr;
 use slog::error;
 use slog::info;
 
-use crate::table::*;
 use crate::Switch;
+use crate::table::*;
 use aal::ActionParse;
 use aal::MatchMask;
 use aal::MatchParse;

@@ -18,9 +18,9 @@ use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
 use crate::integration_tests::icmp_ipv4;
 use ::common::network::MacAddr;
+use dpd_client::ClientInfo;
 use dpd_client::types::Ipv4Entry;
 use dpd_client::types::Ipv6Entry;
-use dpd_client::ClientInfo;
 
 // Run a single drop test.  This sends a packet that we expect to be dropped,
 // and verifies that the expected drop counter is bumped by one.  If the test

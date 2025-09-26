@@ -307,7 +307,7 @@ Configuring a nat entry using `swadm`:
 ``` sh
 $ ./target/release/swadm nat add \
     -e 10.85.0.211 \
-    -h 65535 \
+    -H 65535 \
     -m A8:40:25:F6:F9:94 \
     -i fd00:1122:3344:101::1 \
     -l 1024 \

@@ -91,8 +91,8 @@ pub enum IpSrc {
 impl fmt::Display for IpSrc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            IpSrc::Exact(ip) => write!(f, "{}", ip),
-            IpSrc::Subnet(subnet) => write!(f, "{}", subnet),
+            IpSrc::Exact(ip) => write!(f, "{ip}"),
+            IpSrc::Subnet(subnet) => write!(f, "{subnet}"),
         }
     }
 }

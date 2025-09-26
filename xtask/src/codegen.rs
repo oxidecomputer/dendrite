@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 
 /// Describes the ASIC the p4 program was built for
@@ -132,8 +132,8 @@ pub fn build(
 ) -> Result<()> {
     let root = super::project_root()?;
     let src_dir = match app_name.as_str() {
-        "sidecar" => format!("{}/dpd/p4", root),
-        name => format!("{}/{}/p4", root, name),
+        "sidecar" => format!("{root}/dpd/p4"),
+        name => format!("{root}/{name}/p4"),
     };
 
     let app_path = format!("{src_dir}/{app_name}.p4");
@@ -199,7 +199,7 @@ pub fn build(
     // already been done for us.
     let fw_dir = match sde_location.starts_with("/opt") {
         true => sde_location.clone(),
-        false => format!("{}/install", sde_location),
+        false => format!("{sde_location}/install"),
     };
 
     // Copy the serdes firmware blobs

@@ -283,7 +283,7 @@ fn infer_p4_dir() -> AsicResult<String> {
         _ => {
             return Err(AsicError::P4Missing(
                 "dpd not in a workspace or dist package".into(),
-            ))
+            ));
         }
     };
     Ok(exe_path
@@ -359,18 +359,18 @@ impl BfRt {
             }
         }
 
-        if let Some(data) = &t.data {
-            if !data.is_empty() {
-                println!("  data:");
-                for d in data {
-                    let s = &d.singleton;
-                    println!(
-                        "    {} {} {}",
-                        s.name,
-                        s.id,
-                        s.dtype.as_ref().unwrap().dtype
-                    );
-                }
+        if let Some(data) = &t.data
+            && !data.is_empty()
+        {
+            println!("  data:");
+            for d in data {
+                let s = &d.singleton;
+                println!(
+                    "    {} {} {}",
+                    s.name,
+                    s.id,
+                    s.dtype.as_ref().unwrap().dtype
+                );
             }
         }
     }
@@ -384,7 +384,7 @@ impl BfRt {
             None => {
                 return Err(AsicError::InvalidArg(format!(
                     "no such table: {name}"
-                )))
+                )));
             }
         };
 
@@ -408,7 +408,7 @@ impl BfRt {
                             "uint32" => 4,
                             "uint16" => 2,
                             "uint8" => 1,
-                            _ => panic!("unknown type in {:?}", k),
+                            _ => panic!("unknown type in {k:?}"),
                         },
                     },
                     match_type: match k.match_type.as_str() {
@@ -416,7 +416,7 @@ impl BfRt {
                         "LPM" => MatchType::Lpm,
                         "Ternary" => MatchType::Mask,
                         "Range" => MatchType::Range,
-                        x => panic!("unrecognized match type: {}", x),
+                        x => panic!("unrecognized match type: {x}"),
                     },
                 };
                 keys.insert(get_short(&k.name), f);

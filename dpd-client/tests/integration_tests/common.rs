@@ -8,7 +8,7 @@ use std::fmt::Write;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use std::{fmt, thread};
 
@@ -18,18 +18,18 @@ use oxnet::Ipv6Net;
 use slog::Drain;
 
 use ::common::network::MacAddr;
-use dpd_client::types;
 use dpd_client::Client;
 use dpd_client::ClientInfo;
 use dpd_client::ClientState;
+use dpd_client::types;
+use packet::Endpoint;
+use packet::Packet;
 use packet::arp;
 use packet::eth;
 use packet::icmp;
 use packet::ipv4;
 use packet::ipv6;
 use packet::sidecar;
-use packet::Endpoint;
-use packet::Packet;
 use types::PortId;
 
 const SHOW_VERBOSE: u8 = 0x01;
@@ -786,11 +786,13 @@ impl Switch {
 
         match errors.len() {
             0 => Ok(()),
-            _ => Err(anyhow!(errors
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<String>>()
-                .join(", "))),
+            _ => Err(anyhow!(
+                errors
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            )),
         }
     }
 
@@ -838,7 +840,7 @@ pub fn gen_tcp_packet_loaded(
         IpAddr::V6(_) => vec![ipv6::IPPROTO_TCP.into(), eth::ETHER_IPV6],
     };
 
-    Packet::gen(src, dst, tcp_stack, Some(body)).unwrap()
+    Packet::generate(src, dst, tcp_stack, Some(body)).unwrap()
 }
 
 // Construct a single UDP packet with an optional payload
@@ -852,7 +854,7 @@ pub fn gen_udp_packet_loaded(
         IpAddr::V6(_) => vec![ipv6::IPPROTO_UDP.into(), eth::ETHER_IPV6],
     };
 
-    Packet::gen(src, dst, udp_stack, Some(body)).unwrap()
+    Packet::generate(src, dst, udp_stack, Some(body)).unwrap()
 }
 
 // Construct a single ICMP packet with an optional payload
@@ -866,7 +868,7 @@ pub fn gen_icmp_packet_loaded(
         IpAddr::V6(_) => vec![ipv6::IPPROTO_ICMPV6.into(), eth::ETHER_IPV6],
     };
 
-    Packet::gen(src, dst, icmp_stack, Some(body)).unwrap()
+    Packet::generate(src, dst, icmp_stack, Some(body)).unwrap()
 }
 
 // Given an ingressing IP packet, generate a corresponding IP packet egressing
@@ -993,7 +995,7 @@ pub fn gen_geneve_packet(
         }
     };
 
-    let mut pkt = Packet::gen(src, dst, udp_stack, Some(payload)).unwrap();
+    let mut pkt = Packet::generate(src, dst, udp_stack, Some(payload)).unwrap();
     let geneve = pkt.hdrs.geneve_hdr.as_mut().unwrap();
     geneve.vni = vni;
 
@@ -1394,7 +1396,7 @@ pub fn gen_ipv4_ping(
 ) -> Packet {
     let type_code: u16 = (icmp_type as u16) << 8 | icmp_code as u16;
 
-    Packet::gen(
+    Packet::generate(
         src,
         tgt,
         vec![type_code, ipv4::IPPROTO_ICMP as u16, eth::ETHER_IPV4],
@@ -1404,15 +1406,16 @@ pub fn gen_ipv4_ping(
 }
 
 pub fn gen_arp_reply(src: Endpoint, tgt: Endpoint) -> Packet {
-    Packet::gen(src, tgt, vec![arp::ARPOP_REPLY, eth::ETHER_ARP], None).unwrap()
+    Packet::generate(src, tgt, vec![arp::ARPOP_REPLY, eth::ETHER_ARP], None)
+        .unwrap()
 }
 
 pub mod prelude {
-    pub use super::get_switch;
+    pub use super::NO_PORT;
     pub use super::PhysPort;
+    pub use super::SERVICE_PORT;
     pub use super::Switch;
     pub use super::TestPacket;
     pub use super::TestResult;
-    pub use super::NO_PORT;
-    pub use super::SERVICE_PORT;
+    pub use super::get_switch;
 }

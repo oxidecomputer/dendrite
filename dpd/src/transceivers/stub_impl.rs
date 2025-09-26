@@ -11,9 +11,9 @@
 //! `dpd`, such as in the API endpoint handlers themselves, should have stub
 //! implementations.
 
+use crate::Switch;
 use crate::types::DpdError;
 use crate::types::DpdResult;
-use crate::Switch;
 use common::ports::QsfpPort;
 use tokio::sync::RwLockReadGuard;
 use transceiver_controller::Controller;
@@ -60,7 +60,7 @@ impl Switch {
 
     pub async fn transceiver_controller(
         &self,
-    ) -> DpdResult<RwLockReadGuard<Controller>> {
+    ) -> DpdResult<RwLockReadGuard<'_, Controller>> {
         Err(DpdError::NoTransceiverController)
     }
 }

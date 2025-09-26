@@ -10,7 +10,7 @@ use std::sync::Arc;
 use oxnet::Ipv6Net;
 
 use ::common::network::MacAddr;
-use packet::{ipv6, sidecar, Endpoint};
+use packet::{Endpoint, ipv6, sidecar};
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
@@ -571,8 +571,7 @@ async fn test_ipv6_link_local_multicast_hop_limit_one() -> TestResult {
         switch.get_counter("ipv6_ttl_invalid", None).await.unwrap();
 
     assert_eq!(
-        ctr_final_hop_limit,
-        ctr_baseline_hop_limit,
+        ctr_final_hop_limit, ctr_baseline_hop_limit,
         "Hop limit invalid counter should not increment for link-local multicast with hop limit 1"
     );
 

@@ -10,22 +10,22 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use common::{
     nat::{NatTarget, Vni},
     network::MacAddr,
 };
 use internal_dns_resolver::Resolver;
 use internal_dns_types::names::ServiceName;
-use slog::{debug, error, info, o, Logger};
+use slog::{Logger, debug, error, info, o};
 use tokio::{
     spawn,
-    time::{sleep, Duration, Instant},
+    time::{Duration, Instant, sleep},
 };
 
-use crate::{nat, oxstats::is_localhost, types::DpdError::Exists, Switch};
-use nexus_client::types::NatEntryView;
+use crate::{Switch, nat, oxstats::is_localhost, types::DpdError::Exists};
 use nexus_client::Client as NexusClient;
+use nexus_client::types::NatEntryView;
 
 static IPV4_NAT_INTERVAL: Duration = Duration::from_secs(30);
 pub const NEXUS_INTERNAL_PORT: u16 = 12221;
@@ -110,21 +110,26 @@ pub async fn ipv4_nat_workflow(
         wait(timer.clone()).await;
         debug!(log, "starting ipv4 nat reconciliation");
 
-        let gen = nat::get_ipv4_nat_generation(&switch);
-        debug!(log, "we are currently at ipv4 nat generation: {gen}");
+        let generation = nat::get_ipv4_nat_generation(&switch);
+        debug!(
+            log,
+            "we are currently at ipv4 nat generation: {}", generation
+        );
 
-        let mut updates = match fetch_nat_updates(&client, gen, &log).await {
-            Some(value) => value,
-            None => {
-                update_timer(timer.clone(), IPV4_NAT_INTERVAL);
-                continue;
-            }
-        };
+        let mut updates =
+            match fetch_nat_updates(&client, generation, &log).await {
+                Some(value) => value,
+                None => {
+                    update_timer(timer.clone(), IPV4_NAT_INTERVAL);
+                    continue;
+                }
+            };
 
         debug!(log, "request successful"; "response" => ?updates);
         while !updates.is_empty() {
             debug!(log, "applying updates");
-            let new_gen = apply_updates(&switch, gen, updates.into_inner());
+            let new_gen =
+                apply_updates(&switch, generation, updates.into_inner());
 
             updates = match fetch_nat_updates(&client, new_gen, &log).await {
                 Some(value) => value,
@@ -139,11 +144,11 @@ pub async fn ipv4_nat_workflow(
 
 async fn fetch_nat_updates(
     client: &NexusClient,
-    gen: i64,
+    generation: i64,
     log: &Logger,
 ) -> Option<nexus_client::ResponseValue<Vec<NatEntryView>>> {
     debug!(log, "checking Nexus for updates");
-    let updates = match client.ipv4_nat_changeset(gen, 100).await {
+    let updates = match client.ipv4_nat_changeset(generation, 100).await {
         Ok(response) => response,
         Err(e) => {
             error!(log, "unable to retrieve nat updates"; "error" => ?e);
@@ -157,7 +162,7 @@ async fn fetch_nat_updates(
 /// applied change.
 fn apply_updates(
     switch: &Switch,
-    mut gen: i64,
+    mut generation: i64,
     updates: Vec<NatEntryView>,
 ) -> i64 {
     for entry in &updates {
@@ -223,10 +228,10 @@ fn apply_updates(
             }
         }
         // update gen if nat entry update was successful
-        gen = entry.gen;
-        nat::set_ipv4_nat_generation(switch, gen);
+        generation = entry.r#gen;
+        nat::set_ipv4_nat_generation(switch, generation);
     }
-    gen
+    generation
 }
 
 async fn wait(timer: Arc<RwLock<Instant>>) {
@@ -297,5 +302,5 @@ async fn nexus_client_with_resolver(
 
 // Create nexus client using fixed ip address
 fn nexus_client(address: &str, log: &slog::Logger) -> NexusClient {
-    nexus_client::Client::new(&format!("http://{}", address), log.clone())
+    nexus_client::Client::new(&format!("http://{address}"), log.clone())
 }

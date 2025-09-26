@@ -8,7 +8,7 @@
 
 use std::net::Ipv6Addr;
 
-use crate::{table::*, Switch};
+use crate::{Switch, table::*};
 
 use super::Ipv6MatchKey;
 

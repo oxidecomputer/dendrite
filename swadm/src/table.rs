@@ -4,51 +4,50 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
-use std::io::stdout;
+use std::collections::btree_map::Entry;
 use std::io::Write;
+use std::io::stdout;
 
+use clap::Subcommand;
 use colored::Colorize;
-use structopt::*;
 use tabwriter::TabWriter;
 
-use dpd_client::types;
 use dpd_client::Client;
+use dpd_client::types;
 
-use crate::counters::get_counter_type;
 use crate::counters::CounterType;
+use crate::counters::get_counter_type;
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand)]
 /// Access the raw contents of the tables used by the P4 program.
-#[structopt(verbatim_doc_comment)]
 pub enum Table {
-    #[structopt(alias = "ls")]
+    #[clap(visible_alias = "ls")]
     /// List the names of the dynamic p4 tables.
     List,
     /// Fetch the data programmed into the specified table.
     Dump {
-        #[structopt(short = "a")]
+        #[clap(short = 'a')]
         /// Display only those entries with the specified action.
         action: Option<String>,
-        #[structopt(short = "s")]
+        #[clap(short = 's')]
         /// Displays the schema rather than the table contents.  The order in
         /// which the names are the displayed match the order in which the
         /// actual data will be displayed as 'parseable' output.
         schema: bool,
-        #[structopt(short = "p")]
+        #[clap(short = 'p')]
         /// Display the data in a parseable format rather then user-friendly.
         parseable: bool,
         /// The name of the table to display.
         name: String,
     },
     /// Fetch any counter data associated with the specified table.
-    #[structopt(visible_alias = "ctrs")]
+    #[clap(visible_alias = "ctrs")]
     Counters {
-        #[structopt(short = "p")]
+        #[clap(short = 'p')]
         /// Display the data in a parseable format rather then user-friendly.
         parseable: bool,
-        #[structopt(short = "f")]
+        #[clap(short = 'f')]
         /// sync the counter data from the ASIC to memory even if the normal
         /// refresh timeout hasn't expired.
         force_sync: bool,
@@ -116,10 +115,10 @@ async fn table_dump(
         .unwrap();
     }
     for entry in &t.entries {
-        if let Some(filter) = &action_filter {
-            if &entry.action != filter {
-                continue;
-            }
+        if let Some(filter) = &action_filter
+            && &entry.action != filter
+        {
+            continue;
         }
 
         let keys: Vec<String> = schema
@@ -238,7 +237,7 @@ pub async fn table_cmd(
     match table_cmd {
         Table::List => {
             for t in client.table_list().await?.into_inner() {
-                println!("{}", t)
+                println!("{t}")
             }
             Ok(())
         }

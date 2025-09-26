@@ -1,7 +1,7 @@
 [package]
 name = "tfportd"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 dpd-client.workspace = true
@@ -26,7 +26,7 @@ signal-hook.workspace = true
 slog.workspace = true
 smf.workspace = true
 socket2.workspace = true
-structopt.workspace = true
+clap.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 uuid.workspace = true

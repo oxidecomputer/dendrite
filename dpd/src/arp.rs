@@ -13,7 +13,7 @@ use chrono::prelude::*;
 use slog::debug;
 
 use crate::types::{DpdError, DpdResult};
-use crate::{table, Switch};
+use crate::{Switch, table};
 use common::network::MacAddr;
 
 #[derive(Clone)]

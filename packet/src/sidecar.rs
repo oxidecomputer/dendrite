@@ -11,8 +11,8 @@ use bytes::BufMut;
 use bytes::BytesMut;
 
 use crate::PacketResult;
-use crate::{arp, eth, ipv4, ipv6, lldp};
 use crate::{Endpoint, Headers, Packet, Protocol};
+use crate::{arp, eth, ipv4, ipv6, lldp};
 
 pub const SC_FWD_FROM_USERSPACE: u8 = 0;
 pub const SC_FWD_TO_USERSPACE: u8 = 1;
@@ -66,7 +66,7 @@ impl Protocol for SidecarHdr {
         Ok(hdrs)
     }
 
-    fn gen(
+    fn generate(
         _src: Endpoint,
         _dst: Endpoint,
         mut protos: Vec<u16>,
@@ -149,7 +149,11 @@ impl fmt::Debug for SidecarHdr {
         write!(
             f,
             "sidecar op code: {} ingress: {}  egress: {}  ether_type: {:x}  payload: {:?}",
-            self.sc_code, self.sc_ingress, self.sc_egress, self.sc_ether_type, self.sc_payload
+            self.sc_code,
+            self.sc_ingress,
+            self.sc_egress,
+            self.sc_ether_type,
+            self.sc_payload
         )
     }
 }

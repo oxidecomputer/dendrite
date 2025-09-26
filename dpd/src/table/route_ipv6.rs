@@ -7,8 +7,8 @@
 use std::convert::TryInto;
 use std::net::Ipv6Addr;
 
-use crate::table::*;
 use crate::Switch;
+use crate::table::*;
 use aal::ActionParse;
 use aal::MatchParse;
 use aal_macros::*;

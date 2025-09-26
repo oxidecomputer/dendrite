@@ -11,7 +11,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use crate::{table::*, Switch};
+use crate::{Switch, table::*};
 
 use aal::{ActionParse, MatchParse};
 use aal_macros::*;

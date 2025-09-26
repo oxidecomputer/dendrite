@@ -254,7 +254,7 @@ impl JsonSchema for PortId {
     }
 
     fn json_schema(
-        _: &mut schemars::gen::SchemaGenerator,
+        _: &mut schemars::r#gen::SchemaGenerator,
     ) -> schemars::schema::Schema {
         const QSFP_REGEX: &str =
             r#"(^[qQ][sS][fF][pP](([0-9])|([1-2][0-9])|(3[0-1]))$)"#;

@@ -8,11 +8,11 @@ use std::fmt;
 
 use bytes::{BufMut, BytesMut};
 
+use crate::PacketResult;
 use crate::arp::ArpHdr;
 use crate::ipv4::Ipv4Hdr;
 use crate::ipv6::Ipv6Hdr;
 use crate::lldp::LldpHdr;
-use crate::PacketResult;
 use crate::{Endpoint, Headers, L2Endpoint, MacAddr, Packet, Protocol};
 
 const ETH_HDR_SZ: usize = 14;
@@ -114,7 +114,7 @@ impl Protocol for EthHdr {
         Ok(hdrs)
     }
 
-    fn gen(
+    fn generate(
         src: Endpoint,
         dst: Endpoint,
         mut protos: Vec<u16>,
@@ -123,10 +123,10 @@ impl Protocol for EthHdr {
         let eth_type = protos.pop().unwrap_or_default();
 
         let mut pkt = match eth_type {
-            ETHER_LLDP => LldpHdr::gen(src, dst, protos, body)?,
-            ETHER_ARP => ArpHdr::gen(src, dst, protos, body)?,
-            ETHER_IPV4 => Ipv4Hdr::gen(src, dst, protos, body)?,
-            ETHER_IPV6 => Ipv6Hdr::gen(src, dst, protos, body)?,
+            ETHER_LLDP => LldpHdr::generate(src, dst, protos, body)?,
+            ETHER_ARP => ArpHdr::generate(src, dst, protos, body)?,
+            ETHER_IPV4 => Ipv4Hdr::generate(src, dst, protos, body)?,
+            ETHER_IPV6 => Ipv6Hdr::generate(src, dst, protos, body)?,
             _ => {
                 println!(
                     "unsupported ethertype: {}",

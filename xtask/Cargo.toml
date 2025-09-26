@@ -1,14 +1,14 @@
 [package]
 name = "xtask"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 search_path = "0.1.4"
 
 camino.workspace = true
 chrono.workspace = true
-structopt.workspace = true
+clap.workspace = true
 anyhow.workspace = true
 curl.workspace = true
 omicron-zone-package.workspace = true

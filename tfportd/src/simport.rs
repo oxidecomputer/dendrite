@@ -12,9 +12,9 @@ use std::sync::Arc;
 use futures::TryStreamExt;
 use slog::{debug, error, warn};
 
+use crate::Global;
 use crate::oxstats::link;
 use crate::poll_interval;
-use crate::Global;
 use common::illumos;
 use dpd_client::types;
 

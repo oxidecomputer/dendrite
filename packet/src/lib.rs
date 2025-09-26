@@ -73,7 +73,7 @@ type PacketResult<T> = Result<T, PacketError>;
 pub trait Protocol {
     fn parse(pb: &mut ParseBuffer) -> PacketResult<Headers>;
     fn doc(&self) -> (Option<String>, Option<String>, Option<String>);
-    fn gen(
+    fn generate(
         src: Endpoint,
         dst: Endpoint,
         protos: Vec<u16>,
@@ -421,13 +421,13 @@ impl Packet {
         }
     }
 
-    pub fn gen(
+    pub fn generate(
         src: Endpoint,
         dst: Endpoint,
         protos: Vec<u16>,
         body: Option<&[u8]>,
     ) -> PacketResult<Packet> {
-        eth::EthHdr::gen(src, dst, protos, body)
+        eth::EthHdr::generate(src, dst, protos, body)
     }
 
     pub fn parse_protocol(data: &[u8], protocol: u16) -> PacketResult<Packet> {

@@ -6,9 +6,9 @@
 
 use std::sync::Arc;
 
+use packet::Endpoint;
 use packet::eth;
 use packet::geneve;
-use packet::Endpoint;
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;

@@ -222,7 +222,7 @@ impl SwitchPort {
     #[cfg(feature = "tofino_asic")]
     pub fn as_backplane(&self) -> Option<&FakeQsfpModule> {
         match &self.fixed_side {
-            FixedSideDevice::Backplane { ref device, .. } => Some(device),
+            FixedSideDevice::Backplane { device, .. } => Some(device),
             _ => None,
         }
     }
@@ -234,7 +234,7 @@ impl SwitchPort {
     #[cfg(feature = "tofino_asic")]
     pub fn as_backplane_mut(&mut self) -> Option<&mut FakeQsfpModule> {
         match &mut self.fixed_side {
-            FixedSideDevice::Backplane { ref mut device, .. } => Some(device),
+            FixedSideDevice::Backplane { device, .. } => Some(device),
             _ => None,
         }
     }
@@ -244,7 +244,7 @@ impl SwitchPort {
     /// If the port is not a QSFP port, `None` will be returned.
     pub fn as_qsfp(&self) -> Option<&QsfpDevice> {
         match &self.fixed_side {
-            FixedSideDevice::Qsfp { ref device, .. } => Some(device),
+            FixedSideDevice::Qsfp { device, .. } => Some(device),
             _ => None,
         }
     }
@@ -255,7 +255,7 @@ impl SwitchPort {
     /// If the port is not a QSFP port, `None` will be returned.
     pub fn as_qsfp_mut(&mut self) -> Option<&mut QsfpDevice> {
         match &mut self.fixed_side {
-            FixedSideDevice::Qsfp { ref mut device, .. } => Some(device),
+            FixedSideDevice::Qsfp { device, .. } => Some(device),
             _ => None,
         }
     }
@@ -264,7 +264,7 @@ impl SwitchPort {
     #[cfg_attr(not(feature = "tofino_asic"), allow(dead_code))]
     pub fn led_policy(&self) -> Option<&LedPolicy> {
         match &self.fixed_side {
-            FixedSideDevice::Qsfp { ref led_policy, .. } => Some(led_policy),
+            FixedSideDevice::Qsfp { led_policy, .. } => Some(led_policy),
             _ => None,
         }
     }
@@ -273,9 +273,7 @@ impl SwitchPort {
     #[cfg_attr(not(feature = "tofino_asic"), allow(dead_code))]
     pub fn led_policy_mut(&mut self) -> Option<&mut LedPolicy> {
         match &mut self.fixed_side {
-            FixedSideDevice::Qsfp {
-                ref mut led_policy, ..
-            } => Some(led_policy),
+            FixedSideDevice::Qsfp { led_policy, .. } => Some(led_policy),
             _ => None,
         }
     }
