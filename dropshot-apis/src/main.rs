@@ -23,7 +23,7 @@ pub fn environment() -> anyhow::Result<Environment> {
         workspace_root,
         // This is the location within the workspace root where the OpenAPI
         // documents are stored.
-        "openapi".into(),
+        "openapi",
     )?;
     Ok(env)
 }

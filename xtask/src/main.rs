@@ -64,6 +64,8 @@ struct Xtasks {
 #[derive(Debug, Subcommand)]
 #[clap(name = "xtask")]
 enum XtaskCommands {
+    /// run the OpenAPI manager
+    Openapi(external::External),
     /// compile a p4 program
     Codegen {
         /// name of p4 program to build
@@ -246,6 +248,8 @@ fn collect_binaries<T: ToString>(
 async fn main() {
     let task = Xtasks::parse();
     if let Err(e) = match task.subcommand {
+        XtaskCommands::Openapi(external) => external
+            .exec_bin("dendrite-dropshot-apis", "dendrite-dropshot-apis"),
         XtaskCommands::Codegen { name, sde, stages } => {
             codegen::build(name, sde, stages)
         }

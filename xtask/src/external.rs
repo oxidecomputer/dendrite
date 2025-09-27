@@ -24,7 +24,7 @@ use clap::Parser;
 /// `External`, which captures all arguments and options (even `--help`) as
 /// a `Vec<OsString>`. The main function then calls `External::exec` with the
 /// appropriate bin target name and any additional Cargo arguments.
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[clap(
     disable_help_flag(true),
     disable_help_subcommand(true),
