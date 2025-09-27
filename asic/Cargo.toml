@@ -21,6 +21,7 @@ doctest = false
 [dependencies]
 aal.workspace = true
 common.workspace = true
+dpd-api.workspace = true
 
 propolis = { workspace = true, optional = true , features = ["falcon"] }
 tofino = { workspace = true, optional = true }

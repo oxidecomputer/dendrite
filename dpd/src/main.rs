@@ -69,13 +69,9 @@ mod port_settings;
 mod ports;
 mod route;
 mod rpw;
-#[cfg(feature = "softnpu")]
-mod softnpu_api_server;
 mod switch_identifiers;
 mod switch_port;
 mod table;
-#[cfg(feature = "tofino_asic")]
-mod tofino_api_server;
 mod transceivers;
 mod types;
 mod version;

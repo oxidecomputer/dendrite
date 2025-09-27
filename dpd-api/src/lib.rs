@@ -12,10 +12,12 @@ use std::{
 };
 
 use common::{
+    counters::{FecRSCounters, PcsCounters, RMonCounters, RMonCountersAll},
     nat::{Ipv4Nat, Ipv6Nat, NatTarget},
     network::MacAddr,
     ports::{
         Ipv4Entry, Ipv6Entry, PortFec, PortId, PortPrbsMode, PortSpeed, TxEq,
+        TxEqSwHw,
     },
 };
 use dpd_types::{
@@ -1580,6 +1582,185 @@ pub trait DpdApi {
     async fn multicast_reset_untagged(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /**
+     * Get the physical coding sublayer (PCS) counters for all links.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/counters/pcs",
+    }]
+    async fn pcs_counters_list(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<Vec<LinkPcsCounters>>, HttpError>;
+
+    /**
+     * Get the Physical Coding Sublayer (PCS) counters for the given link.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/counters/pcs/{port_id}/{link_id}",
+    }]
+    async fn pcs_counters_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LinkPcsCounters>, HttpError>;
+
+    /**
+     * Get the FEC RS counters for all links.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/counters/fec",
+    }]
+    async fn fec_rs_counters_list(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<Vec<LinkFecRSCounters>>, HttpError>;
+
+    /**
+     * Get the FEC RS counters for the given link.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/counters/fec/{port_id}/{link_id}",
+    }]
+    async fn fec_rs_counters_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LinkFecRSCounters>, HttpError>;
+
+    /**
+     * Get the most relevant subset of traffic counters for the given link.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/counters/rmon/{port_id}/{link_id}/subset",
+    }]
+    async fn rmon_counters_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LinkRMonCounters>, HttpError>;
+
+    /**
+     * Get the full set of traffic counters for the given link.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/counters/rmon/{port_id}/{link_id}/all",
+    }]
+    async fn rmon_counters_get_all(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LinkRMonCountersAll>, HttpError>;
+
+    /**
+     * Get the logical->physical mappings for each lane in this port
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/serdes/lane_map",
+    }]
+    async fn lane_map_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LaneMap>, HttpError>;
+
+    /**
+     * Get the per-lane tx eq settings for each lane on this link
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/serdes/tx_eq",
+    }]
+    async fn link_tx_eq_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<TxEqSwHw>>, HttpError>;
+
+    /**
+     * Update the per-lane tx eq settings for all lanes on this link
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/ports/{port_id}/links/{link_id}/serdes/tx_eq",
+    }]
+    async fn link_tx_eq_set(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+        args: TypedBody<TxEq>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Get the per-lane rx signal info for each lane on this link
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/serdes/rx_sig",
+    }]
+    async fn link_rx_sig_info_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<RxSigInfo>>, HttpError>;
+
+    /**
+     * Get the per-lane adaptation counts for each lane on this link
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/serdes/adapt",
+    }]
+    async fn link_rx_adapt_count_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<DfeAdaptationState>>, HttpError>;
+
+    /**
+     * Get the per-lane eye measurements for each lane on this link
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/serdes/eye",
+    }]
+    async fn link_eye_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<SerdesEye>>, HttpError>;
+
+    /**
+     * Get the per-lane speed and encoding for each lane on this link
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/serdes/enc_speed",
+    }]
+    async fn link_enc_speed_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<EncSpeed>>, HttpError>;
+
+    /**
+     * Get the per-lane AN/LT status for each lane on this link
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/serdes/anlt_status",
+    }]
+    async fn link_an_lt_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<AnLtStatus>, HttpError>;
+
+    /**
+     * Return the estimated bit-error rate (BER) for a link.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/ber",
+    }]
+    async fn link_ber_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<Ber>, HttpError>;
 }
 
 /// Parameter used to create a port.
@@ -2074,4 +2255,219 @@ pub struct MulticastUnderlayGroupIpParam {
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupIdParam {
     pub group_id: Option<mcast::MulticastGroupId>,
+}
+
+/// The Physical Coding Sublayer (PCS) counters for a specific link.
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+pub struct LinkPcsCounters {
+    /// The switch port ID.
+    pub port_id: PortId,
+    /// The link ID.
+    pub link_id: LinkId,
+    /// The PCS counter data.
+    pub counters: PcsCounters,
+}
+
+/// The FEC counters for a specific link, including its link ID.
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+pub struct LinkFecRSCounters {
+    /// The switch port ID.
+    pub port_id: PortId,
+    /// The link ID.
+    pub link_id: LinkId,
+    /// The FEC counter data.
+    pub counters: FecRSCounters,
+}
+
+/// The RMON counters (traffic counters) for a specific link.
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+pub struct LinkRMonCounters {
+    /// The switch port ID.
+    pub port_id: PortId,
+    /// The link ID.
+    pub link_id: LinkId,
+    /// The RMON counter data.
+    pub counters: RMonCounters,
+}
+
+/// The complete RMON counters (traffic counters) for a specific link.
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+pub struct LinkRMonCountersAll {
+    /// The switch port ID.
+    pub port_id: PortId,
+    /// The link ID.
+    pub link_id: LinkId,
+    /// The RMON counter data.
+    pub counters: RMonCountersAll,
+}
+
+/// Mapping of the logical lanes in a link to their physical instantiation in
+/// the MAC/serdes interface.
+//
+// For each lane assigned to the port, this captures the mac block, the logical
+// lane within the mac block, the physical rx and tx lanes, and the polarity of
+// each.  All of these values are determined by the physical layout of the
+// board, should be identical across all sidecars with the same board revision,
+// and shouldn't change from run to run.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct LaneMap {
+    /// MAC block in the tofino ASIC
+    pub mac_block: u32,
+    /// logical lane within the mac block for each lane
+    pub logical_lane: Vec<u32>,
+    /// Rx logical->physical mapping
+    pub rx_phys: Vec<u32>,
+    /// Tx logical->physical mapping
+    pub tx_phys: Vec<u32>,
+    /// Rx polarity
+    pub rx_polarity: Vec<Polarity>,
+    /// Tx polarity
+    pub tx_polarity: Vec<Polarity>,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub enum Polarity {
+    Normal,
+    Inverted,
+}
+
+impl From<bool> for Polarity {
+    fn from(p: bool) -> Self {
+        match p {
+            true => Polarity::Inverted,
+            false => Polarity::Normal,
+        }
+    }
+}
+
+/// Per-lane Rx signal information
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct RxSigInfo {
+    /// Rx signal detected
+    pub sig_detect: bool,
+    /// CDR lock achieved
+    pub phy_ready: bool,
+    /// Apparent PPM difference between local and remote
+    pub ppm: i32,
+}
+
+/// Rx DFE adaptation information
+#[derive(Default, Deserialize, Serialize, JsonSchema)]
+pub struct DfeAdaptationState {
+    /// DFE complete
+    pub adapt_done: bool,
+    /// Total DFE attempts
+    pub adapt_cnt: u32,
+    /// DFE attempts since the last read
+    pub readapt_cnt: u32,
+    /// Times the signal was lost since the last read
+    pub link_lost_cnt: u32,
+}
+
+/// Eye height(s) for a single lane in mv
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub enum SerdesEye {
+    Nrz(f32),
+    Pam4 { eye1: f32, eye2: f32, eye3: f32 },
+}
+
+/// Signal encoding
+#[derive(PartialEq, Deserialize, Serialize, JsonSchema)]
+pub enum LaneEncoding {
+    /// Pulse Amplitude Modulation 4-level
+    Pam4,
+    /// Non-Return-to-Zero encoding
+    Nrz,
+    /// No encoding selected
+    None,
+}
+
+/// Signal speed and encoding for a single lane
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct EncSpeed {
+    pub encoding: LaneEncoding,
+    pub gigabits: u32,
+}
+
+/// State of a single lane during autonegotiation
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct AnStatus {
+    /// Can the link partner perform AN?
+    pub lp_an_ability: bool,
+    /// Allegedly: is the link up?  In practice, this always seems to be false?
+    /// TODO: investigate this
+    pub link_status: bool,
+    /// Are we capable of AN?
+    pub an_ability: bool,
+    /// Remote fault detected
+    pub remote_fault: bool,
+    /// Is autonegotiation complete?
+    pub an_complete: bool,
+    /// has a base page been received?
+    pub page_rcvd: bool,
+    /// Is extended page format supported?
+    pub ext_np_status: bool,
+    /// A fault has been detected via the parallel detection function
+    pub parallel_detect_fault: bool,
+}
+
+/// Link-training status for a single lane
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct LtStatus {
+    /// Readout for frame lock state
+    pub readout_state: u32,
+    /// Frame lock state
+    pub frame_lock: bool,
+    /// Local training finished
+    pub rx_trained: bool,
+    /// Training state readout
+    pub readout_training_state: u32,
+    /// Link training failed
+    pub training_failure: bool,
+    /// TX control to send training pattern
+    pub tx_training_data_en: bool,
+    /// Signal detect for PCS
+    pub sig_det: bool,
+    /// State machine readout for training arbiter
+    pub readout_txstate: u32,
+}
+
+/// A collection of the data involved in the autonegiation/link-training process
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct AnLtStatus {
+    /// The base and extended pages received from the link partner
+    pub lp_pages: LpPages,
+    /// The per-lane status
+    pub lanes: Vec<LaneStatus>,
+}
+
+/// Set of AN pages sent by our link partner
+#[derive(Default, Deserialize, Serialize, JsonSchema)]
+pub struct LpPages {
+    pub base_page: u64,
+    pub next_page1: u64,
+    pub next_page2: u64,
+}
+
+/// The combined status of a lane, with respect to the autonegotiation /
+/// link-training process.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct LaneStatus {
+    /// Has a lane successfully completed autoneg and link training?
+    pub lane_done: bool,
+    /// Detailed autonegotiation status
+    pub lane_an_status: AnStatus,
+    /// Detailed link-training status
+    pub lane_lt_status: LtStatus,
+}
+
+/// Reports the bit-error rate (BER) for a link.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
+pub struct Ber {
+    /// Counters of symbol errors per-lane.
+    pub symbol_errors: Vec<u64>,
+    /// Estimated BER per-lane.
+    pub ber: Vec<f32>,
+    /// Aggregate BER on the link.
+    pub total_ber: f32,
 }
