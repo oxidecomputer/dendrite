@@ -87,7 +87,7 @@ pub struct Cli {
 #[clap(name = "dpd")]
 pub(crate) enum Args {
     /// Run the Dendrite API server.
-    Run(Opt),
+    Run(Box<Opt>),
     /// Generate an OpenAPI specification for the Dendrite server.
     Openapi,
 }
@@ -792,7 +792,7 @@ fn main() -> anyhow::Result<()> {
 
     match cli.args {
         Args::Openapi => print_openapi(),
-        Args::Run(opt) => oxide_tokio_rt::run(run_dpd(opt)),
+        Args::Run(opt) => oxide_tokio_rt::run(run_dpd(*opt)),
     }
 }
 
