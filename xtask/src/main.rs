@@ -64,7 +64,7 @@ struct Xtasks {
 #[derive(Debug, Subcommand)]
 #[clap(name = "xtask")]
 enum XtaskCommands {
-    /// run the OpenAPI manager
+    /// manage OpenAPI documents
     Openapi(external::External),
     /// compile a p4 program
     Codegen {
