@@ -31,7 +31,7 @@ compile_error!(
 
 fn err<T: std::fmt::Display>(what: T) -> io::Error {
     let tmp = format!("{what}");
-    io::Error::new(io::ErrorKind::Other, tmp)
+    io::Error::other(tmp)
 }
 
 fn project_root() -> io::Result<String> {

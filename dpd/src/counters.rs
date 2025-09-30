@@ -17,15 +17,15 @@ use std::convert::TryInto;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use crate::Switch;
 use crate::table;
 use crate::types::{DpdError, DpdResult};
-use crate::views;
-use crate::Switch;
 use aal::MatchParse;
 use aal_macros::*;
 use asic::Handle;
 
 use anyhow::Context;
+use dpd_types::views;
 
 // Counters in an indirect table are accessed by their index number rather than
 // a key.  Still, we define a key anyway to allow us to use the direct counter
@@ -372,7 +372,7 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
 async fn port_label(switch: &Switch, ctr: u16) -> Option<String> {
     switch
         .asic_port_id_to_port_link(ctr)
-        .map(|(port, link)| format!("{}/{}", port, link))
+        .map(|(port, link)| format!("{port}/{link}"))
         .ok()
 }
 

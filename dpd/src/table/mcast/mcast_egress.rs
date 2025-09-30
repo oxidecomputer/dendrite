@@ -8,10 +8,11 @@
 
 use std::fmt;
 
-use crate::{mcast::MulticastGroupId, table::*, Switch};
+use crate::{Switch, table::*};
 
 use aal::{ActionParse, MatchParse};
 use aal_macros::*;
+use dpd_types::mcast::MulticastGroupId;
 use slog::debug;
 
 /// Table for multicast egress entries matching the multicast group ID

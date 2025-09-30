@@ -7,8 +7,8 @@
 use std::collections::BTreeMap;
 use std::net::Ipv6Addr;
 
-use anyhow::anyhow;
 use anyhow::Result;
+use anyhow::anyhow;
 use slog::debug;
 
 use crate::Global;
@@ -110,10 +110,10 @@ fn test_parse_ipadm() -> Result<()> {
     );
 
     // test too many fields
-    assert!(parse_ipadm_line(
-        r"tfport10/ll:fe80\:\:aa40\:25ff\:fe04\:392:garbage"
-    )
-    .is_err());
+    assert!(
+        parse_ipadm_line(r"tfport10/ll:fe80\:\:aa40\:25ff\:fe04\:392:garbage")
+            .is_err()
+    );
 
     // test too few fields
     assert!(parse_ipadm_line(r"tfport10/ll").is_err());

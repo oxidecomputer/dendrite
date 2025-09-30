@@ -1,0 +1,13 @@
+[package]
+name = "dpd-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common.workspace = true
+dpd-types.workspace = true
+dropshot.workspace = true
+oxnet.workspace = true
+schemars.workspace = true
+serde.workspace = true
+transceiver-controller.workspace = true

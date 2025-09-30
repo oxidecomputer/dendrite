@@ -6,7 +6,7 @@
 
 use std::str::FromStr;
 
-use slog::{o, Drain};
+use slog::{Drain, o};
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum LogFormat {

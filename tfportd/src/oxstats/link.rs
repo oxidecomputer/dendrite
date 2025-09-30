@@ -8,9 +8,9 @@
 
 use std::fmt;
 
-use oximeter::{types::Cumulative, Sample};
+use oximeter::{Sample, types::Cumulative};
 use oximeter_instruments::kstat::{
-    hrtime_to_utc, ConvertNamedData, Error, KstatList, KstatTarget,
+    ConvertNamedData, Error, KstatList, KstatTarget, hrtime_to_utc,
 };
 
 use chrono::{DateTime, Utc};

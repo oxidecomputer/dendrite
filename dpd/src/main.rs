@@ -16,6 +16,10 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 
 use anyhow::Context;
+use clap::{Parser, Subcommand};
+use dpd_api::LinkCreate;
+use dpd_types::link::LinkId;
+use dpd_types::oxstats::OximeterMetadata;
 use futures::stream::StreamExt;
 use libc::c_int;
 use signal_hook::consts::SIGHUP;
@@ -27,20 +31,18 @@ use signal_hook_tokio::Signals;
 use slog::debug;
 use slog::error;
 use slog::info;
-use structopt::StructOpt;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::time::sleep;
 use tokio::time::Duration;
 
-use crate::api_server::LinkCreate;
 use crate::macaddrs::BaseMac;
 use crate::port_map::SidecarRevision;
 use crate::rpw::WorkflowServer;
-use crate::switch_identifiers::SwitchIdentifiers;
 use crate::switch_port::SwitchPorts;
 use aal::{ActionParse, AsicError, MatchParse};
 use common::network::MacAddr;
 use common::ports::PortId;
+use dpd_types::switch_identifiers::SwitchIdentifiers;
 use table::Table;
 use types::*;
 
@@ -67,21 +69,22 @@ mod port_settings;
 mod ports;
 mod route;
 mod rpw;
-#[cfg(feature = "softnpu")]
-mod softnpu_api_server;
 mod switch_identifiers;
 mod switch_port;
 mod table;
-#[cfg(feature = "tofino_asic")]
-mod tofino_api_server;
 mod transceivers;
 mod types;
 mod version;
-mod views;
 
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, StructOpt)]
-#[structopt(name = "dpd", about = "dataplane controller for oxide switch")]
+/// dataplane controller for oxide switch
+#[derive(Debug, Parser)]
+pub struct Cli {
+    #[command(subcommand)]
+    args: Args,
+}
+
+#[derive(Debug, Subcommand)]
+#[clap(name = "dpd")]
 pub(crate) enum Args {
     /// Run the Dendrite API server.
     Run(Opt),
@@ -89,104 +92,87 @@ pub(crate) enum Args {
     Openapi,
 }
 
-#[derive(Debug, Default, StructOpt)]
-#[structopt(name = "dpd", about = "dataplane controller for oxide switch")]
+/// dataplane controller for oxide switch
+#[derive(Debug, Default, Parser)]
+#[clap(name = "dpd")]
 pub(crate) struct Opt {
-    #[structopt(
-        long,
-        about = "send log data to the named file rather than stdout"
-    )]
+    /// send log data to the named file rather than stdout
+    #[clap(long)]
     log_file: Option<String>,
 
-    #[structopt(
-        long,
-        short = "l",
-        about = "log format",
-        help = "format logs for 'human' or 'json' consumption"
-    )]
+    /// log format
+    ///
+    /// format logs for 'human' or 'json' consumption
+    #[clap(long, short = 'l')]
     log_format: Option<common::logging::LogFormat>,
 
     // TODO-correctness: This argument may need to change or go away. The
     // control plane ultimately will set the addresses for each switch port
     // independently, but it's not clear whether that makes sense in the SoftNPU
     // and Intel simulator implementations.
-    #[structopt(
-        long,
-        help = "set the base mac address for the switch",
-        parse(try_from_str)
-    )]
+    /// set the base mac address for the switch
+    #[clap(long)]
     mac_base: Option<MacAddr>,
 
-    #[structopt(
-        long,
-        help = "file defining the ports to configure at startup"
-    )]
+    /// file defining the ports to configure at startup
+    #[clap(long)]
     port_config: Option<String>,
 
-    #[structopt(
-        long,
-        help = "file describing alternate settings for some transceivers"
-    )]
+    /// file describing alternate settings for some transceivers
+    #[clap(long)]
     xcvr_defaults: Option<String>,
 
     // TODO-completeness: This will ultimately go away in the product, or be
     // ignored, as the value will ideally be determined from the FRUID data in
     // the Sidecar itself.
+    /// Revision of the Sidecar which Dendrite will manage
     #[cfg_attr(not(feature = "tofino_asic"), allow(dead_code))]
-    #[structopt(
-        long,
-        help = "Revision of the Sidecar which Dendrite will manage",
-        parse(try_from_str)
-    )]
+    #[clap(long)]
     sidecar_revision: Option<SidecarRevision>,
 
-    #[structopt(
-        long,
-        help = "IP addresses and ports on which to expose the API server"
-    )]
+    /// IP addresses and ports on which to expose the API server
+    #[clap(long)]
     listen_addresses: Option<Vec<SocketAddr>>,
 
+    /// path to the tofino device
     #[cfg(feature = "tofino_asic")]
-    #[structopt(long, about = "path to the tofino device")]
+    #[clap(long)]
     device_path: Option<String>,
 
+    /// path to the the chaos testing configuration
     #[cfg(feature = "chaos")]
-    #[structopt(long, about = "path to the the chaos testing configuration")]
+    #[clap(long)]
     chaos_config: Option<String>,
 
     // NOTE: This should never be set to something other than the default
     // `sidecar0` in the product.
+    /// IP interface over which to communicate with
+    /// the Hubris transceivers task for controlling
+    /// QSFP modules
     #[cfg_attr(not(feature = "tofino_asic"), allow(dead_code))]
-    #[structopt(
-        long,
-        help = "\
-            IP interface over which to communicate with \
-            the Hubris transceivers task for controlling \
-            QSFP modules."
-    )]
+    #[clap(long)]
     transceiver_interface: Option<String>,
 
+    /// Mechanism for controlling SoftNPU emulated switch
     #[cfg(feature = "softnpu")]
-    #[structopt(
-        long,
-        about = "Mechanism for controlling SoftNPU emulated switch"
-    )]
+    #[clap(long)]
     softnpu_management: Option<asic::softnpu::mgmt::SoftnpuManagement>,
 
+    /// Path to UNIX domain socket to use for communicating with asic
     #[cfg(feature = "softnpu")]
-    #[structopt(
-        long,
-        about = "Path to UNIX domain socket to use for communicating with asic"
-    )]
+    #[clap(long)]
     uds_path: Option<String>,
 
-    #[structopt(long, about = "Enable RPW services.")]
+    /// Enable RPW services
+    #[clap(long)]
     enable_rpw: bool,
 
-    #[structopt(long, about = "IP address and port of nexus server.")]
+    /// IP address and port of nexus server
+    #[clap(long)]
     nexus_address: Option<SocketAddr>,
 
-    #[structopt(long, about = "IP address and port of MGS server.")]
+    /// IP address and port of MGS server.
+    #[structopt(long)]
     mgs_address: Option<SocketAddr>,
 }
 
@@ -206,7 +192,7 @@ pub struct Switch {
     pub loopback: Mutex<loopback::LoopbackData>,
     pub identifiers: Mutex<Option<SwitchIdentifiers>>,
     pub oximeter_producer: Mutex<Option<oximeter_producer::Server>>,
-    pub oximeter_meta: Mutex<Option<oxstats::OximeterMetadata>>,
+    pub oximeter_meta: Mutex<Option<OximeterMetadata>>,
     pub reconciler: link::LinkReconciler,
     pub mcast: Mutex<mcast::MulticastGroupData>,
 
@@ -277,7 +263,7 @@ impl Switch {
             Err(AsicError::AsicMissing) => {
                 panic!("Unable to find the network switch ASIC")
             }
-            Err(e) => panic!("unable to initialize bf: {:?}", e),
+            Err(e) => panic!("unable to initialize bf: {e:?}"),
         };
 
         let switch_ports = SwitchPorts::new(
@@ -329,7 +315,7 @@ impl Switch {
     pub fn table_get(
         &self,
         id: table::TableType,
-    ) -> DpdResult<MutexGuard<Table>> {
+    ) -> DpdResult<MutexGuard<'_, Table>> {
         match self.tables.get(&id) {
             Some(table) => Ok(table.lock().unwrap()),
             None => Err("no such table".into()),
@@ -408,10 +394,10 @@ impl Switch {
     pub fn table_dump<M: MatchParse, A: ActionParse>(
         &self,
         t: table::TableType,
-    ) -> DpdResult<views::Table> {
+    ) -> DpdResult<dpd_types::views::Table> {
         let t = self.table_get(t)?;
 
-        Ok(views::Table {
+        Ok(dpd_types::views::Table {
             name: t.name.to_string(),
             size: t.usage.size as usize,
             entries: t
@@ -425,7 +411,7 @@ impl Switch {
                 .map(|vec| {
                     vec.into_iter()
                         .map(|(key, action): (M, A)| {
-                            views::TableEntry::new(key, action)
+                            dpd_types::views::TableEntry::new(key, action)
                         })
                         .collect()
                 })?,
@@ -437,7 +423,7 @@ impl Switch {
         &self,
         force_sync: bool,
         t: table::TableType,
-    ) -> DpdResult<Vec<views::TableCounterEntry>> {
+    ) -> DpdResult<Vec<dpd_types::views::TableCounterEntry>> {
         let t = self.table_get(t)?;
 
         t.get_counters::<M>(&self.asic_hdl, force_sync)
@@ -450,7 +436,7 @@ impl Switch {
             .map(|vec| {
                 vec.into_iter()
                     .map(|(key, data): (M, aal::CounterData)| {
-                        views::TableCounterEntry::new(key, data)
+                        dpd_types::views::TableCounterEntry::new(key, data)
                     })
                     .collect()
             })
@@ -465,7 +451,7 @@ impl Switch {
     pub fn allocate_mac_address(
         &self,
         port_id: PortId,
-        link_id: link::LinkId,
+        link_id: LinkId,
     ) -> DpdResult<MacAddr> {
         let mut mgr = self.mac_mgmt.lock().unwrap();
         mgr.allocate_mac_address(port_id, link_id)
@@ -760,7 +746,7 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
                         fec: Some(common::ports::PortFec::RS),
                         autoneg: true,
                         kr: true,
-                        lane: Some(crate::link::LinkId(0)),
+                        lane: Some(dpd_types::link::LinkId(0)),
                         tx_eq: None,
                     };
                     Some((*port_id, create))
@@ -802,15 +788,20 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = Args::from_args();
+    let cli = Cli::parse();
 
-    match args {
+    match cli.args {
         Args::Openapi => print_openapi(),
         Args::Run(opt) => oxide_tokio_rt::run(run_dpd(opt)),
     }
 }
 
 fn print_openapi() -> anyhow::Result<()> {
+    // TODO: Once migrated to the OpenAPI manager, this should use the stub API
+    // description. But there are currently additional backend-specific methods
+    // added by the tofino-asic and softnpu features -- those would need to be
+    // migrated to the API trait (possibly via a uniform API across all
+    // backends).
     crate::api_server::http_api()
         .openapi(
             "Oxide Switch Dataplane Controller",

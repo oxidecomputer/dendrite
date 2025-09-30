@@ -370,7 +370,7 @@ fn get_fields<'a>(
                     return Err(Error::new(
                         f.span(),
                         format!("unrecognized key type: {x}"),
-                    ))
+                    ));
                 }
             },
         };
@@ -391,7 +391,7 @@ fn get_fields<'a>(
 }
 
 // Parse all of the arguments to an action
-fn get_action_args(variant: &Variant) -> Result<Vec<ActionArg>> {
+fn get_action_args(variant: &Variant) -> Result<Vec<ActionArg<'_>>> {
     let mut args = Vec::new();
 
     let named = match variant.fields {

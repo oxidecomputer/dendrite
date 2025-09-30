@@ -21,7 +21,7 @@ pub mod ports;
 pub mod illumos;
 mod smf;
 
-pub use smf::{is_smf_active, SmfError, SmfResult};
+pub use smf::{SmfError, SmfResult, is_smf_active};
 
 /// The default port on which the Dendrite API server listens.
 pub const DEFAULT_DPD_PORT: u16 = 12224;

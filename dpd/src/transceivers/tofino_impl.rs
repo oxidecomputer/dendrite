@@ -41,18 +41,13 @@
 // both in some conditions. Regardless, the controller must always be acquired
 // first to avoid deadlocks.
 
-use crate::link::LinkState;
+use crate::Switch;
 use crate::port_map::PortMap;
-use crate::switch_port::LedPolicy;
 use crate::switch_port::LedState;
-use crate::switch_port::ManagementMode;
 use crate::switch_port::SwitchPort;
 use crate::switch_port::SwitchPorts;
-use crate::transceivers::FaultReason;
-use crate::transceivers::Transceiver;
 use crate::types::DpdError;
 use crate::types::DpdResult;
-use crate::Switch;
 use aal::Connector;
 use asic::tofino_asic::qsfp::ReadRequest;
 use asic::tofino_asic::qsfp::SdeTransceiverMessage;
@@ -61,32 +56,31 @@ use asic::tofino_asic::qsfp::SdeTransceiverResponse;
 use asic::tofino_asic::qsfp::WriteRequest;
 use common::ports::PortId;
 use common::ports::QsfpPort;
+use dpd_types::link::LinkState;
+use dpd_types::switch_port::LedPolicy;
+use dpd_types::switch_port::ManagementMode;
+use dpd_types::transceivers::FaultReason;
+use dpd_types::transceivers::Transceiver;
+use slog::Logger;
 use slog::debug;
 use slog::error;
 use slog::info;
 use slog::o;
 use slog::trace;
 use slog::warn;
-use slog::Logger;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tokio::sync::mpsc;
 use tokio::sync::MappedMutexGuard;
 use tokio::sync::Mutex;
 use tokio::sync::MutexGuard;
 use tokio::sync::Notify;
+use tokio::sync::mpsc;
 use tokio::time::sleep;
-use transceiver_controller::filter_module_data;
-use transceiver_controller::message::ExtendedStatus;
-use transceiver_controller::mgmt;
-use transceiver_controller::mgmt::cmis::page_accepts_bank_number;
-use transceiver_controller::mgmt::ManagementInterface;
-use transceiver_controller::mgmt::MemoryPage;
 use transceiver_controller::Datapath;
 use transceiver_controller::DecodeError;
 use transceiver_controller::Error as ControllerError;
@@ -96,6 +90,12 @@ use transceiver_controller::ModuleId;
 use transceiver_controller::Monitors;
 use transceiver_controller::PowerState;
 use transceiver_controller::SpRequest;
+use transceiver_controller::filter_module_data;
+use transceiver_controller::message::ExtendedStatus;
+use transceiver_controller::mgmt;
+use transceiver_controller::mgmt::ManagementInterface;
+use transceiver_controller::mgmt::MemoryPage;
+use transceiver_controller::mgmt::cmis::page_accepts_bank_number;
 use usdt::UniqueId;
 
 #[usdt::provider(provider = "dpd")]
@@ -574,10 +574,9 @@ struct CheckedModules {
 mod transceiver_chaos {
     const DEFAULT_ERROR_RATE: f32 = 0.1;
     use rand::random;
-    use slog::debug;
     use slog::Logger;
+    use slog::debug;
     use std::env::var;
-    use transceiver_controller::mgmt::ManagementInterface;
     use transceiver_controller::DecodeError;
     use transceiver_controller::ExtendedStatus;
     use transceiver_controller::ExtendedStatusResult;
@@ -586,6 +585,7 @@ mod transceiver_chaos {
     use transceiver_controller::ModuleId;
     use transceiver_controller::ModuleResult;
     use transceiver_controller::TransceiverError;
+    use transceiver_controller::mgmt::ManagementInterface;
     use transceiver_messages::filter_module_data;
 
     // A kind of status error that can be injected.
@@ -1797,7 +1797,7 @@ impl Switch {
                         }
                         Err(e) => {
                             probes::sde__presence__mask__request__failed!(
-                                || (e.to_string())
+                                || e.to_string()
                             )
                         }
                     }
@@ -1812,9 +1812,9 @@ impl Switch {
                     )
                     .await;
                     match &response {
-                        Ok(r) => probes::sde__lpmode__request__done!(|| (r)),
+                        Ok(r) => probes::sde__lpmode__request__done!(|| r),
                         Err(e) => probes::sde__lpmode__request__failed!(
-                            || (e.to_string())
+                            || e.to_string()
                         ),
                     }
                     response
@@ -1829,7 +1829,7 @@ impl Switch {
                     match &response {
                         Ok(r) => probes::sde__interrupt__request__done!(|| r),
                         Err(e) => probes::sde__interrupt__request__failed!(
-                            || (e.to_string())
+                            || e.to_string()
                         ),
                     }
                     response
@@ -1866,7 +1866,7 @@ impl Switch {
                     )
                     .await
                 }
-                SdeTransceiverRequest::Write(ref write) => {
+                SdeTransceiverRequest::Write(write) => {
                     probes::sde__write__request__start!(|| write);
                     let response = handle_write_request(
                         &self.log,
@@ -1886,7 +1886,7 @@ impl Switch {
                     }
                     response
                 }
-                SdeTransceiverRequest::Read(ref read) => {
+                SdeTransceiverRequest::Read(read) => {
                     probes::sde__read__request__start!(|| read);
                     let response = handle_read_request(
                         &self.log,
@@ -1956,7 +1956,9 @@ impl Switch {
     /// transceivers.
     ///
     /// If the controller isn't available, an error is returned.
-    pub async fn transceiver_controller(&self) -> DpdResult<LockedController> {
+    pub async fn transceiver_controller(
+        &self,
+    ) -> DpdResult<LockedController<'_>> {
         LockedController::new(&self.transceivers.controller).await
     }
 
@@ -1979,7 +1981,7 @@ impl Switch {
     pub async fn acquire_transceiver_resources(
         &self,
         qsfp_port: QsfpPort,
-    ) -> DpdResult<(LockedController, MutexGuard<SwitchPort>)> {
+    ) -> DpdResult<(LockedController<'_>, MutexGuard<'_, SwitchPort>)> {
         let port_id = PortId::from(qsfp_port);
         let port_lock = self
             .switch_ports
@@ -2365,7 +2367,7 @@ async fn handle_presence_mask_request(
             return Ok(SdeTransceiverResponse::PresenceMask {
                 backplane,
                 qsfp: 0,
-            })
+            });
         }
         Ok(controller) => {
             module_status(log, &controller, ModuleId::all_sidecar()).await?
@@ -2436,7 +2438,7 @@ async fn handle_lp_mode_mask_request(
             return Ok(SdeTransceiverResponse::LpModeMask {
                 backplane,
                 qsfp: 0,
-            })
+            });
         }
         Ok(controller) => {
             module_status(log, &controller, ModuleId::all_sidecar()).await?
@@ -2482,7 +2484,7 @@ async fn handle_interrupt_mask_request(
             return Ok(SdeTransceiverResponse::InterruptMask {
                 backplane: 0,
                 qsfp: 0,
-            })
+            });
         }
         Ok(controller) => {
             module_status(log, &controller, ModuleId::all_sidecar()).await?
@@ -3614,7 +3616,7 @@ where
     const SIZE: u8;
 
     fn build_one(page: P, offset: u8, len: u8)
-        -> Result<Self, ControllerError>;
+    -> Result<Self, ControllerError>;
 
     fn build_many(
         page: P,
@@ -3661,15 +3663,6 @@ impl LargeCmisOp for mgmt::MemoryWrite {
 
 #[cfg(test)]
 mod tests {
-    use super::handle_assert_reset_request;
-    use super::handle_detect_request;
-    use super::handle_interrupt_mask_request;
-    use super::handle_lp_mode_mask_request;
-    use super::handle_presence_mask_request;
-    use super::handle_read_request;
-    use super::handle_set_lp_mode_request;
-    use super::handle_write_request;
-    use super::mgmt;
     use super::Connector;
     use super::Controller;
     use super::ExtendedStatus;
@@ -3681,6 +3674,15 @@ mod tests {
     use super::SdeTransceiverResponse;
     use super::SwitchPorts;
     use super::WriteRequest;
+    use super::handle_assert_reset_request;
+    use super::handle_detect_request;
+    use super::handle_interrupt_mask_request;
+    use super::handle_lp_mode_mask_request;
+    use super::handle_presence_mask_request;
+    use super::handle_read_request;
+    use super::handle_set_lp_mode_request;
+    use super::handle_write_request;
+    use super::mgmt;
     use crate::port_map::SidecarRevision;
     use crate::transceivers::FakeQsfpModule;
     use common::ports::PortId;
@@ -3834,7 +3836,7 @@ mod tests {
         let modules = ModuleId::all_sidecar();
         for i in 0..modules.selected_transceiver_count() {
             let i = i as u8;
-            let is_present = i % 2 == 0;
+            let is_present = i.is_multiple_of(2);
             let modules = ModuleId::single(i).unwrap();
             let data = if is_present {
                 vec![super::PRESENT_FOR_SDE]
@@ -3895,12 +3897,16 @@ mod tests {
 
         // SDE module indices are 1-based.
         let log = logger();
-        assert!(handle_detect_request(&log, &switch_ports, &controller, 0)
-            .await
-            .is_err());
-        assert!(handle_detect_request(&log, &switch_ports, &controller, 100)
-            .await
-            .is_err());
+        assert!(
+            handle_detect_request(&log, &switch_ports, &controller, 0)
+                .await
+                .is_err()
+        );
+        assert!(
+            handle_detect_request(&log, &switch_ports, &controller, 100)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -4138,24 +4144,28 @@ mod tests {
 
         // SDE module indices are 1-based.
         let log = logger();
-        assert!(handle_set_lp_mode_request(
-            &log,
-            &switch_ports,
-            &controller,
-            0,
-            true
-        )
-        .await
-        .is_err());
-        assert!(handle_set_lp_mode_request(
-            &log,
-            &switch_ports,
-            &controller,
-            100,
-            true
-        )
-        .await
-        .is_err());
+        assert!(
+            handle_set_lp_mode_request(
+                &log,
+                &switch_ports,
+                &controller,
+                0,
+                true
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            handle_set_lp_mode_request(
+                &log,
+                &switch_ports,
+                &controller,
+                100,
+                true
+            )
+            .await
+            .is_err()
+        );
     }
 
     #[tokio::test]
@@ -4775,9 +4785,11 @@ mod tests {
         }
 
         // Read and check.
-        assert!(handle_read_request(&log, &switch_ports, &controller, read)
-            .await
-            .is_ok());
+        assert!(
+            handle_read_request(&log, &switch_ports, &controller, read)
+                .await
+                .is_ok()
+        );
         let port = switch_ports.ports.get(&port_id).unwrap().lock().await;
         let device = port.as_backplane().expect("Expected a backplane port");
         assert_eq!(

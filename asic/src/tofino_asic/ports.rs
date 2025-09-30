@@ -668,7 +668,7 @@ pub fn init(dev_id: i32) -> AsicResult<PortData> {
     let eth_port = match unsafe { bf_eth_cpu_port_get(dev_id) } {
         -1 => None,
         x if x >= 0 && x < BF_PORT_COUNT as i32 => Some(x as PortId),
-        x => panic!("invalid CPU ETH port: {}", x),
+        x => panic!("invalid CPU ETH port: {x}"),
     };
 
     // Iterate over all of the ports the SDE has inventoried, populating our
@@ -702,10 +702,7 @@ pub fn init(dev_id: i32) -> AsicResult<PortData> {
         map_to_asic_id.insert((connector, chan), asic_id);
         map_from_asic_id.insert(asic_id, (connector, chan));
 
-        fp = match x.get_next() {
-            Ok(x) => Some(x),
-            Err(_) => None,
-        }
+        fp = x.get_next().ok()
     }
 
     let _ = unsafe { bf_pm_port_delete_all(dev_id) };

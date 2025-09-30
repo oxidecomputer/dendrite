@@ -155,7 +155,10 @@ impl TableOps<Handle> for Table {
                                     params.extend_from_slice(&v.to_le_bytes());
                                 }
                                 x => {
-                                    error!(hdl.log, "unexpected parameter: {dpd_table}::index {x}")
+                                    error!(
+                                        hdl.log,
+                                        "unexpected parameter: {dpd_table}::index {x}"
+                                    )
                                 }
                             }
                         }
@@ -185,7 +188,10 @@ impl TableOps<Handle> for Table {
                                     );
                                 }
                                 x => {
-                                    error!(hdl.log, "unexpected parameter: {dpd_table}::forward {x}")
+                                    error!(
+                                        hdl.log,
+                                        "unexpected parameter: {dpd_table}::forward {x}"
+                                    )
                                 }
                             }
                         }
@@ -221,7 +227,10 @@ impl TableOps<Handle> for Table {
                                     );
                                 }
                                 x => {
-                                    error!(hdl.log, "unexpected parameter: {dpd_table}::forward_vlan {x}")
+                                    error!(
+                                        hdl.log,
+                                        "unexpected parameter: {dpd_table}::forward_vlan {x}"
+                                    )
                                 }
                             }
                         }
@@ -249,7 +258,10 @@ impl TableOps<Handle> for Table {
                                     params.extend_from_slice(&v.to_le_bytes());
                                 }
                                 x => {
-                                    error!(hdl.log, "unexpected parameter: {dpd_table}::index {x}")
+                                    error!(
+                                        hdl.log,
+                                        "unexpected parameter: {dpd_table}::index {x}"
+                                    )
                                 }
                             }
                         }
@@ -273,7 +285,10 @@ impl TableOps<Handle> for Table {
                                     );
                                 }
                                 x => {
-                                    error!(hdl.log, "unexpected parameter: {dpd_table}::forward {x}")
+                                    error!(
+                                        hdl.log,
+                                        "unexpected parameter: {dpd_table}::forward {x}"
+                                    )
                                 }
                             }
                         }
@@ -305,7 +320,10 @@ impl TableOps<Handle> for Table {
                                     );
                                 }
                                 x => {
-                                    error!(hdl.log, "unexpected parameter: {dpd_table}::forward_vlan {x}")
+                                    error!(
+                                        hdl.log,
+                                        "unexpected parameter: {dpd_table}::forward_vlan {x}"
+                                    )
                                 }
                             }
                         }

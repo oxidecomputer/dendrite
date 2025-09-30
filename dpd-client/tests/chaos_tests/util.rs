@@ -4,8 +4,8 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use dpd_client::types::{Ipv4Entry, Ipv6Entry};
 use dpd_client::Client;
+use dpd_client::types::{Ipv4Entry, Ipv6Entry};
 use futures::TryStreamExt;
 
 pub(crate) async fn link_list_ipv4(

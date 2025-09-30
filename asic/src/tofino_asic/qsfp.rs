@@ -89,15 +89,15 @@ cfg_if::cfg_if! {
 use libc::c_int;
 use libc::c_uint;
 use libc::c_void;
+use slog::Logger;
 use slog::debug;
 use slog::error;
 use slog::trace;
-use slog::Logger;
 use std::convert::TryFrom;
 use std::ptr::copy_nonoverlapping;
-use std::sync::atomic::AtomicBool;
 use std::sync::RwLock;
 use std::sync::RwLockReadGuard;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -336,7 +336,7 @@ struct bf_qsfp_vec_t {
 
 /// Platform-specific initialization of the QSFP modules.
 #[cfg(not(target_os = "linux"))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_qsfp_init(_: *mut c_void) -> c_int {
     // Inform the BF SDE that the number of QSFP ports is one fewer than the
     // total number of ports on the system, so that it does not include the CPU
@@ -370,7 +370,7 @@ pub extern "C" fn bf_pltfm_qsfp_init(_: *mut c_void) -> c_int {
 
 /// Platform-specific initialization of the QSFP modules.
 #[cfg(target_os = "linux")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_qsfp_init(_: *mut c_void) -> c_int {
     slog::warn!(
         get_logger(),
@@ -380,7 +380,7 @@ pub extern "C" fn bf_pltfm_qsfp_init(_: *mut c_void) -> c_int {
 }
 
 /// Report the presence of a QSFP module.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_detect_qsfp(module: c_uint) -> bool {
     let log = get_logger();
     if module > MAX_PORT {
@@ -445,7 +445,7 @@ pub extern "C" fn bf_pltfm_detect_qsfp(module: c_uint) -> bool {
 /// Using it would require a large about of extra work on our part, to cache the
 /// page and bank the SDE wants to access for each module. Instead we implement
 /// the `bf_qsfp_vec_t` struct and the functions it points to.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_qsfp_read_module(
     _module: c_uint,
     _offset: c_int,
@@ -463,7 +463,7 @@ pub extern "C" fn bf_pltfm_qsfp_read_module(
 /// Using it would require a large about of extra work on our part, to cache the
 /// page and bank the SDE wants to access for each module. Instead we implement
 /// the `bf_qsfp_vec_t` struct and the functions it points to.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_qsfp_write_module(
     _module: c_uint,
     _offset: c_int,
@@ -747,8 +747,7 @@ fn send_bitmask_request(request: SdeTransceiverRequest) -> Option<(u32, u32)> {
                         None
                     }
                     (_, _) => panic!(
-                        "Unexpected messages: request = {:?}, response = {:?}",
-                        request, response
+                        "Unexpected messages: request = {request:?}, response = {response:?}"
                     ),
                 },
             }
@@ -766,25 +765,27 @@ fn send_bitmask_request(request: SdeTransceiverRequest) -> Option<(u32, u32)> {
 ///
 /// This function dereferences the raw pointer arguments.
 //
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bf_pltfm_qsfp_get_presence_mask(
     port_1_32: *mut u32,
     port_33_64: *mut u32,
     cpu_port: *mut u32,
 ) -> c_int {
-    let Some((backplane, qsfp)) =
-        send_bitmask_request(SdeTransceiverRequest::PresenceMask)
-    else {
-        return -1;
-    };
+    unsafe {
+        let Some((backplane, qsfp)) =
+            send_bitmask_request(SdeTransceiverRequest::PresenceMask)
+        else {
+            return -1;
+        };
 
-    // Invert the presence bits. We use 1 to indicate presence, the SDE uses 0.
-    *port_1_32 = !backplane;
-    *port_33_64 = !qsfp;
+        // Invert the presence bits. We use 1 to indicate presence, the SDE uses 0.
+        *port_1_32 = !backplane;
+        *port_33_64 = !qsfp;
 
-    // CPU port is always present.
-    *cpu_port = !0;
-    0
+        // CPU port is always present.
+        *cpu_port = !0;
+        0
+    }
 }
 
 /// Return the interrupt status of each QSFP module.
@@ -795,25 +796,27 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_presence_mask(
 /// # Safety
 ///
 /// This function dereferences the raw pointer arguments.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bf_pltfm_qsfp_get_int_mask(
     port_1_32: *mut u32,
     port_33_64: *mut u32,
     cpu_port: *mut u32,
 ) -> c_int {
-    let Some((backplane, qsfp)) =
-        send_bitmask_request(SdeTransceiverRequest::InterruptMask)
-    else {
-        return -1;
-    };
+    unsafe {
+        let Some((backplane, qsfp)) =
+            send_bitmask_request(SdeTransceiverRequest::InterruptMask)
+        else {
+            return -1;
+        };
 
-    // Invert the interrupt bits. We use 1 to indicate a pending interrupt, the
-    // SDE uses 0.
-    *port_1_32 = !backplane;
-    *port_33_64 = !qsfp;
-    // Never interrupts on CPU port.
-    *cpu_port = !0;
-    0
+        // Invert the interrupt bits. We use 1 to indicate a pending interrupt, the
+        // SDE uses 0.
+        *port_1_32 = !backplane;
+        *port_33_64 = !qsfp;
+        // Never interrupts on CPU port.
+        *cpu_port = !0;
+        0
+    }
 }
 
 /// Return the low-power mode of each QSFP module.
@@ -824,32 +827,34 @@ pub unsafe extern "C" fn bf_pltfm_qsfp_get_int_mask(
 /// # Safety
 ///
 /// This function dereferences the raw pointer arguments.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bf_pltfm_qsfp_get_lpmode_mask(
     port_1_32: *mut u32,
     port_33_64: *mut u32,
     cpu_port: *mut u32,
 ) -> c_int {
-    let Some((backplane, qsfp)) =
-        send_bitmask_request(SdeTransceiverRequest::LpModeMask)
-    else {
-        return -1;
-    };
+    unsafe {
+        let Some((backplane, qsfp)) =
+            send_bitmask_request(SdeTransceiverRequest::LpModeMask)
+        else {
+            return -1;
+        };
 
-    // We don't need to invert this mask. A 1 means the module is _in_ low-power
-    // mode, which is what we report in the messaging protocol.
-    *port_1_32 = backplane;
-    *port_33_64 = qsfp;
-    // CPU port is always in high-power mode.
-    *cpu_port = 0;
-    0
+        // We don't need to invert this mask. A 1 means the module is _in_ low-power
+        // mode, which is what we report in the messaging protocol.
+        *port_1_32 = backplane;
+        *port_33_64 = qsfp;
+        // CPU port is always in high-power mode.
+        *cpu_port = 0;
+        0
+    }
 }
 
 /// Set the low-power mode of a QSFP module.
 ///
 /// NOTE: The C signature for this function does actually take a signed integer,
 /// in contrast to the other functions which accept a u32.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_qsfp_set_lpmode(
     module: c_int,
     lp_mode: bool,
@@ -923,7 +928,7 @@ pub extern "C" fn bf_pltfm_qsfp_set_lpmode(
 ///
 /// NOTE: The C signature for this function does actually take a signed integer,
 /// in contrast to the other functions which accept a u32.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bf_pltfm_qsfp_module_reset(
     module: c_int,
     reset: bool,
@@ -1040,13 +1045,13 @@ fn send_to_dpd(
 
 #[cfg(test)]
 mod tests {
-    use super::read_qsfp_module;
-    use super::send_to_dpd;
-    use super::write_qsfp_module;
     use super::SdeTransceiverMessage;
     use super::SdeTransceiverRequest;
     use super::SdeTransceiverResponse;
     use super::SendError;
+    use super::read_qsfp_module;
+    use super::send_to_dpd;
+    use super::write_qsfp_module;
     use crate::tofino_asic::genpd::bf_drv_device_type_get;
     use tokio::sync::mpsc;
 

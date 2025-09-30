@@ -4,14 +4,11 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use crate::api_server::LinkSettings;
-use crate::api_server::PortSettings;
-use crate::link::Link;
-use crate::link::LinkId;
-use crate::link::LinkParams;
 use crate::DpdError;
 use crate::DpdResult;
 use crate::Switch;
+use crate::link::Link;
+use crate::link::LinkParams;
 use aal::AsicOps;
 use common::ports::Ipv4Entry;
 use common::ports::Ipv6Entry;
@@ -19,10 +16,13 @@ use common::ports::PortFec;
 use common::ports::PortId;
 use common::ports::PortSpeed;
 use common::ports::TxEq;
+use dpd_api::LinkSettings;
+use dpd_api::PortSettings;
+use dpd_types::link::LinkId;
+use slog::Logger;
 use slog::debug;
 use slog::error;
 use slog::trace;
-use slog::Logger;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -421,6 +421,9 @@ impl PortSettingsDiff {
         link.config.kr = spec.after.kr;
         link.tx_eq = spec.after.tx_eq;
         link.config.delete_me = false;
+        if spec.before.tx_eq != spec.after.tx_eq {
+            link.plumbed.tx_eq_pushed = false;
+        }
         rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
             let link_lock = ctx.link(link_id)?;
             let mut link = link_lock.lock().unwrap();

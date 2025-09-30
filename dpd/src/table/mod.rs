@@ -9,13 +9,13 @@ use std::hash::Hash;
 
 use slog::{debug, error, info};
 
-use crate::types::*;
-use crate::views;
 use crate::Switch;
+use crate::types::*;
 use aal::ActionParse;
 use aal::MatchParse;
 use aal::TableOps;
 use common::network::MacAddr;
+use dpd_types::views;
 
 pub mod arp_ipv4;
 pub mod mcast;

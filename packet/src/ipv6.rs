@@ -11,8 +11,8 @@ use std::net::Ipv6Addr;
 use bytes::{BufMut, BytesMut};
 
 use crate::PacketResult;
-use crate::{eth, icmp, sidecar, tcp, udp};
 use crate::{Endpoint, Headers, IpAddr, L3Endpoint, Packet, Protocol};
+use crate::{eth, icmp, sidecar, tcp, udp};
 
 const IPV6_HDR_SZ: usize = 40;
 
@@ -107,7 +107,7 @@ impl Protocol for Ipv6Hdr {
         Ok(hdrs)
     }
 
-    fn gen(
+    fn generate(
         src: Endpoint,
         dst: Endpoint,
         mut protos: Vec<u16>,
@@ -122,9 +122,9 @@ impl Protocol for Ipv6Hdr {
         })?;
 
         let mut pkt = match proto {
-            IPPROTO_ICMPV6 => icmp::IcmpHdr::gen(src, dst, protos, body)?,
-            IPPROTO_TCP => tcp::TcpHdr::gen(src, dst, protos, body)?,
-            IPPROTO_UDP => udp::UdpHdr::gen(src, dst, protos, body)?,
+            IPPROTO_ICMPV6 => icmp::IcmpHdr::generate(src, dst, protos, body)?,
+            IPPROTO_TCP => tcp::TcpHdr::generate(src, dst, protos, body)?,
+            IPPROTO_UDP => udp::UdpHdr::generate(src, dst, protos, body)?,
             _ => Packet::new(body),
         };
 

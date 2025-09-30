@@ -12,8 +12,8 @@ use oxnet::Ipv4Net;
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
-use packet::eth::EthQHdr;
 use packet::Endpoint;
+use packet::eth::EthQHdr;
 
 use dpd_client::types;
 

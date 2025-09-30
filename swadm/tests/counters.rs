@@ -19,7 +19,7 @@ fn swadm() -> Command {
 #[ignore]
 fn test_p4_counter_list() {
     let output = swadm()
-        .arg("-h")
+        .arg("--host")
         .arg("[::1]")
         .arg("counters")
         .arg("list")
@@ -62,9 +62,7 @@ fn test_p4_counter_list() {
     for counter in &expected_counters {
         assert!(
             stdout.contains(counter),
-            "Counter list should contain '{}' counter. Output: {}",
-            counter,
-            stdout
+            "Counter list should contain '{counter}' counter. Output: {stdout}"
         );
     }
 }

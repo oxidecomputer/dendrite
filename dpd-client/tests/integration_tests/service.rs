@@ -7,9 +7,9 @@
 use std::sync::Arc;
 
 use ::common::network::MacAddr;
-use dpd_client::types::Ipv4Entry;
 use dpd_client::ClientInfo;
-use packet::{eth, icmp, ipv4, sidecar, Endpoint};
+use dpd_client::types::Ipv4Entry;
+use packet::{Endpoint, eth, icmp, ipv4, sidecar};
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
@@ -379,7 +379,8 @@ async fn execute_test_service_lldp(nat_only: bool) -> TestResult {
     // contains a single data-bearing TLV, while a real LLDP header has at
     // least 3 TLVs.
     let send_pkt =
-        packet::Packet::gen(src, tgt, vec![eth::ETHER_LLDP], None).unwrap();
+        packet::Packet::generate(src, tgt, vec![eth::ETHER_LLDP], None)
+            .unwrap();
     let mut recv_pkt = send_pkt.clone();
 
     let send = TestPacket {

@@ -10,9 +10,9 @@ use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::ops::Bound;
 
+use crate::Switch;
 use crate::table::nat;
 use crate::types::{DpdError, DpdResult};
-use crate::Switch;
 use common::nat::{Ipv4Nat, Ipv6Nat, NatTarget};
 
 trait PortRange {
@@ -245,10 +245,10 @@ pub fn get_ipv6_mapping(
     high: u16,
 ) -> DpdResult<NatTarget> {
     let nat = switch.nat.lock().unwrap();
-    if let Some(v) = nat.ipv6_mappings.get(&nat_ip) {
-        if let Some(idx) = find_first_mapping(v, low, high) {
-            return Ok(v[idx].tgt);
-        }
+    if let Some(v) = nat.ipv6_mappings.get(&nat_ip)
+        && let Some(idx) = find_first_mapping(v, low, high)
+    {
+        return Ok(v[idx].tgt);
     }
     Err(DpdError::Missing("no mapping".into()))
 }
@@ -271,7 +271,7 @@ pub fn set_ipv6_mapping(
     let mut nat = switch.nat.lock().unwrap();
     let (entries, idx) = match nat.ipv6_mappings.get_mut(&nat_ip) {
         Some(e) => {
-            if e.iter().any(|entry| *entry == new_entry) {
+            if e.contains(&new_entry) {
                 // entry already exists
                 return Ok(());
             }
@@ -280,8 +280,7 @@ pub fn set_ipv6_mapping(
                 None => {
                     trace!(
                         switch.log,
-                        "unable to add nat entry {}: conflicting mapping",
-                        full
+                        "unable to add nat entry {}: conflicting mapping", full
                     );
                     return Err(DpdError::Exists("conflicting mapping".into()));
                 }
@@ -317,26 +316,24 @@ pub fn clear_ipv6_mapping(
     let mut nat = switch.nat.lock().unwrap();
     trace!(switch.log, "clearing nat entry {}/{}-{}", nat_ip, low, high);
 
-    if let Some(mappings) = nat.ipv6_mappings.get_mut(&nat_ip) {
-        if let Some(idx) = find_first_mapping(mappings, low, high) {
-            let ent = mappings.remove(idx);
-            if mappings.is_empty() {
-                nat.ipv6_mappings.remove(&nat_ip);
-            }
-            let full = ipv6_entry(nat_ip, &ent);
-            return match nat::delete_ipv6_entry(
-                switch, nat_ip, ent.low, ent.high,
-            ) {
-                Err(e) => {
-                    error!(switch.log, "failed to clear {}: {:?}", full, e);
-                    Err(e)
-                }
-                _ => {
-                    debug!(switch.log, "cleared nat entry {}", full);
-                    Ok(())
-                }
-            };
+    if let Some(mappings) = nat.ipv6_mappings.get_mut(&nat_ip)
+        && let Some(idx) = find_first_mapping(mappings, low, high)
+    {
+        let ent = mappings.remove(idx);
+        if mappings.is_empty() {
+            nat.ipv6_mappings.remove(&nat_ip);
         }
+        let full = ipv6_entry(nat_ip, &ent);
+        return match nat::delete_ipv6_entry(switch, nat_ip, ent.low, ent.high) {
+            Err(e) => {
+                error!(switch.log, "failed to clear {}: {:?}", full, e);
+                Err(e)
+            }
+            _ => {
+                debug!(switch.log, "cleared nat entry {}", full);
+                Ok(())
+            }
+        };
     }
 
     Ok(())
@@ -408,10 +405,10 @@ pub fn get_ipv4_mapping(
     high: u16,
 ) -> DpdResult<NatTarget> {
     let nat = switch.nat.lock().unwrap();
-    if let Some(v) = nat.ipv4_mappings.get(&nat_ip) {
-        if let Some(idx) = find_first_mapping(v, low, high) {
-            return Ok(v[idx].tgt);
-        }
+    if let Some(v) = nat.ipv4_mappings.get(&nat_ip)
+        && let Some(idx) = find_first_mapping(v, low, high)
+    {
+        return Ok(v[idx].tgt);
     }
     Err(DpdError::Missing("no mapping".into()))
 }
@@ -434,7 +431,7 @@ pub fn set_ipv4_mapping(
     let mut nat = switch.nat.lock().unwrap();
     let (entries, idx) = match nat.ipv4_mappings.get_mut(&nat_ip) {
         Some(e) => {
-            if e.iter().any(|entry| *entry == new_entry) {
+            if e.contains(&new_entry) {
                 // entry already exists
                 return Ok(());
             }
@@ -479,32 +476,27 @@ pub fn clear_ipv4_mapping(
     let mut nat = switch.nat.lock().unwrap();
     trace!(
         switch.log,
-        "clearing nat entry covering {}/{}-{}",
-        nat_ip,
-        low,
-        high
+        "clearing nat entry covering {}/{}-{}", nat_ip, low, high
     );
 
-    if let Some(mappings) = nat.ipv4_mappings.get_mut(&nat_ip) {
-        if let Some(idx) = find_first_mapping(mappings, low, high) {
-            let ent = mappings.remove(idx);
-            if mappings.is_empty() {
-                nat.ipv4_mappings.remove(&nat_ip);
-            }
-            let full = ipv4_entry(nat_ip, &ent);
-            return match nat::delete_ipv4_entry(
-                switch, nat_ip, ent.low, ent.high,
-            ) {
-                Err(e) => {
-                    error!(switch.log, "failed to clear {}: {:?}", full, e);
-                    Err(e)
-                }
-                _ => {
-                    debug!(switch.log, "cleared nat entry {}", full);
-                    Ok(())
-                }
-            };
+    if let Some(mappings) = nat.ipv4_mappings.get_mut(&nat_ip)
+        && let Some(idx) = find_first_mapping(mappings, low, high)
+    {
+        let ent = mappings.remove(idx);
+        if mappings.is_empty() {
+            nat.ipv4_mappings.remove(&nat_ip);
         }
+        let full = ipv4_entry(nat_ip, &ent);
+        return match nat::delete_ipv4_entry(switch, nat_ip, ent.low, ent.high) {
+            Err(e) => {
+                error!(switch.log, "failed to clear {}: {:?}", full, e);
+                Err(e)
+            }
+            _ => {
+                debug!(switch.log, "cleared nat entry {}", full);
+                Ok(())
+            }
+        };
     }
 
     Ok(())
@@ -521,10 +513,7 @@ pub fn clear_overlapping_ipv4_mappings(
     let mut nat = switch.nat.lock().unwrap();
     trace!(
         switch.log,
-        "clearing all nat entries overlapping with {}/{}-{}",
-        nat_ip,
-        low,
-        high
+        "clearing all nat entries overlapping with {}/{}-{}", nat_ip, low, high
     );
 
     if let Some(mappings) = nat.ipv4_mappings.get_mut(&nat_ip) {
@@ -579,11 +568,11 @@ pub fn reset_ipv4(switch: &Switch) -> DpdResult<()> {
     }
 }
 
-pub fn set_ipv4_nat_generation(switch: &Switch, gen: i64) {
+pub fn set_ipv4_nat_generation(switch: &Switch, generation: i64) {
     let mut nat = switch.nat.lock().unwrap();
 
     debug!(switch.log, "setting nat generation");
-    nat.ipv4_generation = gen;
+    nat.ipv4_generation = generation;
 }
 
 pub fn get_ipv4_nat_generation(switch: &Switch) -> i64 {

@@ -6,13 +6,12 @@
 
 //! General types used throughout Dendrite.
 
-use crate::link::LinkId;
-
 use aal::AsicError;
+use common::ROLLBACK_FAILURE_ERROR_CODE;
+use common::SmfError;
 use common::ports::PortId;
 use common::ports::QsfpPort;
-use common::SmfError;
-use common::ROLLBACK_FAILURE_ERROR_CODE;
+use dpd_types::link::LinkId;
 use slog::error;
 use std::{convert, net::IpAddr};
 use transceiver_controller::Error as TransceiverError;
@@ -47,7 +46,9 @@ pub enum DpdError {
     NoSuchSwitchPort { port_id: PortId },
     #[error("Link {link_id} does not exist in switch port \"{port_id}\"")]
     NoSuchLink { port_id: PortId, link_id: LinkId },
-    #[error("Address {address} is not associated with port \"{port_id}\" link \"{link_id}\"")]
+    #[error(
+        "Address {address} is not associated with port \"{port_id}\" link \"{link_id}\""
+    )]
     NoSuchAddress {
         port_id: PortId,
         link_id: LinkId,
@@ -78,6 +79,9 @@ pub enum DpdError {
     Transceiver(#[from] TransceiverError),
     #[error("QSFP port \"{qsfp_port}\" has no transceiver")]
     MissingTransceiver { qsfp_port: QsfpPort },
+    /// Usability is currently determined by `check_module_support`.
+    #[error("The transceiver has failed basic operability checks")]
+    UnusableTransceiver,
     #[error("Operation only valid in manual management mode")]
     NotInManualMode,
     /// Error encountered while constructing oximter metrics
@@ -211,6 +215,10 @@ impl convert::From<DpdError> for dropshot::HttpError {
             DpdError::Faulted(e) => {
                 dropshot::HttpError::for_bad_request(None, e)
             }
+            DpdError::UnusableTransceiver => dropshot::HttpError::for_unavail(
+                None,
+                "unusable transceiver".to_string(),
+            ),
             DpdError::Smf(e) => dropshot::HttpError::for_internal_error(e),
             DpdError::Other(e) => dropshot::HttpError::for_internal_error(e),
             e @ DpdError::NoSuchSwitchPort { .. } => {
@@ -297,6 +305,12 @@ impl convert::From<anyhow::Error> for DpdError {
 
 impl convert::From<common::network::VlanError> for DpdError {
     fn from(err: common::network::VlanError) -> Self {
+        DpdError::Invalid(err.to_string())
+    }
+}
+
+impl convert::From<dpd_types::mcast::Error> for DpdError {
+    fn from(err: dpd_types::mcast::Error) -> Self {
         DpdError::Invalid(err.to_string())
     }
 }

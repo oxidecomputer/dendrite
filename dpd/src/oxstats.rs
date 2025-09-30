@@ -9,10 +9,12 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use common::ports::PortId;
-use schemars::JsonSchema;
-use serde::Serialize;
+use dpd_types::link::{LinkId, LinkState};
+use dpd_types::oxstats::{OximeterConfig, OximeterMetadata};
+use dpd_types::switch_identifiers::SwitchIdentifiers;
+
 use slog::{debug, error, info, o, warn};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -25,8 +27,6 @@ use omicron_common::backoff::{
 use oximeter::types::{ProducerRegistry, Sample};
 use oximeter::{MetricsError, Producer};
 
-use crate::link::{LinkId, LinkState};
-use crate::switch_identifiers::SwitchIdentifiers;
 use crate::table;
 use crate::DpdResult;
 use crate::Switch;
@@ -55,20 +55,6 @@ const LINK_KIND: &str = "switch-port";
 const LINK_NETWORK_TYPE: &str = "primary-data";
 /// Model type for the data link.
 const LINK_MODEL_TYPE: &str = "TF2";
-
-/// Data associated with this dpd instance as an oximeter producer
-#[derive(Clone, Debug, JsonSchema, Serialize)]
-pub struct OximeterMetadata {
-    /// Configuration of the server and our timeseries.
-    #[serde(flatten)]
-    config: OximeterConfig,
-    /// When we registered with nexus
-    //
-    // NOTE: This is really the time we created the producer server, not when we
-    // registered with Nexus. Registration happens in the background and
-    // continually renews.
-    registered_at: Option<DateTime<Utc>>,
-}
 
 /// Statistics collected for a single link
 #[derive(Clone, Debug)]
@@ -489,17 +475,6 @@ pub fn oximeter_meta(switch: &Switch) -> Option<OximeterMetadata> {
     switch.oximeter_meta.lock().unwrap().clone()
 }
 
-/// Configuration for the oximeter producer server and our timeseries.
-#[derive(Clone, Debug, JsonSchema, Serialize)]
-struct OximeterConfig {
-    /// IP address of the producer server.
-    listen_address: Ipv6Addr,
-    /// Identifiers for the Scrimlet we're running on.
-    sled_identifiers: SledIdentifiers,
-    /// Identifiers for the Sidecar we're managing.
-    switch_identifiers: SwitchIdentifiers,
-}
-
 // Spin until the switch config is populated with all the information we need
 // from SMF.  If this routine returns with an error, it means that the daemon is
 // shutting down before we found the needed information.
@@ -657,7 +632,10 @@ async fn wait_for_switch_identifiers(
                 );
                 return Ok(idents);
             } else {
-                info!(log, "missing switch identifiers from configuration, will continue to poll");
+                info!(
+                    log,
+                    "missing switch identifiers from configuration, will continue to poll"
+                );
             }
         }
 

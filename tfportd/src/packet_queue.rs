@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use slog::debug;
 
-use crate::{now, Global};
+use crate::{Global, now};
 use packet::Packet;
 
 // An enqueued packet awaiting resolution of an IP to MAC address.

@@ -4,15 +4,16 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::io::{stdout, Write};
+use std::collections::HashMap;
+use std::io::{Write, stdout};
 use std::net::IpAddr;
 use std::str::FromStr;
 
-use anyhow::bail;
 use anyhow::Context;
+use anyhow::bail;
+use clap::{Parser, Subcommand};
 use colored::*;
 use futures::stream::TryStreamExt;
-use structopt::*;
 use tabwriter::TabWriter;
 
 use common::counters::RMonCounters;
@@ -21,29 +22,28 @@ use common::ports::PortFec;
 use common::ports::PortMedia;
 use common::ports::PortPrbsMode;
 use common::ports::PortSpeed;
-use dpd_client::types;
 use dpd_client::Client;
+use dpd_client::types;
 
-use crate::parse_port_id;
-use crate::switchport::SwitchId;
 use crate::IpFamily;
 use crate::LinkPath;
+use crate::parse_port_id;
+use crate::switchport::SwitchId;
 
-#[derive(Debug, StructOpt)]
-#[structopt(about = "Link-specific statistics")]
+#[derive(Debug, Subcommand)]
+/// Link-specific statistics
 pub enum LinkCounters {
     /// Fetch RMON counters.
-    #[structopt(about = "get RMON counters")]
     Rmon {
         /// The link to fetch counters for.
         link: LinkPath,
 
         /// Interval on which to re-fetch and print, in seconds.
-        #[structopt(long, short = "i")]
+        #[clap(long, short = 'i')]
         interval: Option<u32>,
 
         /// The level of detail.
-        #[structopt(short = "l", default_value = "1")]
+        #[clap(short = 'l', default_value = "1")]
         level: u8,
     },
     /// Fetch physical coding sublayer counters, for one link or all.
@@ -59,7 +59,6 @@ pub enum LinkCounters {
     /// UnknErr   Count of Unknown Error Events
     /// InvErr    Count of Invalid Error Events
     /// BipErr    Bit Inteleaved Parity errors (per PCS lane)
-    #[structopt(verbatim_doc_comment)]
     Pcs {
         /// The link to fetch counters for.
         ///
@@ -79,7 +78,6 @@ pub enum LinkCounters {
     /// FecSer1   Count of FEC Symbol Errors On Lane 1
     /// FecSer2   Count of FEC Symbol Errors On Lane 2
     /// FecSer3   Count of FEC Symbol Errors On Lane 3
-    #[structopt(verbatim_doc_comment)]
     Fec {
         /// The link to fetch counters for.
         ///
@@ -92,7 +90,6 @@ pub enum LinkCounters {
     ///
     /// Current   Shows the link-up count since the link was last enabled
     /// Total     Shows the link-up count since the link was created
-    #[structopt(verbatim_doc_comment)]
     Up {
         /// The link to fetch counters for.
         ///
@@ -105,7 +102,6 @@ pub enum LinkCounters {
     ///
     /// Current   Shows the per-state count since the link was last enabled
     /// Total     Shows the per-state count since the link was created
-    #[structopt(verbatim_doc_comment)]
     Fsm {
         /// The link to fetch counters for.
         link: LinkPath,
@@ -127,25 +123,22 @@ pub enum LinkCounters {
 /// on the other end of the link.  When the administrator believes that the
 /// underlying failure has been addressed, the fault can be "cleared", which
 /// will notify the dataplane daemon that it can try to bring the port online.
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand)]
 pub enum Fault {
     /// Show the kind of fault that has been detected
     Show {
         /// The link path, specified as `switch_port/link`.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
     },
     /// Mark the fault as "cleared"
     Clear {
         /// The link path, specified as `switch_port/link`.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
     },
     /// Move a link into the faulted state.  This is most likely to be used only
     /// for debugging.
     Inject {
         /// The link path, specified as `switch_port/link`.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
 
         /// The nominal reason for the injected fault
@@ -154,33 +147,30 @@ pub enum Fault {
 }
 
 /// Diagnostic commands to examine the hardware and software state of a link's SERDES
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand)]
 pub enum GetSerdes {
     /// Fetch the logical->physical lane mappings for this port
-    #[structopt(visible_alias = "map")]
+    #[clap(visible_alias = "map")]
     LaneMap {
         /// The link path, specified as `switch_port/link`.
         ///
         /// For example `rear0/0` is the first link on the rear0 switch port.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
     },
     /// Fetch the speed and encoding configuration for each lane in this port
-    #[structopt(visible_alias = "enc")]
+    #[clap(visible_alias = "enc")]
     EncSpeed {
         /// The link path, specified as `switch_port/link`.
         ///
         /// For example `rear0/0` is the first link on the rear0 switch port.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
     },
     /// Fetch the combined autonegotiation / link-training state for this port
-    #[structopt(alias = "anlt")]
+    #[clap(visible_alias = "anlt")]
     AnLt {
         /// The link path, specified as `switch_port/link`.
         ///
         /// For example `rear0/0` is the first link on the rear0 switch port.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
     },
     /// Fetch the eye data for this port
@@ -188,71 +178,72 @@ pub enum GetSerdes {
         /// The link path, specified as `switch_port/link`.
         ///
         /// For example `rear0/0` is the first link on the rear0 switch port.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
     },
     /// Fetch the rx adaptation counts for this port
-    #[structopt(alias = "adapt")]
+    #[clap(visible_alias = "adapt")]
     RxAdapt {
         /// The link path, specified as `switch_port/link`.
         ///
         /// For example `rear0/0` is the first link on the rear0 switch port.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
     },
     /// Fetch the tx equalization settings for this port.  This displays both
     /// the initial software setting followed by the current hardware setting in
     /// parenthesis.
-    #[structopt(alias = "txeq")]
+    #[clap(visible_alias = "txeq")]
     TxEq {
         /// The link path, specified as `switch_port/link`.
         ///
         /// For example `rear0/0` is the first link on the rear0 switch port.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
     },
     /// Fetch the rx signal info for this port
-    #[structopt(alias = "rxsig")]
+    #[clap(visible_alias = "rxsig")]
     RxSig {
         /// The link path, specified as `switch_port/link`.
         ///
         /// For example `rear0/0` is the first link on the rear0 switch port.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
     },
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand)]
 /// Diagnostic commands to updated the settings of a link's SERDES
 pub enum SetSerdes {
     /// Update the tx equalization settings for this port.  Only the main setting is
     /// required.  All others will default to 0. Note: to set a negative value,
     /// you must use the "=" option syntax.  e.g., "--pre1=-1"
-    #[structopt(alias = "txeq")]
+    #[clap(visible_alias = "txeq")]
     TxEq {
         /// The link path, specified as `switch_port/link`.
         ///
         /// For example `rear0/0` is the first link on the rear0 switch port.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
-        #[structopt(long)]
+        #[clap(long)]
         pre2: Option<i32>,
-        #[structopt(long)]
+        #[clap(long)]
         pre1: Option<i32>,
-        #[structopt(long)]
+        #[clap(long)]
         main: Option<i32>,
-        #[structopt(long)]
+        #[clap(long)]
         post1: Option<i32>,
-        #[structopt(long)]
+        #[clap(long)]
         post2: Option<i32>,
     },
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand)]
 /// Commands to monitor and manage a link's SERDES
 pub enum Serdes {
-    Get(GetSerdes),
-    Set(SetSerdes),
+    Get {
+        #[command(subcommand)]
+        cmd: GetSerdes,
+    },
+    Set {
+        #[command(subcommand)]
+        cmd: SetSerdes,
+    },
 }
 
 /// Manage Ethernet links.
@@ -260,7 +251,7 @@ pub enum Serdes {
 /// Links are always referenced to the switch port that contains them. This
 /// is normally done by using a "link path", which is structured like
 /// `switch_port/link_id`, e.g., `rear0/0`.
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand)]
 pub enum Link {
     /// Create a new link on a switch port.
     Create(LinkCreate),
@@ -270,76 +261,69 @@ pub enum Link {
         /// The link path, specified as `switch_port/link`.
         ///
         /// For example `rear0/0` is the first link on the rear0 switch port.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
         /// Display verbose output
-        #[structopt(short, long, conflicts_with("parseable"))]
+        #[clap(short, long, conflicts_with("parseable"))]
         verbose: bool,
         /// Provide machine-parseable output.
-        #[structopt(
-            short,
-            long,
-            requires("fields"),
-            conflicts_with("verbose")
-        )]
+        #[clap(short, long, requires("fields"), conflicts_with("verbose"))]
         parseable: bool,
         /// Which fields to output.
-        #[structopt(short = "o", parse(try_from_str = parse_link_fields))]
+        #[clap(short = 'o', value_parser = parse_link_fields)]
         fields: Option<FieldList>,
         /// The field separator.
-        #[structopt(short = "s", requires("parseable"))]
+        #[clap(short = 's', requires("parseable"))]
         sep: Option<String>,
         /// Rather than printing a link, list the parseable fields that can be
         /// printed.
-        #[structopt(long)]
+        #[clap(long)]
         list_fields: bool,
     },
 
     /// List all links on a switch port.
     List {
         /// The port whose links should be listed.
-        #[structopt(parse(try_from_str = parse_port_id))]
+        #[clap(value_parser = parse_port_id)]
         port_id: types::PortId,
         /// Provide machine-parseable output.
-        #[structopt(short, long, requires("fields"))]
+        #[clap(short, long, requires("fields"))]
         parseable: bool,
         /// Which fields to output.
-        #[structopt(short = "o", parse(try_from_str = parse_link_fields))]
+        #[clap(short = 'o', value_parser = parse_link_fields)]
         fields: Option<FieldList>,
         /// The field separator.
-        #[structopt(short = "s", requires("parseable"))]
+        #[clap(short = 's', requires("parseable"))]
         sep: Option<String>,
         /// Rather than printing a link, list the parseable fields that can be
         /// printed.
-        #[structopt(long)]
+        #[clap(long)]
         list_fields: bool,
     },
 
     /// Delete a link on a switch port.
-    #[structopt(visible_alias = "del")]
+    #[clap(visible_alias = "del")]
     Delete {
         /// The link path, specified as `switch_port/link`.
         ///
         /// For example `rear0/0` is the first link on the rear0 switch port.
-        #[structopt(parse(try_from_str))]
         link_path: LinkPath,
     },
 
     /// List all links on all switch ports.
-    #[structopt(visible_alias = "ls")]
+    #[clap(visible_alias = "ls")]
     ListAll {
         /// Provide machine-parseable output.
-        #[structopt(short, long, requires("fields"))]
+        #[clap(short, long, requires("fields"))]
         parseable: bool,
         /// Which fields to output.
-        #[structopt(short = "o", parse(try_from_str = parse_link_fields))]
+        #[clap(short = 'o', value_parser = parse_link_fields)]
         fields: Option<FieldList>,
         /// The field separator.
-        #[structopt(short = "s", requires("parseable"))]
+        #[clap(short = 's', requires("parseable"))]
         sep: Option<String>,
         /// Rather than printing a link, list the parseable fields that can be
         /// printed.
-        #[structopt(long)]
+        #[clap(long)]
         list_fields: bool,
         /// Filter output to those links whose name contains the provided substring.
         ///
@@ -360,7 +344,7 @@ pub enum Link {
         /// The link to set the property on.
         link: LinkPath,
         /// The property to be set.
-        #[structopt(flatten)]
+        #[command(subcommand)]
         property: SetLinkProp,
     },
 
@@ -369,7 +353,7 @@ pub enum Link {
         /// The link to get the property for.
         link: LinkPath,
         /// The property to be fetched.
-        #[structopt(flatten)]
+        #[command(subcommand)]
         property: LinkProp,
     },
 
@@ -388,57 +372,122 @@ pub enum Link {
         /// The link to get the history of.
         link: LinkPath,
         /// Display raw timestamps rather than relative
-        #[structopt(long, visible_alias = "R")]
+        #[clap(long, visible_alias = "R")]
         raw: bool,
         /// Display history from oldest event to newest event
-        #[structopt(long, short)]
+        #[clap(long, short)]
         reverse: bool,
         /// Maximum number of events to display
-        #[structopt(short)]
+        #[clap(short)]
         n: Option<usize>,
     },
 
     /// Manage a link in the Faulted state
-    Fault(Fault),
+    Fault {
+        #[command(subcommand)]
+        cmd: Fault,
+    },
 
     /// Display counters related to the link.
-    #[structopt(visible_alias = "ctr", visible_alias = "co")]
-    Counters(LinkCounters),
+    #[clap(visible_aliases = ["ctr", "co"])]
+    Counters {
+        #[command(subcommand)]
+        cmd: LinkCounters,
+    },
 
-    #[structopt(visible_alias = "sd")]
-    Serdes(Serdes),
+    #[clap(visible_alias = "sd")]
+    Serdes {
+        #[command(subcommand)]
+        cmd: Serdes,
+    },
+
+    /// Use the mechanism omicron uses to set up a link
+    Apply {
+        /// The link path
+        #[clap(long)]
+        link: LinkPath,
+        /// Dpd tag to use
+        #[clap(long)]
+        tag: String,
+        /// The first lane of the port to use for the new link
+        #[clap(long)]
+        lane: Option<types::LinkId>,
+        /// The requested speed of the link.
+        #[clap(long)]
+        speed: PortSpeed,
+        /// The requested forward-error correction method.  If this is None, the
+        /// standard FEC for the underlying media will be applied if it can be
+        /// determined.
+        #[clap(long)]
+        fec: Option<PortFec>,
+        /// Whether the link is configured to autonegotiate with its peer during
+        /// link training.
+        ///
+        /// This is generally only true for backplane links, and defaults to
+        #[clap(long)]
+        autoneg: bool,
+        /// Whether the link is configured in KR mode, an electrical specification
+        /// generally only true for backplane link.
+        ///
+        #[clap(long)]
+        kr: bool,
+
+        /// Uniform equalization parameter to apply to all cursors.
+        #[clap(long)]
+        tx_eq: Option<i32>,
+
+        /// Transmit equalization precursor 1.
+        #[clap(long, conflicts_with = "tx_eq")]
+        pre1: Option<i32>,
+
+        /// Transmit equalization precursor 2.
+        #[clap(long, conflicts_with = "tx_eq")]
+        pre2: Option<i32>,
+
+        /// Transmit equalization main precursor.
+        #[clap(long, conflicts_with = "tx_eq")]
+        main: Option<i32>,
+
+        /// Transmit equalization postcursor 1.
+        #[clap(long, conflicts_with = "tx_eq")]
+        post1: Option<i32>,
+
+        /// Transmit equalization postcursor 2.
+        #[clap(long, conflicts_with = "tx_eq")]
+        post2: Option<i32>,
+    },
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 pub struct LinkCreate {
     /// The ID of the switch port on which to create the link.
-    #[structopt(parse(try_from_str = parse_port_id))]
+    #[clap(value_parser = parse_port_id)]
     port_id: types::PortId,
 
     /// The first lane of the port to use for this link
-    #[structopt(long, parse(try_from_str))]
+    #[clap(long)]
     lane: Option<types::LinkId>,
 
     /// The speed for the new link.
-    #[structopt(short = "s", long, parse(try_from_str))]
+    #[clap(short = 's')]
     speed: PortSpeed,
 
     /// The error-correction scheme for the link.
-    #[structopt(long, parse(try_from_str))]
+    #[clap(long)]
     fec: Option<PortFec>,
 
     /// If provided, configure the link to use autonegotiation with its peer.
-    #[structopt(short, long)]
+    #[clap(short, long)]
     autoneg: bool,
 
     /// If provided, configure the link in KR mode.
     ///
     /// This is generally only appropriate for backplane links.
-    #[structopt(short, long)]
+    #[clap(short, long)]
     kr: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, StructOpt)]
+#[derive(Clone, Copy, Debug, PartialEq, Subcommand)]
 pub enum LinkProp {
     /// Fetch the MAC address of the link.
     Mac,
@@ -451,66 +500,48 @@ pub enum LinkProp {
     /// The error-correction scheme for the link.
     Fec,
     /// Fetch whether autonegotiation is enabled for the link.
-    #[structopt(visible_alias = "an")]
+    #[clap(visible_alias = "an")]
     Autoneg,
     /// Fetch whether nat-only restrictions are enabled for the link.
     NatOnly,
     /// Fetch whether the link is enabled.
-    #[structopt(visible_alias = "ena")]
+    #[clap(visible_alias = "ena")]
     Enabled,
     /// Fetch the link state.
     State,
     /// Fetch the IP addresses assigned to a link.
     Ip {
-        #[structopt(short = "f", long)]
+        #[clap(short = 'f', long)]
         family: Option<IpFamily>,
     },
     /// Fetch whether the link is configured for IPv6
-    #[structopt(visible_alias = "ipv6")]
+    #[clap(visible_alias = "ipv6")]
     Ipv6Enabled,
     /// Fetch the PRBS mode for the link.
     Prbs,
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Clone, Subcommand)]
 pub enum SetLinkProp {
     /// Set the MAC address of the link.
     Mac { mac: MacAddr },
     /// Set the KR mode for the link.
-    Kr {
-        #[structopt(parse(try_from_str))]
-        kr: bool,
-    },
+    Kr { kr: bool },
     /// Set whether autonegotiation is enabled for the link.
-    #[structopt(visible_alias = "an")]
-    Autoneg {
-        #[structopt(parse(try_from_str))]
-        autoneg: bool,
-    },
+    #[clap(visible_alias = "an")]
+    Autoneg { autoneg: bool },
     /// Set whether nat-only restrictions are enabled for the link.
-    NatOnly {
-        #[structopt(parse(try_from_str))]
-        nat_only: bool,
-    },
+    NatOnly { nat_only: bool },
     /// Set whether the link is enabled.
-    #[structopt(visible_alias = "ena")]
-    Enabled {
-        #[structopt(parse(try_from_str))]
-        enabled: bool,
-    },
+    #[clap(visible_alias = "ena")]
+    Enabled { enabled: bool },
     /// Assign an IP address to the link.
     Ip { ip: IpAddr },
     /// Set  whether the link is configured for IPv6
-    #[structopt(visible_alias = "ipv6")]
-    Ipv6Enabled {
-        #[structopt(parse(try_from_str))]
-        enabled: bool,
-    },
+    #[clap(visible_alias = "ipv6")]
+    Ipv6Enabled { enabled: bool },
     /// Set the PRBS mode for the link. (7, 9, 11, 15, 23, 31, or mission/off)
-    Prbs {
-        #[structopt(parse(try_from_str))]
-        prbs: PortPrbsMode,
-    },
+    Prbs { prbs: PortPrbsMode },
 }
 
 async fn link_pcs_counters(
@@ -518,11 +549,13 @@ async fn link_pcs_counters(
     maybe_link: Option<LinkPath>,
 ) -> anyhow::Result<()> {
     let counters = if let Some(link) = maybe_link {
-        vec![client
-            .pcs_counters_get(&link.port_id, &link.link_id)
-            .await
-            .context("failed to get PCS counters")
-            .map(|r| r.into_inner())?]
+        vec![
+            client
+                .pcs_counters_get(&link.port_id, &link.link_id)
+                .await
+                .context("failed to get PCS counters")
+                .map(|r| r.into_inner())?,
+        ]
     } else {
         let mut counters = client
             .pcs_counters_list()
@@ -560,7 +593,7 @@ async fn link_pcs_counters(
             .bip_errors_per_pcs_lane
             .iter()
             .enumerate()
-            .filter(|(_, &cnt)| cnt > 0)
+            .filter(|&(_, &cnt)| cnt > 0)
             .map(|(i, cnt)| format!("{i}: {cnt}"))
             .collect();
         let bip = match non_zero.len() {
@@ -661,11 +694,13 @@ async fn link_up_counters(
     maybe_link: Option<LinkPath>,
 ) -> anyhow::Result<()> {
     let counters = if let Some(link) = maybe_link {
-        vec![client
-            .link_up_counters_get(&link.port_id, &link.link_id)
-            .await
-            .map(|r| r.into_inner())
-            .context("failed to get link-up counters")?]
+        vec![
+            client
+                .link_up_counters_get(&link.port_id, &link.link_id)
+                .await
+                .map(|r| r.into_inner())
+                .context("failed to get link-up counters")?,
+        ]
     } else {
         client
             .link_up_counters_list()
@@ -1234,7 +1269,7 @@ impl FromStr for LinkField {
             "f" | "fec" => LinkField::Fec,
             "m" | "mac" => LinkField::Mac,
             "6" | "ipv6" => LinkField::Ipv6Enabled,
-            _ => bail!("Invalid link field: \"{}\"", s),
+            _ => bail!("Invalid link field: \"{s}\""),
         })
     }
 }
@@ -1263,7 +1298,7 @@ impl LinkField {
     }
 }
 
-// Newtype needed to convince `structopt` to parse a list of fields.
+// Newtype needed to convince `clap` to parse a list of fields.
 #[derive(Clone, Debug)]
 pub struct FieldList(Vec<LinkField>);
 
@@ -1410,7 +1445,7 @@ fn print_link_verbose(
                     types::LinkState::Up => "Up".to_string(),
                     types::LinkState::Down => "Down".to_string(),
                     types::LinkState::ConfigError(ref detail) =>
-                        format!("ConfigError({})", detail),
+                        format!("ConfigError({detail})"),
                     types::LinkState::Faulted(_) => "Faulted".to_string(),
                     types::LinkState::Unknown => "Unknown".to_string(),
                 },
@@ -1702,7 +1737,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                         .await
                         .context("failed to fetch PRBS mode")?
                         .into_inner();
-                    println!("{}", prbs);
+                    println!("{prbs}");
                 }
                 _ => {
                     // These properties do not have specific endpoints, so we
@@ -1828,7 +1863,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 .context("failed to get Link history")?;
             display_link_history(history.into_inner(), raw, reverse, n);
         }
-        Link::Fault(fault) => match fault {
+        Link::Fault { cmd: fault } => match fault {
             Fault::Show { link_path } => {
                 let cond = client
                     .link_fault_get(&link_path.port_id, &link_path.link_id)
@@ -1856,7 +1891,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                     .context("failed to inject fault")?;
             }
         },
-        Link::Counters(counters) => match counters {
+        Link::Counters { cmd: counters } => match counters {
             LinkCounters::Rmon {
                 link,
                 level,
@@ -1890,8 +1925,8 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 .await
                 .context("failed to fetch link BER")?,
         },
-        Link::Serdes(serdes) => match serdes {
-            Serdes::Get(get) => match get {
+        Link::Serdes { cmd: serdes } => match serdes {
+            Serdes::Get { cmd: get } => match get {
                 GetSerdes::EncSpeed { link_path } => {
                     link_serdes_enc_speed(client, link_path)
                         .await
@@ -1928,7 +1963,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                         .context("failed to fetch lane mapping")?;
                 }
             },
-            Serdes::Set(set) => match set {
+            Serdes::Set { cmd: set } => match set {
                 SetSerdes::TxEq {
                     link_path,
                     pre2,
@@ -1945,6 +1980,68 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 }
             },
         },
+
+        Link::Apply {
+            link,
+            tag,
+            lane,
+            speed,
+            fec,
+            autoneg,
+            kr,
+            tx_eq,
+            pre1,
+            pre2,
+            main,
+            post1,
+            post2,
+        } => {
+            let port_id = &link.port_id;
+            let mut body = types::PortSettings {
+                links: HashMap::default(),
+            };
+
+            let txeq = if pre1.is_none()
+                && pre2.is_none()
+                && main.is_none()
+                && post1.is_none()
+                && post2.is_none()
+            {
+                tx_eq.map(|x| types::TxEq {
+                    pre1: Some(x),
+                    pre2: Some(x),
+                    main: Some(x),
+                    post1: Some(x),
+                    post2: Some(x),
+                })
+            } else {
+                Some(types::TxEq {
+                    pre1,
+                    pre2,
+                    main,
+                    post1,
+                    post2,
+                })
+            };
+            body.links.insert(
+                String::from("0"),
+                types::LinkSettings {
+                    addrs: Vec::default(),
+                    params: types::LinkCreate {
+                        autoneg,
+                        fec: fec.map(|f| f.into()),
+                        kr,
+                        lane,
+                        speed: speed.into(),
+                        tx_eq: txeq,
+                    },
+                },
+            );
+            client
+                .port_settings_apply(port_id, Some(tag.as_str()), &body)
+                .await
+                .context("port settings apply failed")?;
+        }
     }
     Ok(())
 }

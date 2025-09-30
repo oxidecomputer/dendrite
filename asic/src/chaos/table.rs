@@ -4,13 +4,13 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Mutex;
 
-use crate::chaos::{table_unfurl, Handle};
+use crate::chaos::{Handle, table_unfurl};
 use aal::{
     ActionParse, AsicError, AsicResult, CounterData, MatchParse, TableOps,
 };

@@ -12,9 +12,8 @@ use std::ops::Bound;
 use chrono::prelude::*;
 use slog::debug;
 
-use crate::api_server;
 use crate::types::{DpdError, DpdResult};
-use crate::{table, Switch};
+use crate::{Switch, table};
 use common::network::MacAddr;
 
 #[derive(Clone)]
@@ -153,7 +152,7 @@ pub fn get_range_ipv4(
     switch: &Switch,
     last: Option<&Ipv4Addr>,
     mut max: u32,
-) -> DpdResult<Vec<api_server::ArpEntry>> {
+) -> DpdResult<Vec<dpd_api::ArpEntry>> {
     if max > 32 {
         max = 32
     };
@@ -168,7 +167,7 @@ pub fn get_range_ipv4(
         .v4
         .range((lower_bound, Bound::Unbounded))
         .take(usize::try_from(max).expect("invalid usize"))
-        .map(|(ip, entry)| api_server::ArpEntry {
+        .map(|(ip, entry)| dpd_api::ArpEntry {
             tag: entry.tag.clone(),
             ip: IpAddr::V4((*ip).into()),
             mac: entry.mac,
@@ -183,7 +182,7 @@ pub fn get_range_ipv6(
     switch: &Switch,
     last: Option<&Ipv6Addr>,
     mut max: u32,
-) -> DpdResult<Vec<api_server::ArpEntry>> {
+) -> DpdResult<Vec<dpd_api::ArpEntry>> {
     max = std::cmp::max(max, 32);
 
     let lower_bound = match last {
@@ -196,7 +195,7 @@ pub fn get_range_ipv6(
         .v6
         .range((lower_bound, Bound::Unbounded))
         .take(usize::try_from(max).expect("invalid usize"))
-        .map(|(ip, entry)| api_server::ArpEntry {
+        .map(|(ip, entry)| dpd_api::ArpEntry {
             tag: entry.tag.clone(),
             ip: IpAddr::V6((*ip).into()),
             mac: entry.mac,

@@ -9,8 +9,8 @@ use std::fmt::{self};
 use bytes::{BufMut, BytesMut};
 
 use crate::PacketResult;
-use crate::{eth, sidecar};
 use crate::{Endpoint, Headers, Packet, Protocol};
+use crate::{eth, sidecar};
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub struct LldpTlv {
@@ -85,7 +85,7 @@ impl Protocol for LldpHdr {
         }
     }
 
-    fn gen(
+    fn generate(
         _src: Endpoint,
         _dst: Endpoint,
         _protos: Vec<u16>,

@@ -12,7 +12,7 @@ use crate::types::DpdResult;
 
 #[cfg(target_os = "illumos")]
 use common::illumos::smf;
-use common::{network::MacAddr, SmfError, SmfResult};
+use common::{SmfError, SmfResult, network::MacAddr};
 
 #[cfg(feature = "chaos")]
 use asic::chaos::AsicConfig;

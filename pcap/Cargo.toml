@@ -2,7 +2,7 @@
 name = "pcap"
 version = "0.1.0"
 authors = ["Nils Nieuwejaar <nils@oxide.computer>"]
-edition = "2021"
+edition = "2024"
 
 [build-dependencies]
 cc = "1.0"

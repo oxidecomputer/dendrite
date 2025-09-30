@@ -8,12 +8,13 @@
 
 use std::net::Ipv6Addr;
 
-use crate::{mcast::MulticastGroupId, table::*, Switch};
+use crate::{Switch, table::*};
 
 use super::Ipv6MatchKey;
 
 use aal::ActionParse;
 use aal_macros::*;
+use dpd_types::mcast::MulticastGroupId;
 use slog::debug;
 
 /// IPv6 Table for multicast replication entries and group membership.
@@ -42,12 +43,12 @@ enum Ipv6Action {
 /// - external_mcast_grp: for replication to external/customer ports (mcast_grp_a)
 /// - underlay_mcast_grp: for replication to underlay/infrastructure ports (mcast_grp_b)
 ///
-/// Both groups are optional depending on the group's member configuration.
+/// Both groups are always allocated.
 pub(crate) fn add_ipv6_entry(
     s: &Switch,
     dst_addr: Ipv6Addr,
-    underlay_mcast_grp: Option<MulticastGroupId>,
-    external_mcast_grp: Option<MulticastGroupId>,
+    underlay_mcast_grp: MulticastGroupId,
+    external_mcast_grp: MulticastGroupId,
     replication_id: u16,
     level1_excl_id: u16,
     level2_excl_id: u16,
@@ -58,18 +59,11 @@ pub(crate) fn add_ipv6_entry(
         ));
     }
 
-    if underlay_mcast_grp.is_none() && external_mcast_grp.is_none() {
-        return Err(DpdError::McastGroupFailure(
-            "neither underlay nor external multicast group specified"
-                .to_string(),
-        ));
-    }
-
     let match_key = Ipv6MatchKey::new(dst_addr);
 
     let action_data = Ipv6Action::ConfigureIpv6 {
-        mcast_grp_a: external_mcast_grp.unwrap_or(0),
-        mcast_grp_b: underlay_mcast_grp.unwrap_or(0),
+        mcast_grp_a: external_mcast_grp,
+        mcast_grp_b: underlay_mcast_grp,
         rid: replication_id,
         level1_excl_id,
         level2_excl_id,
@@ -91,8 +85,8 @@ pub(crate) fn add_ipv6_entry(
 pub(crate) fn update_ipv6_entry(
     s: &Switch,
     dst_addr: Ipv6Addr,
-    underlay_mcast_grp: Option<MulticastGroupId>,
-    external_mcast_grp: Option<MulticastGroupId>,
+    underlay_mcast_grp: MulticastGroupId,
+    external_mcast_grp: MulticastGroupId,
     replication_id: u16,
     level1_excl_id: u16,
     level2_excl_id: u16,
@@ -103,18 +97,11 @@ pub(crate) fn update_ipv6_entry(
         ));
     }
 
-    if underlay_mcast_grp.is_none() && external_mcast_grp.is_none() {
-        return Err(DpdError::McastGroupFailure(
-            "neither underlay nor external multicast group specified"
-                .to_string(),
-        ));
-    }
-
     let match_key = Ipv6MatchKey::new(dst_addr);
 
     let action_data = Ipv6Action::ConfigureIpv6 {
-        mcast_grp_a: external_mcast_grp.unwrap_or(0),
-        mcast_grp_b: underlay_mcast_grp.unwrap_or(0),
+        mcast_grp_a: external_mcast_grp,
+        mcast_grp_b: underlay_mcast_grp,
         rid: replication_id,
         level1_excl_id,
         level2_excl_id,

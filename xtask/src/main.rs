@@ -11,8 +11,8 @@ use std::io::Read;
 use std::path::Path;
 use std::str::FromStr;
 
-use anyhow::{anyhow, Context, Result};
-use structopt::*;
+use anyhow::{Context, Result, anyhow};
+use clap::{Parser, Subcommand, ValueEnum};
 
 mod codegen;
 
@@ -28,7 +28,7 @@ use linux as plat;
 
 // Possible formats for a bundled dendrite distro.  Currently the two "zone"
 // package formats are helios-only.
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, ValueEnum, Copy, Clone)]
 pub enum DistFormat {
     Native,  // .deb or .p5p, depending on the platform
     Omicron, // package to be included in an omicron zone
@@ -53,49 +53,46 @@ impl FromStr for DistFormat {
     }
 }
 
-#[derive(Debug, StructOpt)]
-#[structopt(name = "xtask", about = "dendrite xtask support")]
-enum Xtasks {
-    #[structopt(about = "compile a p4 program")]
+#[derive(Debug, Parser)]
+struct Xtasks {
+    #[command(subcommand)]
+    subcommand: XtaskCommands,
+}
+
+/// dendrite xtask support
+#[derive(Debug, Subcommand)]
+#[clap(name = "xtask")]
+enum XtaskCommands {
+    /// compile a p4 program
     Codegen {
-        #[structopt(
-            short,
-            help = "name of p4 program to build",
-            default_value = "sidecar"
-        )]
+        /// name of p4 program to build
+        #[clap(short, default_value = "sidecar")]
         name: String,
 
-        #[structopt(
-            long,
-            help = "location of the tofino SDE",
-            default_value = "/opt/oxide/tofino_sde"
-        )]
+        /// location of the tofino SDE
+        #[clap(long, default_value = "/opt/oxide/tofino_sde")]
         sde: String,
 
-        #[structopt(long, help = "pipeline stages to build for")]
+        /// pipeline stages to build for
+        #[clap(long)]
         stages: Option<u8>,
     },
-    #[structopt(about = "build an installable dataplane controller package")]
+    /// build an installable dataplane controller package
     Dist {
-        #[structopt(long, help = "tofino_asic, tofino_stub, or softnpu")]
+        /// tofino_asic, tofino_stub, or softnpu
+        #[clap(long)]
         features: Option<String>,
 
-        #[structopt(
-            short,
-            help = "list of p4 programs to include",
-            default_value = "sidecar"
-        )]
+        /// list of p4 programs to include
+        #[clap(short, default_value = "sidecar")]
         names: Vec<String>,
 
-        #[structopt(short, long, help = "package release bits ")]
+        /// package release bits
+        #[clap(short, long)]
         release: bool,
 
-        #[structopt(
-            short,
-            long,
-            help = "package format: omicron, global, native",
-            default_value = "native"
-        )]
+        /// package format: omicron, global, native
+        #[clap(short, long, default_value = "native")]
         format: DistFormat,
     },
 }
@@ -147,11 +144,10 @@ fn copylinks(dst: &str, links: HashMap<String, String>) -> Result<()> {
     }
 
     for (tgt, orig) in links {
-        println!("-- Linking: {} to {}", tgt, orig);
+        println!("-- Linking: {tgt} to {orig}");
         let link_file = dst_dir.join(&tgt);
-        std::os::unix::fs::symlink(&orig, &link_file).with_context(|| {
-            format!("linking {:?} to {:?}", link_file, orig)
-        })?;
+        std::os::unix::fs::symlink(&orig, &link_file)
+            .with_context(|| format!("linking {link_file:?} to {orig:?}"))?;
     }
     Ok(())
 }
@@ -163,7 +159,7 @@ fn copyfiles<T: ToString>(src: &str, dst: &str, file: &[T]) -> Result<()> {
     let dst_dir = Path::new(dst);
 
     if !src_dir.is_dir() {
-        return Err(anyhow!("source '{}' isn't a directory", src));
+        return Err(anyhow!("source '{src}' isn't a directory"));
     }
 
     if !dst_dir.is_dir() {
@@ -174,10 +170,9 @@ fn copyfiles<T: ToString>(src: &str, dst: &str, file: &[T]) -> Result<()> {
         let f = f.to_string();
         let src_file = src_dir.join(&f);
         let dst_file = dst_dir.join(&f);
-        println!("-- Installing: {:?}", dst_file);
-        fs::copy(src_file, dst_file).with_context(|| {
-            format!("copying {:?} from {} to {}", f, src, dst)
-        })?;
+        println!("-- Installing: {dst_file:?}");
+        fs::copy(src_file, dst_file)
+            .with_context(|| format!("copying {f:?} from {src} to {dst}"))?;
     }
 
     Ok(())
@@ -188,7 +183,7 @@ pub fn copydir(src: &str, dst: &str) -> Result<()> {
     let src_dir = Path::new(src);
 
     if !src_dir.is_dir() {
-        return Err(anyhow!("source '{}' isn't a directory", src));
+        return Err(anyhow!("source '{src}' isn't a directory"));
     }
 
     let mut files = Vec::new();
@@ -248,12 +243,12 @@ fn collect_binaries<T: ToString>(
 )]
 #[tokio::main]
 async fn main() {
-    let task = Xtasks::from_args();
-    if let Err(e) = match task {
-        Xtasks::Codegen { name, sde, stages } => {
+    let task = Xtasks::parse();
+    if let Err(e) = match task.subcommand {
+        XtaskCommands::Codegen { name, sde, stages } => {
             codegen::build(name, sde, stages)
         }
-        Xtasks::Dist {
+        XtaskCommands::Dist {
             features,
             names,
             release,

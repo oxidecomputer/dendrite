@@ -15,9 +15,9 @@ use dpd_client::types;
 use futures::TryStreamExt;
 use slog::{debug, error, info};
 
+use crate::Global;
 use crate::poll_interval;
 use crate::sidecar;
-use crate::Global;
 use common::network::MacAddr;
 use dpd_client::ClientInfo;
 

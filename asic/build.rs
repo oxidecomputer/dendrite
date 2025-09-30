@@ -97,7 +97,7 @@ fn sde_prep() -> Result<()> {
     let sde_dir =
         env::var("SDE").with_context(|| "failed to get SDE env var")?;
 
-    env::set_var("CFLAGS", format!("-I{sde_dir}/include"));
+    unsafe { env::set_var("CFLAGS", format!("-I{sde_dir}/include")) };
 
     println!("cargo:rerun-if-changed={TOFINO_DIR}/{FN_FILE}");
     println!("cargo:rerun-if-changed={TOFINO_DIR}/{TYPE_FILE}");
@@ -121,7 +121,7 @@ fn sde_prep() -> Result<()> {
 
 fn main() -> Result<()> {
     #[cfg(target_os = "illumos")]
-    {
+    unsafe {
         env::set_var("AR", "/usr/bin/gar");
         env::set_var("LIBCLANG_PATH", "/opt/ooce/llvm/lib");
     }

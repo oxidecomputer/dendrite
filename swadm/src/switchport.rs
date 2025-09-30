@@ -5,26 +5,25 @@
 // Copyright 2025 Oxide Computer Company
 
 use std::collections::{BTreeMap, HashMap};
-use std::convert::TryFrom;
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::str::FromStr;
 
-use anyhow::bail;
 use anyhow::Context;
+use anyhow::bail;
+use clap::{Subcommand, ValueEnum};
 use colored::*;
-use structopt::*;
 use tabwriter::TabWriter;
 
+use dpd_client::Client;
 use dpd_client::types::{
     self, CmisDatapath, CmisLaneStatus, PortId, Sff8636Datapath,
     SffComplianceCode,
 };
-use dpd_client::Client;
 
 use crate::LinkPath;
 use crate::{parse_port_id, parse_qsfp_port_id};
 
-// Newtype needed to convince `structopt` to parse a list of fields.
+// Newtype needed to convince `clap` to parse a list of fields.
 #[derive(Clone, Debug)]
 pub struct BackplaneMapFieldList(Vec<BackplaneMapField>);
 
@@ -145,10 +144,10 @@ fn print_backplane_map_fields() {
 }
 
 /// Manage physical switch ports.
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand)]
 pub enum SwitchPort {
     /// List all switch ports.
-    #[structopt(visible_alias = "ls")]
+    #[clap(visible_alias = "ls")]
     List {
         /// Limit output to those ports containing the provided name.
         ///
@@ -157,13 +156,19 @@ pub enum SwitchPort {
         name: Option<String>,
     },
     /// Fetch the free MAC lanes in the port.
-    #[structopt(visible_alias = "avail")]
+    #[clap(visible_alias = "avail")]
     Free,
     /// Manage the Sidecar QSFP transceivers.
-    #[structopt(visible_alias = "xcvr")]
-    Transceiver(Transceiver),
+    #[clap(visible_aliases = ["xcvr", "txr"])]
+    Transceiver {
+        #[command(subcommand)]
+        cmd: Transceiver,
+    },
     /// Manage the attention LEDs on the Sidecar QSFP switch ports.
-    Led(Led),
+    Led {
+        #[command(subcommand)]
+        cmd: Led,
+    },
     /// Get the management mode for a switch port's transceiver.
     ///
     /// In most situations, QSFP switch ports are managed automatically, meaning
@@ -174,104 +179,112 @@ pub enum SwitchPort {
     /// Modules may be turned to manual management mode, which allows the
     /// operator to explicitly control their power. The software will not change
     /// the power of such a module automatically.
-    #[structopt(visible_aliases = &["mgmt", "mode"])]
+    #[clap(visible_aliases = ["mgmt", "mode"])]
     ManagementMode {
         /// The QSFP port to operate on.
-        #[structopt(parse(try_from_str = parse_qsfp_port_id))]
+        #[clap(value_parser = parse_qsfp_port_id)]
         port_id: types::PortId,
     },
     /// Set the management mode for a switch port's transceiver.
     ///
     /// See the help for `management-mode` for details.
-    #[structopt(visible_aliases = &["set-mgmt", "set-mode"])]
+    #[clap(visible_aliases = ["set-mgmt", "set-mode"])]
     SetManagementMode {
         /// The QSFP port to operate on.
-        #[structopt(parse(try_from_str = parse_qsfp_port_id))]
+        #[clap(value_parser = parse_qsfp_port_id)]
         port_id: types::PortId,
         /// The management mode to set the port to.
-        #[structopt(
-            possible_values = &["automatic", "auto", "manual"],
-            parse(try_from_str = parse_management_mode)
-        )]
         mode: types::ManagementMode,
     },
     /// Return the backplane map.
     BackplaneMap {
         /// If true, provide parseable ouptut, separated by a `,`.
-        #[structopt(short, long)]
+        #[clap(short, long)]
         parseable: bool,
         /// Which backplane map fields to print.
-        #[structopt(short = "o", parse(try_from_str = parse_backplane_map_fields))]
+        #[clap(short = 'o', value_parser = parse_backplane_map_fields)]
         fields: Option<BackplaneMapFieldList>,
         /// List the available fields for printing.
-        #[structopt(short, long)]
+        #[clap(short, long)]
         list_fields: bool,
     },
 }
 
+#[derive(Debug, ValueEnum, Copy, Clone)]
+pub enum ManagementMode {
+    Automatic,
+    Auto,
+    Manual,
+}
+
+impl From<ManagementMode> for types::ManagementMode {
+    fn from(value: ManagementMode) -> Self {
+        match value {
+            ManagementMode::Manual => types::ManagementMode::Manual,
+            ManagementMode::Auto => types::ManagementMode::Automatic,
+            ManagementMode::Automatic => types::ManagementMode::Automatic,
+        }
+    }
+}
+
 /// Manage the Sidecar QSFP transceivers.
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand, Clone)]
 pub enum Transceiver {
     /// List basic transceiver information.
-    #[structopt(visible_alias = "ls")]
+    #[clap(visible_alias = "ls")]
     List,
     /// Get basic transceiver information about one transceiver.
     Get {
         /// The QSFP port to fetch transceiver information from.
-        #[structopt(parse(try_from_str = parse_port_id))]
+        #[clap(value_parser = parse_port_id)]
         port_id: PortId,
     },
     /// Reset a transceiver module.
     Reset {
         /// The QSFP port whose module should be reset.
-        #[structopt(parse(try_from_str = parse_port_id))]
+        #[clap(value_parser = parse_port_id)]
         port_id: PortId,
     },
     /// Fetch the power state of a transceiver  module
     Power {
         /// The QSFP port whose module to fetch the power for.
-        #[structopt(parse(try_from_str = parse_port_id))]
+        #[clap(value_parser = parse_port_id)]
         port_id: PortId,
     },
     /// Set the power state of a transceiver module.
     SetPower {
         /// The QSFP port whose module should be controlled.
-        #[structopt(parse(try_from_str = parse_port_id))]
+        #[clap(value_parser = parse_port_id)]
         port_id: PortId,
         /// The power state to which to set the module.
         state: types::PowerState,
     },
     /// Fetch the environmental monitoring data for a transceiver.
+    #[clap(visible_alias = "mon")]
     Monitors {
         /// The QSFP port to fetch the transceiver monitoring data from.
-        #[structopt(parse(try_from_str = parse_port_id))]
+        #[clap(value_parser = parse_port_id)]
         port_id: PortId,
     },
     /// Fetch the state of the datapath for a transceiver.
+    #[clap(visible_alias = "dp")]
     Datapath {
         /// The QSFP port to fetch the transceiver datapath from.
-        #[structopt(parse(try_from_str = parse_port_id))]
+        #[clap(value_parser = parse_port_id)]
         port_id: PortId,
     },
 }
 
-fn parse_management_mode(s: &str) -> anyhow::Result<types::ManagementMode> {
-    if s.eq_ignore_ascii_case("auto") {
-        return Ok(types::ManagementMode::Automatic);
-    }
-    types::ManagementMode::try_from(s).context("parsing management mode")
-}
-
 /// Manage the attention LEDs on the Sidecar QSFP switch ports.
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Subcommand)]
 pub enum Led {
     /// List the state of all LEDs.
-    #[structopt(visible_alias = "ls")]
+    #[clap(visible_alias = "ls")]
     List,
     /// Get the state of a single LED.
     Get {
         /// The QSFP port whose LED state should be fetched.
-        #[structopt(parse(try_from_str = parse_port_id))]
+        #[clap(value_parser = parse_port_id)]
         port_id: PortId,
     },
     /// Override the state of a single LED.
@@ -285,31 +298,20 @@ pub enum Led {
     /// automatic`.
     Set {
         /// The QSFP port whose LED should be controlled.
-        #[structopt(parse(try_from_str = parse_port_id))]
+        #[clap(value_parser = parse_port_id)]
         port_id: PortId,
         /// The state to set the LED to.
-        #[structopt(possible_values = &["on", "off", "blink", "automatic", "auto"])]
         state: SetLedState,
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, ValueEnum, Copy, Clone)]
 pub enum SetLedState {
+    Auto,
     Automatic,
-    Override(types::LedState),
-}
-
-impl FromStr for SetLedState {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.eq_ignore_ascii_case("auto") || s.eq_ignore_ascii_case("automatic")
-        {
-            return Ok(SetLedState::Automatic);
-        }
-        types::LedState::try_from(s)
-            .map(SetLedState::Override)
-            .context("parsing LED state")
-    }
+    Off,
+    On,
+    Blink,
 }
 
 // Helper used to stringify an optional displayable item, or `-`, if it is None.
@@ -364,7 +366,7 @@ fn print_faulted_transceiver_row(
     port_id: &PortId,
     reason: &types::FaultReason,
 ) -> anyhow::Result<()> {
-    writeln!(tw, "{}\tfaulted ({:?})\t\t\t\t\t\t\t", port_id, reason)
+    writeln!(tw, "{port_id}\tfaulted ({reason:?})\t\t\t\t\t\t\t")
         .map_err(|e| e.into())
 }
 
@@ -372,7 +374,7 @@ fn print_unsupported_transceiver_row(
     tw: &mut TabWriter<std::io::Stdout>,
     port_id: &PortId,
 ) -> anyhow::Result<()> {
-    writeln!(tw, "{}\tunsupported\t\t\t\t\t\t\t", port_id).map_err(|e| e.into())
+    writeln!(tw, "{port_id}\tunsupported\t\t\t\t\t\t\t").map_err(|e| e.into())
 }
 
 fn print_supported_transceiver_row(
@@ -393,11 +395,7 @@ fn print_supported_transceiver_row(
             |m| {
                 m.software_override.map(
                     |t| {
-                        if t {
-                            "Software"
-                        } else {
-                            "Hardware"
-                        }
+                        if t { "Software" } else { "Hardware" }
                     },
                 )
             }
@@ -572,7 +570,7 @@ async fn transceivers_cmd(
                 .await
                 .context("failed to get transceiver monitors")?
                 .into_inner();
-            println!("Port monitors: {}", port_id);
+            println!("Port monitors: {port_id}");
             const UNSUPPORTED: &str = "-";
             const WIDTH: usize = 22;
 
@@ -740,7 +738,7 @@ fn print_sff_datapath(
             .map(|b| if b { "Yes" } else { "No" })
             .collect::<Vec<_>>()
             .join("\t");
-        writeln!(tw, "{:>WIDTH$}: {}", name, cols).unwrap();
+        writeln!(tw, "{name:>WIDTH$}: {cols}").unwrap();
     }
 
     tw.flush().expect("Failed to flush tabwriter");
@@ -873,7 +871,7 @@ fn print_cmis_datapath(
                 .map(getter)
                 .collect::<Vec<_>>()
                 .join("\t");
-            writeln!(tw, "{:>WIDTH$}: {}", name, cols).unwrap();
+            writeln!(tw, "{name:>WIDTH$}: {cols}").unwrap();
         }
         tw.flush().unwrap();
     }
@@ -926,12 +924,21 @@ async fn led_cmd(client: &Client, led: Led) -> anyhow::Result<()> {
             tw.flush()?;
         }
         Led::Set { port_id, state } => match state {
-            SetLedState::Automatic => {
+            SetLedState::Automatic | SetLedState::Auto => {
                 client.led_set_auto(&port_id).await?.into_inner()
             }
-            SetLedState::Override(state) => {
-                client.led_set(&port_id, state).await?.into_inner()
-            }
+            SetLedState::Off => client
+                .led_set(&port_id, types::LedState::Off)
+                .await?
+                .into_inner(),
+            SetLedState::On => client
+                .led_set(&port_id, types::LedState::On)
+                .await?
+                .into_inner(),
+            SetLedState::Blink => client
+                .led_set(&port_id, types::LedState::Blink)
+                .await?
+                .into_inner(),
         },
     }
     Ok(())
@@ -944,12 +951,12 @@ pub async fn switch_cmd(
     match switch_port {
         SwitchPort::List { name } => {
             for p in client.port_list().await?.into_inner() {
-                if let Some(name) = name.as_ref() {
-                    if !p.to_string().contains(name) {
-                        continue;
-                    }
+                if let Some(name) = name.as_ref()
+                    && !p.to_string().contains(name)
+                {
+                    continue;
                 }
-                println!("{}", p)
+                println!("{p}")
             }
         }
         SwitchPort::Free => {
@@ -975,7 +982,9 @@ pub async fn switch_cmd(
                 )?;
             }
         }
-        SwitchPort::Transceiver(xcvr) => transceivers_cmd(client, xcvr).await?,
+        SwitchPort::Transceiver { cmd: xcvr } => {
+            transceivers_cmd(client, xcvr).await?
+        }
         SwitchPort::ManagementMode { port_id } => {
             let mode = client.management_mode_get(&port_id).await?.into_inner();
             println!("{mode:?}");
@@ -983,7 +992,7 @@ pub async fn switch_cmd(
         SwitchPort::SetManagementMode { port_id, mode } => {
             client.management_mode_set(&port_id, mode).await?;
         }
-        SwitchPort::Led(led) => led_cmd(client, led).await?,
+        SwitchPort::Led { cmd: led } => led_cmd(client, led).await?,
         SwitchPort::BackplaneMap {
             parseable,
             fields,
@@ -1022,7 +1031,7 @@ pub async fn switch_cmd(
                     for (i, field) in fields.iter().enumerate() {
                         match field {
                             BackplaneMapField::PortId => {
-                                print!("{}", port_id)
+                                print!("{port_id}")
                             }
                             BackplaneMapField::TofinoConnector => {
                                 print!("{:<}", entry.tofino_connector)
@@ -1052,7 +1061,7 @@ pub async fn switch_cmd(
                         }
                         match field {
                             BackplaneMapField::PortId => {
-                                write!(&mut tw, "{}", port_id)?
+                                write!(&mut tw, "{port_id}")?
                             }
                             BackplaneMapField::TofinoConnector => {
                                 write!(&mut tw, "{:<}", entry.tofino_connector)?
@@ -1185,10 +1194,7 @@ mod test {
             assert_eq!(
                 lhs.order_by_id(&rhs),
                 order,
-                "{:?} should be {:?} than {:?}",
-                lhs,
-                order,
-                rhs
+                "{lhs:?} should be {order:?} than {rhs:?}"
             );
         }
     }
