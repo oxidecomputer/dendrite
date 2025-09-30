@@ -22,14 +22,14 @@ use uuid::Uuid;
 use omicron_common::api::internal::nexus::{ProducerEndpoint, ProducerKind};
 use omicron_common::api::internal::shared::SledIdentifiers;
 use omicron_common::backoff::{
-    retry_notify, retry_policy_internal_service_aggressive, BackoffError,
+    BackoffError, retry_notify, retry_policy_internal_service_aggressive,
 };
 use oximeter::types::{ProducerRegistry, Sample};
 use oximeter::{MetricsError, Producer};
 
-use crate::table;
 use crate::DpdResult;
 use crate::Switch;
+use crate::table;
 use aal::PortHdl;
 use asic::AsicLinkStats;
 use asic::FsmStats;
