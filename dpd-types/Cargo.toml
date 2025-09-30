@@ -12,5 +12,5 @@ oxnet.workspace = true
 schemars.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-transceiver-controller.workspace = true
+transceiver-controller = { workspace = true, features = ["api-traits"] }
 uuid.workspace = true
