@@ -87,7 +87,7 @@ pub struct Cli {
 #[clap(name = "dpd")]
 pub(crate) enum Args {
     /// Run the Dendrite API server.
-    Run(Opt),
+    Run(Box<Opt>),
     /// Generate an OpenAPI specification for the Dendrite server.
     Openapi,
 }
@@ -170,6 +170,10 @@ pub(crate) struct Opt {
     /// IP address and port of nexus server
     #[clap(long)]
     nexus_address: Option<SocketAddr>,
+
+    /// IP address and port of MGS server.
+    #[structopt(long)]
+    mgs_address: Option<SocketAddr>,
 }
 
 /// The main context object for running all of `dpd`.
@@ -788,7 +792,7 @@ fn main() -> anyhow::Result<()> {
 
     match cli.args {
         Args::Openapi => print_openapi(),
-        Args::Run(opt) => oxide_tokio_rt::run(run_dpd(opt)),
+        Args::Run(opt) => oxide_tokio_rt::run(run_dpd(*opt)),
     }
 }
 
