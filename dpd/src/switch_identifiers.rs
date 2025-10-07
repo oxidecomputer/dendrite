@@ -51,7 +51,14 @@ pub(crate) async fn fetch_switch_identifiers_loop(
     //
     // Note that we do _not_ use internal DNS to resolve this address --
     // we care about our _local_ MGS only.
-    let url = format!("http://[::1]:{MGS_PORT}");
+    //
+    // We also allow the MGS socketaddr to be overridden for testing purposes.
+    let mgs_socketaddr = switch.config.lock().unwrap().mgs_address;
+
+    let url = match mgs_socketaddr {
+        Some(socket_addr) => format!("http://{socket_addr}"),
+        None => format!("http://[::1]:{MGS_PORT}"),
+    };
     let client_log = log.new(slog::o!("unit" => "gateway-client"));
     let client = gateway_client::Client::new(&url, client_log);
     let fetch_idents = || async {
