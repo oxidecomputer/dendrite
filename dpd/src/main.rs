@@ -88,8 +88,6 @@ pub struct Cli {
 pub(crate) enum Args {
     /// Run the Dendrite API server.
     Run(Box<Opt>),
-    /// Generate an OpenAPI specification for the Dendrite server.
-    Openapi,
 }
 
 /// dataplane controller for oxide switch
@@ -791,27 +789,8 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.args {
-        Args::Openapi => print_openapi(),
         Args::Run(opt) => oxide_tokio_rt::run(run_dpd(*opt)),
     }
-}
-
-fn print_openapi() -> anyhow::Result<()> {
-    // TODO: Once migrated to the OpenAPI manager, this should use the stub API
-    // description. But there are currently additional backend-specific methods
-    // added by the tofino-asic and softnpu features -- those would need to be
-    // migrated to the API trait (possibly via a uniform API across all
-    // backends).
-    crate::api_server::http_api()
-        .openapi(
-            "Oxide Switch Dataplane Controller",
-            semver::Version::new(0, 1, 0),
-        )
-        .description("API for managing the Oxide rack switch")
-        .contact_url("https://oxide.computer")
-        .contact_email("api@oxide.computer")
-        .write(&mut std::io::stdout())
-        .context("writing OpenAPI specification")
 }
 
 async fn run_dpd(opt: Opt) -> anyhow::Result<()> {
