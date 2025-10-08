@@ -100,7 +100,7 @@ slog-async = "2.8"
 slog-bunyan = "2.5"
 slog-term = "2.9"
 socket2 = { version = "0.6", features = ["all"] }
-strum = { version = "0.26.3", features = [ "derive" ] }
+strum = { version = "0.27.2", features = [ "derive" ] }
 syn = { version = "2.0", features = ["extra-traits"]}
 tabwriter = { version = "1", features = ["ansi_formatting"] }
 thiserror = "1.0"
