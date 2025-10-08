@@ -2617,7 +2617,7 @@ fn launch_server(
         log_headers: vec![],
     };
 
-    let server = dropshot::ServerBuilder::new(
+    dropshot::ServerBuilder::new(
         api_description,
         ctx,
         log.new(o!("unit" => "api-server", "server_id" => id.to_string())),
