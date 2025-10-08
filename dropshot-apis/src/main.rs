@@ -32,8 +32,8 @@ pub fn environment() -> anyhow::Result<Environment> {
 pub fn all_apis() -> anyhow::Result<ManagedApis> {
     let apis = vec![ManagedApiConfig {
         ident: "dpd",
-        versions: Versions::Lockstep {
-            version: semver::Version::new(0, 1, 0),
+        versions: Versions::Versioned {
+            supported_versions: dpd_api::supported_versions(),
         },
         title: "Oxide Switch Dataplane Controller",
         metadata: ManagedApiMetadata {

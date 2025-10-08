@@ -33,6 +33,7 @@ use dpd_types::switch_port::Led;
 use dpd_types::switch_port::ManagementMode;
 use dpd_types::transceivers::Transceiver;
 use dropshot::ClientErrorStatusCode;
+use dropshot::ClientSpecifiesVersionInHeader;
 use dropshot::EmptyScanParams;
 use dropshot::HttpError;
 use dropshot::HttpResponseCreated;
@@ -45,6 +46,7 @@ use dropshot::Query;
 use dropshot::RequestContext;
 use dropshot::ResultsPage;
 use dropshot::TypedBody;
+use dropshot::VersionPolicy;
 use dropshot::WhichPage;
 use slog::{debug, error, info, o};
 use transceiver_controller::Datapath;
@@ -2614,17 +2616,20 @@ fn launch_server(
         default_handler_task_mode: dropshot::HandlerTaskMode::Detached,
         log_headers: vec![],
     };
-    let log = switch
-        .log
-        .new(o!("unit" => "api-server", "server_id" => id.to_string()));
 
-    slog::info!(log, "starting api server {id} on {addr}");
-    dropshot::HttpServerStarter::new(
-        &config_dropshot,
-        http_api(),
-        switch.clone(),
-        &log,
+    let server = dropshot::ServerBuilder::new(
+        api_description,
+        ctx,
+        log.new(o!("unit" => "api-server", "server_id" => id.to_string())),
     )
+    .config(config_dropshot)
+    .version_policy(VersionPolicy::Dynamic(Box::new(
+        ClientSpecifiesVersionInHeader::new(
+            omicron_common::api::VERSION_HEADER,
+            dpd_api::latest_version(),
+        ),
+    )))
+    .build_starter()
     .map(|s| s.start())
     .map_err(|e| anyhow::anyhow!(e.to_string()))
 }
