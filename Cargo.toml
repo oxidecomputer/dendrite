@@ -106,7 +106,7 @@ tabwriter = { version = "1", features = ["ansi_formatting"] }
 thiserror = "1.0"
 tokio = "1.37"
 toml = "0.8"
-usdt = "0.5"
+usdt = "0.6"
 uuid = { version = "1.10", features = [ "v4", "serde" ] }
 internet-checksum = "0.2"
 
