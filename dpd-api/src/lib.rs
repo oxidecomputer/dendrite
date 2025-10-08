@@ -36,12 +36,40 @@ use dropshot::{
     HttpResponseOk, HttpResponseUpdatedNoContent, PaginationParams, Path,
     Query, RequestContext, ResultsPage, TypedBody,
 };
+use dropshot_api_manager_types::api_versions;
 use oxnet::{Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use transceiver_controller::{
     Datapath, Monitors, PowerState, message::LedState,
 };
+
+api_versions!([
+    // WHEN CHANGING THE API (part 1 of 2):
+    //
+    // +- Pick a new semver and define it in the list below.  The list MUST
+    // |  remain sorted, which generally means that your version should go at
+    // |  the very top.
+    // |
+    // |  Duplicate this line, uncomment the *second* copy, update that copy for
+    // |  your new API version, and leave the first copy commented out as an
+    // |  example for the next person.
+    // v
+    // (next_int, IDENT),
+    (1, INITIAL),
+]);
+
+// WHEN CHANGING THE API (part 2 of 2):
+//
+// The call to `api_versions!` above defines constants of type
+// `semver::Version` that you can use in your Dropshot API definition to specify
+// the version when a particular endpoint was added or removed.  For example, if
+// you used:
+//
+//     (2, ADD_FOOBAR)
+//
+// Then you could use `VERSION_ADD_FOOBAR` as the version in which endpoints
+// were added or removed.
 
 #[dropshot::api_description]
 pub trait DpdApi {

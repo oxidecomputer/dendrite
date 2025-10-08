@@ -31,7 +31,7 @@ pub struct ClientState {
 
 // Automatically generate the client bindings using Progenitor.
 progenitor::generate_api!(
-    spec = "../openapi/dpd.json",
+    spec = "../openapi/dpd/dpd-latest.json",
     interface = Positional,
     inner_type = crate::ClientState,
     pre_hook = (|state: &crate::ClientState, request: &reqwest::Request| {

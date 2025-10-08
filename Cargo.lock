@@ -1493,6 +1493,7 @@ dependencies = [
  "common 0.1.0",
  "dpd-types",
  "dropshot",
+ "dropshot-api-manager-types",
  "oxnet",
  "schemars",
  "serde",
