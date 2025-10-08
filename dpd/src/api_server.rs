@@ -2616,22 +2616,21 @@ fn launch_server(
         default_handler_task_mode: dropshot::HandlerTaskMode::Detached,
         log_headers: vec![],
     };
+    let log = switch
+        .log
+        .new(o!("unit" => "api-server", "server_id" => id.to_string()));
 
-    dropshot::ServerBuilder::new(
-        api_description,
-        ctx,
-        log.new(o!("unit" => "api-server", "server_id" => id.to_string())),
-    )
-    .config(config_dropshot)
-    .version_policy(VersionPolicy::Dynamic(Box::new(
-        ClientSpecifiesVersionInHeader::new(
-            omicron_common::api::VERSION_HEADER,
-            dpd_api::latest_version(),
-        ),
-    )))
-    .build_starter()
-    .map(|s| s.start())
-    .map_err(|e| anyhow::anyhow!(e.to_string()))
+    dropshot::ServerBuilder::new(http_api(), switch, log)
+        .config(config_dropshot)
+        .version_policy(VersionPolicy::Dynamic(Box::new(
+            ClientSpecifiesVersionInHeader::new(
+                omicron_common::api::VERSION_HEADER,
+                dpd_api::latest_version(),
+            ),
+        )))
+        .build_starter()
+        .map(|s| s.start())
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
 }
 
 // Manage the set of api servers currently listening for requests.  When a
