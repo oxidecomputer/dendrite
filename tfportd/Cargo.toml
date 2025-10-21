@@ -39,4 +39,4 @@ oximeter-producer.workspace = true
 oxnet.workspace = true
 
 [build-dependencies]
-cc = "1.0"
+cc = "1.2"
