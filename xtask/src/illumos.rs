@@ -96,7 +96,7 @@ fn collect_sde(dst: &str, p4_root: &str) -> Result<()> {
     // The remaining files are all included solely for the bfshell cli
     let xml_path = "share/cli/xml";
     let xml_src = format!("{src}/{xml_path}");
-    let xml_dst = format!("{dst}/opt/oxide/tofino_sde/{xml_path}");
+    let xml_dst = format!("{p4_root}/{xml_path}");
     collect(
         &xml_src,
         &xml_dst,
