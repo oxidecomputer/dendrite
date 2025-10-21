@@ -10,10 +10,10 @@ use std::io::BufRead;
 use std::io::Write;
 use std::process::Command;
 
-use anyhow::anyhow;
-use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::anyhow;
+use anyhow::bail;
 use camino::Utf8Path;
 
 use omicron_zone_package::config::PackageName;
