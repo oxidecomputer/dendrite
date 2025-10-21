@@ -9,7 +9,7 @@ chaos = ["asic/chaos"]
 tofino_asic = ["asic/tofino_asic"]
 
 [dependencies]
-async-trait = "0.1.88"
+async-trait = "0.1.89"
 chrono.workspace = true
 crc8 = "0.1.1"
 futures.workspace = true
