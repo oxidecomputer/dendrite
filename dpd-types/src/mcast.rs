@@ -11,7 +11,7 @@ use std::{
     net::{IpAddr, Ipv6Addr},
 };
 
-use common::{nat::NatTarget, ports::PortId};
+use common::{network::NatTarget, ports::PortId};
 use oxnet::{Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

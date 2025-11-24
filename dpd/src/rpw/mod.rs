@@ -10,22 +10,19 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use anyhow::{Result, anyhow};
-use common::{
-    nat::{NatTarget, Vni},
-    network::MacAddr,
-};
+use anyhow::{anyhow, Result};
+use common::network::{MacAddr, NatTarget, Vni};
 use internal_dns_resolver::Resolver;
 use internal_dns_types::names::ServiceName;
-use slog::{Logger, debug, error, info, o};
+use slog::{debug, error, info, o, Logger};
 use tokio::{
     spawn,
-    time::{Duration, Instant, sleep},
+    time::{sleep, Duration, Instant},
 };
 
-use crate::{Switch, nat, types::DpdError::Exists};
-use nexus_client::Client as NexusClient;
+use crate::{nat, types::DpdError::Exists, Switch};
 use nexus_client::types::NatEntryView;
+use nexus_client::Client as NexusClient;
 
 static IPV4_NAT_INTERVAL: Duration = Duration::from_secs(30);
 pub const NEXUS_INTERNAL_PORT: u16 = 12221;

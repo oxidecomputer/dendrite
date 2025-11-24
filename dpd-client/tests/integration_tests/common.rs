@@ -8,7 +8,7 @@ use std::fmt::Write;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use std::{fmt, thread};
 
@@ -18,18 +18,18 @@ use oxnet::Ipv6Net;
 use slog::Drain;
 
 use ::common::network::MacAddr;
+use dpd_client::types;
 use dpd_client::Client;
 use dpd_client::ClientInfo;
 use dpd_client::ClientState;
-use dpd_client::types;
-use packet::Endpoint;
-use packet::Packet;
 use packet::arp;
 use packet::eth;
 use packet::icmp;
 use packet::ipv4;
 use packet::ipv6;
 use packet::sidecar;
+use packet::Endpoint;
+use packet::Packet;
 use types::PortId;
 
 const SHOW_VERBOSE: u8 = 0x01;
@@ -119,7 +119,7 @@ pub struct TestPacket {
     pub packet: Arc<packet::Packet>,
 }
 
-fn dump_hex(a: &[u8]) {
+pub fn dump_hex(a: &[u8]) {
     const CHUNK_SIZE: usize = 16;
     let mut off = 0;
 
@@ -786,13 +786,11 @@ impl Switch {
 
         match errors.len() {
             0 => Ok(()),
-            _ => Err(anyhow!(
-                errors
-                    .iter()
-                    .map(|e| e.to_string())
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            )),
+            _ => Err(anyhow!(errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<String>>()
+                .join(", "))),
         }
     }
 
@@ -1411,11 +1409,11 @@ pub fn gen_arp_reply(src: Endpoint, tgt: Endpoint) -> Packet {
 }
 
 pub mod prelude {
-    pub use super::NO_PORT;
+    pub use super::get_switch;
     pub use super::PhysPort;
-    pub use super::SERVICE_PORT;
     pub use super::Switch;
     pub use super::TestPacket;
     pub use super::TestResult;
-    pub use super::get_switch;
+    pub use super::NO_PORT;
+    pub use super::SERVICE_PORT;
 }

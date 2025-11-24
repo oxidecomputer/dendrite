@@ -13,8 +13,9 @@ use std::{
 
 use common::{
     counters::{FecRSCounters, PcsCounters, RMonCounters, RMonCountersAll},
-    nat::{Ipv4Nat, Ipv6Nat, NatTarget},
-    network::MacAddr,
+    ext_subnet::ExtSubnetEntry,
+    nat::{Ipv4Nat, Ipv6Nat},
+    network::{InstanceTarget, MacAddr, NatTarget},
     ports::{
         Ipv4Entry, Ipv6Entry, PortFec, PortId, PortPrbsMode, PortSpeed, TxEq,
         TxEqSwHw,
@@ -41,7 +42,7 @@ use oxnet::{Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use transceiver_controller::{
-    Datapath, Monitors, PowerState, message::LedState,
+    message::LedState, Datapath, Monitors, PowerState,
 };
 
 api_versions!([
@@ -56,6 +57,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (2, EXTERNAL_SUBNETS),
     (1, INITIAL),
 ]);
 
@@ -1153,6 +1155,75 @@ pub trait DpdApi {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
+     * Get all of the external subnets with internal mappings
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ext_subnet",
+	versions = VERSION_EXTERNAL_SUBNETS..,
+    }]
+    async fn external_subnet_list(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<ExtSubnetEntry>>, HttpError>;
+
+    /**
+     * Get the mapping for the given external subnet.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ext_subnet/{subnet}",
+	versions = VERSION_EXTERNAL_SUBNETS..,
+    }]
+    async fn external_subnet_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPathV4>,
+    ) -> Result<HttpResponseOk<InstanceTarget>, HttpError>;
+
+    /**
+     * Add a mapping to an internal target for an external subnet address.
+     *
+     * These identify the gimlet on which a guest is running, and gives OPTE the
+     * information it needs to  identify the guest VM that uses the external
+     * subnet.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/ext_subnet/{subnet}",
+	versions = VERSION_EXTERNAL_SUBNETS..,
+    }]
+    async fn external_subnet_create(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPathV4>,
+        target: TypedBody<InstanceTarget>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Delete the mapping for an external subnet
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/ext_subnet/{subnet}",
+	versions = VERSION_EXTERNAL_SUBNETS..,
+    }]
+    async fn external_subnet_delete(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPathV4>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /**
+     * Clear all external subnet mappings
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/ext_subnet",
+	versions = VERSION_EXTERNAL_SUBNETS..,
+    }]
+    async fn external_subnet_reset(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
      * Clear all settings associated with a specific tag.
      *
      * This removes:
@@ -1984,6 +2055,12 @@ pub struct Ipv6Token {
 pub struct RoutePathV4 {
     /// The IPv4 subnet in CIDR notation whose route entry is returned.
     pub cidr: Ipv4Net,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct SubnetPathV4 {
+    /// The external IPv4 subnet in CIDR notation being managed
+    pub subnet: Ipv4Net,
 }
 
 /// Represents a single subnet->target route entry

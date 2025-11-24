@@ -6,7 +6,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use common::nat::NatTarget;
+use common::network::NatTarget;
 use oxnet::{Ipv4Net, Ipv6Net};
 
 use super::IpSrc;

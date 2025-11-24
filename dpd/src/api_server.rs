@@ -66,6 +66,7 @@ use common::ports::TxEq;
 use common::ports::TxEqSwHw;
 
 use crate::counters;
+use crate::ext_subnet;
 use crate::mcast;
 use crate::oxstats;
 use crate::rpw::Task;
@@ -73,9 +74,10 @@ use crate::switch_port::FixedSideDevice;
 use crate::switch_port::LedState;
 use crate::transceivers::PowerState;
 use crate::types::DpdError;
-use crate::{Switch, arp, loopback, nat, ports, route};
-use common::nat::{Ipv4Nat, Ipv6Nat, NatTarget};
-use common::network::MacAddr;
+use crate::{arp, loopback, nat, ports, route, Switch};
+use common::ext_subnet::ExtSubnetEntry;
+use common::nat::{Ipv4Nat, Ipv6Nat};
+use common::network::{InstanceTarget, MacAddr, NatTarget};
 use common::ports::PortId;
 use common::ports::QsfpPort;
 use common::ports::{Ipv4Entry, Ipv6Entry, PortPrbsMode};
@@ -1554,6 +1556,81 @@ impl DpdApi for DpdApiImpl {
         }
     }
 
+    async fn external_subnet_list(
+        rqctx: RequestContext<Arc<Switch>>,
+        query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<ExtSubnetEntry>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let pag_params = query.into_inner();
+        let max = rqctx.page_limit(&pag_params)?.get();
+        let subnet = match &pag_params.page {
+            WhichPage::First(..) => None,
+            WhichPage::Next(Ipv4RouteToken { cidr }) => Some(*cidr),
+        };
+
+        let entries = ext_subnet::get_mappings(
+            switch,
+            subnet,
+            usize::try_from(max).expect("invalid usize"),
+        );
+        Ok(HttpResponseOk(ResultsPage::new(
+            entries,
+            &EmptyScanParams {},
+            |e: &ExtSubnetEntry, _| Ipv4RouteToken { cidr: e.subnet },
+        )?))
+    }
+
+    async fn external_subnet_get(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<SubnetPathV4>,
+    ) -> Result<HttpResponseOk<InstanceTarget>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        match ext_subnet::get_mapping(switch, params.subnet) {
+            Ok(tgt) => Ok(HttpResponseOk(tgt)),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn external_subnet_create(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<SubnetPathV4>,
+        target: TypedBody<InstanceTarget>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        match ext_subnet::set_mapping(
+            switch,
+            params.subnet,
+            target.into_inner(),
+        ) {
+            Ok(_) => Ok(HttpResponseUpdatedNoContent()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn external_subnet_delete(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<SubnetPathV4>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        ext_subnet::clear_mapping(switch, params.subnet)
+            .map(|_| HttpResponseDeleted())
+            .map_err(HttpError::from)
+    }
+
+    async fn external_subnet_reset(
+        rqctx: RequestContext<Arc<Switch>>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+
+        match ext_subnet::reset(switch) {
+            Ok(_) => Ok(HttpResponseUpdatedNoContent()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     async fn reset_all_tagged(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<TagPath>,
@@ -1563,6 +1640,7 @@ impl DpdApi for DpdApiImpl {
 
         debug!(switch.log, "resetting settings tagged with {}", tag);
 
+        arp::reset_ipv4_tag(switch, &tag);
         arp::reset_ipv4_tag(switch, &tag);
         arp::reset_ipv6_tag(switch, &tag);
         route::reset_ipv4_tag(switch, &tag).await;
@@ -1606,6 +1684,13 @@ impl DpdApi for DpdApiImpl {
         }
         if let Err(e) = mcast::reset(switch) {
             error!(switch.log, "failed to reset multicast state: {:?}", e);
+            err = Some(e);
+        }
+        if let Err(e) = ext_subnet::reset(switch) {
+            error!(
+                switch.log,
+                "failed to reset external subnet state: {:?}", e
+            );
             err = Some(e);
         }
 

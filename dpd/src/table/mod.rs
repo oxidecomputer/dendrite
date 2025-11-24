@@ -9,8 +9,8 @@ use std::hash::Hash;
 
 use slog::{debug, error, info};
 
-use crate::Switch;
 use crate::types::*;
+use crate::Switch;
 use aal::ActionParse;
 use aal::MatchParse;
 use aal::TableOps;
@@ -18,6 +18,7 @@ use common::network::MacAddr;
 use dpd_types::views;
 
 pub mod arp_ipv4;
+pub mod extsub;
 pub mod mcast;
 pub mod nat;
 pub mod neighbor_ipv6;
@@ -27,7 +28,7 @@ pub mod port_nat;
 pub mod route_ipv4;
 pub mod route_ipv6;
 
-const NAME_TO_TYPE: [(&str, TableType); 22] = [
+const NAME_TO_TYPE: [(&str, TableType); 23] = [
     (route_ipv4::INDEX_TABLE_NAME, TableType::RouteIdxIpv4),
     (route_ipv4::FORWARD_TABLE_NAME, TableType::RouteFwdIpv4),
     (route_ipv6::INDEX_TABLE_NAME, TableType::RouteIdxIpv6),
@@ -40,6 +41,7 @@ const NAME_TO_TYPE: [(&str, TableType); 22] = [
     (nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4),
     (nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6),
     (port_nat::TABLE_NAME, TableType::NatOnly),
+    (extsub::EXT_SUBNET_TABLE_NAME, TableType::ExternalSubnet),
     (
         mcast::mcast_replication::IPV6_TABLE_NAME,
         TableType::McastIpv6,
@@ -277,6 +279,7 @@ pub fn get_entries(switch: &Switch, name: String) -> DpdResult<views::Table> {
         TableType::ArpIpv4 => arp_ipv4::table_dump(switch),
         TableType::NatIngressIpv4 => nat::ipv4_table_dump(switch),
         TableType::NatIngressIpv6 => nat::ipv6_table_dump(switch),
+        TableType::ExternalSubnet => extsub::table_dump(switch),
         TableType::PortIpv4 => port_ip::ipv4_table_dump(switch),
         TableType::PortIpv6 => port_ip::ipv6_table_dump(switch),
         TableType::PortMac => {
@@ -352,6 +355,7 @@ pub fn get_counters(
         TableType::PortIpv4 => port_ip::ipv4_counter_fetch(switch, force_sync),
         TableType::PortIpv6 => port_ip::ipv6_counter_fetch(switch, force_sync),
         TableType::NatOnly => port_nat::counter_fetch(switch, force_sync),
+        TableType::ExternalSubnet => extsub::counter_fetch(switch, force_sync),
         TableType::McastIpv6 => {
             mcast::mcast_replication::ipv6_counter_fetch(switch, force_sync)
         }
@@ -403,6 +407,7 @@ pub enum TableType {
     NatIngressIpv4,
     NatIngressIpv6,
     NatOnly,
+    ExternalSubnet,
     McastIpv6,
     McastIpv4SrcFilter,
     McastIpv6SrcFilter,
