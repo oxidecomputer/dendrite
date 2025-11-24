@@ -12,6 +12,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 pub mod counters;
+pub mod ext_subnet;
 pub mod logging;
 pub mod nat;
 pub mod network;
@@ -21,7 +22,7 @@ pub mod ports;
 pub mod illumos;
 mod smf;
 
-pub use smf::{SmfError, SmfResult, is_smf_active};
+pub use smf::{is_smf_active, SmfError, SmfResult};
 
 /// The default port on which the Dendrite API server listens.
 pub const DEFAULT_DPD_PORT: u16 = 12224;

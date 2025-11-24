@@ -73,8 +73,8 @@ use crate::switch_port::FixedSideDevice;
 use crate::switch_port::LedState;
 use crate::transceivers::PowerState;
 use crate::types::DpdError;
-use crate::{Switch, arp, loopback, nat, ports, route};
-use common::nat::{Ipv4Nat, Ipv6Nat, NatTarget};
+use crate::{arp, loopback, nat, ports, route, Switch};
+use common::nat::{InternalTarget, Ipv4Nat, Ipv6Nat};
 use common::network::MacAddr;
 use common::ports::PortId;
 use common::ports::QsfpPort;
@@ -1394,7 +1394,7 @@ impl DpdApi for DpdApiImpl {
     async fn nat_ipv6_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv6PortPath>,
-    ) -> Result<HttpResponseOk<NatTarget>, HttpError> {
+    ) -> Result<HttpResponseOk<InternalTarget>, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
         match nat::get_ipv6_mapping(switch, params.ipv6, params.low, params.low)
@@ -1407,7 +1407,7 @@ impl DpdApi for DpdApiImpl {
     async fn nat_ipv6_create(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv6RangePath>,
-        target: TypedBody<NatTarget>,
+        target: TypedBody<InternalTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
@@ -1503,7 +1503,7 @@ impl DpdApi for DpdApiImpl {
     async fn nat_ipv4_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv4PortPath>,
-    ) -> Result<HttpResponseOk<NatTarget>, HttpError> {
+    ) -> Result<HttpResponseOk<InternalTarget>, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
         match nat::get_ipv4_mapping(switch, params.ipv4, params.low, params.low)
@@ -1516,7 +1516,7 @@ impl DpdApi for DpdApiImpl {
     async fn nat_ipv4_create(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv4RangePath>,
-        target: TypedBody<NatTarget>,
+        target: TypedBody<InternalTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
@@ -1549,6 +1549,114 @@ impl DpdApi for DpdApiImpl {
         let switch: &Switch = rqctx.context();
 
         match nat::reset_ipv4(switch) {
+            Ok(_) => Ok(HttpResponseUpdatedNoContent()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn external_subnet_list(
+        rqctx: RequestContext<Arc<Switch>>,
+        query: Query<PaginationParams<EmptyScanParams, Ipv6Token>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Addr>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let pag_params = query.into_inner();
+        let max = rqctx.page_limit(&pag_params)?.get();
+
+        let last_addr = match &pag_params.page {
+            WhichPage::First(..) => None,
+            WhichPage::Next(Ipv6Token { ip }) => Some(*ip),
+        };
+
+        let entries = nat::get_ipv6_addrs_range(
+            switch,
+            last_addr,
+            usize::try_from(max).expect("invalid usize"),
+        );
+
+        Ok(HttpResponseOk(ResultsPage::new(
+            entries,
+            &EmptyScanParams {},
+            |ip: &Ipv6Addr, _| Ipv6Token { ip: *ip },
+        )?))
+    }
+
+    async fn external_subnet_list(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<NatIpv6Path>,
+        query: Query<PaginationParams<EmptyScanParams, NatToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Nat>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        let pag_params = query.into_inner();
+        let max = rqctx.page_limit(&pag_params)?.get();
+        let port = match &pag_params.page {
+            WhichPage::First(..) => None,
+            WhichPage::Next(NatToken { port }) => Some(*port),
+        };
+
+        let entries = nat::get_ipv6_mappings_range(
+            switch,
+            params.ipv6,
+            port,
+            usize::try_from(max).expect("invalid usize"),
+        );
+
+        Ok(HttpResponseOk(ResultsPage::new(
+            entries,
+            &EmptyScanParams {},
+            |e: &Ipv6Nat, _| NatToken { port: e.low },
+        )?))
+    }
+
+    async fn external_subnet_get(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<NatIpv6PortPath>,
+    ) -> Result<HttpResponseOk<InternalTarget>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        match nat::get_ipv6_mapping(switch, params.ipv6, params.low, params.low)
+        {
+            Ok(tgt) => Ok(HttpResponseOk(tgt)),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn external_subnet_create(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<NatIpv6RangePath>,
+        target: TypedBody<InternalTarget>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        match nat::set_ipv6_mapping(
+            switch,
+            params.ipv6,
+            params.low,
+            params.high,
+            target.into_inner(),
+        ) {
+            Ok(_) => Ok(HttpResponseUpdatedNoContent()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn external_subnet_delete(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<NatIpv6PortPath>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        nat::clear_ipv6_mapping(switch, params.ipv6, params.low, params.low)
+            .map(|_| HttpResponseDeleted())
+            .map_err(HttpError::from)
+    }
+
+    async fn external_subnet_reset(
+        rqctx: RequestContext<Arc<Switch>>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+
+        match nat::reset_ipv6(switch) {
             Ok(_) => Ok(HttpResponseUpdatedNoContent()),
             Err(e) => Err(e.into()),
         }

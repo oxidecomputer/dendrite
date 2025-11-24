@@ -17,7 +17,7 @@ use aal::AsicOps;
 use oxnet::Ipv4Net;
 use slog::{debug, error};
 
-use common::{nat::NatTarget, ports::PortId};
+use common::{network::InternalTarget, ports::PortId};
 
 use super::{
     Direction, IpSrc, LinkId, MulticastGroup, MulticastGroupId,
@@ -122,7 +122,7 @@ pub(crate) struct GroupCreateRollbackContext<'a> {
     group_ip: IpAddr,
     external_id: MulticastGroupId,
     underlay_id: MulticastGroupId,
-    nat_target: Option<NatTarget>,
+    nat_target: Option<InternalTarget>,
     sources: Option<&'a [IpSrc]>,
 }
 
@@ -247,7 +247,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
         group_ip: IpAddr,
         external_id: MulticastGroupId,
         underlay_id: MulticastGroupId,
-        nat_target: NatTarget,
+        nat_target: InternalTarget,
         sources: Option<&'a [IpSrc]>,
     ) -> Self {
         Self {

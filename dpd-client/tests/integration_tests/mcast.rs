@@ -14,10 +14,10 @@ use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
 use ::common::network::MacAddr;
 use anyhow::anyhow;
-use dpd_client::{Error, types};
+use dpd_client::{types, Error};
 use futures::TryStreamExt;
 use oxnet::{Ipv4Net, MulticastMac};
-use packet::{Endpoint, eth, geneve, ipv4, ipv6, udp};
+use packet::{eth, geneve, ipv4, ipv6, udp, Endpoint};
 
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
 const MULTICAST_TEST_IPV6: Ipv6Addr =
@@ -242,7 +242,7 @@ fn get_sources(
 
 fn get_nat_target(
     response: &types::MulticastGroupResponse,
-) -> Option<&types::NatTarget> {
+) -> Option<&types::InternalTarget> {
     match response {
         types::MulticastGroupResponse::Underlay { .. } => None,
         types::MulticastGroupResponse::External {
@@ -259,16 +259,16 @@ fn get_tag(response: &types::MulticastGroupResponse) -> &Option<String> {
     }
 }
 
-fn create_nat_target_ipv4() -> types::NatTarget {
-    types::NatTarget {
+fn create_nat_target_ipv4() -> types::InternalTarget {
+    types::InternalTarget {
         internal_ip: MULTICAST_NAT_IP,
         inner_mac: MacAddr::new(0x11, 0x22, 0x33, 0x44, 0x55, 0x66).into(),
         vni: 100.into(),
     }
 }
 
-fn create_nat_target_ipv6() -> types::NatTarget {
-    types::NatTarget {
+fn create_nat_target_ipv6() -> types::InternalTarget {
+    types::InternalTarget {
         internal_ip: MULTICAST_NAT_IP,
         inner_mac: MacAddr::new(0x11, 0x22, 0x33, 0x44, 0x55, 0x66).into(),
         vni: 101.into(),
@@ -357,7 +357,7 @@ fn prepare_expected_pkt(
     switch: &Switch,
     send_pkt: &packet::Packet,
     vlan: Option<u16>,
-    nat_target: Option<&types::NatTarget>,
+    nat_target: Option<&types::InternalTarget>,
     switch_port: Option<PhysPort>,
 ) -> packet::Packet {
     match nat_target {
@@ -649,7 +649,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
         .into_inner();
 
     // Create external group that references the admin-scoped group
-    let nat_target = types::NatTarget {
+    let nat_target = types::InternalTarget {
         internal_ip: "ff04::200".parse().unwrap(), // References admin-scoped group
         inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x03).into(),
         vni: 200.into(),
@@ -812,7 +812,7 @@ async fn test_group_api_lifecycle() {
     );
 
     // Update the group
-    let updated_nat_target = types::NatTarget {
+    let updated_nat_target = types::InternalTarget {
         internal_ip: MULTICAST_NAT_IP.into(),
         inner_mac: MacAddr::from(MULTICAST_NAT_IP.derive_multicast_mac())
             .into(),
@@ -1824,8 +1824,8 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
--> TestResult {
+async fn test_encapped_multicast_geneve_mcast_tag_to_external_members(
+) -> TestResult {
     let switch = &*get_switch().await;
 
     // Define test ports
@@ -1966,8 +1966,8 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
 
 #[tokio::test]
 #[ignore]
-async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
--> TestResult {
+async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members(
+) -> TestResult {
     let switch = &*get_switch().await;
 
     // Define test ports
@@ -2105,8 +2105,8 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
 
 #[tokio::test]
 #[ignore]
-async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_members()
--> TestResult {
+async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_members(
+) -> TestResult {
     let switch = &*get_switch().await;
 
     // Define test ports
@@ -4112,7 +4112,7 @@ async fn test_external_group_nat_target_validation() -> TestResult {
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
     // Creating external group with NAT target referencing non-existent group should fail
-    let nonexistent_nat_target = types::NatTarget {
+    let nonexistent_nat_target = types::InternalTarget {
         internal_ip: "ff04::1".parse().unwrap(), // Admin-scoped IPv6 that does not exist
         inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x01).into(),
         vni: 100.into(),
@@ -4174,7 +4174,7 @@ async fn test_external_group_nat_target_validation() -> TestResult {
     );
 
     // Test 3: Now create external group with valid NAT target
-    let valid_nat_target = types::NatTarget {
+    let valid_nat_target = types::InternalTarget {
         internal_ip: "ff04::1".parse().unwrap(), // References the admin-scoped group we just created
         inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x02).into(),
         vni: 100.into(),
@@ -4331,7 +4331,7 @@ async fn test_ipv6_multicast_scope_validation() {
         group_ip: "ff04::500".parse().unwrap(),
         tag: Some("test_admin_external".to_string()),
         internal_forwarding: types::InternalForwarding {
-            nat_target: Some(types::NatTarget {
+            nat_target: Some(types::InternalTarget {
                 internal_ip: "ff04::1000".parse().unwrap(),
                 inner_mac: MacAddr::new(0x02, 0x00, 0x00, 0x00, 0x00, 0x01)
                     .into(),
@@ -4537,7 +4537,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         _ => panic!("Expected IPv6 address"),
     };
 
-    let nat_target = types::NatTarget {
+    let nat_target = types::InternalTarget {
         internal_ip: ipv6,
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x00, 0x00, 0x01).into(),
         vni: 100.into(),
@@ -4894,7 +4894,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     .await;
 
     // Create external group that references the internal group (empty, no members)
-    let nat_target = types::NatTarget {
+    let nat_target = types::InternalTarget {
         internal_ip: match internal_group_ip {
             IpAddr::V6(ipv6) => ipv6,
             _ => panic!("Expected IPv6 address"),
@@ -5298,7 +5298,7 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
         }
         _ => panic!("Expected IPv6 address"),
     };
-    let nat_target = types::NatTarget {
+    let nat_target = types::InternalTarget {
         internal_ip: invalid_internal_ip,
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x02, 0x66).into(),
         vni: 200.into(),
@@ -5494,7 +5494,7 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
     .await;
 
     // Create external group with NAT
-    let nat_target = types::NatTarget {
+    let nat_target = types::InternalTarget {
         internal_ip: match internal_group_ip {
             IpAddr::V6(ipv6) => ipv6,
             _ => panic!("Expected IPv6 address"),
@@ -5534,7 +5534,7 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
         .expect("Should be able to dump NAT table");
 
     // Attempt to update NAT target to invalid configuration that should fail
-    let invalid_nat_target = types::NatTarget {
+    let invalid_nat_target = types::InternalTarget {
         internal_ip: match internal_group_ip {
             IpAddr::V6(ipv6) => ipv6,
             _ => panic!("Expected IPv6 address"),
@@ -5651,7 +5651,7 @@ async fn test_multicast_rollback_vlan_propagation_consistency() {
         .await
         .expect("Should cleanup internal group");
 
-    let nat_target = types::NatTarget {
+    let nat_target = types::InternalTarget {
         internal_ip: match internal_group_ip {
             IpAddr::V6(ipv6) => ipv6,
             _ => panic!("Expected IPv6 address"),
@@ -5757,7 +5757,7 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
 
     // Create IPv4 SSM group that supports source filters
     let group_ip = IpAddr::V4(Ipv4Addr::new(232, 1, 1, 100)); // SSM range
-    let nat_target = types::NatTarget {
+    let nat_target = types::InternalTarget {
         internal_ip: MULTICAST_NAT_IP.into(),
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x01, 0x64).into(),
         vni: 100.into(),
@@ -5997,7 +5997,7 @@ async fn test_multicast_rollback_table_operation_failure() {
         .expect("Should be able to dump bitmap table");
 
     // Attempt to create external group that references the non-existent internal group
-    let broken_nat_target = types::NatTarget {
+    let broken_nat_target = types::InternalTarget {
         internal_ip: match internal_group_ip {
             IpAddr::V6(ipv6) => ipv6,
             _ => panic!("Expected IPv6 address"),

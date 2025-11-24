@@ -13,8 +13,9 @@ use std::{
 
 use common::{
     counters::{FecRSCounters, PcsCounters, RMonCounters, RMonCountersAll},
-    nat::{Ipv4Nat, Ipv6Nat, NatTarget},
-    network::MacAddr,
+    ext_subnet::ExtSubnetEntry,
+    nat::{Ipv4Nat, Ipv6Nat},
+    network::{InternalTarget, MacAddr},
     ports::{
         Ipv4Entry, Ipv6Entry, PortFec, PortId, PortPrbsMode, PortSpeed, TxEq,
         TxEqSwHw,
@@ -41,7 +42,7 @@ use oxnet::{Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use transceiver_controller::{
-    Datapath, Monitors, PowerState, message::LedState,
+    message::LedState, Datapath, Monitors, PowerState,
 };
 
 api_versions!([
@@ -1021,7 +1022,7 @@ pub trait DpdApi {
     async fn nat_ipv6_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<NatIpv6PortPath>,
-    ) -> Result<HttpResponseOk<NatTarget>, HttpError>;
+    ) -> Result<HttpResponseOk<InternalTarget>, HttpError>;
 
     /**
      * Add an external->internal NAT mapping for the given address and L3 port
@@ -1043,7 +1044,7 @@ pub trait DpdApi {
     async fn nat_ipv6_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<NatIpv6RangePath>,
-        target: TypedBody<NatTarget>,
+        target: TypedBody<InternalTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -1104,7 +1105,7 @@ pub trait DpdApi {
     async fn nat_ipv4_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<NatIpv4PortPath>,
-    ) -> Result<HttpResponseOk<NatTarget>, HttpError>;
+    ) -> Result<HttpResponseOk<InternalTarget>, HttpError>;
 
     /**
      * Add an external->internal NAT mapping for the given address/port range
@@ -1126,7 +1127,7 @@ pub trait DpdApi {
     async fn nat_ipv4_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<NatIpv4RangePath>,
-        target: TypedBody<NatTarget>,
+        target: TypedBody<InternalTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -1149,6 +1150,70 @@ pub trait DpdApi {
         path = "/nat/ipv4"
     }]
     async fn nat_ipv4_reset(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Get all of the external subnets with internal mappings
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ext_subnet",
+    }]
+    async fn external_subnet_list(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<ExtSubnetEntry>>, HttpError>;
+
+    /**
+     * Get the mapping for the given external subnet.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ext_subnet/{subnet}",
+    }]
+    async fn external_subnet_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPathV4>,
+    ) -> Result<HttpResponseOk<InternalTarget>, HttpError>;
+
+    /**
+     * Add a mapping to an internal target for an external subnet address.
+     *
+     * These identify the gimlet on which a guest is running, and gives OPTE the
+     * information it needs to  identify the guest VM that uses the external
+     * subnet.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/ext_subnet/{subnet}"
+    }]
+    async fn external_subnet_create(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPathV4>,
+        target: TypedBody<InternalTarget>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Delete the mapping for an external subnet
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/ext_subnet/{subnet}"
+    }]
+    async fn external_subnet_delete(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPathV4>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /**
+     * Clear all external subnet mappings
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/ext_subnet"
+    }]
+    async fn external_subnet_reset(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -1984,6 +2049,12 @@ pub struct Ipv6Token {
 pub struct RoutePathV4 {
     /// The IPv4 subnet in CIDR notation whose route entry is returned.
     pub cidr: Ipv4Net,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct SubnetPathV4 {
+    /// The external IPv4 subnet in CIDR notation being managed
+    pub subnet: Ipv4Net,
 }
 
 /// Represents a single subnet->target route entry

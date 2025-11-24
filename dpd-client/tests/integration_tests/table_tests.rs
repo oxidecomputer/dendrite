@@ -15,9 +15,9 @@ use oxnet::Ipv6Net;
 use reqwest::StatusCode;
 
 use crate::integration_tests::common::prelude::*;
+use dpd_client::types;
 use dpd_client::ClientInfo;
 use dpd_client::ResponseValue;
-use dpd_client::types;
 
 // The expected sizes of each table.  The values are copied from constants.p4.
 //
@@ -294,7 +294,7 @@ impl TableTest for types::Ipv4Nat {
     async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let external_ip = Ipv4Addr::new(192, 168, 0, 1);
 
-        let tgt = types::NatTarget {
+        let tgt = types::InternalTarget {
             internal_ip: Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 1),
             inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             vni: 0.into(),
@@ -335,7 +335,7 @@ impl TableTest for types::Ipv6Nat {
     async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let external_ip = "fd00:1122:1122:0101::4".parse::<Ipv6Addr>().unwrap();
 
-        let tgt = types::NatTarget {
+        let tgt = types::InternalTarget {
             internal_ip: "fd00:1122:7788:0101::4".parse::<Ipv6Addr>().unwrap(),
             inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             vni: 0.into(),

@@ -6,7 +6,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use common::nat::NatTarget;
+use common::network::InternalTarget;
 use oxnet::{Ipv4Net, Ipv6Net};
 
 use super::IpSrc;
@@ -36,7 +36,7 @@ pub(crate) fn validate_multicast_address(
 }
 
 /// Validates the NAT target inner MAC address.
-pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
+pub(crate) fn validate_nat_target(nat_target: InternalTarget) -> DpdResult<()> {
     if !nat_target.inner_mac.is_multicast() {
         return Err(DpdError::Invalid(format!(
             "NAT target inner MAC address {} is not a multicast MAC address",
@@ -288,7 +288,7 @@ fn validate_ipv4_source_subnet(subnet: Ipv4Net) -> DpdResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::{nat::Vni, network::MacAddr};
+    use common::network::{Vni,MacAddr};
     use oxnet::Ipv4Net;
 
     use std::str::FromStr;
@@ -580,7 +580,7 @@ mod tests {
 
     #[test]
     fn test_validate_nat_target() {
-        let ucast_nat_target = NatTarget {
+        let ucast_nat_target = InternalTarget {
             internal_ip: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
             // Not a multicast MAC
             inner_mac: MacAddr::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x01),
@@ -589,7 +589,7 @@ mod tests {
 
         assert!(validate_nat_target(ucast_nat_target).is_err());
 
-        let mcast_nat_target = NatTarget {
+        let mcast_nat_target = InternalTarget {
             // org-scoped multicast
             internal_ip: Ipv6Addr::new(0xff08, 0, 0, 0, 0, 0, 0, 0x1234),
             // Multicast MAC
