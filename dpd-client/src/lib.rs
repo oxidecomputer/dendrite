@@ -322,12 +322,12 @@ impl From<network::Vni> for types::Vni {
     }
 }
 
-impl TryFrom<types::InternalTarget> for nat::InternalTarget {
+impl TryFrom<types::InternalTarget> for network::InternalTarget {
     type Error = String;
 
     fn try_from(
         t: types::InternalTarget,
-    ) -> Result<nat::InternalTarget, Self::Error> {
+    ) -> Result<network::InternalTarget, Self::Error> {
         Ok(Self {
             internal_ip: t.internal_ip,
             inner_mac: t.inner_mac.into(),

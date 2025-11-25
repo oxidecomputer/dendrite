@@ -4,13 +4,12 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::network::MacAddr;
+use crate::network::InternalTarget;
 
 /** represents an IPv6 NAT reservation */
 #[derive(Debug, Copy, Clone, Deserialize, Serialize, JsonSchema)]

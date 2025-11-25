@@ -4,16 +4,23 @@
 //
 // Copyright 2025 Oxide Computer Company
 
+use oxnet::Ipv4Net;
 use std::fmt;
-use std::net::Ipv4Net;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::network::MacAddr;
+use crate::network::InternalTarget;
 
 /** represents an external subnet mapping */
-pub(crate) struct ExtSubnetEntry {
+#[derive(Debug, Copy, Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub struct ExtSubnetEntry {
     pub subnet: Ipv4Net,
-    pub tgt: Interl,
+    pub tgt: InternalTarget,
+}
+
+impl fmt::Display for ExtSubnetEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}->{}", self.subnet, self.tgt)
+    }
 }

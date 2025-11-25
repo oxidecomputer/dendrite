@@ -122,7 +122,7 @@ pub(crate) struct GroupCreateRollbackContext<'a> {
     group_ip: IpAddr,
     external_id: MulticastGroupId,
     underlay_id: MulticastGroupId,
-    nat_target: Option<InternalTarget>,
+    internal_tgt: Option<InternalTarget>,
     sources: Option<&'a [IpSrc]>,
 }
 
@@ -149,7 +149,7 @@ impl RollbackOps for GroupCreateRollbackContext<'_> {
         _removed_ports: &[MulticastGroupMember],
         _replication_info: &MulticastReplicationInfo,
     ) -> DpdResult<()> {
-        if self.nat_target.is_some() {
+        if self.internal_tgt.is_some() {
             Ok(())
         } else {
             debug!(
@@ -247,7 +247,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
         group_ip: IpAddr,
         external_id: MulticastGroupId,
         underlay_id: MulticastGroupId,
-        nat_target: InternalTarget,
+        internal_tgt: InternalTarget,
         sources: Option<&'a [IpSrc]>,
     ) -> Self {
         Self {
@@ -255,7 +255,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
             group_ip,
             external_id,
             underlay_id,
-            nat_target: Some(nat_target),
+            internal_tgt: Some(internal_tgt),
             sources,
         }
     }
@@ -272,7 +272,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
             group_ip,
             external_id,
             underlay_id,
-            nat_target: None,
+            internal_tgt: None,
             sources: None,
         }
     }
@@ -335,7 +335,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
     /// Remove multicast groups from ASIC.
     fn remove_groups(&self) -> DpdResult<()> {
         // External groups don't destroy ASIC groups (they're shared with internal group)
-        if self.nat_target.is_none() {
+        if self.internal_tgt.is_none() {
             self.log_rollback_error(
                 "remove external multicast group",
                 &format!(
@@ -390,7 +390,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
                         }
                     }
                 }
-                if self.nat_target.is_some() {
+                if self.internal_tgt.is_some() {
                     self.log_rollback_error(
                         "delete IPv4 NAT entry",
                         &format!("for group {ipv4}"),
@@ -445,7 +445,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
                         }
                     }
                 }
-                if self.nat_target.is_some() {
+                if self.internal_tgt.is_some() {
                     self.log_rollback_error(
                         "delete IPv6 NAT entry",
                         &format!("for group {ipv6}"),
@@ -683,7 +683,7 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         let underlay_group_id = self.original_group.underlay_group_id();
         let replication_info = &self.original_group.replication_info;
         let vlan_id = self.original_group.ext_fwding.vlan_id;
-        let nat_target = self.original_group.int_fwding.nat_target;
+        let internal_tgt = self.original_group.int_fwding.internal_tgt;
         let prev_members = self.original_group.members.to_vec();
 
         if let Some(replication_info) = replication_info {
@@ -701,7 +701,7 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         }
 
         // Restore NAT settings
-        match (self.group_ip, nat_target) {
+        match (self.group_ip, internal_tgt) {
             (IpAddr::V4(ipv4), Some(nat)) => {
                 self.log_rollback_error(
                     "restore IPv4 NAT settings",

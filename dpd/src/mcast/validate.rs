@@ -36,21 +36,21 @@ pub(crate) fn validate_multicast_address(
 }
 
 /// Validates the NAT target inner MAC address.
-pub(crate) fn validate_nat_target(nat_target: InternalTarget) -> DpdResult<()> {
-    if !nat_target.inner_mac.is_multicast() {
+pub(crate) fn validate_internal_tgt(internal_tgt: InternalTarget) -> DpdResult<()> {
+    if !internal_tgt.inner_mac.is_multicast() {
         return Err(DpdError::Invalid(format!(
             "NAT target inner MAC address {} is not a multicast MAC address",
-            nat_target.inner_mac
+            internal_tgt.inner_mac
         )));
     }
 
-    let internal_nat_ip = Ipv6Net::new_unchecked(nat_target.internal_ip, 128);
+    let internal_nat_ip = Ipv6Net::new_unchecked(internal_tgt.internal_ip, 128);
 
     if !internal_nat_ip.is_admin_scoped_multicast() {
         return Err(DpdError::Invalid(format!(
             "NAT target internal IP address {} is not a valid \
              site/admin-local or org-scoped multicast address",
-            nat_target.internal_ip
+            internal_tgt.internal_ip
         )));
     }
 
@@ -579,17 +579,17 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_nat_target() {
-        let ucast_nat_target = InternalTarget {
+    fn test_validate_internal_tgt() {
+        let ucast_internal_tgt = InternalTarget {
             internal_ip: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
             // Not a multicast MAC
             inner_mac: MacAddr::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x01),
             vni: Vni::new(100).unwrap(),
         };
 
-        assert!(validate_nat_target(ucast_nat_target).is_err());
+        assert!(validate_internal_tgt(ucast_internal_tgt).is_err());
 
-        let mcast_nat_target = InternalTarget {
+        let mcast_internal_tgt = InternalTarget {
             // org-scoped multicast
             internal_ip: Ipv6Addr::new(0xff08, 0, 0, 0, 0, 0, 0, 0x1234),
             // Multicast MAC
@@ -597,7 +597,7 @@ mod tests {
             vni: Vni::new(100).unwrap(),
         };
 
-        assert!(validate_nat_target(mcast_nat_target).is_ok());
+        assert!(validate_internal_tgt(mcast_internal_tgt).is_ok());
     }
 
     #[test]

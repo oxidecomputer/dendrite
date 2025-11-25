@@ -11,7 +11,7 @@ use std::{
     net::{IpAddr, Ipv6Addr},
 };
 
-use common::{nat::InternalTarget, ports::PortId};
+use common::{network::InternalTarget, ports::PortId};
 use oxnet::{Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -180,7 +180,7 @@ impl MulticastGroupResponse {
 /// forwarding.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 pub struct InternalForwarding {
-    pub nat_target: Option<InternalTarget>,
+    pub internal_tgt: Option<InternalTarget>,
 }
 
 /// Represents the forwarding configuration for external multicast traffic.

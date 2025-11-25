@@ -66,6 +66,7 @@ use common::ports::TxEq;
 use common::ports::TxEqSwHw;
 
 use crate::counters;
+use crate::ext_subnet;
 use crate::mcast;
 use crate::oxstats;
 use crate::rpw::Task;
@@ -74,8 +75,9 @@ use crate::switch_port::LedState;
 use crate::transceivers::PowerState;
 use crate::types::DpdError;
 use crate::{arp, loopback, nat, ports, route, Switch};
-use common::nat::{InternalTarget, Ipv4Nat, Ipv6Nat};
-use common::network::MacAddr;
+use common::ext_subnet::ExtSubnetEntry;
+use common::nat::{Ipv4Nat, Ipv6Nat};
+use common::network::{InternalTarget, MacAddr};
 use common::ports::PortId;
 use common::ports::QsfpPort;
 use common::ports::{Ipv4Entry, Ipv6Entry, PortPrbsMode};
@@ -1556,66 +1558,35 @@ impl DpdApi for DpdApiImpl {
 
     async fn external_subnet_list(
         rqctx: RequestContext<Arc<Switch>>,
-        query: Query<PaginationParams<EmptyScanParams, Ipv6Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Addr>>, HttpError> {
+        query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<ExtSubnetEntry>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let pag_params = query.into_inner();
         let max = rqctx.page_limit(&pag_params)?.get();
-
-        let last_addr = match &pag_params.page {
+        let subnet = match &pag_params.page {
             WhichPage::First(..) => None,
-            WhichPage::Next(Ipv6Token { ip }) => Some(*ip),
+            WhichPage::Next(Ipv4RouteToken { cidr }) => Some(*cidr),
         };
 
-        let entries = nat::get_ipv6_addrs_range(
+        let entries = ext_subnet::get_mappings(
             switch,
-            last_addr,
+            subnet,
             usize::try_from(max).expect("invalid usize"),
         );
-
         Ok(HttpResponseOk(ResultsPage::new(
             entries,
             &EmptyScanParams {},
-            |ip: &Ipv6Addr, _| Ipv6Token { ip: *ip },
-        )?))
-    }
-
-    async fn external_subnet_list(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<NatIpv6Path>,
-        query: Query<PaginationParams<EmptyScanParams, NatToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Nat>>, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let params = path.into_inner();
-        let pag_params = query.into_inner();
-        let max = rqctx.page_limit(&pag_params)?.get();
-        let port = match &pag_params.page {
-            WhichPage::First(..) => None,
-            WhichPage::Next(NatToken { port }) => Some(*port),
-        };
-
-        let entries = nat::get_ipv6_mappings_range(
-            switch,
-            params.ipv6,
-            port,
-            usize::try_from(max).expect("invalid usize"),
-        );
-
-        Ok(HttpResponseOk(ResultsPage::new(
-            entries,
-            &EmptyScanParams {},
-            |e: &Ipv6Nat, _| NatToken { port: e.low },
+            |e: &ExtSubnetEntry, _| Ipv4RouteToken { cidr: e.subnet },
         )?))
     }
 
     async fn external_subnet_get(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<NatIpv6PortPath>,
+        path: Path<SubnetPathV4>,
     ) -> Result<HttpResponseOk<InternalTarget>, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
-        match nat::get_ipv6_mapping(switch, params.ipv6, params.low, params.low)
-        {
+        match ext_subnet::get_mapping(switch, params.subnet) {
             Ok(tgt) => Ok(HttpResponseOk(tgt)),
             Err(e) => Err(e.into()),
         }
@@ -1623,16 +1594,14 @@ impl DpdApi for DpdApiImpl {
 
     async fn external_subnet_create(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<NatIpv6RangePath>,
+        path: Path<SubnetPathV4>,
         target: TypedBody<InternalTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
-        match nat::set_ipv6_mapping(
+        match ext_subnet::set_mapping(
             switch,
-            params.ipv6,
-            params.low,
-            params.high,
+            params.subnet,
             target.into_inner(),
         ) {
             Ok(_) => Ok(HttpResponseUpdatedNoContent()),
@@ -1642,11 +1611,11 @@ impl DpdApi for DpdApiImpl {
 
     async fn external_subnet_delete(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<NatIpv6PortPath>,
+        path: Path<SubnetPathV4>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
-        nat::clear_ipv6_mapping(switch, params.ipv6, params.low, params.low)
+        ext_subnet::clear_mapping(switch, params.subnet)
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
     }
@@ -1656,7 +1625,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
 
-        match nat::reset_ipv6(switch) {
+        match ext_subnet::reset(switch) {
             Ok(_) => Ok(HttpResponseUpdatedNoContent()),
             Err(e) => Err(e.into()),
         }

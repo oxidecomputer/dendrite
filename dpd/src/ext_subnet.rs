@@ -6,25 +6,14 @@
 
 use slog::{debug, trace};
 use std::collections::BTreeMap;
-use std::fmt;
 use std::net::Ipv4Addr;
 
 use crate::types::{DpdError, DpdResult};
 use crate::Switch;
-use common::nat::InternalTarget;
+use common::ext_subnet::ExtSubnetEntry;
+use common::network::InternalTarget;
 use oxnet::Ipv4Net;
 
-#[derive(Clone, PartialEq, Eq)]
-pub(crate) struct ExtSubnetEntry {
-    pub subnet: Ipv4Net,
-    pub tgt: InternalTarget,
-}
-
-impl fmt::Display for ExtSubnetEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}->{}", self.subnet, self.tgt)
-    }
-}
 pub struct ExtSubnetData {
     mappings: BTreeMap<Ipv4Net, ExtSubnetEntry>,
 }
