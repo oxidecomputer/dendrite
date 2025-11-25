@@ -9,7 +9,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::network::InternalTarget;
+use crate::network::NatTarget;
 
 /** represents an IPv6 NAT reservation */
 #[derive(Debug, Copy, Clone, Deserialize, Serialize, JsonSchema)]
@@ -17,7 +17,7 @@ pub struct Ipv6Nat {
     pub external: Ipv6Addr,
     pub low: u16,
     pub high: u16,
-    pub target: InternalTarget,
+    pub target: NatTarget,
 }
 
 impl PartialEq for Ipv6Nat {
@@ -34,7 +34,7 @@ pub struct Ipv4Nat {
     pub external: Ipv4Addr,
     pub low: u16,
     pub high: u16,
-    pub target: InternalTarget,
+    pub target: NatTarget,
 }
 
 impl PartialEq for Ipv4Nat {

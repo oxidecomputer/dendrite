@@ -13,8 +13,9 @@ use oxnet::Ipv6Net;
 
 use ::common::nat::Vni;
 use ::common::network::MacAddr;
-use dpd_client::types;
 use dpd_client::ClientInfo;
+use dpd_client::types;
+use packet::Endpoint;
 use packet::eth;
 use packet::geneve;
 use packet::icmp;
@@ -22,7 +23,6 @@ use packet::ipv4;
 use packet::ipv6;
 use packet::tcp;
 use packet::udp;
-use packet::Endpoint;
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
@@ -39,7 +39,7 @@ async fn test_api() -> TestResult {
     let ext0 = Ipv4Addr::new(10, 10, 10, 10);
     let ext1 = Ipv4Addr::new(10, 10, 10, 11);
     let internal_ip = "fd00:1122:7788:0101::4".parse::<Ipv6Addr>().unwrap();
-    let tgt = types::InternalTarget {
+    let tgt = types::NatTarget {
         internal_ip,
         inner_mac: inner_mac.into(),
         vni: vni.into(),
@@ -572,7 +572,7 @@ async fn test_ingress_ipv4(
 
     let nat_ip = test.uplink_port_external.parse().unwrap();
     let internal_ip = test.gimlet_ip.parse().unwrap();
-    let tgt = types::InternalTarget {
+    let tgt = types::NatTarget {
         internal_ip,
         inner_mac: test.vpc_dst_mac.parse::<MacAddr>()?.into(),
         vni: Vni::new(test.geneve_vni).unwrap().into(),
@@ -680,7 +680,7 @@ async fn test_ingress_ipv6(
     let internal_ip = test.gimlet_ip.parse().unwrap();
     let nat_low = 1024;
     let nat_high = 2048;
-    let tgt = types::InternalTarget {
+    let tgt = types::NatTarget {
         internal_ip,
         inner_mac: test.vpc_dst_mac.parse::<MacAddr>()?.into(),
         vni: Vni::new(test.geneve_vni).unwrap().into(),

@@ -330,6 +330,43 @@ impl fmt::Display for InternalTarget {
     }
 }
 
+/// represents an internal NAT target
+// This is identical to the more generically named InternalTarget, which should
+// be used for new APIs.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema, Serialize,
+)]
+pub struct NatTarget {
+    pub internal_ip: Ipv6Addr,
+    pub inner_mac: MacAddr,
+    pub vni: Vni,
+}
+
+impl fmt::Display for NatTarget {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}/{}/{}", self.internal_ip, self.inner_mac, self.vni)
+    }
+}
+
+impl From<NatTarget> for InternalTarget {
+    fn from(value: NatTarget) -> Self {
+        InternalTarget {
+            internal_ip: value.internal_ip,
+            inner_mac: value.inner_mac,
+            vni: value.vni,
+        }
+    }
+}
+
+impl From<InternalTarget> for NatTarget {
+    fn from(value: InternalTarget) -> Self {
+        NatTarget {
+            internal_ip: value.internal_ip,
+            inner_mac: value.inner_mac,
+            vni: value.vni,
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::generate_ipv6_link_local;

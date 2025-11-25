@@ -15,7 +15,7 @@ use common::{
     counters::{FecRSCounters, PcsCounters, RMonCounters, RMonCountersAll},
     ext_subnet::ExtSubnetEntry,
     nat::{Ipv4Nat, Ipv6Nat},
-    network::{InternalTarget, MacAddr},
+    network::{InternalTarget, MacAddr, NatTarget},
     ports::{
         Ipv4Entry, Ipv6Entry, PortFec, PortId, PortPrbsMode, PortSpeed, TxEq,
         TxEqSwHw,
@@ -57,6 +57,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (2, EXTERNAL_SUBNETS),
     (1, INITIAL),
 ]);
 
@@ -1022,7 +1023,7 @@ pub trait DpdApi {
     async fn nat_ipv6_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<NatIpv6PortPath>,
-    ) -> Result<HttpResponseOk<InternalTarget>, HttpError>;
+    ) -> Result<HttpResponseOk<NatTarget>, HttpError>;
 
     /**
      * Add an external->internal NAT mapping for the given address and L3 port
@@ -1044,7 +1045,7 @@ pub trait DpdApi {
     async fn nat_ipv6_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<NatIpv6RangePath>,
-        target: TypedBody<InternalTarget>,
+        target: TypedBody<NatTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -1105,7 +1106,7 @@ pub trait DpdApi {
     async fn nat_ipv4_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<NatIpv4PortPath>,
-    ) -> Result<HttpResponseOk<InternalTarget>, HttpError>;
+    ) -> Result<HttpResponseOk<NatTarget>, HttpError>;
 
     /**
      * Add an external->internal NAT mapping for the given address/port range
@@ -1127,7 +1128,7 @@ pub trait DpdApi {
     async fn nat_ipv4_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<NatIpv4RangePath>,
-        target: TypedBody<InternalTarget>,
+        target: TypedBody<NatTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -1159,6 +1160,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ext_subnet",
+	versions = VERSION_EXTERNAL_SUBNETS..,
     }]
     async fn external_subnet_list(
         rqctx: RequestContext<Self::Context>,
@@ -1171,6 +1173,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ext_subnet/{subnet}",
+	versions = VERSION_EXTERNAL_SUBNETS..,
     }]
     async fn external_subnet_get(
         rqctx: RequestContext<Self::Context>,
@@ -1186,7 +1189,8 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = PUT,
-        path = "/ext_subnet/{subnet}"
+        path = "/ext_subnet/{subnet}",
+	versions = VERSION_EXTERNAL_SUBNETS..,
     }]
     async fn external_subnet_create(
         rqctx: RequestContext<Self::Context>,
@@ -1199,7 +1203,8 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = DELETE,
-        path = "/ext_subnet/{subnet}"
+        path = "/ext_subnet/{subnet}",
+	versions = VERSION_EXTERNAL_SUBNETS..,
     }]
     async fn external_subnet_delete(
         rqctx: RequestContext<Self::Context>,
@@ -1211,7 +1216,8 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = DELETE,
-        path = "/ext_subnet"
+        path = "/ext_subnet",
+	versions = VERSION_EXTERNAL_SUBNETS..,
     }]
     async fn external_subnet_reset(
         rqctx: RequestContext<Self::Context>,

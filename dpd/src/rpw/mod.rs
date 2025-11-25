@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use common::network::{InternalTarget, MacAddr, Vni};
+use common::network::{MacAddr, NatTarget, Vni};
 use internal_dns_resolver::Resolver;
 use internal_dns_types::names::ServiceName;
 use slog::{debug, error, info, o, Logger};
@@ -179,7 +179,7 @@ fn apply_updates(
             }
         };
 
-        let tgt = InternalTarget {
+        let tgt = NatTarget {
             internal_ip: entry.sled_address,
             inner_mac: MacAddr::from_slice(entry.mac.as_bytes()),
             vni,

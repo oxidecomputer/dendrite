@@ -14,7 +14,7 @@ use crate::Switch;
 use crate::table::nat;
 use crate::types::{DpdError, DpdResult};
 use common::nat::{Ipv4Nat, Ipv6Nat};
-use common::network::InternalTarget;
+use common::network:: NatTarget;
 
 trait PortRange {
     fn low(&self) -> u16;
@@ -25,7 +25,7 @@ trait PortRange {
 pub(crate) struct Ipv6NatEntry {
     pub low: u16,
     pub high: u16,
-    pub tgt: InternalTarget,
+    pub tgt: NatTarget,
 }
 
 impl PortRange for Ipv6NatEntry {
@@ -47,7 +47,7 @@ impl fmt::Display for Ipv6NatEntry {
 pub(crate) struct Ipv4NatEntry {
     pub low: u16,
     pub high: u16,
-    pub tgt: InternalTarget,
+    pub tgt: NatTarget,
 }
 
 impl PortRange for Ipv4NatEntry {
@@ -132,9 +132,9 @@ fn find_space<T: PortRange>(
 #[test]
 fn test_mapping() {
     use super::MacAddr;
-    use common::network::Vni;
+    use common::nat::Vni;
 
-    let dummy_target = InternalTarget {
+    let dummy_target = NatTarget {
         internal_ip: Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0),
         inner_mac: MacAddr::new(0, 0, 0, 0, 0, 0),
         vni: Vni::new(0).unwrap(),
@@ -237,14 +237,14 @@ pub fn get_ipv6_mappings_range(
     entries
 }
 
-/// Find the first `InternalTarget` where its `Ipv6NatEntry` matches the provided
+/// Find the first `NatTarget` where its `Ipv6NatEntry` matches the provided
 /// `Ipv6Addr` and overlaps with the provided port range
 pub fn get_ipv6_mapping(
     switch: &Switch,
     nat_ip: Ipv6Addr,
     low: u16,
     high: u16,
-) -> DpdResult<InternalTarget> {
+) -> DpdResult<NatTarget> {
     let nat = switch.nat.lock().unwrap();
     if let Some(v) = nat.ipv6_mappings.get(&nat_ip)
         && let Some(idx) = find_first_mapping(v, low, high)
@@ -259,7 +259,7 @@ pub fn set_ipv6_mapping(
     nat_ip: Ipv6Addr,
     low: u16,
     high: u16,
-    tgt: InternalTarget,
+    tgt: NatTarget,
 ) -> DpdResult<()> {
     let new_entry = Ipv6NatEntry { low, high, tgt };
     let full = ipv6_entry(nat_ip, &new_entry);
@@ -306,7 +306,7 @@ pub fn set_ipv6_mapping(
     }
 }
 
-/// Find the first `InternalTarget` where its `Ipv6NatEntry` matches the provided
+/// Find the first `NatTarget` where its `Ipv6NatEntry` matches the provided
 /// `Ipv6Addr` and overlaps with the provided port range, then remove it.
 pub fn clear_ipv6_mapping(
     switch: &Switch,
@@ -397,14 +397,14 @@ pub fn get_ipv4_mappings_range(
     entries
 }
 
-/// Find the first `InternalTarget` where its `Ipv4NatEntry` matches the provided
+/// Find the first `NatTarget` where its `Ipv4NatEntry` matches the provided
 /// `Ipv4Addr` and overlaps with the provided port range
 pub fn get_ipv4_mapping(
     switch: &Switch,
     nat_ip: Ipv4Addr,
     low: u16,
     high: u16,
-) -> DpdResult<InternalTarget> {
+) -> DpdResult<NatTarget> {
     let nat = switch.nat.lock().unwrap();
     if let Some(v) = nat.ipv4_mappings.get(&nat_ip)
         && let Some(idx) = find_first_mapping(v, low, high)
@@ -419,7 +419,7 @@ pub fn set_ipv4_mapping(
     nat_ip: Ipv4Addr,
     low: u16,
     high: u16,
-    tgt: InternalTarget,
+    tgt: NatTarget,
 ) -> DpdResult<()> {
     let new_entry = Ipv4NatEntry { low, high, tgt };
     let full = ipv4_entry(nat_ip, &new_entry);
@@ -466,7 +466,7 @@ pub fn set_ipv4_mapping(
     }
 }
 
-/// Find the first `InternalTarget` where its `Ipv4NatEntry` matches the provided
+/// Find the first `NatTarget` where its `Ipv4NatEntry` matches the provided
 /// `Ipv4Addr` and overlaps with the provided port range, then remove it.
 pub fn clear_ipv4_mapping(
     switch: &Switch,

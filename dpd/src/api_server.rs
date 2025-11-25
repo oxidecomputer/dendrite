@@ -77,7 +77,7 @@ use crate::types::DpdError;
 use crate::{arp, loopback, nat, ports, route, Switch};
 use common::ext_subnet::ExtSubnetEntry;
 use common::nat::{Ipv4Nat, Ipv6Nat};
-use common::network::{InternalTarget, MacAddr};
+use common::network::{InternalTarget, MacAddr, NatTarget};
 use common::ports::PortId;
 use common::ports::QsfpPort;
 use common::ports::{Ipv4Entry, Ipv6Entry, PortPrbsMode};
@@ -1396,12 +1396,12 @@ impl DpdApi for DpdApiImpl {
     async fn nat_ipv6_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv6PortPath>,
-    ) -> Result<HttpResponseOk<InternalTarget>, HttpError> {
+    ) -> Result<HttpResponseOk<NatTarget>, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
         match nat::get_ipv6_mapping(switch, params.ipv6, params.low, params.low)
         {
-            Ok(tgt) => Ok(HttpResponseOk(tgt)),
+            Ok(tgt) => Ok(HttpResponseOk(tgt.into())),
             Err(e) => Err(e.into()),
         }
     }
@@ -1409,7 +1409,7 @@ impl DpdApi for DpdApiImpl {
     async fn nat_ipv6_create(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv6RangePath>,
-        target: TypedBody<InternalTarget>,
+        target: TypedBody<NatTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
@@ -1418,7 +1418,7 @@ impl DpdApi for DpdApiImpl {
             params.ipv6,
             params.low,
             params.high,
-            target.into_inner(),
+            target.into_inner().into(),
         ) {
             Ok(_) => Ok(HttpResponseUpdatedNoContent()),
             Err(e) => Err(e.into()),
@@ -1505,12 +1505,12 @@ impl DpdApi for DpdApiImpl {
     async fn nat_ipv4_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv4PortPath>,
-    ) -> Result<HttpResponseOk<InternalTarget>, HttpError> {
+    ) -> Result<HttpResponseOk<NatTarget>, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
         match nat::get_ipv4_mapping(switch, params.ipv4, params.low, params.low)
         {
-            Ok(tgt) => Ok(HttpResponseOk(tgt)),
+            Ok(tgt) => Ok(HttpResponseOk(tgt.into())),
             Err(e) => Err(e.into()),
         }
     }
@@ -1518,7 +1518,7 @@ impl DpdApi for DpdApiImpl {
     async fn nat_ipv4_create(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv4RangePath>,
-        target: TypedBody<InternalTarget>,
+        target: TypedBody<NatTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
@@ -1527,7 +1527,7 @@ impl DpdApi for DpdApiImpl {
             params.ipv4,
             params.low,
             params.high,
-            target.into_inner(),
+            target.into_inner().into(),
         ) {
             Ok(_) => Ok(HttpResponseUpdatedNoContent()),
             Err(e) => Err(e.into()),

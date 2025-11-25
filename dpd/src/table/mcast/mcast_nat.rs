@@ -14,7 +14,7 @@ use super::{Ipv4MatchKey, Ipv6MatchKey};
 
 use aal::ActionParse;
 use aal_macros::*;
-use common::network::{InternalTarget, MacAddr};
+use common::network::{MacAddr, NatTarget};
 use slog::debug;
 
 /// IPv4 Table for multicast NAT entries.
@@ -48,7 +48,7 @@ enum Ipv6Action {
 pub(crate) fn add_ipv4_entry(
     s: &Switch,
     ip: Ipv4Addr,
-    tgt: InternalTarget,
+    tgt: NatTarget,
 ) -> DpdResult<()> {
     let match_key = Ipv4MatchKey::new(ip);
     let action_key = Ipv4Action::Forward {
@@ -69,7 +69,7 @@ pub(crate) fn add_ipv4_entry(
 pub(crate) fn update_ipv4_entry(
     s: &Switch,
     ip: Ipv4Addr,
-    tgt: InternalTarget,
+    tgt: NatTarget,
 ) -> DpdResult<()> {
     let match_key = Ipv4MatchKey::new(ip);
     let action_key = Ipv4Action::Forward {
@@ -121,7 +121,7 @@ pub(crate) fn reset_ipv4(s: &Switch) -> DpdResult<()> {
 pub(crate) fn add_ipv6_entry(
     s: &Switch,
     ip: Ipv6Addr,
-    tgt: InternalTarget,
+    tgt: NatTarget,
 ) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(ip);
     let action_key = Ipv6Action::Forward {
@@ -142,7 +142,7 @@ pub(crate) fn add_ipv6_entry(
 pub(crate) fn update_ipv6_entry(
     s: &Switch,
     ip: Ipv6Addr,
-    tgt: InternalTarget,
+    tgt: NatTarget,
 ) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(ip);
     let action_key = Ipv6Action::Forward {

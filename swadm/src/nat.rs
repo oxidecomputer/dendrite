@@ -6,7 +6,7 @@
 
 use std::convert::TryFrom;
 use std::io::{stdout, Write};
-use std::net::{self, IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use anyhow::Context;
 use clap::Subcommand;
@@ -57,7 +57,7 @@ pub enum Nat {
         inner: MacAddr,
         /// Geneve VNI
         #[clap(short = 'v')]
-        vni: network::Vni,
+        vni: nat::Vni,
     },
     /// delete a single NAT reservation
     Del {
@@ -127,7 +127,7 @@ async fn nat_get(
                 .nat_ipv4_get(&ipv4, port)
                 .await
                 .map(|r| {
-                    network::InternalTarget::try_from(r.into_inner())
+                    network::NatTarget::try_from(r.into_inner())
                         .expect("Invalid NAT target from server")
                 })
                 .context("failed to get IPv4 NAT mapping")?;
@@ -138,7 +138,7 @@ async fn nat_get(
                 .nat_ipv6_get(&ipv6, port)
                 .await
                 .map(|r| {
-                    network::InternalTarget::try_from(r.into_inner())
+                    network::NatTarget::try_from(r.into_inner())
                         .expect("Invalid NAT target from server")
                 })
                 .context("failed to get IPv6 NAT mapping")?;
@@ -155,9 +155,9 @@ async fn nat_add(
     high_port: u16,
     internal_ip: Ipv6Addr,
     inner_mac: MacAddr,
-    vni: network::Vni,
+    vni: nat::Vni,
 ) -> anyhow::Result<()> {
-    let tgt = types::InternalTarget {
+    let tgt = types::NatTarget {
         internal_ip,
         inner_mac: inner_mac.into(),
         vni: types::Vni::from(vni),

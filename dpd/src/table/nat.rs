@@ -15,7 +15,7 @@ use aal_macros::*;
 
 use crate::table::*;
 use crate::Switch;
-use common::network::{InternalTarget, MacAddr};
+use common::network::{MacAddr, NatTarget};
 
 pub const IPV4_TABLE_NAME: &str = "pipe.Ingress.nat_ingress.ingress_ipv4";
 pub const IPV6_TABLE_NAME: &str = "pipe.Ingress.nat_ingress.ingress_ipv6";
@@ -111,7 +111,7 @@ pub fn add_ipv6_entry(
     nat_ip: Ipv6Addr,
     nat_port_low: u16,
     nat_port_high: u16,
-    tgt: InternalTarget,
+    tgt: NatTarget,
 ) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(nat_ip, nat_port_low, nat_port_high);
     let action_key = Ipv6Action::Forward {
@@ -145,7 +145,7 @@ pub fn add_ipv4_entry(
     nat_ip: Ipv4Addr,
     nat_port_low: u16,
     nat_port_high: u16,
-    tgt: InternalTarget,
+    tgt: NatTarget,
 ) -> DpdResult<()> {
     let match_key = Ipv4MatchKey::new(nat_ip, nat_port_low, nat_port_high);
     let action_key = Ipv4Action::Forward {

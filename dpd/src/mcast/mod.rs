@@ -60,7 +60,7 @@ use std::{
 };
 
 use aal::{AsicError, AsicOps};
-use common::{network::InternalTarget, ports::PortId};
+use common::{network::NatTarget, ports::PortId};
 use dpd_types::{
     link::LinkId,
     mcast::{
@@ -85,7 +85,7 @@ mod validate;
 
 use rollback::{GroupCreateRollbackContext, GroupUpdateRollbackContext};
 use validate::{
-    validate_multicast_address, validate_internal_tgt,
+    validate_multicast_address, validate_nat_target,
     validate_not_admin_scoped_ipv6,
 };
 
@@ -222,7 +222,7 @@ pub struct MulticastGroupData {
     free_group_ids: Arc<Mutex<Vec<MulticastGroupId>>>,
     /// 1:1 mapping from admin-scoped group IP to external group that uses it as NAT
     /// target (admin_scoped_ip -> external_group_ip)
-    internal_tgt_refs: BTreeMap<AdminScopedIpv6, IpAddr>,
+    nat_target_refs: BTreeMap<AdminScopedIpv6, IpAddr>,
 }
 
 impl MulticastGroupData {
@@ -240,7 +240,7 @@ impl MulticastGroupData {
         Self {
             groups: BTreeMap::new(),
             free_group_ids,
-            internal_tgt_refs: BTreeMap::new(),
+            nat_target_refs: BTreeMap::new(),
         }
     }
 
@@ -269,13 +269,13 @@ impl MulticastGroupData {
         external_group_ip: IpAddr,
         admin_scoped_ip: AdminScopedIpv6,
     ) {
-        self.internal_tgt_refs
+        self.nat_target_refs
             .insert(admin_scoped_ip, external_group_ip);
     }
 
     /// Remove 1:1 forwarding reference.
     fn rm_forwarding_refs(&mut self, admin_scoped_ip: AdminScopedIpv6) {
-        self.internal_tgt_refs.remove(&admin_scoped_ip);
+        self.nat_target_refs.remove(&admin_scoped_ip);
     }
 
     /// Get the VLAN ID for an internal multicast group by looking up
@@ -284,7 +284,7 @@ impl MulticastGroupData {
         &self,
         internal_ip: AdminScopedIpv6,
     ) -> Option<u16> {
-        self.internal_tgt_refs
+        self.nat_target_refs
             .get(&internal_ip)
             .and_then(|external_ip| self.groups.get(external_ip))
             .and_then(|group| group.ext_fwding.vlan_id)
@@ -312,18 +312,18 @@ pub(crate) fn add_group_external(
     // deterministic operation order
     let mut mcast = s.mcast.lock().unwrap();
 
-    let internal_tgt =
-        group_info.internal_forwarding.internal_tgt.ok_or_else(|| {
+    let nat_target =
+        group_info.internal_forwarding.nat_target.ok_or_else(|| {
             DpdError::Invalid(
                 "external groups must have NAT target".to_string(),
             )
         })?;
 
     validate_external_group_creation(&mcast, group_ip, &group_info)?;
-    validate_internal_tgt(internal_tgt)?;
+    validate_nat_target(nat_target)?;
 
     // Validate that NAT target points to an existing group and get its IDs
-    let internal_group_ip = internal_tgt.internal_ip.into();
+    let internal_group_ip = nat_target.internal_ip.into();
     let internal_group =
         mcast.groups.get(&internal_group_ip).ok_or_else(|| {
             DpdError::Invalid(format!(
@@ -342,7 +342,7 @@ pub(crate) fn add_group_external(
         group_ip,
         scoped_external_id.id(),
         scoped_underlay_id.id(),
-        internal_tgt,
+        nat_target,
         group_info.sources.as_deref(),
     );
 
@@ -356,7 +356,7 @@ pub(crate) fn add_group_external(
                     &mcast,
                     group_ip,
                     vlan_id,
-                    internal_tgt.internal_ip.into(),
+                    nat_target.internal_ip.into(),
                 )
             } else {
                 Ok(())
@@ -365,7 +365,7 @@ pub(crate) fn add_group_external(
         .map_err(|e| rollback_ctx.rollback_and_return_error(e))?;
 
     // Validate the admin-scoped IP early to avoid partial state
-    let admin_scoped_ip = AdminScopedIpv6::new(internal_tgt.internal_ip)?;
+    let admin_scoped_ip = AdminScopedIpv6::new(nat_target.internal_ip)?;
 
     let group = MulticastGroup {
         external_scoped_group: scoped_external_id,
@@ -468,7 +468,7 @@ pub(crate) fn add_group_internal(
         underlay_scoped_group: scoped_underlay_id,
         tag: group_info.tag,
         int_fwding: InternalForwarding {
-            internal_tgt: None, // Internal groups don't have NAT targets
+            nat_target: None, // Internal groups don't have NAT targets
         },
         ext_fwding: ExternalForwarding {
             vlan_id: None, // Internal groups don't have VLANs
@@ -494,9 +494,9 @@ pub(crate) fn del_group(s: &Switch, group_ip: IpAddr) -> DpdResult<()> {
         ))
     })?;
 
-    let internal_tgt_to_remove = group
+    let nat_target_to_remove = group
         .int_fwding
-        .internal_tgt
+        .nat_target
         .map(|nat| nat.internal_ip.into());
 
     debug!(s.log, "deleting multicast group for IP {group_ip}");
@@ -505,7 +505,7 @@ pub(crate) fn del_group(s: &Switch, group_ip: IpAddr) -> DpdResult<()> {
 
     // Only delete ASIC groups for internal groups (groups without NAT targets).
     // External groups share ASIC resources with their referenced internal groups.
-    if group.int_fwding.internal_tgt.is_none() {
+    if group.int_fwding.nat_target.is_none() {
         delete_multicast_groups(
             s,
             group_ip,
@@ -514,7 +514,7 @@ pub(crate) fn del_group(s: &Switch, group_ip: IpAddr) -> DpdResult<()> {
         )?;
     }
 
-    if let Some(IpAddr::V6(ipv6)) = internal_tgt_to_remove {
+    if let Some(IpAddr::V6(ipv6)) = nat_target_to_remove {
         mcast.rm_forwarding_refs(AdminScopedIpv6::new(ipv6)?);
     }
 
@@ -567,10 +567,10 @@ pub(crate) fn modify_group_external(
         )));
     }
 
-    let internal_tgt =
+    let nat_target =
         new_group_info
             .internal_forwarding
-            .internal_tgt
+            .nat_target
             .ok_or_else(|| {
                 DpdError::Invalid(
                     "external groups must have NAT target".to_string(),
@@ -578,10 +578,10 @@ pub(crate) fn modify_group_external(
             })?;
 
     validate_multicast_address(group_ip, new_group_info.sources.as_deref())?;
-    validate_internal_tgt(internal_tgt)?;
+    validate_nat_target(nat_target)?;
 
     let group_entry = mcast.groups.remove(&group_ip).unwrap();
-    let old_internal_tgt = group_entry.int_fwding.internal_tgt;
+    let old_nat_target = group_entry.int_fwding.nat_target;
 
     // Create rollback context for external group update
     let group_entry_for_rollback = group_entry.clone();
@@ -601,9 +601,9 @@ pub(crate) fn modify_group_external(
     let mut updated_group = group_entry.clone();
 
     // Update NAT target references if NAT target changed
-    if let Some(old_nat) = old_internal_tgt {
+    if let Some(old_nat) = old_nat_target {
         let old_internal_ip = old_nat.internal_ip;
-        let new_internal_ip = internal_tgt.internal_ip;
+        let new_internal_ip = nat_target.internal_ip;
 
         if old_internal_ip != new_internal_ip {
             mcast.rm_forwarding_refs(AdminScopedIpv6::new(old_internal_ip)?);
@@ -616,7 +616,7 @@ pub(crate) fn modify_group_external(
 
     // Update the external group fields
     updated_group.tag = new_group_info.tag.or(updated_group.tag);
-    updated_group.int_fwding.internal_tgt = Some(internal_tgt);
+    updated_group.int_fwding.nat_target = Some(nat_target);
 
     let old_vlan_id = updated_group.ext_fwding.vlan_id;
     updated_group.ext_fwding.vlan_id = new_group_info
@@ -628,7 +628,7 @@ pub(crate) fn modify_group_external(
     // Update bitmap tables with new VLAN if VLAN changed
     // Also, handles possible membership skew between update internal + external calls.
     if old_vlan_id != updated_group.ext_fwding.vlan_id {
-        let internal_ip = internal_tgt.internal_ip.into();
+        let internal_ip = nat_target.internal_ip.into();
 
         let bitmap_result = match mcast.groups.get(&internal_ip) {
             Some(internal_group)
@@ -924,7 +924,7 @@ pub(crate) fn reset(s: &Switch) -> DpdResult<()> {
 
     // Clear data structures
     mcast.groups.clear();
-    mcast.internal_tgt_refs.clear();
+    mcast.nat_target_refs.clear();
 
     Ok(())
 }
@@ -1121,8 +1121,8 @@ fn configure_external_tables(
     group_info: &MulticastGroupCreateExternalEntry,
 ) -> DpdResult<()> {
     let group_ip = group_info.group_ip;
-    let internal_tgt =
-        group_info.internal_forwarding.internal_tgt.ok_or_else(|| {
+    let nat_target =
+        group_info.internal_forwarding.nat_target.ok_or_else(|| {
             DpdError::Invalid(
                 "external groups must have NAT target".to_string(),
             )
@@ -1134,10 +1134,10 @@ fn configure_external_tables(
     // Add NAT entry
     match group_ip {
         IpAddr::V4(ipv4) => {
-            table::mcast::mcast_nat::add_ipv4_entry(s, ipv4, internal_tgt)?;
+            table::mcast::mcast_nat::add_ipv4_entry(s, ipv4, nat_target)?;
         }
         IpAddr::V6(ipv6) => {
-            table::mcast::mcast_nat::add_ipv6_entry(s, ipv6, internal_tgt)?;
+            table::mcast::mcast_nat::add_ipv6_entry(s, ipv6, nat_target)?;
         }
     }
 
@@ -1470,25 +1470,25 @@ fn update_external_tables(
     if Some(
         new_group_info
             .internal_forwarding
-            .internal_tgt
+            .nat_target
             .ok_or_else(|| {
                 DpdError::Invalid(
                     "external groups must have NAT target".to_string(),
                 )
             })?,
-    ) != group_entry.int_fwding.internal_tgt
+    ) != group_entry.int_fwding.nat_target
     {
         update_nat_tables(
             s,
             group_ip,
-            Some(new_group_info.internal_forwarding.internal_tgt.ok_or_else(
+            Some(new_group_info.internal_forwarding.nat_target.ok_or_else(
                 || {
                     DpdError::Invalid(
                         "external groups must have NAT target".to_string(),
                     )
                 },
             )?),
-            group_entry.int_fwding.internal_tgt,
+            group_entry.int_fwding.nat_target,
         )?;
     }
 
@@ -1594,7 +1594,7 @@ fn delete_group_tables(
         IpAddr::V4(ipv4) => {
             remove_ipv4_source_filters(s, ipv4, group.sources.as_deref())?;
 
-            if group.int_fwding.internal_tgt.is_some() {
+            if group.int_fwding.nat_target.is_some() {
                 table::mcast::mcast_nat::del_ipv4_entry(s, ipv4)?;
             }
 
@@ -1607,7 +1607,7 @@ fn delete_group_tables(
 
             remove_ipv6_source_filters(s, ipv6, group.sources.as_deref())?;
 
-            if group.int_fwding.internal_tgt.is_some() {
+            if group.int_fwding.nat_target.is_some() {
                 table::mcast::mcast_nat::del_ipv6_entry(s, ipv6)?;
             }
 
@@ -1644,10 +1644,10 @@ fn update_replication_tables(
 fn update_nat_tables(
     s: &Switch,
     group_ip: IpAddr,
-    new_internal_tgt: Option<InternalTarget>,
-    old_internal_tgt: Option<InternalTarget>,
+    new_nat_target: Option<NatTarget>,
+    old_nat_target: Option<NatTarget>,
 ) -> DpdResult<()> {
-    match (group_ip, new_internal_tgt, old_internal_tgt) {
+    match (group_ip, new_nat_target, old_nat_target) {
         (IpAddr::V4(ipv4), Some(nat), Some(_)) => {
             // NAT to NAT - update existing entry
             table::mcast::mcast_nat::update_ipv4_entry(s, ipv4, nat)
