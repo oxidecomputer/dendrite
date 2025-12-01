@@ -44,6 +44,7 @@ internal-dns-resolver = { git = "https://github.com/oxidecomputer/omicron", bran
 internal-dns-types = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 ispf = { git = "https://github.com/oxidecomputer/ispf" }
 gateway-client = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
+gateway-types = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 nexus-client = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 omicron-common = { git = "https://github.com/oxidecomputer/omicron", branch= "main" }
 oximeter = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
@@ -51,7 +52,6 @@ oximeter-producer = { git = "https://github.com/oxidecomputer/omicron", branch =
 oximeter-instruments = { git = "https://github.com/oxidecomputer/omicron", branch = "main", default-features = false, features = ["kstat"] }
 oxnet = { version = "0.1.3", default-features = false, features = ["schemars", "serde"] }
 propolis = { git = "https://github.com/oxidecomputer/propolis" }
-sled-agent-client = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 smf = { git = "https://github.com/illumos/smf-rs" }
 softnpu-lib = { git = "https://github.com/oxidecomputer/softnpu" , package = "softnpu" , branch = "main"}
 tofino = { git = "https://github.com/oxidecomputer/tofino", branch = "main" }

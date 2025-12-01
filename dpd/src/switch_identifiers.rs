@@ -69,13 +69,13 @@ pub(crate) async fn fetch_switch_identifiers_loop(
                 BackoffError::transient(DisplayErrorChain::new(&e).to_string())
             })?
             .into_inner();
-        if type_ != gateway_client::types::SpType::Switch {
+        if type_ != gateway_types::component::SpType::Switch {
             return Err(BackoffError::transient(format!(
                 "expected a switch SP, but found one of type: {type_:?}"
             )));
         };
         let sp = client
-            .sp_get(type_, slot)
+            .sp_get(&type_, slot)
             .await
             .map_err(|e| {
                 BackoffError::transient(DisplayErrorChain::new(&e).to_string())
