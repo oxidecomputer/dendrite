@@ -15,6 +15,7 @@ use crate::integration_tests::common::prelude::*;
 use ::common::network::MacAddr;
 use anyhow::anyhow;
 use dpd_client::{Error, types};
+use dpd_types::mcast::ADMIN_LOCAL_PREFIX;
 use futures::TryStreamExt;
 use oxnet::{Ipv4Net, MulticastMac};
 use packet::{Endpoint, eth, geneve, ipv4, ipv6, udp};
@@ -25,7 +26,8 @@ const MULTICAST_TEST_IPV6: Ipv6Addr =
 const MULTICAST_TEST_IPV4_SSM: Ipv4Addr = Ipv4Addr::new(232, 123, 45, 67);
 const MULTICAST_TEST_IPV6_SSM: Ipv6Addr =
     Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0, 0x1111);
-const MULTICAST_NAT_IP: Ipv6Addr = Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 1);
+const MULTICAST_NAT_IP: Ipv6Addr =
+    Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 1);
 const GIMLET_MAC: &str = "11:22:33:44:55:66";
 const GIMLET_IP: Ipv6Addr =
     Ipv6Addr::new(0xfd00, 0x1122, 0x7788, 0x0101, 0, 0, 0, 4);
@@ -121,12 +123,12 @@ async fn create_test_multicast_group(
         }
         IpAddr::V6(ipv6) => {
             if oxnet::Ipv6Net::new_unchecked(ipv6, 128)
-                .is_admin_scoped_multicast()
+                .is_admin_local_multicast()
             {
-                // Admin-scoped IPv6 groups are internal
-                let admin_scoped_ip = types::AdminScopedIpv6(ipv6);
+                // Admin-local IPv6 groups are internal
+                let admin_local_ip = types::AdminScopedIpv6(ipv6);
                 let internal_entry = types::MulticastGroupCreateUnderlayEntry {
-                    group_ip: admin_scoped_ip,
+                    group_ip: admin_local_ip,
                     tag: tag.map(String::from),
                     members,
                 };
@@ -146,7 +148,7 @@ async fn create_test_multicast_group(
                     underlay_group_id: resp.underlay_group_id,
                 }
             } else {
-                // Non-admin-scoped IPv6 groups are external-only and require NAT targets
+                // Non-admin-local IPv6 groups are external-only and require NAT targets
                 let external_entry = types::MulticastGroupCreateExternalEntry {
                     group_ip,
                     tag: tag.map(String::from),
@@ -1154,9 +1156,9 @@ async fn test_api_internal_ipv6_underlay_only() -> TestResult {
 
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
-    // Create admin-scoped IPv6 group with only underlay members
+    // Create admin-local IPv6 group with only underlay members
     let underlay_only_group = types::MulticastGroupCreateUnderlayEntry {
-        group_ip: "ff05::200".parse().unwrap(),
+        group_ip: "ff04::200".parse().unwrap(),
         tag: Some("test_underlay_only".to_string()),
         members: vec![types::MulticastGroupMember {
             port_id: port_id.clone(),
@@ -1169,7 +1171,7 @@ async fn test_api_internal_ipv6_underlay_only() -> TestResult {
         .client
         .multicast_group_create_underlay(&underlay_only_group)
         .await
-        .expect("Should create underlay-only admin-scoped group")
+        .expect("Should create underlay-only admin-local group")
         .into_inner();
 
     // Verify only underlay members
@@ -1186,10 +1188,10 @@ async fn test_api_internal_ipv6_external_only() -> TestResult {
 
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
-    // Create admin-scoped IPv6 group with only external members
+    // Create admin-local IPv6 group with only external members
     let external_members_only_group =
         types::MulticastGroupCreateUnderlayEntry {
-            group_ip: "ff08::300".parse().unwrap(),
+            group_ip: "ff04::300".parse().unwrap(),
             tag: Some("test_external_members_only".to_string()),
             members: vec![types::MulticastGroupMember {
                 port_id: port_id.clone(),
@@ -1292,10 +1294,10 @@ async fn test_api_invalid_combinations() -> TestResult {
     match result {
         Error::ErrorResponse(inner) => {
             assert_eq!(inner.status(), 400);
-            assert!(inner.message.contains("admin-scoped multicast address"));
+            assert!(inner.message.contains("admin-local multicast address"));
         }
         _ => panic!(
-            "Expected ErrorResponse for admin-scoped external group creation"
+            "Expected ErrorResponse for admin-local external group creation"
         ),
     }
 
@@ -3538,8 +3540,8 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     )
     .await;
 
-    // 2b. Admin-scoped IPv6 group to test internal API with custom replication parameters
-    let ipv6 = Ipv6Addr::new(0xff04, 0, 0, 0, 0, 0, 0, 2);
+    // 2b. Admin-local IPv6 group to test internal API with custom replication parameters
+    let ipv6 = Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 2);
 
     let group_entry2b = types::MulticastGroupCreateUnderlayEntry {
         group_ip: types::AdminScopedIpv6(ipv6),
@@ -4249,7 +4251,7 @@ async fn test_ipv6_multicast_scope_validation() {
         "Admin-local scope (ff04::/16) should work with internal API"
     );
 
-    // Site-local scope (ff05::/16) - should work with internal API
+    // Site-local scope (ff05::/16) - should be rejected (only admin-local ff04 allowed)
     let site_local_group = types::MulticastGroupCreateUnderlayEntry {
         group_ip: "ff05::200".parse().unwrap(),
         tag: Some("test_site_local".to_string()),
@@ -4265,11 +4267,11 @@ async fn test_ipv6_multicast_scope_validation() {
         .multicast_group_create_underlay(&site_local_group)
         .await;
     assert!(
-        site_local_result.is_ok(),
-        "Site-local scope (ff05::/16) should work with internal API"
+        site_local_result.is_err(),
+        "Site-local scope (ff05::/16) should be rejected - only admin-local (ff04) allowed"
     );
 
-    // Organization-local scope (ff08::/16) - should work with internal API
+    // Organization-local scope (ff08::/16) - should be rejected (only admin-local ff04 allowed)
     let org_local_group = types::MulticastGroupCreateUnderlayEntry {
         group_ip: "ff08::300".parse().unwrap(),
         tag: Some("test_org_local".to_string()),
@@ -4285,8 +4287,8 @@ async fn test_ipv6_multicast_scope_validation() {
         .multicast_group_create_underlay(&org_local_group)
         .await;
     assert!(
-        org_local_result.is_ok(),
-        "Organization-local scope (ff08::/16) should work with internal API"
+        org_local_result.is_err(),
+        "Organization-local scope (ff08::/16) should be rejected - only admin-local (ff04) allowed"
     );
 
     // Global scope (ff0e::/16) - should be rejected by server-side validation
@@ -4353,29 +4355,17 @@ async fn test_ipv6_multicast_scope_validation() {
     let external_error_msg =
         format!("{:?}", admin_external_result.unwrap_err());
     assert!(
-        external_error_msg.contains("admin-scoped multicast address"),
-        "Error should indicate admin-scoped addresses require internal API"
+        external_error_msg.contains("admin-local multicast address"),
+        "Error should indicate admin-local addresses require internal API"
     );
 
     // Cleanup all created groups
     let admin_local_group = admin_local_result.unwrap().into_inner();
-    let site_local_group = site_local_result.unwrap().into_inner();
-    let org_local_group = org_local_result.unwrap().into_inner();
     let target_group = target_result.into_inner();
 
     switch
         .client
         .multicast_group_delete(&admin_local_group.group_ip.to_ip_addr())
-        .await
-        .ok();
-    switch
-        .client
-        .multicast_group_delete(&site_local_group.group_ip.to_ip_addr())
-        .await
-        .ok();
-    switch
-        .client
-        .multicast_group_delete(&org_local_group.group_ip.to_ip_addr())
         .await
         .ok();
     switch
@@ -4391,9 +4381,12 @@ async fn test_multicast_group_id_recycling() -> TestResult {
     let switch = &*get_switch().await;
 
     // Use admin-scoped IPv6 addresses that get group IDs assigned
-    let group1_ip = IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 10));
-    let group2_ip = IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 11));
-    let group3_ip = IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 12));
+    let group1_ip =
+        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 10));
+    let group2_ip =
+        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 11));
+    let group3_ip =
+        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 12));
 
     // Create first group and capture its group IDs
     let group1 = create_test_multicast_group(
@@ -4486,7 +4479,8 @@ async fn test_multicast_group_id_recycling() -> TestResult {
         "Group2 should be deleted"
     );
 
-    let group4_ip = IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 13));
+    let group4_ip =
+        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 13));
     let group4 = create_test_multicast_group(
         switch,
         group4_ip,
@@ -4515,7 +4509,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     let switch = &*get_switch().await;
 
     let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 100));
+        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 100));
     let external_group_ip =
         IpAddr::V6(Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 100));
 
@@ -4878,7 +4872,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     let switch = &*get_switch().await;
 
     let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 101));
+        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 101));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 100));
 
     // Create internal admin-scoped group (empty, no members)
@@ -5244,7 +5238,7 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
     let switch = &*get_switch().await;
 
     let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 102));
+        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 102));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 102));
 
     // Create internal group with members first
@@ -5398,7 +5392,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
     let switch = &*get_switch().await;
 
     let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 103));
+        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 103));
 
     // Create internal group with initial members
     create_test_multicast_group(
@@ -5478,7 +5472,7 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
     let switch = &*get_switch().await;
 
     let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 104));
+        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 104));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 104));
 
     // Create internal group
@@ -5621,7 +5615,7 @@ async fn test_multicast_rollback_vlan_propagation_consistency() {
     let switch = &*get_switch().await;
 
     let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 105));
+        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 105));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 105));
 
     // Create internal group with members (so bitmap entry get created)
@@ -5857,7 +5851,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
     let switch = &*get_switch().await;
 
     let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 106));
+        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 106));
 
     // Create internal group with initial members
     create_test_multicast_group(
@@ -5956,7 +5950,7 @@ async fn test_multicast_rollback_table_operation_failure() {
     let switch = &*get_switch().await;
 
     let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 107));
+        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 107));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 107));
 
     // Create internal group first
@@ -6091,7 +6085,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
     let switch = &*get_switch().await;
 
     let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 200));
+        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 200));
 
     // Create an internal/underlay group
     let _created_group = create_test_multicast_group(

@@ -56,6 +56,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (2, MCAST_DOCS_ADMIN_LOCAL),
     (1, INITIAL),
 ]);
 
@@ -1431,7 +1432,7 @@ pub trait DpdApi {
     /**
      * Create an external-only multicast group configuration.
      *
-     * External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast
+     * External-only groups are used for IPv4 and non-admin-local IPv6 multicast
      * traffic that doesn't require replication infrastructure. These groups use
      * simple forwarding tables and require a NAT target.
      */
@@ -1450,9 +1451,10 @@ pub trait DpdApi {
     /**
      * Create an underlay (internal) multicast group configuration.
      *
-     * Underlay groups are used for admin-scoped IPv6 multicast traffic that
-     * requires replication infrastructure. These groups support both external
-     * and underlay members with full replication capabilities.
+     * Underlay groups are used for admin-local IPv6 multicast traffic
+     * (ff04::/16, as defined in RFC 7346 and RFC 4291) that requires
+     * replication infrastructure. These groups support both external and
+     * underlay members with full replication capabilities.
      */
     #[endpoint {
         method = POST,
@@ -1502,10 +1504,10 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError>;
 
     /**
-     * Get an underlay (internal) multicast group configuration by admin-scoped
+     * Get an underlay (internal) multicast group configuration by admin-local
      * IPv6 address.
      *
-     * Underlay groups handle admin-scoped IPv6 multicast traffic with
+     * Underlay groups handle admin-local IPv6 multicast traffic (ff04::/16) with
      * replication infrastructure for external and underlay members.
      */
     #[endpoint {
@@ -1521,8 +1523,8 @@ pub trait DpdApi {
      * Update an underlay (internal) multicast group configuration for a given
      * group IP address.
      *
-     * Underlay groups are used for admin-scoped IPv6 multicast traffic that
-     * requires replication infrastructure with external and underlay members.
+     * Underlay groups are used for admin-local IPv6 multicast traffic (ff04::/16)
+     * that requires replication infrastructure with external and underlay members.
      */
     #[endpoint {
         method = PUT,
@@ -1537,7 +1539,7 @@ pub trait DpdApi {
     /**
      * Update an external-only multicast group configuration for a given group IP address.
      *
-     * External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast
+     * External-only groups are used for IPv4 and non-admin-local IPv6 multicast
      * traffic that doesn't require replication infrastructure.
      */
     #[endpoint {
@@ -2270,8 +2272,11 @@ pub struct MulticastGroupIpParam {
     pub group_ip: IpAddr,
 }
 
-/// Used to identify an underlay (internal) multicast group by admin-scoped IPv6
-/// address.
+/// Used to identify an underlay (internal) multicast group by admin-local IPv6
+/// address (ff04::/16, as defined in [RFC 7346] and [RFC 4291]).
+///
+/// [RFC 7346]: https://www.rfc-editor.org/rfc/rfc7346.html
+/// [RFC 4291]: https://www.rfc-editor.org/rfc/rfc4291.html
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct MulticastUnderlayGroupIpParam {
     pub group_ip: mcast::AdminScopedIpv6,

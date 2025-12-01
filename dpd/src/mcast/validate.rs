@@ -4,9 +4,21 @@
 //
 // Copyright 2025 Oxide Computer Company
 
+//! Multicast address validation.
+//!
+//! Reserved multicast addresses are defined by IANA:
+//! <https://www.iana.org/assignments/multicast-addresses/multicast-addresses.xhtml>.
+
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use common::nat::NatTarget;
+use omicron_common::address::{
+    IPV4_ADMIN_SCOPED_MULTICAST_SUBNET, IPV4_GLOP_MULTICAST_SUBNET,
+    IPV4_LINK_LOCAL_MULTICAST_SUBNET, IPV4_SPECIFIC_RESERVED_MULTICAST_ADDRS,
+    IPV4_SSM_SUBNET, IPV6_INTERFACE_LOCAL_MULTICAST_SUBNET,
+    IPV6_LINK_LOCAL_MULTICAST_SUBNET, IPV6_RESERVED_SCOPE_MULTICAST_SUBNET,
+    IPV6_SSM_SUBNET,
+};
 use oxnet::{Ipv4Net, Ipv6Net};
 
 use super::IpSrc;
@@ -46,10 +58,10 @@ pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
 
     let internal_nat_ip = Ipv6Net::new_unchecked(nat_target.internal_ip, 128);
 
-    if !internal_nat_ip.is_admin_scoped_multicast() {
+    if !internal_nat_ip.is_admin_local_multicast() {
         return Err(DpdError::Invalid(format!(
             "NAT target internal IP address {} is not a valid \
-             site/admin-local or org-scoped multicast address",
+             admin-local multicast address (must be ff04::/16)",
             nat_target.internal_ip
         )));
     }
@@ -60,16 +72,8 @@ pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
 /// Check if an IP address is a Source-Specific Multicast (SSM) address.
 pub(crate) fn is_ssm(addr: IpAddr) -> bool {
     match addr {
-        IpAddr::V4(ipv4) => {
-            let subnet = Ipv4Net::new_unchecked(Ipv4Addr::new(232, 0, 0, 0), 8);
-            subnet.contains(ipv4)
-        }
-        // Check for Source-Specific Multicast (ff3x::/32)
-        // In IPv6 multicast, the second nibble (flag field) indicates SSM when set to 3
-        IpAddr::V6(ipv6) => {
-            let flag_field = (ipv6.octets()[1] & 0xF0) >> 4;
-            flag_field == 3
-        }
+        IpAddr::V4(ipv4) => IPV4_SSM_SUBNET.contains(ipv4),
+        IpAddr::V6(ipv6) => IPV6_SSM_SUBNET.contains(ipv6),
     }
 }
 
@@ -102,17 +106,13 @@ fn validate_ipv4_multicast(
         )));
     }
 
-    // Define reserved IPv4 multicast subnets
+    // Check reserved subnets
     let reserved_subnets = [
-        // Local network control block (link-local)
-        Ipv4Net::new_unchecked(Ipv4Addr::new(224, 0, 0, 0), 24), // 224.0.0.0/24
-        // GLOP addressing
-        Ipv4Net::new_unchecked(Ipv4Addr::new(233, 0, 0, 0), 8), // 233.0.0.0/8
-        // Administrative scoped addresses
-        Ipv4Net::new_unchecked(Ipv4Addr::new(239, 0, 0, 0), 8), // 239.0.0.0/8 (administratively scoped)
+        IPV4_LINK_LOCAL_MULTICAST_SUBNET,
+        IPV4_GLOP_MULTICAST_SUBNET,
+        IPV4_ADMIN_SCOPED_MULTICAST_SUBNET,
     ];
 
-    // Check reserved subnets
     for subnet in &reserved_subnets {
         if subnet.contains(addr) {
             return Err(DpdError::Invalid(format!(
@@ -121,14 +121,8 @@ fn validate_ipv4_multicast(
         }
     }
 
-    // Check specific reserved addresses that may not fall within entire subnets
-    let specific_reserved = [
-        Ipv4Addr::new(224, 0, 1, 1), // NTP (Network Time Protocol)
-        Ipv4Addr::new(224, 0, 1, 129), // Cisco Auto-RP-Announce
-        Ipv4Addr::new(224, 0, 1, 130), // Cisco Auto-RP-Discovery
-    ];
-
-    if specific_reserved.contains(&addr) {
+    // Check specific reserved addresses
+    if IPV4_SPECIFIC_RESERVED_MULTICAST_ADDRS.contains(&addr) {
         return Err(DpdError::Invalid(format!(
             "{addr} is a specifically reserved multicast address",
         )));
@@ -165,17 +159,13 @@ fn validate_ipv6_multicast(
         )));
     }
 
-    // Define reserved IPv6 multicast subnets
+    // Check reserved subnets
     let reserved_subnets = [
-        // Link-local scope
-        Ipv6Net::new_unchecked(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0), 16), // ff02::/16
-        // Interface-local scope
-        Ipv6Net::new_unchecked(Ipv6Addr::new(0xff01, 0, 0, 0, 0, 0, 0, 0), 16), // ff01::/16
-        // Node-local scope (deprecated)
-        Ipv6Net::new_unchecked(Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 0), 16), // ff00::/16
+        IPV6_LINK_LOCAL_MULTICAST_SUBNET,
+        IPV6_INTERFACE_LOCAL_MULTICAST_SUBNET,
+        IPV6_RESERVED_SCOPE_MULTICAST_SUBNET,
     ];
 
-    // Check reserved subnets
     for subnet in &reserved_subnets {
         if subnet.contains(addr) {
             return Err(DpdError::Invalid(format!(
@@ -187,13 +177,13 @@ fn validate_ipv6_multicast(
     Ok(())
 }
 
-/// Validates that IPv6 addresses are not admin-scoped for external group creation.
-pub(crate) fn validate_not_admin_scoped_ipv6(addr: IpAddr) -> DpdResult<()> {
+/// Validates that IPv6 addresses are not admin-local for external group creation.
+pub(crate) fn validate_not_admin_local_ipv6(addr: IpAddr) -> DpdResult<()> {
     if let IpAddr::V6(ipv6) = addr
-        && oxnet::Ipv6Net::new_unchecked(ipv6, 128).is_admin_scoped_multicast()
+        && oxnet::Ipv6Net::new_unchecked(ipv6, 128).is_admin_local_multicast()
     {
         return Err(DpdError::Invalid(format!(
-            "{addr} is an admin-scoped multicast address and \
+            "{addr} is an admin-local multicast address and \
                  must be created via the internal multicast API",
         )));
     }
@@ -289,6 +279,7 @@ fn validate_ipv4_source_subnet(subnet: Ipv4Net) -> DpdResult<()> {
 mod tests {
     use super::*;
     use common::{nat::Vni, network::MacAddr};
+    use dpd_types::mcast::ADMIN_LOCAL_PREFIX;
     use oxnet::Ipv4Net;
 
     use std::str::FromStr;
@@ -590,8 +581,17 @@ mod tests {
         assert!(validate_nat_target(ucast_nat_target).is_err());
 
         let mcast_nat_target = NatTarget {
-            // org-scoped multicast
-            internal_ip: Ipv6Addr::new(0xff08, 0, 0, 0, 0, 0, 0, 0x1234),
+            // admin-local multicast (ff04::/16)
+            internal_ip: Ipv6Addr::new(
+                ADMIN_LOCAL_PREFIX,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0x1234,
+            ),
             // Multicast MAC
             inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x00, 0x00, 0x01),
             vni: Vni::new(100).unwrap(),

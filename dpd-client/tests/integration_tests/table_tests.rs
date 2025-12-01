@@ -18,6 +18,7 @@ use crate::integration_tests::common::prelude::*;
 use dpd_client::ClientInfo;
 use dpd_client::ResponseValue;
 use dpd_client::types;
+use dpd_types::mcast::ADMIN_LOCAL_PREFIX;
 
 // The expected sizes of each table.  The values are copied from constants.p4.
 //
@@ -46,7 +47,7 @@ const IPV6_NAT_TABLE_SIZE: usize = 1024; // nat routing table
 const IPV4_ARP_SIZE: usize = 512; // arp cache
 const IPV6_NEIGHBOR_SIZE: usize = 512; // ipv6 neighbor cache
 /// The size of the multicast table related to replication on
-/// admin-scoped (internal) multicast groups.
+/// admin-local (internal) multicast groups.
 const MULTICAST_TABLE_SIZE: usize = 1024;
 const MCAST_TAG: &str = "mcast_table_test"; // multicast group tag
 
@@ -73,16 +74,11 @@ fn gen_ipv6_cidr(idx: usize) -> Ipv6Net {
     Ipv6Net::new(gen_ipv6_addr(idx), 128).unwrap()
 }
 
-// Generates valid IPv6 multicast addresses that are admin-scoped.
+// Generates valid IPv6 multicast addresses that are admin-local (scope 4).
 fn gen_ipv6_multicast_addr(idx: usize) -> Ipv6Addr {
-    // Use admin-scoped multicast addresses (ff04::/16, ff05::/16, ff08::/16)
+    // Use admin-local multicast addresses (ff04::/16)
     // This ensures they will be created as internal groups
-    let scope = match idx % 3 {
-        0 => 0xFF04, // admin-scoped
-        1 => 0xFF05, // admin-scoped
-        _ => 0xFF08, // admin-scoped
-    };
-    Ipv6Addr::new(scope, 0, 0, 0, 0, 0, 0, (1000 + idx) as u16)
+    Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, (1000 + idx) as u16)
 }
 
 // For each table we want to test, we define functions to insert, delete, and
@@ -295,7 +291,7 @@ impl TableTest for types::Ipv4Nat {
         let external_ip = Ipv4Addr::new(192, 168, 0, 1);
 
         let tgt = types::NatTarget {
-            internal_ip: Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 1),
+            internal_ip: Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 1),
             inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             vni: 0.into(),
         };
@@ -469,10 +465,10 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
         let (port_id1, link_id1) = switch.link_id(PhysPort(11)).unwrap();
         let (port_id2, link_id2) = switch.link_id(PhysPort(12)).unwrap();
 
-        // Only IPv6 admin-scoped multicast addresses for replication table testing
+        // Only IPv6 admin-local multicast addresses for replication table testing
         let group_ip = gen_ipv6_multicast_addr(idx);
 
-        // Admin-scoped IPv6 groups are internal with replication info and members
+        // Admin-local IPv6 groups are internal with replication info and members
         let internal_entry = types::MulticastGroupCreateUnderlayEntry {
             group_ip: types::AdminScopedIpv6(group_ip),
             tag: Some(MCAST_TAG.to_string()),

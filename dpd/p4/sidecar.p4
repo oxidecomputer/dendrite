@@ -1813,21 +1813,16 @@ control MulticastEgress (
 
 		const entries = {
 			// Admin-local (scope value 4): Matches IPv6 multicast addresses
-			// with scope ff04::/16
+			// with scope ff04::/16. This is the only multicast scope used for
+			// internal/underlay traffic (RFC 7346, RFC 4291).
 			( true, IPV6_ADMIN_LOCAL_PATTERN &&& IPV6_SCOPE_MASK, true, true, 2 ) : NoAction;
-			// Site-local (scope value 5): Matches IPv6 multicast addresses with
-			// scope ff05::/16
-			( true, IPV6_SITE_LOCAL_PATTERN &&& IPV6_SCOPE_MASK, true, true, 2 ) : NoAction;
-			// Organization-local (scope value 8): Matches IPv6 multicast
-			// addresses with scope ff08::/16
-			( true, IPV6_ORG_SCOPE_PATTERN &&& IPV6_SCOPE_MASK, true, true, 2 ) : NoAction;
 			// ULA (Unique Local Address): Matches IPv6 addresses that start
 			// with fc00::/7. This is not a multicast address, but it is used
 			// for other internal routing purposes.
  			( true, IPV6_ULA_PATTERN &&& IPV6_ULA_MASK, true, true, 2 ) : NoAction;
 		}
 
-		const size = 4;
+		const size = 2;
 	}
 
 	table tbl_decap_ports {

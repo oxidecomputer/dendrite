@@ -37,20 +37,24 @@
 //! The multicast implementation uses a bifurcated design that separates
 //! external (customer) and (internal) underlay traffic:
 //!
-//! 1. External-only groups (IPv4 and non-admin-scoped IPv6):
+//! 1. External-only groups (IPv4 and non-admin-local IPv6):
 //!    - Created from API control plane IPs for customer traffic
 //!    - Handle customer traffic to/from outside the rack
 //!    - Use the external multicast API (/multicast/external-groups)
 //!    - Must have NAT targets pointing to internal groups for proper forwarding
 //!
-//! 2. Internal groups (admin-scoped IPv6 multicast):
-//!    - Admin-scoped = admin-local, site-local, or organization-local scope (RFC 7346, RFC 4291)
+//! 2. Internal groups (admin-local IPv6 multicast):
+//!    - Admin-local = scope 4 (ff04::/16) as defined in
+//!      [RFC 7346] and [RFC 4291]
 //!    - Geneve encapsulated multicast traffic (NAT targets of external-only groups)
 //!    - Use the internal multicast API (/multicast/underlay-groups)
 //!    - Can replicate to:
 //!      a) External group members (customer traffic)
 //!      b) Underlay-only members (infrastructure traffic)
 //!      c) Both external and underlay members (bifurcated replication)
+//!
+//! [RFC 7346]: https://www.rfc-editor.org/rfc/rfc7346.html
+//! [RFC 4291]: https://www.rfc-editor.org/rfc/rfc4291.html
 
 use std::{
     collections::{BTreeMap, HashSet},
@@ -86,7 +90,7 @@ mod validate;
 use rollback::{GroupCreateRollbackContext, GroupUpdateRollbackContext};
 use validate::{
     validate_multicast_address, validate_nat_target,
-    validate_not_admin_scoped_ipv6,
+    validate_not_admin_local_ipv6,
 };
 
 #[derive(Debug)]
@@ -220,8 +224,8 @@ pub struct MulticastGroupData {
     /// Stack of available group IDs for O(1) allocation.
     /// Pre-populated with all IDs from GENERATOR_START to u16::MAX-1.
     free_group_ids: Arc<Mutex<Vec<MulticastGroupId>>>,
-    /// 1:1 mapping from admin-scoped group IP to external group that uses it as NAT
-    /// target (admin_scoped_ip -> external_group_ip)
+    /// 1:1 mapping from admin-local group IP to external group that uses it as NAT
+    /// target (admin_local_ip -> external_group_ip)
     nat_target_refs: BTreeMap<AdminScopedIpv6, IpAddr>,
 }
 
@@ -263,7 +267,7 @@ impl MulticastGroupData {
         Ok(ScopedIdInner(id, Arc::downgrade(&self.free_group_ids)).into())
     }
 
-    /// Add 1:1 forwarding reference from admin-scoped IP to external group's IP.
+    /// Add 1:1 forwarding reference from admin-local IP to external group's IP.
     fn add_forwarding_refs(
         &mut self,
         external_group_ip: IpAddr,
@@ -364,8 +368,8 @@ pub(crate) fn add_group_external(
         })
         .map_err(|e| rollback_ctx.rollback_and_return_error(e))?;
 
-    // Validate the admin-scoped IP early to avoid partial state
-    let admin_scoped_ip = AdminScopedIpv6::new(nat_target.internal_ip)?;
+    // Validate the admin-local IP early to avoid partial state
+    let admin_local_ip = AdminScopedIpv6::new(nat_target.internal_ip)?;
 
     let group = MulticastGroup {
         external_scoped_group: scoped_external_id,
@@ -380,7 +384,7 @@ pub(crate) fn add_group_external(
     };
 
     mcast.groups.insert(group_ip, group.clone());
-    mcast.add_forwarding_refs(group_ip, admin_scoped_ip);
+    mcast.add_forwarding_refs(group_ip, admin_local_ip);
 
     Ok(group.to_external_response(group_ip))
 }
@@ -521,13 +525,13 @@ pub(crate) fn del_group(s: &Switch, group_ip: IpAddr) -> DpdResult<()> {
     Ok(())
 }
 
-/// Get an internal multicast group configuration by admin-scoped IPv6 address.
+/// Get an internal multicast group configuration by admin-local IPv6 address.
 pub(crate) fn get_group_internal(
     s: &Switch,
-    admin_scoped: AdminScopedIpv6,
+    admin_local: AdminScopedIpv6,
 ) -> DpdResult<MulticastGroupUnderlayResponse> {
     let mcast = s.mcast.lock().unwrap();
-    let group_ip = IpAddr::V6(admin_scoped.into());
+    let group_ip = IpAddr::V6(admin_local.into());
 
     let group = mcast.groups.get(&group_ip).ok_or_else(|| {
         DpdError::Missing(format!(
@@ -535,7 +539,7 @@ pub(crate) fn get_group_internal(
         ))
     })?;
 
-    Ok(group.to_underlay_response(admin_scoped))
+    Ok(group.to_underlay_response(admin_local))
 }
 
 /// Get a multicast group configuration.
@@ -1099,7 +1103,7 @@ fn validate_external_group_creation(
 ) -> DpdResult<()> {
     validate_group_exists(mcast, group_ip)?;
     validate_multicast_address(group_ip, group_info.sources.as_deref())?;
-    validate_not_admin_scoped_ipv6(group_ip)?;
+    validate_not_admin_local_ipv6(group_ip)?;
     Ok(())
 }
 
