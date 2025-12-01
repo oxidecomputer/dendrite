@@ -7,7 +7,6 @@
 //! Client library for the Dendrite data plane daemon.
 
 use common::counters;
-use common::nat;
 use common::network;
 use common::ports;
 pub use common::ROLLBACK_FAILURE_ERROR_CODE;
