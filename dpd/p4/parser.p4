@@ -23,10 +23,10 @@ parser IngressParser(
 	}
 
 	state meta_init {
+		meta.dropped = false;
 		meta.ipv4_checksum_err = false;
 		meta.is_switch_address = false;
 		meta.is_mcast = false;
-		meta.is_valid = true;
 		meta.allow_source_mcast = false;
 		meta.is_link_local_mcastv6 = false;
 		meta.service_routed = false;
@@ -205,8 +205,8 @@ parser IngressParser(
 	}
 
 	state invalidate_ttl {
-		meta.is_valid = false;
 		meta.drop_reason = DROP_IPV4_TTL_INVALID;
+		meta.dropped = true;
 
 		// We don't reject here because we want to update our stats and reason
 		transition accept;
@@ -214,8 +214,8 @@ parser IngressParser(
 
 	state invalidate_ipv4_mcast {
 		meta.is_mcast = true;
-		meta.is_valid = false;
 		meta.drop_reason = DROP_MULTICAST_INVALID_MAC;
+		meta.dropped = true;
 
 		// We don't reject here because we want to update our stats and reason
 		transition accept;
@@ -251,8 +251,8 @@ parser IngressParser(
 
 	state drop_interface_local_mcast {
 		meta.is_mcast = true;
-		meta.is_valid = false;
 		meta.drop_reason = DROP_MULTICAST_TO_LOCAL_INTERFACE;
+		meta.dropped = true;
 
 		// We don't reject here because we want to update our stats and reason
 		transition accept;
@@ -305,8 +305,8 @@ parser IngressParser(
 	}
 
 	state invalidate_hop_limit {
-		meta.is_valid = false;
 		meta.drop_reason = DROP_IPV6_TTL_INVALID;
+		meta.dropped = true;
 
 		// We don't reject here because we want to update our stats and reason
 		transition accept;
@@ -438,13 +438,13 @@ parser IngressParser(
 
 	state geneve_malformed {
 		meta.drop_reason = DROP_GENEVE_OPTION_MALFORMED;
-		meta.is_valid = false;
+		meta.dropped = true;
 		transition accept;
 	}
 
 	state geneve_bad_size {
 		meta.drop_reason = DROP_GENEVE_OPTIONS_TOO_LONG;
-		meta.is_valid = false;
+		meta.dropped = true;
 		transition accept;
 	}
 
@@ -452,7 +452,7 @@ parser IngressParser(
 	// once we hit one we don't understand, for forward-compatibility.
 	state geneve_unknown {
 		meta.drop_reason = DROP_GENEVE_OPTION_UNKNOWN;
-		meta.is_valid = false;
+		meta.dropped = true;
 		transition accept;
 	}
 
