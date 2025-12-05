@@ -121,25 +121,11 @@ control Filter(
 		ipv6_ctr.count();
 	}
 
-	action drop_with_reason(bit<8> reason) {
-		meta.is_valid = false;
+	action drop_mcast_bad_mac() {
 		ig_dprsr_md.drop_ctl = 1;
-		meta.drop_reason = reason;
-	}
-
-	action drop_mcast_with_reason(bit<8> reason) {
+		meta.drop_reason = DROP_MULTICAST_INVALID_MAC;
 		meta.is_mcast = true;
-		meta.is_valid = false;
 		meta.is_link_local_mcastv6 = false;
-		ig_dprsr_md.drop_ctl = 1;
-		meta.drop_reason = reason;
-	}
-
-	action drop_mcast() {
-		meta.is_mcast = true;
-		meta.is_valid = false;
-		meta.is_link_local_mcastv6 = false;
-		ig_dprsr_md.drop_ctl = 1;
 	}
 
 	action claimv4() {
@@ -180,11 +166,7 @@ control Filter(
 		if (hdr.arp.isValid()) {
 			switch_ipv4_addr.apply();
 		} else if (hdr.ipv4.isValid()) {
-			if (meta.is_mcast && !meta.is_valid) {
-				drop_mcast();
-				drop_mcast_ctr.count(ig_intr_md.ingress_port);
-				return;
-			} else if (meta.is_mcast && meta.is_valid) {
+			if (meta.is_mcast) {
 				// IPv4 Multicast Address Validation (RFC 1112, RFC 7042)
 				//
 				// We've already validated the first 3 bytes of the MAC in the parser.
@@ -193,7 +175,8 @@ control Filter(
 				// First, check that 4th byte of the MAC address is the lower 7
 				// bits of the IPv4 address.
 				bit<8> mac_byte4 = hdr.ethernet.dst_mac[23:16];
-				bit<7> ipv4_lower7 = hdr.ipv4.dst_addr[22:16]; // The lower 7 bits of the first byte
+				// The lower 7 bits of the first byte
+				bit<7> ipv4_lower7 = hdr.ipv4.dst_addr[22:16];
 
 				// Check 5th byte of MAC against 3rd octet of IPv4 address.
 				bit<8> mac_byte5 = hdr.ethernet.dst_mac[15:8];
@@ -207,22 +190,15 @@ control Filter(
 				if (mac_byte4 != (bit<8>)ipv4_lower7 ||
 					mac_byte5 != ipv4_byte3 ||
 					mac_byte6 != ipv4_byte4) {
-					drop_mcast_with_reason(DROP_MULTICAST_INVALID_MAC);
+					drop_mcast_bad_mac();
 					drop_mcast_ctr.count(ig_intr_md.ingress_port);
 					return;
 				}
-			} else if (!meta.is_valid) {
-				drop_with_reason(meta.drop_reason);
-				return;
 			} else {
 				switch_ipv4_addr.apply();
 			}
 		} else if (hdr.ipv6.isValid()) {
-			if (meta.is_mcast && !meta.is_valid) {
-				drop_mcast();
-				drop_mcast_ctr.count(ig_intr_md.ingress_port);
-				return;
-			} else if (meta.is_mcast && meta.is_valid) {
+			if (meta.is_mcast) {
 				// Validate the IPv6 multicast MAC address format (RFC 2464,
 				// RFC 7042).
 				//
@@ -235,7 +211,7 @@ control Filter(
 				// registers on the device.
 				if (hdr.ethernet.dst_mac[47:40] != 8w0x33 ||
 					hdr.ethernet.dst_mac[39:32] != 8w0x33) {
-						drop_mcast_with_reason(DROP_MULTICAST_INVALID_MAC);
+						drop_mcast_bad_mac();
 						drop_mcast_ctr.count(ig_intr_md.ingress_port);
 						return;
 				}
@@ -249,7 +225,7 @@ control Filter(
 					hdr.ethernet.dst_mac[23:16] != hdr.ipv6.dst_addr[23:16] ||
 					hdr.ethernet.dst_mac[15:8] != hdr.ipv6.dst_addr[15:8] ||
 					hdr.ethernet.dst_mac[7:0] != hdr.ipv6.dst_addr[7:0]) {
-						drop_mcast_with_reason(DROP_MULTICAST_INVALID_MAC);
+						drop_mcast_bad_mac();
 						drop_mcast_ctr.count(ig_intr_md.ingress_port);
 						return;
 				}
@@ -684,13 +660,13 @@ control NatIngress (
 
 		// Note: This whole conditional could be simpler as a set of */
 		// `const entries`, but apply (on tables) cannot be called from actions
-		if (hdr.ipv4.isValid() && meta.is_valid) {
+		if (hdr.ipv4.isValid()) {
 			if (meta.is_mcast) {
 				ingress_ipv4_mcast.apply();
 			} else {
 				ingress_ipv4.apply();
 			}
-		} else if (hdr.ipv6.isValid() && meta.is_valid) {
+		} else if (hdr.ipv6.isValid()) {
 			// If this is a multicast packet and not a link-local multicast,
 			// we need to check the multicast table
 			if (meta.is_mcast && !meta.is_link_local_mcastv6) {
@@ -1992,34 +1968,40 @@ control Ingress(
 		ingress_ctr.count(ig_intr_md.ingress_port);
 		packet_ctr.count(meta.pkt_type);
 
+		// Any packet that triggered an error in the parser should be
+		// dropped with no further processing.
+		if (!meta.is_valid) {
+			ig_dprsr_md.drop_ctl = 1;
+			drop_port_ctr.count(ig_intr_md.ingress_port);
+			drop_reason_ctr.count(meta.drop_reason);
+			return;
+		}
+
 		// Always apply the filter first, as it may drop packets
 		// that are not valid for the rest of the pipeline or tag metadata
 		// accordingly.
-		//
-		// Additionally, it sets the `meta.is_valid` flag to indicate
-		// whether the packet is valid for further processing.
 		filter.apply(hdr, meta, ig_dprsr_md, ig_intr_md);
 
-		if (meta.is_valid && !hdr.geneve.isValid()) {
+		if (ig_dprsr_md.drop_ctl == 0 && !hdr.geneve.isValid()) {
 			nat_ingress.apply(hdr, meta, ig_intr_md);
 		}
 
-		if (meta.is_valid && (!meta.is_mcast || meta.is_link_local_mcastv6)) {
+		if (ig_dprsr_md.drop_ctl == 0 && (!meta.is_mcast || meta.is_link_local_mcastv6)) {
 			services.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
 		}
 
 		// We perform NAT ingress before multicast replication to ensure that
 		// the NAT'd outer address is used for multicast replication to inbound
 		// groups
-		if (meta.is_valid && meta.is_mcast && !meta.is_link_local_mcastv6) {
+		if (ig_dprsr_md.drop_ctl == 0 && meta.is_mcast && !meta.is_link_local_mcastv6) {
 			mcast_ingress.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
 		}
 
-		if (meta.is_valid && !meta.service_routed && ig_dprsr_md.drop_ctl == 0) {
-			if (hdr.geneve.isValid()) {
-				nat_egress.apply(hdr, meta, ig_dprsr_md);
+		if (ig_dprsr_md.drop_ctl == 0 && !meta.service_routed) {
+			nat_egress.apply(hdr, meta, ig_dprsr_md);
+			if (ig_dprsr_md.drop_ctl == 0) {
+				l3_router.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
 			}
-			l3_router.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
 		}
 
 		if (meta.drop_reason != 0) {
