@@ -2,11 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use common::nat::NatTarget;
+use common::network::NatTarget;
 use oxnet::{Ipv4Net, Ipv6Net};
 
 use super::IpSrc;
@@ -288,7 +288,7 @@ fn validate_ipv4_source_subnet(subnet: Ipv4Net) -> DpdResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::{nat::Vni, network::MacAddr};
+    use common::network::{MacAddr, Vni};
     use oxnet::Ipv4Net;
 
     use std::str::FromStr;

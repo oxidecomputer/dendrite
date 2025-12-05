@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use slog::{debug, error, trace};
 use std::collections::BTreeMap;
@@ -13,7 +13,8 @@ use std::ops::Bound;
 use crate::Switch;
 use crate::table::nat;
 use crate::types::{DpdError, DpdResult};
-use common::nat::{Ipv4Nat, Ipv6Nat, NatTarget};
+use common::nat::{Ipv4Nat, Ipv6Nat};
+use common::network::NatTarget;
 
 trait PortRange {
     fn low(&self) -> u16;
@@ -131,7 +132,7 @@ fn find_space<T: PortRange>(
 #[test]
 fn test_mapping() {
     use super::MacAddr;
-    use common::nat::Vni;
+    use common::network::Vni;
 
     let dummy_target = NatTarget {
         internal_ip: Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0),

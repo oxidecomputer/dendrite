@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 const bit<16> L2_ISOLATED_FLAG = 0x8000;
 
@@ -18,6 +18,8 @@ const int SWITCH_IPV4_ADDRS_SIZE    = 512;  // ipv4 addrs assigned to our ports
 const int SWITCH_IPV6_ADDRS_SIZE    = 512;  // ipv6 addrs assigned to our ports
 const int IPV4_MULTICAST_TABLE_SIZE = 1024; // multicast routing table(s) for IPv4
 const int IPV6_MULTICAST_TABLE_SIZE = 1024; // multicast routing table(s) for IPv6
+const int ATTACHED_SUBNETS_V4_SIZE  = 512;  // external subnets mapped to instances
+const int ATTACHED_SUBNETS_V6_SIZE  = 512;  // external subnets mapped to instances
 
 const bit<8> SC_FWD_FROM_USERSPACE  = 0x00;
 const bit<8> SC_FWD_TO_USERSPACE    = 0x01;

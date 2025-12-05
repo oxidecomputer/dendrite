@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 #if __TARGET_TOFINO__ == 2
 #include <t2na.p4>
@@ -135,6 +135,7 @@ control Filter(
 		ipv6_ctr.count();
 	}
 
+
 	// Table of the IPv4 addresses assigned to ports on the switch.
 	table switch_ipv4_addr {
 		key = {
@@ -227,7 +228,7 @@ control Filter(
 				}
 			}
 
-			if (!meta.is_mcast || meta.is_link_local_mcastv6) {
+			if (!meta.is_mcast || meta.is_link_local_mcastv6 && !meta.encap_needed) {
 				switch_ipv6_addr.apply();
 			}
 		}
@@ -401,7 +402,7 @@ control Services(
 		 * as the restructuring is likely to have knock-on effects in
 		 * dpd and sidecar-lite.
 		 */
-		if (!meta.is_switch_address && meta.nat_ingress_port && !meta.nat_ingress_hit) {
+		if (!meta.is_switch_address && meta.nat_ingress_port && !meta.encap_needed) {
 			// For packets that were not marked for NAT ingress, but which
 			// arrived on an uplink port that only allows in traffic that
 			// is meant to be NAT encapsulated.
@@ -413,6 +414,54 @@ control Services(
 		}
 		else {
 			service.apply();
+		}
+	}
+}
+
+control AttachedSubnetIngress (
+	in sidecar_headers_t hdr,
+	inout sidecar_ingress_meta_t meta
+) {
+	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) attached_subnets_v4_ctr;
+	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) attached_subnets_v6_ctr;
+
+	action forward_to_v4(ipv6_addr_t target, mac_addr_t inner_mac, geneve_vni_t vni) {
+		meta.encap_needed = true;
+		meta.nat_ingress_tgt = target;
+		meta.nat_inner_mac = inner_mac;
+		meta.nat_geneve_vni = vni;
+		attached_subnets_v4_ctr.count();
+	}
+
+	table attached_subnets_v4 {
+		key             = { hdr.ipv4.dst_addr: lpm; }
+		actions         = { forward_to_v4 ; }
+
+		const size      = ATTACHED_SUBNETS_V4_SIZE + 1;
+		counters	= attached_subnets_v4_ctr;
+	}
+
+	action forward_to_v6(ipv6_addr_t target, mac_addr_t inner_mac, geneve_vni_t vni) {
+		meta.encap_needed = true;
+		meta.nat_ingress_tgt = target;
+		meta.nat_inner_mac = inner_mac;
+		meta.nat_geneve_vni = vni;
+		attached_subnets_v6_ctr.count();
+	}
+
+	table attached_subnets_v6 {
+		key             = { hdr.ipv6.dst_addr: lpm; }
+		actions         = { forward_to_v6 ; }
+
+		const size      = ATTACHED_SUBNETS_V6_SIZE + 1;
+		counters	= attached_subnets_v6_ctr;
+	}
+
+	apply {
+		if (hdr.ipv4.isValid()) {
+			attached_subnets_v4.apply();
+		} else if (hdr.ipv6.isValid()) {
+			attached_subnets_v6.apply();
 		}
 	}
 }
@@ -503,6 +552,7 @@ control NatIngress (
 		meta.nat_ingress_tgt = target;
 		meta.nat_inner_mac = inner_mac;
 		meta.nat_geneve_vni = vni;
+		meta.encap_needed = true;
 
 		ipv4_ingress_ctr.count();
 	}
@@ -523,6 +573,7 @@ control NatIngress (
 		meta.nat_ingress_tgt = target;
 		meta.nat_inner_mac = inner_mac;
 		meta.nat_geneve_vni = vni;
+		meta.encap_needed = true;
 
 		ipv6_ingress_ctr.count();
 	}
@@ -556,6 +607,7 @@ control NatIngress (
 		meta.nat_ingress_tgt = target;
 		meta.nat_inner_mac = inner_mac;
 		meta.nat_geneve_vni = vni;
+		meta.encap_needed = true;
 		mcast_ipv4_ingress_ctr.count();
 	}
 
@@ -572,6 +624,7 @@ control NatIngress (
 		meta.nat_ingress_tgt = target;
 		meta.nat_inner_mac = inner_mac;
 		meta.nat_geneve_vni = vni;
+		meta.encap_needed = true;
 
 		mcast_ipv6_ingress_ctr.count();
 	}
@@ -628,7 +681,7 @@ control NatIngress (
 
 	table ingress_hit {
 		key = {
-			meta.nat_ingress_hit : exact;
+			meta.encap_needed : exact;
 			hdr.tcp.isValid() : ternary;
 			hdr.udp.isValid() : ternary;
 			hdr.icmp.isValid() : ternary;
@@ -657,7 +710,7 @@ control NatIngress (
 		if (hdr.ipv4.isValid()) {
 			if (meta.is_mcast) {
 				ingress_ipv4_mcast.apply();
-			} else {
+			} else if (!meta.encap_needed) {
 				ingress_ipv4.apply();
 			}
 		} else if (hdr.ipv6.isValid()) {
@@ -815,7 +868,7 @@ control NatEgress (
 			( true, false, false, false, true ) : decap_ipv4_icmp;
 			( false, true, true, false, false ) : decap_ipv6_tcp;
 			( false, true, false, true, false ) : decap_ipv6_udp;
-			( false, true, false, true, true ) : decap_ipv6_icmp;
+			( false, true, false, false, true ) : decap_ipv6_icmp;
 		}
 		default_action = drop;
 
@@ -877,7 +930,7 @@ control RouterLookupIndex6(
 		res.nexthop = 0;
 		index_ctr.count();
 	}
-	
+
 	/*
 	 * The select_route table contains 2048 pre-computed entries.
 	 * It lives in another file just to keep this one manageable.
@@ -1943,6 +1996,7 @@ control Ingress(
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md)
 {
 	Filter() filter;
+	AttachedSubnetIngress() attached_subnet_ingress;
 	Services() services;
 	NatIngress() nat_ingress;
 	NatEgress() nat_egress;
@@ -1968,6 +2022,10 @@ control Ingress(
 			// that are not valid for the rest of the pipeline or tag metadata
 			// accordingly.
 			filter.apply(hdr, meta, ig_intr_md);
+		}
+
+		if (!meta.is_mcast || meta.is_link_local_mcastv6) {
+			attached_subnet_ingress.apply(hdr, meta);
 		}
 
 		// We perform NAT ingress before multicast replication to ensure
@@ -2008,7 +2066,7 @@ control Ingress(
 			ig_tm_md.bypass_egress = 1w1;
 		}
 
-		if (meta.nat_ingress_hit) {
+		if (meta.encap_needed) {
 			// This works around a few things which cropped up in
 			// supporting several concurrent Geneve options:
 			//
@@ -2063,12 +2121,12 @@ control IngressDeparser(packet_out pkt,
 		// checksum engine, exceeding the hardware's limit.  Rewriting
 		// the logic as seen below somehow makes the independence
 		// apparent to the compiler.
-		if (meta.nat_ingress_hit && hdr.inner_ipv4.isValid() &&
+		if (meta.encap_needed && hdr.inner_ipv4.isValid() &&
 		    hdr.inner_udp.isValid()) {
 			hdr.udp.checksum = nat_checksum.update({
 				COMMON_FIELDS, IPV4_FIELDS, hdr.inner_udp});
 		}
-		if (meta.nat_ingress_hit && hdr.inner_ipv4.isValid() &&
+		if (meta.encap_needed && hdr.inner_ipv4.isValid() &&
 		    hdr.inner_tcp.isValid()) {
 			hdr.udp.checksum = nat_checksum.update({
 				COMMON_FIELDS, IPV4_FIELDS, hdr.inner_tcp});
@@ -2076,19 +2134,19 @@ control IngressDeparser(packet_out pkt,
 		/* COMPILER BUG: I cannot convince the tofino to compute this correctly.
 		 * Conveniently, we don't actually need it, see RFC 6935.
 		 *
-		 *     if (meta.nat_ingress_hit && hdr.inner_ipv4.isValid() &&
+		 *     if (meta.encap_needed && hdr.inner_ipv4.isValid() &&
 		 *         hdr.inner_icmp.isValid()) {
 		 *         hdr.udp.checksum = nat_checksum.update({
 		 *             COMMON_FIELDS, IPV4_FIELDS, hdr.inner_icmp});
 		 *     }
 		 *
 		 */
-		if (meta.nat_ingress_hit && hdr.inner_ipv6.isValid() &&
+		if (meta.encap_needed && hdr.inner_ipv6.isValid() &&
 		    hdr.inner_udp.isValid()) {
 			hdr.udp.checksum = nat_checksum.update({
 				COMMON_FIELDS, IPV6_FIELDS, hdr.inner_udp});
 		}
-		if (meta.nat_ingress_hit && hdr.inner_ipv6.isValid() &&
+		if (meta.encap_needed && hdr.inner_ipv6.isValid() &&
 		    hdr.inner_tcp.isValid()) {
 			hdr.udp.checksum = nat_checksum.update({
 				COMMON_FIELDS, IPV6_FIELDS, hdr.inner_tcp});

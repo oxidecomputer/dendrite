@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Public types for multicast group management.
 
@@ -11,7 +11,7 @@ use std::{
     net::{IpAddr, Ipv6Addr},
 };
 
-use common::{nat::NatTarget, ports::PortId};
+use common::{network::NatTarget, ports::PortId};
 use oxnet::{Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
