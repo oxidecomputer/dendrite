@@ -11,8 +11,8 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use oxnet::Ipv6Net;
 
-use ::common::nat::Vni;
 use ::common::network::MacAddr;
+use ::common::network::Vni;
 use dpd_client::ClientInfo;
 use dpd_client::types;
 use packet::Endpoint;

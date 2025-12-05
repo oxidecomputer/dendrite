@@ -10,10 +10,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use common::{
-    nat::{NatTarget, Vni},
-    network::MacAddr,
-};
+use common::network::{MacAddr, NatTarget, Vni};
 use internal_dns_resolver::Resolver;
 use internal_dns_types::names::ServiceName;
 use slog::{Logger, debug, error, info, o};

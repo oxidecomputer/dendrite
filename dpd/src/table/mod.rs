@@ -18,6 +18,8 @@ use common::network::MacAddr;
 use dpd_types::views;
 
 pub mod arp_ipv4;
+pub mod extsub_ipv4;
+pub mod extsub_ipv6;
 pub mod mcast;
 pub mod nat;
 pub mod neighbor_ipv6;
@@ -27,7 +29,7 @@ pub mod port_nat;
 pub mod route_ipv4;
 pub mod route_ipv6;
 
-const NAME_TO_TYPE: [(&str, TableType); 22] = [
+const NAME_TO_TYPE: [(&str, TableType); 24] = [
     (route_ipv4::INDEX_TABLE_NAME, TableType::RouteIdxIpv4),
     (route_ipv4::FORWARD_TABLE_NAME, TableType::RouteFwdIpv4),
     (route_ipv6::INDEX_TABLE_NAME, TableType::RouteIdxIpv6),
@@ -40,6 +42,14 @@ const NAME_TO_TYPE: [(&str, TableType); 22] = [
     (nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4),
     (nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6),
     (port_nat::TABLE_NAME, TableType::NatOnly),
+    (
+        extsub_ipv4::EXT_SUBNET_IPV4_TABLE_NAME,
+        TableType::ExternalSubnetIpv4,
+    ),
+    (
+        extsub_ipv6::EXT_SUBNET_IPV6_TABLE_NAME,
+        TableType::ExternalSubnetIpv6,
+    ),
     (
         mcast::mcast_replication::IPV6_TABLE_NAME,
         TableType::McastIpv6,
@@ -277,6 +287,8 @@ pub fn get_entries(switch: &Switch, name: String) -> DpdResult<views::Table> {
         TableType::ArpIpv4 => arp_ipv4::table_dump(switch),
         TableType::NatIngressIpv4 => nat::ipv4_table_dump(switch),
         TableType::NatIngressIpv6 => nat::ipv6_table_dump(switch),
+        TableType::ExternalSubnetIpv4 => extsub_ipv4::table_dump(switch),
+        TableType::ExternalSubnetIpv6 => extsub_ipv6::table_dump(switch),
         TableType::PortIpv4 => port_ip::ipv4_table_dump(switch),
         TableType::PortIpv6 => port_ip::ipv6_table_dump(switch),
         TableType::PortMac => {
@@ -352,6 +364,12 @@ pub fn get_counters(
         TableType::PortIpv4 => port_ip::ipv4_counter_fetch(switch, force_sync),
         TableType::PortIpv6 => port_ip::ipv6_counter_fetch(switch, force_sync),
         TableType::NatOnly => port_nat::counter_fetch(switch, force_sync),
+        TableType::ExternalSubnetIpv4 => {
+            extsub_ipv4::counter_fetch(switch, force_sync)
+        }
+        TableType::ExternalSubnetIpv6 => {
+            extsub_ipv6::counter_fetch(switch, force_sync)
+        }
         TableType::McastIpv6 => {
             mcast::mcast_replication::ipv6_counter_fetch(switch, force_sync)
         }
@@ -403,6 +421,8 @@ pub enum TableType {
     NatIngressIpv4,
     NatIngressIpv6,
     NatOnly,
+    ExternalSubnetIpv4,
+    ExternalSubnetIpv6,
     McastIpv6,
     McastIpv4SrcFilter,
     McastIpv6SrcFilter,

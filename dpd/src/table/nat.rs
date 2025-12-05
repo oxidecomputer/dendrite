@@ -15,8 +15,7 @@ use aal_macros::*;
 
 use crate::Switch;
 use crate::table::*;
-use common::nat::NatTarget;
-use common::network::MacAddr;
+use common::network::{MacAddr, NatTarget};
 
 pub const IPV4_TABLE_NAME: &str = "pipe.Ingress.nat_ingress.ingress_ipv4";
 pub const IPV6_TABLE_NAME: &str = "pipe.Ingress.nat_ingress.ingress_ipv6";

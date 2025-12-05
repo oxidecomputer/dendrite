@@ -14,7 +14,7 @@ use super::{Ipv4MatchKey, Ipv6MatchKey};
 
 use aal::ActionParse;
 use aal_macros::*;
-use common::{nat::NatTarget, network::MacAddr};
+use common::network::{MacAddr, NatTarget};
 use slog::debug;
 
 /// IPv4 Table for multicast NAT entries.

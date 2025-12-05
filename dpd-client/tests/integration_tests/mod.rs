@@ -6,6 +6,7 @@
 
 mod common;
 mod counters;
+mod external_subnet;
 mod geneve;
 mod icmp_ipv4;
 mod loopback;

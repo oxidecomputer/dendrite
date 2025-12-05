@@ -6,7 +6,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use common::nat::NatTarget;
+use common::network::NatTarget;
 use oxnet::{Ipv4Net, Ipv6Net};
 
 use super::IpSrc;
@@ -288,7 +288,7 @@ fn validate_ipv4_source_subnet(subnet: Ipv4Net) -> DpdResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::{nat::Vni, network::MacAddr};
+    use common::network::{MacAddr, Vni};
     use oxnet::Ipv4Net;
 
     use std::str::FromStr;

@@ -105,6 +105,8 @@ control Filter(
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv4_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv6_ctr;
+	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) external_subnets_v4_ctr;
+	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) external_subnets_v6_ctr;
 	Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS) drop_mcast_ctr;
 	bit<16> mcast_scope;
 
@@ -133,6 +135,40 @@ control Filter(
 	action claimv6() {
 		meta.is_switch_address = true;
 		ipv6_ctr.count();
+	}
+
+	action forward_extsub_v4_to(ipv6_addr_t target, mac_addr_t inner_mac, geneve_vni_t vni) {
+		meta.extsub_hit = true;
+		meta.encap_needed = true;
+		meta.nat_ingress_tgt = target;
+		meta.nat_inner_mac = inner_mac;
+		meta.nat_geneve_vni = vni;
+		external_subnets_v4_ctr.count();
+	}
+	
+	table external_subnets_v4 {
+		key             = { hdr.ipv4.dst_addr: lpm; }
+		actions         = { forward_extsub_v4_to ; }
+
+		const size      = EXTERNAL_SUBNETS_V4_SIZE + 1;
+		counters	= external_subnets_v4_ctr;
+	}
+
+	action forward_extsub_v6_to(ipv6_addr_t target, mac_addr_t inner_mac, geneve_vni_t vni) {
+		meta.extsub_hit = true;
+		meta.encap_needed = true;
+		meta.nat_ingress_tgt = target;
+		meta.nat_inner_mac = inner_mac;
+		meta.nat_geneve_vni = vni;
+		external_subnets_v6_ctr.count();
+	}
+
+	table external_subnets_v6 {
+		key             = { hdr.ipv6.dst_addr: lpm; }
+		actions         = { forward_extsub_v6_to ; }
+
+		const size      = EXTERNAL_SUBNETS_V6_SIZE + 1;
+		counters	= external_subnets_v6_ctr;
 	}
 
 	// Table of the IPv4 addresses assigned to ports on the switch.
@@ -191,7 +227,10 @@ control Filter(
 					return;
 				}
 			} else {
-				switch_ipv4_addr.apply();
+				external_subnets_v4.apply();
+				if (!meta.encap_needed) {
+					switch_ipv4_addr.apply();
+				}
 			}
 		} else if (hdr.ipv6.isValid()) {
 			if (meta.is_mcast) {
@@ -228,7 +267,10 @@ control Filter(
 			}
 
 			if (!meta.is_mcast || meta.is_link_local_mcastv6) {
-				switch_ipv6_addr.apply();
+				external_subnets_v6.apply();
+				if (!meta.encap_needed) {
+					switch_ipv6_addr.apply();
+				}
 			}
 		}
 	}
@@ -401,7 +443,7 @@ control Services(
 		 * as the restructuring is likely to have knock-on effects in
 		 * dpd and sidecar-lite.
 		 */
-		if (!meta.is_switch_address && meta.nat_ingress_port && !meta.nat_ingress_hit) {
+		if (!meta.is_switch_address && meta.nat_ingress_port && !meta.encap_needed) {
 			// For packets that were not marked for NAT ingress, but which
 			// arrived on an uplink port that only allows in traffic that
 			// is meant to be NAT encapsulated.
@@ -503,6 +545,7 @@ control NatIngress (
 		meta.nat_ingress_tgt = target;
 		meta.nat_inner_mac = inner_mac;
 		meta.nat_geneve_vni = vni;
+		meta.encap_needed = true;
 
 		ipv4_ingress_ctr.count();
 	}
@@ -523,6 +566,7 @@ control NatIngress (
 		meta.nat_ingress_tgt = target;
 		meta.nat_inner_mac = inner_mac;
 		meta.nat_geneve_vni = vni;
+		meta.encap_needed = true;
 
 		ipv6_ingress_ctr.count();
 	}
@@ -556,6 +600,7 @@ control NatIngress (
 		meta.nat_ingress_tgt = target;
 		meta.nat_inner_mac = inner_mac;
 		meta.nat_geneve_vni = vni;
+		meta.encap_needed = true;
 		mcast_ipv4_ingress_ctr.count();
 	}
 
@@ -572,6 +617,7 @@ control NatIngress (
 		meta.nat_ingress_tgt = target;
 		meta.nat_inner_mac = inner_mac;
 		meta.nat_geneve_vni = vni;
+		meta.encap_needed = true;
 
 		mcast_ipv6_ingress_ctr.count();
 	}
@@ -628,7 +674,7 @@ control NatIngress (
 
 	table ingress_hit {
 		key = {
-			meta.nat_ingress_hit : exact;
+			meta.encap_needed : exact;
 			hdr.tcp.isValid() : ternary;
 			hdr.udp.isValid() : ternary;
 			hdr.icmp.isValid() : ternary;
@@ -657,7 +703,7 @@ control NatIngress (
 		if (hdr.ipv4.isValid()) {
 			if (meta.is_mcast) {
 				ingress_ipv4_mcast.apply();
-			} else {
+			} else if (!meta.encap_needed) {
 				ingress_ipv4.apply();
 			}
 		} else if (hdr.ipv6.isValid()) {
@@ -815,7 +861,7 @@ control NatEgress (
 			( true, false, false, false, true ) : decap_ipv4_icmp;
 			( false, true, true, false, false ) : decap_ipv6_tcp;
 			( false, true, false, true, false ) : decap_ipv6_udp;
-			( false, true, false, true, true ) : decap_ipv6_icmp;
+			( false, true, false, false, true ) : decap_ipv6_icmp;
 		}
 		default_action = drop;
 
@@ -2008,7 +2054,7 @@ control Ingress(
 			ig_tm_md.bypass_egress = 1w1;
 		}
 
-		if (meta.nat_ingress_hit) {
+		if (meta.encap_needed) {
 			// This works around a few things which cropped up in
 			// supporting several concurrent Geneve options:
 			//
@@ -2063,12 +2109,12 @@ control IngressDeparser(packet_out pkt,
 		// checksum engine, exceeding the hardware's limit.  Rewriting
 		// the logic as seen below somehow makes the independence
 		// apparent to the compiler.
-		if (meta.nat_ingress_hit && hdr.inner_ipv4.isValid() &&
+		if (meta.encap_needed && hdr.inner_ipv4.isValid() &&
 		    hdr.inner_udp.isValid()) {
 			hdr.udp.checksum = nat_checksum.update({
 				COMMON_FIELDS, IPV4_FIELDS, hdr.inner_udp});
 		}
-		if (meta.nat_ingress_hit && hdr.inner_ipv4.isValid() &&
+		if (meta.encap_needed && hdr.inner_ipv4.isValid() &&
 		    hdr.inner_tcp.isValid()) {
 			hdr.udp.checksum = nat_checksum.update({
 				COMMON_FIELDS, IPV4_FIELDS, hdr.inner_tcp});
@@ -2076,19 +2122,19 @@ control IngressDeparser(packet_out pkt,
 		/* COMPILER BUG: I cannot convince the tofino to compute this correctly.
 		 * Conveniently, we don't actually need it, see RFC 6935.
 		 *
-		 *     if (meta.nat_ingress_hit && hdr.inner_ipv4.isValid() &&
+		 *     if (meta.encap_needed && hdr.inner_ipv4.isValid() &&
 		 *         hdr.inner_icmp.isValid()) {
 		 *         hdr.udp.checksum = nat_checksum.update({
 		 *             COMMON_FIELDS, IPV4_FIELDS, hdr.inner_icmp});
 		 *     }
 		 *
 		 */
-		if (meta.nat_ingress_hit && hdr.inner_ipv6.isValid() &&
+		if (meta.encap_needed && hdr.inner_ipv6.isValid() &&
 		    hdr.inner_udp.isValid()) {
 			hdr.udp.checksum = nat_checksum.update({
 				COMMON_FIELDS, IPV6_FIELDS, hdr.inner_udp});
 		}
-		if (meta.nat_ingress_hit && hdr.inner_ipv6.isValid() &&
+		if (meta.encap_needed && hdr.inner_ipv6.isValid() &&
 		    hdr.inner_tcp.isValid()) {
 			hdr.udp.checksum = nat_checksum.update({
 				COMMON_FIELDS, IPV6_FIELDS, hdr.inner_tcp});

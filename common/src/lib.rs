@@ -12,6 +12,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 pub mod counters;
+pub mod ext_subnet;
 pub mod logging;
 pub mod nat;
 pub mod network;
