@@ -4,10 +4,9 @@
 //
 // Copyright 2025 Oxide Computer Company
 
+use anyhow::anyhow;
 use std::ffi::CString;
 use std::net::{IpAddr, Ipv6Addr};
-
-use anyhow::anyhow;
 
 unsafe extern "C" {
     pub fn link_local_get(
@@ -65,6 +64,55 @@ pub fn get_link_local(name: &str) -> Option<Ipv6Addr> {
         let _c_name = CString::from_raw(raw);
         ipv6
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum GetDhcp6Error {
+    #[error("libnet error: {0}")]
+    Libnet(#[from] libnet::Error),
+
+    #[error("error mapping ifname to addrobj: {0}")]
+    IfnameToAddrobj(String),
+}
+
+pub fn get_dhcpv6(
+    ifname: &str,
+) -> anyhow::Result<Vec<Ipv6Addr>, GetDhcp6Error> {
+    let mut result = Vec::default();
+    for (ifx, addrs) in libnet::get_ipaddrs()?.into_iter() {
+        for addr in addrs {
+            let (addrobj, src) =
+                libnet::ip::ifname_to_addrobj(ifx.as_str(), addr.family)
+                    .map_err(GetDhcp6Error::IfnameToAddrobj)?;
+
+            // filter to the specified ifname
+            if addrobj.starts_with(ifname) {
+                continue;
+            }
+
+            // only consider addrconf addresses (dhcpv6 is an addrconf address)
+            if src != "addrconf" {
+                continue;
+            }
+
+            if let IpAddr::V6(v6) = &addr.addr {
+                // skip link local addresses
+                if v6.is_unicast_link_local() {
+                    continue;
+                }
+
+                // skip locally generated SLAAC addresses
+                if [0xfdb1, 0xfdb2].contains(&v6.segments()[0]) {
+                    continue;
+                }
+
+                // if we've gotten this far, the address is an addrconf address
+                // that is not link local and not SLAAC, so it should be dhcpv6
+                result.push(*v6);
+            }
+        }
+    }
+    Ok(result)
 }
 
 pub fn get_ifindex(name: &str) -> Option<u32> {
