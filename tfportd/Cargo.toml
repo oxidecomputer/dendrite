@@ -19,6 +19,7 @@ internet-checksum.workspace = true
 ispf.workspace = true
 libc.workspace = true
 kstat-rs.workspace = true
+libnet.workspace = true
 rand.workspace = true
 schemars.workspace = true
 serde.workspace = true

@@ -434,6 +434,12 @@ async fn main_impl() -> anyhow::Result<()> {
         None
     };
 
+    let g = global.clone();
+    task::spawn(async move {
+        info!(g.log, "spawning techport dhcpv6 sync task");
+        techport::sync_dhcp6(g).await
+    });
+
     // Spawn the task handling Sidecar packets on a separate thread.
     //
     // The code in here is _not_ async, and it's a lot of work to make it so.
