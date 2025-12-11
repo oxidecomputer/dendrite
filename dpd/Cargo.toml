@@ -57,6 +57,7 @@ reqwest.workspace = true
 
 dropshot = { workspace = true, features = [ "usdt-probes" ] }
 gateway-client.workspace = true
+gateway-types.workspace = true
 internal-dns-resolver.workspace = true
 internal-dns-types.workspace = true
 nexus-client.workspace = true
