@@ -13,11 +13,9 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use common::nat::NatTarget;
 use omicron_common::address::{
-    IPV4_ADMIN_SCOPED_MULTICAST_SUBNET, IPV4_GLOP_MULTICAST_SUBNET,
-    IPV4_LINK_LOCAL_MULTICAST_SUBNET, IPV4_SPECIFIC_RESERVED_MULTICAST_ADDRS,
-    IPV4_SSM_SUBNET, IPV6_INTERFACE_LOCAL_MULTICAST_SUBNET,
-    IPV6_LINK_LOCAL_MULTICAST_SUBNET, IPV6_RESERVED_SCOPE_MULTICAST_SUBNET,
-    IPV6_SSM_SUBNET,
+    IPV4_LINK_LOCAL_MULTICAST_SUBNET, IPV4_SSM_SUBNET,
+    IPV6_INTERFACE_LOCAL_MULTICAST_SUBNET, IPV6_LINK_LOCAL_MULTICAST_SUBNET,
+    IPV6_RESERVED_SCOPE_MULTICAST_SUBNET, IPV6_SSM_SUBNET,
 };
 use oxnet::{Ipv4Net, Ipv6Net};
 
@@ -107,24 +105,9 @@ fn validate_ipv4_multicast(
     }
 
     // Check reserved subnets
-    let reserved_subnets = [
-        IPV4_LINK_LOCAL_MULTICAST_SUBNET,
-        IPV4_GLOP_MULTICAST_SUBNET,
-        IPV4_ADMIN_SCOPED_MULTICAST_SUBNET,
-    ];
-
-    for subnet in &reserved_subnets {
-        if subnet.contains(addr) {
-            return Err(DpdError::Invalid(format!(
-                "{addr} is in the reserved multicast subnet {subnet}",
-            )));
-        }
-    }
-
-    // Check specific reserved addresses
-    if IPV4_SPECIFIC_RESERVED_MULTICAST_ADDRS.contains(&addr) {
+    if IPV4_LINK_LOCAL_MULTICAST_SUBNET.contains(addr) {
         return Err(DpdError::Invalid(format!(
-            "{addr} is a specifically reserved multicast address",
+            "{addr} is in the reserved link-local multicast subnet",
         )));
     }
 
