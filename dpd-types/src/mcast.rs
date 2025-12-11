@@ -21,9 +21,17 @@ use crate::link::LinkId;
 /// Type alias for multicast group IDs.
 pub type MulticastGroupId = u16;
 
-/// A validated admin-scoped IPv6 multicast address.
+/// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
 ///
-/// Admin-scoped addresses are ff04::/16, ff05::/16, or ff08::/16.
+/// Defined in [RFC 7346] and [RFC 4291].
+///
+/// [RFC 7346]: https://www.rfc-editor.org/rfc/rfc7346.html
+/// [RFC 4291]: https://www.rfc-editor.org/rfc/rfc4291.html
+pub const ADMIN_LOCAL_PREFIX: u16 = 0xFF04;
+
+/// A validated admin-local IPv6 multicast address.
+///
+/// Admin-local addresses are ff04::/16 (scope 4).
 /// These are used for internal/underlay multicast groups.
 #[derive(
     Clone,
@@ -42,9 +50,9 @@ pub type MulticastGroupId = u16;
 pub struct AdminScopedIpv6(Ipv6Addr);
 
 impl AdminScopedIpv6 {
-    /// Create a new AdminScopedIpv6 if the address is admin-scoped.
+    /// Create a new AdminScopedIpv6 if the address is admin-local.
     pub fn new(addr: Ipv6Addr) -> Result<Self, Error> {
-        if !Ipv6Net::new_unchecked(addr, 128).is_admin_scoped_multicast() {
+        if !Ipv6Net::new_unchecked(addr, 128).is_admin_local_multicast() {
             return Err(Error::InvalidIp(addr));
         }
         Ok(Self(addr))
@@ -213,8 +221,6 @@ pub enum Direction {
 
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum Error {
-    #[error(
-        "Address {0} is not admin-scoped (must be ff04::/16, ff05::/16, or ff08::/16)"
-    )]
+    #[error("Address {0} is not admin-local (must be ff04::/16)")]
     InvalidIp(Ipv6Addr),
 }
