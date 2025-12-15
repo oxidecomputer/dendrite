@@ -4,6 +4,53 @@
 //
 // Copyright 2025 Oxide Computer Company
 
+// Port Bitmap Check Table
+//
+// Per-port decapsulation filter for multicast egress. Included via
+// `#include <port_bitmap_check.p4>` in MulticastEgress (see sidecar.p4).
+//
+// # Bitmap Structure
+//
+// 256-port bitmap split across 8 x 32-bit metadata fields:
+//
+//   decap_ports_0: ports   0-31   (bit N = port N)
+//   decap_ports_1: ports  32-63   (bit N = port 32+N)
+//   decap_ports_2: ports  64-95   (bit N = port 64+N)
+//   decap_ports_3: ports  96-127  (bit N = port 96+N)
+//   decap_ports_4: ports 128-159  (bit N = port 128+N)
+//   decap_ports_5: ports 160-191  (bit N = port 160+N)
+//   decap_ports_6: ports 192-223  (bit N = port 192+N)
+//   decap_ports_7: ports 224-255  (bit N = port 224+N)
+//
+// # Design
+//
+// The table has const entries mapping each port (0-255) to an action that:
+//   1. Selects the correct 32-bit segment (decap_ports_N);
+//   2. Bitwise ANDs it with a single-bit mask for that port's position;
+//   3. Then, stores result in meta.bitmap_result
+//
+// Prerequisite: `meta.port_number` is populated by the MulticastEgress
+// `asic_id_to_port` table (keyed by `eg_intr_md.egress_port`) prior to
+// invoking `port_bitmap_check.apply()`.
+//
+// If bitmap_result != 0, the port is in the decap set and outer headers
+// are stripped (Geneve decapsulation). Otherwise, the packet is forwarded
+// with encapsulation intact.
+//
+// # Use Case
+//
+// External multicast groups have members on specific sleds. When a multicast
+// packet is replicated to all ports in the group, only ports connected to
+// member sleds should decapsulate. Other ports (e.g., uplinks forwarding to
+// peer switches) keep the Geneve encapsulation.
+//
+// ## Example
+//   Group with members on sleds connected to ports 5, 12, 47
+//   decap_ports_0 = 0x00001020  (bits 5 and 12 set)
+//   decap_ports_1 = 0x00008000  (bit 15 set = port 47)
+//   decap_ports_2..7 = 0x00000000
+//   ...
+
 	action check_port_bitmap_0(bit<32> bit_mask) {
 		meta.bitmap_result = meta.decap_ports_0 & bit_mask;
 	}

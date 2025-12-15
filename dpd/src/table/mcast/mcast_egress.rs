@@ -283,10 +283,9 @@ pub(crate) fn port_mapping_counter_fetch(
     )
 }
 
-/// Structure to hold and manipulate the 256-bit port bitmap.
+/// 256-port bitmap (8 × 32-bit) for multicast egress decapsulation filtering.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PortBitmap {
-    // 8 x 32-bit values representing all 256 ports
     ports: [u32; 8],
 }
 

@@ -908,7 +908,7 @@ control RouterLookupIndex6(
 		res.nexthop = 0;
 		index_ctr.count();
 	}
-	
+
 	/*
 	 * The select_route table contains 2048 pre-computed entries.
 	 * It lives in another file just to keep this one manageable.
@@ -1761,10 +1761,22 @@ control MulticastIngress (
 }
 
 
-/* This control is used to configure the egress port for multicast packets.
- * It includes actions for setting the decap ports bitmap and VLAN ID
- * (if necessary), as well as stripping headers and decrementing TTL or hop
- * limit.
+/* Multicast Egress - Per-Port Decapsulation
+ *
+ * Determines which replicated multicast copies should be decapsulated.
+ * Only packets destined for member sleds have their Geneve headers stripped,
+ * while copies forwarded to peer switches or uplinks remain encapsulated.
+ *
+ * Flow:
+ *   1. mcast_tag_check   : Match packets with admin-local (ff04::/16) or ULA
+ *                          destination, AND mcast_tag=2 (UNDERLAY_EXTERNAL)
+ *   2. tbl_decap_ports   : Lookup by egress_rid to get 256-port decap bitmap
+ *   3. asic_id_to_port   : Map ASIC port ID to logical port number (0-255)
+ *   4. port_bitmap_check : Test port's bit in bitmap (see port_bitmap_check.p4)
+ *   5. modify_hdr        : If bitmap_result != 0, decapsulate packet (strip
+ *                          outer headers, decrement TTL/hop limit, handle VLAN)
+ *
+ * The bitmap is populated by DPD based on which ports connect to member sleds.
  */
 control MulticastEgress (
 	inout sidecar_headers_t hdr,
