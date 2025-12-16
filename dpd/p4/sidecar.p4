@@ -1764,8 +1764,9 @@ control MulticastIngress (
 /* Multicast Egress - Per-Port Decapsulation
  *
  * Determines which replicated multicast copies should be decapsulated.
- * Only packets destined for member sleds have their Geneve headers stripped,
- * while copies forwarded to peer switches or uplinks remain encapsulated.
+ * Traffic bound for sleds remains encapsulated (OPTE on the destination sled
+ * handles decap). Traffic exiting via front panel ports may be decapsulated
+ * based on the per-group bitmap configuration.
  *
  * Flow:
  *   1. mcast_tag_check   : Match packets with admin-local (ff04::/16) or ULA
@@ -1776,7 +1777,8 @@ control MulticastIngress (
  *   5. modify_hdr        : If bitmap_result != 0, decapsulate packet (strip
  *                          outer headers, decrement TTL/hop limit, handle VLAN)
  *
- * The bitmap is populated by DPD based on which ports connect to member sleds.
+ * The bitmap marks which egress ports require decapsulation (typically external
+ * customer-facing ports) vs which keep encapsulation (underlay/sled-bound).
  */
 control MulticastEgress (
 	inout sidecar_headers_t hdr,

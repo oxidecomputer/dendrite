@@ -39,13 +39,14 @@
 //
 // # Use Case
 //
-// External multicast groups have members on specific sleds. When a multicast
-// packet is replicated to all ports in the group, only ports connected to
-// member sleds should decapsulate. Other ports (e.g., uplinks forwarding to
-// peer switches) keep the Geneve encapsulation.
+// Multicast traffic replicated towards sleds remains encapsulated (OPTE on the
+// destination sled handles decap). Traffic bound for customer networks (front
+// panel ports) is decapsulated here before egress. The bitmap marks which ports
+// require decapsulation (external/customer-facing) vs which keep encapsulation
+// (underlay/sled-bound).
 //
 // ## Example
-//   Group with members on sleds connected to ports 5, 12, 47
+//   Group with external ports 5, 12, 47 requiring decap:
 //   decap_ports_0 = 0x00001020  (bits 5 and 12 set)
 //   decap_ports_1 = 0x00008000  (bit 15 set = port 47)
 //   decap_ports_2..7 = 0x00000000
