@@ -173,6 +173,41 @@ async fn test_service_ipv4_wrong_port() -> TestResult {
     switch.packet_test(vec![send], vec![expected])
 }
 
+// Packets sent to an IP address not assigned to a switch port should be
+// dropped.
+#[tokio::test]
+#[ignore]
+async fn test_service_ipv4_unknown_address() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let ingress = 12;
+    let router_ip = "10.10.10.1";
+    let router_mac = "02:78:39:45:b9:00";
+
+    let (port_id, link_id) = switch.link_id(PhysPort(ingress)).unwrap();
+    let entry = Ipv4Entry {
+        addr: router_ip.parse().unwrap(),
+        tag: switch.client.inner().tag.clone(),
+    };
+    switch
+        .client
+        .link_ipv4_create(&port_id, &link_id, &entry)
+        .await
+        .unwrap();
+
+    let send_pkt = common::gen_udp_packet(
+        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
+        Endpoint::parse(router_mac, "192.10.12.1", 4444).unwrap(),
+    );
+
+    let send = TestPacket {
+        packet: Arc::new(send_pkt),
+        port: PhysPort(ingress + 1),
+    };
+
+    switch.packet_test(vec![send], Vec::new())
+}
+
 #[tokio::test]
 #[ignore]
 async fn test_arp_needed() -> TestResult {
