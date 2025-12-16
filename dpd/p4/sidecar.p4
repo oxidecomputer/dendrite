@@ -579,6 +579,7 @@ control NatIngress (
 		meta.nat_ingress_tgt = target;
 		meta.nat_inner_mac = inner_mac;
 		meta.nat_geneve_vni = vni;
+		meta.encap_needed = true;
 		mcast_ipv4_ingress_ctr.count();
 	}
 
@@ -595,6 +596,7 @@ control NatIngress (
 		meta.nat_ingress_tgt = target;
 		meta.nat_inner_mac = inner_mac;
 		meta.nat_geneve_vni = vni;
+		meta.encap_needed = true;
 
 		mcast_ipv6_ingress_ctr.count();
 	}

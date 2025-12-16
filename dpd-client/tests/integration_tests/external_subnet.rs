@@ -10,13 +10,13 @@ use std::sync::Arc;
 
 use ::common::network::MacAddr;
 use ::common::network::Vni;
-use dpd_client::types;
 use dpd_client::ClientInfo;
+use dpd_client::types;
+use packet::Endpoint;
 use packet::eth;
 use packet::geneve;
 use packet::ipv6;
 use packet::udp;
-use packet::Endpoint;
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;

@@ -6,10 +6,10 @@
 
 //! Client library for the Dendrite data plane daemon.
 
+pub use common::ROLLBACK_FAILURE_ERROR_CODE;
 use common::counters;
 use common::network;
 use common::ports;
-pub use common::ROLLBACK_FAILURE_ERROR_CODE;
 use slog::Logger;
 use std::cmp::Ordering;
 use std::fmt;
