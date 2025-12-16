@@ -105,7 +105,8 @@ control Filter(
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv4_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv6_ctr;
-	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) external_subnets_ctr;
+	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) external_subnets_v4_ctr;
+	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) external_subnets_v6_ctr;
 	Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS) drop_mcast_ctr;
 	bit<16> mcast_scope;
 
@@ -136,21 +137,38 @@ control Filter(
 		ipv6_ctr.count();
 	}
 
-	action forward_extsub_to(ipv6_addr_t target, mac_addr_t inner_mac, geneve_vni_t vni) {
+	action forward_extsub_v4_to(ipv6_addr_t target, mac_addr_t inner_mac, geneve_vni_t vni) {
 		meta.extsub_hit = true;
 		meta.encap_needed = true;
 		meta.nat_ingress_tgt = target;
 		meta.nat_inner_mac = inner_mac;
 		meta.nat_geneve_vni = vni;
-		external_subnets_ctr.count();
+		external_subnets_v4_ctr.count();
 	}
 	
-	table external_subnets {
+	table external_subnets_v4 {
 		key             = { hdr.ipv4.dst_addr: lpm; }
-		actions         = { forward_extsub_to ; }
+		actions         = { forward_extsub_v4_to ; }
 
-		const size      = EXTERNAL_SUBNETS_SIZE + 1;
-		counters	= external_subnets_ctr;
+		const size      = EXTERNAL_SUBNETS_V4_SIZE + 1;
+		counters	= external_subnets_v4_ctr;
+	}
+
+	action forward_extsub_v6_to(ipv6_addr_t target, mac_addr_t inner_mac, geneve_vni_t vni) {
+		meta.extsub_hit = true;
+		meta.encap_needed = true;
+		meta.nat_ingress_tgt = target;
+		meta.nat_inner_mac = inner_mac;
+		meta.nat_geneve_vni = vni;
+		external_subnets_v6_ctr.count();
+	}
+
+	table external_subnets_v6 {
+		key             = { hdr.ipv6.dst_addr: lpm; }
+		actions         = { forward_extsub_v6_to ; }
+
+		const size      = EXTERNAL_SUBNETS_V6_SIZE + 1;
+		counters	= external_subnets_v6_ctr;
 	}
 
 	// Table of the IPv4 addresses assigned to ports on the switch.
@@ -209,7 +227,7 @@ control Filter(
 					return;
 				}
 			} else {
-				external_subnets.apply();
+				external_subnets_v4.apply();
 				if (!meta.encap_needed) {
 					switch_ipv4_addr.apply();
 				}
@@ -249,7 +267,10 @@ control Filter(
 			}
 
 			if (!meta.is_mcast || meta.is_link_local_mcastv6) {
-				switch_ipv6_addr.apply();
+				external_subnets_v6.apply();
+				if (!meta.encap_needed) {
+					switch_ipv6_addr.apply();
+				}
 			}
 		}
 	}

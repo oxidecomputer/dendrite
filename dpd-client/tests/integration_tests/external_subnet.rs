@@ -38,13 +38,13 @@ async fn test_api() -> TestResult {
 
     switch
         .client
-        .external_subnet_create(&external_subnet, &tgt)
+        .external_subnet_ipv4_create(&external_subnet, &tgt)
         .await
         .expect("Should be able to add valid external subnet entry");
     assert_eq!(
         switch
             .client
-            .external_subnet_get(&external_subnet)
+            .external_subnet_ipv4_get(&external_subnet)
             .await
             .unwrap()
             .into_inner(),
@@ -53,7 +53,7 @@ async fn test_api() -> TestResult {
     );
     switch
         .client
-        .external_subnet_delete(&external_subnet)
+        .external_subnet_ipv4_delete(&external_subnet)
         .await
         .expect("Failed to delete existing NAT entry");
 
@@ -152,7 +152,7 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
     };
     switch
         .client
-        .external_subnet_create(&external_subnet, &tgt)
+        .external_subnet_ipv4_create(&external_subnet, &tgt)
         .await
         .unwrap();
 
@@ -246,7 +246,7 @@ async fn test_ingress(switch: &Switch, test: &ExternalTest) -> TestResult {
     };
     switch
         .client
-        .external_subnet_create(&external_subnet, &tgt)
+        .external_subnet_ipv4_create(&external_subnet, &tgt)
         .await
         .expect("Should be able to add valid external subnet entry");
 

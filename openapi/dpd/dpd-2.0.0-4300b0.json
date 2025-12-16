@@ -827,9 +827,26 @@
       }
     },
     "/ext_subnet": {
+      "delete": {
+        "summary": "Clear all external subnet mappings",
+        "operationId": "external_subnet_reset",
+        "responses": {
+          "204": {
+            "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/ext_subnet/ipv4": {
       "get": {
-        "summary": "Get all of the external subnets with internal mappings",
-        "operationId": "external_subnet_list",
+        "summary": "Get all of the external IPv4 subnets with internal mappings",
+        "operationId": "external_subnet_ipv4_list",
         "parameters": [
           {
             "in": "query",
@@ -858,7 +875,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ExtSubnetEntryResultsPage"
+                  "$ref": "#/components/schemas/ExtSubnetIpv4EntryResultsPage"
                 }
               }
             }
@@ -873,27 +890,12 @@
         "x-dropshot-pagination": {
           "required": []
         }
-      },
-      "delete": {
-        "summary": "Clear all external subnet mappings",
-        "operationId": "external_subnet_reset",
-        "responses": {
-          "204": {
-            "description": "resource updated"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
       }
     },
-    "/ext_subnet/{subnet}": {
+    "/ext_subnet/ipv4/{subnet}": {
       "get": {
-        "summary": "Get the mapping for the given external subnet.",
-        "operationId": "external_subnet_get",
+        "summary": "Get the mapping for the given external IPv4 subnet.",
+        "operationId": "external_subnet_ipv4_get",
         "parameters": [
           {
             "in": "path",
@@ -925,9 +927,9 @@
         }
       },
       "put": {
-        "summary": "Add a mapping to an internal target for an external subnet address.",
+        "summary": "Add a mapping to an internal target for an external IPv4 subnet address.",
         "description": "These identify the gimlet on which a guest is running, and gives OPTE the information it needs to  identify the guest VM that uses the external subnet.",
-        "operationId": "external_subnet_create",
+        "operationId": "external_subnet_ipv4_create",
         "parameters": [
           {
             "in": "path",
@@ -962,8 +964,8 @@
         }
       },
       "delete": {
-        "summary": "Delete the mapping for an external subnet",
-        "operationId": "external_subnet_delete",
+        "summary": "Delete the mapping for an external IPv4 subnet",
+        "operationId": "external_subnet_ipv4_delete",
         "parameters": [
           {
             "in": "path",
@@ -972,6 +974,153 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/Ipv4Net"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/ext_subnet/ipv6": {
+      "get": {
+        "summary": "Get all of the external IPv6 subnets with internal mappings",
+        "operationId": "external_subnet_ipv6_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "description": "Maximum number of items returned by a single call",
+            "schema": {
+              "nullable": true,
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "description": "Token returned by previous call to retrieve the subsequent page",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtSubnetIpv6EntryResultsPage"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-dropshot-pagination": {
+          "required": []
+        }
+      }
+    },
+    "/ext_subnet/ipv6/{subnet}": {
+      "get": {
+        "summary": "Get the mapping for the given external IPv6 subnet.",
+        "operationId": "external_subnet_ipv6_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subnet",
+            "description": "The external IPv6 subnet in CIDR notation being managed",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Ipv6Net"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceTarget"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "summary": "Add a mapping to an internal target for an external IPv6 subnet address.",
+        "description": "These identify the gimlet on which a guest is running, and gives OPTE the information it needs to  identify the guest VM that uses the external subnet.",
+        "operationId": "external_subnet_ipv6_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subnet",
+            "description": "The external IPv6 subnet in CIDR notation being managed",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Ipv6Net"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstanceTarget"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete the mapping for an external IPv6 subnet",
+        "operationId": "external_subnet_ipv6_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subnet",
+            "description": "The external IPv6 subnet in CIDR notation being managed",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Ipv6Net"
             }
           }
         ],
@@ -6184,8 +6333,8 @@
           "request_id"
         ]
       },
-      "ExtSubnetEntry": {
-        "description": "represents an external subnet mapping",
+      "ExtSubnetIpv4Entry": {
+        "description": "represents an external IPv4 subnet mapping",
         "type": "object",
         "properties": {
           "subnet": {
@@ -6200,7 +6349,7 @@
           "tgt"
         ]
       },
-      "ExtSubnetEntryResultsPage": {
+      "ExtSubnetIpv4EntryResultsPage": {
         "description": "A single page of results",
         "type": "object",
         "properties": {
@@ -6208,7 +6357,44 @@
             "description": "list of items on this page of results",
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ExtSubnetEntry"
+              "$ref": "#/components/schemas/ExtSubnetIpv4Entry"
+            }
+          },
+          "next_page": {
+            "nullable": true,
+            "description": "token used to fetch the next page of results (if any)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ExtSubnetIpv6Entry": {
+        "description": "represents an external IPv6 subnet mapping",
+        "type": "object",
+        "properties": {
+          "subnet": {
+            "$ref": "#/components/schemas/Ipv6Net"
+          },
+          "tgt": {
+            "$ref": "#/components/schemas/InstanceTarget"
+          }
+        },
+        "required": [
+          "subnet",
+          "tgt"
+        ]
+      },
+      "ExtSubnetIpv6EntryResultsPage": {
+        "description": "A single page of results",
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "list of items on this page of results",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExtSubnetIpv6Entry"
             }
           },
           "next_page": {
