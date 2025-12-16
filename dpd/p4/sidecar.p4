@@ -101,7 +101,6 @@ control CalculateIPv4Len(
 control Filter(
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
-	inout ingress_intrinsic_metadata_for_deparser_t ig_dprsr_md,
 	in ingress_intrinsic_metadata_t ig_intr_md
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv4_ctr;
@@ -110,36 +109,20 @@ control Filter(
 	bit<16> mcast_scope;
 
 	action dropv4() {
-		ig_dprsr_md.drop_ctl = 1;
 		meta.drop_reason = DROP_IPV4_SWITCH_ADDR_MISS;
+		meta.dropped = true;
 		ipv4_ctr.count();
 	}
 
 	action dropv6() {
-		ig_dprsr_md.drop_ctl = 1;
 		meta.drop_reason = DROP_IPV6_SWITCH_ADDR_MISS;
+		meta.dropped = true;
 		ipv6_ctr.count();
 	}
 
-	action drop_with_reason(bit<8> reason) {
-		meta.is_valid = false;
-		ig_dprsr_md.drop_ctl = 1;
-		meta.drop_reason = reason;
-	}
-
-	action drop_mcast_with_reason(bit<8> reason) {
-		meta.is_mcast = true;
-		meta.is_valid = false;
-		meta.is_link_local_mcastv6 = false;
-		ig_dprsr_md.drop_ctl = 1;
-		meta.drop_reason = reason;
-	}
-
-	action drop_mcast() {
-		meta.is_mcast = true;
-		meta.is_valid = false;
-		meta.is_link_local_mcastv6 = false;
-		ig_dprsr_md.drop_ctl = 1;
+	action drop_bad_mac() {
+		meta.drop_reason = DROP_MULTICAST_INVALID_MAC;
+		meta.dropped = true;
 	}
 
 	action claimv4() {
@@ -180,11 +163,7 @@ control Filter(
 		if (hdr.arp.isValid()) {
 			switch_ipv4_addr.apply();
 		} else if (hdr.ipv4.isValid()) {
-			if (meta.is_mcast && !meta.is_valid) {
-				drop_mcast();
-				drop_mcast_ctr.count(ig_intr_md.ingress_port);
-				return;
-			} else if (meta.is_mcast && meta.is_valid) {
+			if (meta.is_mcast) {
 				// IPv4 Multicast Address Validation (RFC 1112, RFC 7042)
 				//
 				// We've already validated the first 3 bytes of the MAC in the parser.
@@ -207,22 +186,15 @@ control Filter(
 				if (mac_byte4 != (bit<8>)ipv4_lower7 ||
 					mac_byte5 != ipv4_byte3 ||
 					mac_byte6 != ipv4_byte4) {
-					drop_mcast_with_reason(DROP_MULTICAST_INVALID_MAC);
+					drop_bad_mac();
 					drop_mcast_ctr.count(ig_intr_md.ingress_port);
 					return;
 				}
-			} else if (!meta.is_valid) {
-				drop_with_reason(meta.drop_reason);
-				return;
 			} else {
 				switch_ipv4_addr.apply();
 			}
 		} else if (hdr.ipv6.isValid()) {
-			if (meta.is_mcast && !meta.is_valid) {
-				drop_mcast();
-				drop_mcast_ctr.count(ig_intr_md.ingress_port);
-				return;
-			} else if (meta.is_mcast && meta.is_valid) {
+			if (meta.is_mcast) {
 				// Validate the IPv6 multicast MAC address format (RFC 2464,
 				// RFC 7042).
 				//
@@ -235,7 +207,7 @@ control Filter(
 				// registers on the device.
 				if (hdr.ethernet.dst_mac[47:40] != 8w0x33 ||
 					hdr.ethernet.dst_mac[39:32] != 8w0x33) {
-						drop_mcast_with_reason(DROP_MULTICAST_INVALID_MAC);
+						drop_bad_mac();
 						drop_mcast_ctr.count(ig_intr_md.ingress_port);
 						return;
 				}
@@ -249,7 +221,7 @@ control Filter(
 					hdr.ethernet.dst_mac[23:16] != hdr.ipv6.dst_addr[23:16] ||
 					hdr.ethernet.dst_mac[15:8] != hdr.ipv6.dst_addr[15:8] ||
 					hdr.ethernet.dst_mac[7:0] != hdr.ipv6.dst_addr[7:0]) {
-						drop_mcast_with_reason(DROP_MULTICAST_INVALID_MAC);
+						drop_bad_mac();
 						drop_mcast_ctr.count(ig_intr_md.ingress_port);
 						return;
 				}
@@ -273,7 +245,6 @@ control Filter(
 control Services(
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
-	inout ingress_intrinsic_metadata_for_deparser_t ig_dprsr_md,
 	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
@@ -343,8 +314,8 @@ control Services(
 	}
 
 	action drop_bad_ping() {
-		ig_dprsr_md.drop_ctl = 1;
 		meta.drop_reason = DROP_BAD_PING;
+		meta.dropped = true;
 		service_ctr.count(SVC_COUNTER_BAD_PING);
 	}
 
@@ -376,7 +347,6 @@ control Services(
 
 	table service {
 		key = {
-			ig_dprsr_md.drop_ctl : exact;
 			meta.nat_ingress_hit : exact;
 			meta.is_mcast : exact;
 			meta.is_link_local_mcastv6 : ternary;
@@ -402,20 +372,20 @@ control Services(
 		}
 
 		const entries = {
-			( 0, false, false, _, true, _, _, false, true, true, false, ICMP_ECHOREPLY, 0 ) : forward_to_userspace;
-			( 0, false, false, _, true, _, _, false, true, true, false, ICMP_ECHOREPLY, _ ) : drop_bad_ping;
-			( 0, false, false, _, true, _, _, false, true, true, false, ICMP_ECHO, 0 ) : ping4_reply;
-			( 0, false, false, _, true, _, _, false, true, true, false, ICMP_ECHO, _ ) : drop_bad_ping;
-			( 0, false, false, _, true, _, _, false, true, false, true, ICMP6_ECHOREPLY, 0 ) : forward_to_userspace;
-			( 0, false, false, _, true, _, _, false, true, false, true, ICMP6_ECHOREPLY, _ ) : drop_bad_ping;
-			( 0, false, false, _, true, _, _, false, true, false, true, ICMP6_ECHO, 0 ) : ping6_reply;
-			( 0, false, false, _, true, _, _, false, true, false, true, ICMP6_ECHO, _ ) : drop_bad_ping;
-			( 0, false, false, _, _, USER_SPACE_SERVICE_PORT, true, _, _, _, _, _, _ ) : forward_from_userspace;
-			( 0, false, true, true, _, USER_SPACE_SERVICE_PORT, true, _, _, _, _, _, _ ) : forward_from_userspace;
-			( 0, false, false, _, _, _, false, true, _, _, _, _, _ ) : forward_to_userspace;
-			( 0, false, false, _, true, _, _, _, _, _, _, _, _ ) : forward_to_userspace;
+			( false, false, _, true, _, _, false, true, true, false, ICMP_ECHOREPLY, 0 ) : forward_to_userspace;
+			( false, false, _, true, _, _, false, true, true, false, ICMP_ECHOREPLY, _ ) : drop_bad_ping;
+			( false, false, _, true, _, _, false, true, true, false, ICMP_ECHO, 0 ) : ping4_reply;
+			( false, false, _, true, _, _, false, true, true, false, ICMP_ECHO, _ ) : drop_bad_ping;
+			( false, false, _, true, _, _, false, true, false, true, ICMP6_ECHOREPLY, 0 ) : forward_to_userspace;
+			( false, false, _, true, _, _, false, true, false, true, ICMP6_ECHOREPLY, _ ) : drop_bad_ping;
+			( false, false, _, true, _, _, false, true, false, true, ICMP6_ECHO, 0 ) : ping6_reply;
+			( false, false, _, true, _, _, false, true, false, true, ICMP6_ECHO, _ ) : drop_bad_ping;
+			( false, false, _, _, USER_SPACE_SERVICE_PORT, true, _, _, _, _, _, _ ) : forward_from_userspace;
+			( false, true, true, _, USER_SPACE_SERVICE_PORT, true, _, _, _, _, _, _ ) : forward_from_userspace;
+			( false, false, _, _, _, false, true, _, _, _, _, _ ) : forward_to_userspace;
+			( false, false, _, true, _, _, _, _, _, _, _, _ ) : forward_to_userspace;
 			// Link-local multicast
-			( 0, false, true, true, _, _, _, _, _, _, _, _, _ ) : mcast_inbound_link_local;
+			( false, true, true, _, _, _, _, _, _, _, _, _ ) : mcast_inbound_link_local;
 		}
 
 		default_action = no_service;
@@ -436,7 +406,7 @@ control Services(
 			// arrived on an uplink port that only allows in traffic that
 			// is meant to be NAT encapsulated.
 			meta.drop_reason = DROP_NAT_INGRESS_MISS;
-			ig_dprsr_md.drop_ctl = 1;
+			meta.dropped = true;
 		}
 		else if (meta.is_switch_address && hdr.geneve.isValid() && hdr.geneve.vni != 0) {
 			meta.nat_egress_hit = true;
@@ -684,13 +654,13 @@ control NatIngress (
 
 		// Note: This whole conditional could be simpler as a set of */
 		// `const entries`, but apply (on tables) cannot be called from actions
-		if (hdr.ipv4.isValid() && meta.is_valid) {
+		if (hdr.ipv4.isValid()) {
 			if (meta.is_mcast) {
 				ingress_ipv4_mcast.apply();
 			} else {
 				ingress_ipv4.apply();
 			}
-		} else if (hdr.ipv6.isValid() && meta.is_valid) {
+		} else if (hdr.ipv6.isValid()) {
 			// If this is a multicast packet and not a link-local multicast,
 			// we need to check the multicast table
 			if (meta.is_mcast && !meta.is_link_local_mcastv6) {
@@ -724,14 +694,13 @@ control NatIngress (
 
 control NatEgress (
 	inout sidecar_headers_t hdr,
-	inout sidecar_ingress_meta_t meta,
-	inout ingress_intrinsic_metadata_for_deparser_t ig_dprsr_md
+	inout sidecar_ingress_meta_t meta
 ) {
 	action drop() {
-		ig_dprsr_md.drop_ctl = 1;
 		// We only get here if the packet was marked for a nat egress,
 		// but it's not a packet type allowed through nat.
 		meta.drop_reason = DROP_NAT_HEADER_ERROR;
+		meta.dropped = true;
 	}
 
 	action strip_outer_header() {
@@ -1056,17 +1025,16 @@ control RouterLookupIndex4(
 control Arp (
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
-	inout ingress_intrinsic_metadata_for_deparser_t ig_dprsr_md,
 	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ctr;
 
 	action drop() {
-		ig_dprsr_md.drop_ctl = 1;
 		// This happens if we have explicitly added an ipv4 -> NULL_MAC
 		// entry.
 		meta.drop_reason = DROP_ARP_NULL;
+		meta.dropped = true;
 		ctr.count();
 	}
 
@@ -1085,6 +1053,8 @@ control Arp (
 		hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;
 		meta.service_routed = true;
 		meta.drop_reason = DROP_ARP_MISS;
+		// Dont set meta.dropped because we want an error packet
+		// to go up to the switch.
 		ig_tm_md.ucast_egress_port = USER_SPACE_SERVICE_PORT;
 		ctr.count();
 	}
@@ -1103,17 +1073,16 @@ control Arp (
 control Ndp (
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
-	inout ingress_intrinsic_metadata_for_deparser_t ig_dprsr_md,
 	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ctr;
 
 	action drop() {
-		ig_dprsr_md.drop_ctl = 1;
 		// This happens if we have explicitly added an ipv6 -> NULL_MAC
 		// entry.
 		meta.drop_reason = DROP_NDP_NULL;
+		meta.dropped = true;
 		ctr.count();
 	}
 
@@ -1132,6 +1101,8 @@ control Ndp (
 		hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;
 		meta.service_routed = true;
 		meta.drop_reason = DROP_NDP_MISS;
+		// Dont set meta.dropped because we want an error packet
+		// to go up to the switch.
 		ig_tm_md.ucast_egress_port = USER_SPACE_SERVICE_PORT;
 		ctr.count();
 	}
@@ -1150,7 +1121,6 @@ control Ndp (
 control Router4 (
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
-	inout ingress_intrinsic_metadata_for_deparser_t ig_dprsr_md,
 	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
@@ -1170,12 +1140,6 @@ control Router4 (
 	}
 
 	apply {
-		if (meta.ipv4_checksum_err) {
-			ig_dprsr_md.drop_ctl = 1;
-			meta.drop_reason = DROP_IPV4_CHECKSUM_ERR;
-			return;
-		}
-
 		route4_result_t fwd;
 		fwd.nexthop = 0;
 		fwd.port = 0;
@@ -1198,16 +1162,20 @@ control Router4 (
 
 		if (!fwd.is_hit) {
 			icmp_error(ICMP_DEST_UNREACH, ICMP_DST_UNREACH_NET);
+			// Dont set meta.dropped because we want an error packet
+			// to go out.
 			meta.drop_reason = DROP_IPV4_UNROUTEABLE;
 		} else if (hdr.ipv4.ttl == 1 && !IS_SERVICE(fwd.port)) {
 			icmp_error(ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
+			// Dont set meta.dropped because we want an error packet
+			// to go out.
 			meta.drop_reason = DROP_IPV4_TTL_EXCEEDED;
 		} else {
 			hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
 			ig_tm_md.ucast_egress_port = fwd.port;
 
 			meta.nexthop_ipv4 = fwd.nexthop;
-			Arp.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
+			Arp.apply(hdr, meta, ig_intr_md, ig_tm_md);
 		}
 	}
 }
@@ -1215,7 +1183,6 @@ control Router4 (
 control MulticastRouter4(
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
-	inout ingress_intrinsic_metadata_for_deparser_t ig_dprsr_md,
 	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
@@ -1263,12 +1230,6 @@ control MulticastRouter4(
 	}
 
 	apply {
-		if (meta.ipv4_checksum_err) {
-			ig_dprsr_md.drop_ctl = 1;
-			meta.drop_reason = DROP_IPV4_CHECKSUM_ERR;
-			return;
-		}
-
 		// If the packet came in with a VLAN tag, we need to invalidate
 		// the VLAN header before we do the lookup.  The VLAN header
 		// will be re-attached if set in the forward_vlan action.
@@ -1280,13 +1241,16 @@ control MulticastRouter4(
 		if (!tbl.apply().hit) {
 			icmp_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);
 			meta.drop_reason = DROP_IPV6_UNROUTEABLE;
+			// Dont set meta.dropped because we want an error packet
+			// to go out.
 		} else if (hdr.ipv4.ttl == 1 && !meta.service_routed) {
 			icmp_error(ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
 			meta.drop_reason = DROP_IPV4_TTL_INVALID;
+			// Dont set meta.dropped because we want an error packet
+			// to go out.
 		} else {
 			// Set the destination port to an invalid value
-        	ig_tm_md.ucast_egress_port = (PortId_t)0x1ff;
-
+			ig_tm_md.ucast_egress_port = (PortId_t)0x1ff;
 			if (hdr.ipv4.isValid()) {
 				hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
 			}
@@ -1297,7 +1261,6 @@ control MulticastRouter4(
 control Router6 (
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
-	inout ingress_intrinsic_metadata_for_deparser_t ig_dprsr_md,
 	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
@@ -1340,14 +1303,18 @@ control Router6 (
 		if (!fwd.is_hit) {
 			icmp_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);
 			meta.drop_reason = DROP_IPV6_UNROUTEABLE;
+			// Dont set meta.dropped because we want an error packet
+			// to go out.
 		} else if (hdr.ipv6.hop_limit == 1 && !IS_SERVICE(fwd.port)) {
 			icmp_error(ICMP6_TIME_EXCEEDED, ICMP_EXC_TTL);
 			meta.drop_reason = DROP_IPV6_TTL_EXCEEDED;
+			// Dont set meta.dropped because we want an error packet
+			// to go out.
 		} else {
 			ig_tm_md.ucast_egress_port = fwd.port;
 			hdr.ipv6.hop_limit = hdr.ipv6.hop_limit - 1;
 			meta.nexthop_ipv6 = fwd.nexthop;
-			Ndp.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
+			Ndp.apply(hdr, meta, ig_intr_md, ig_tm_md);
 		}
 	}
 }
@@ -1355,7 +1322,6 @@ control Router6 (
 control MulticastRouter6 (
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
-	inout ingress_intrinsic_metadata_for_deparser_t ig_dprsr_md,
 	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
@@ -1413,9 +1379,13 @@ control MulticastRouter6 (
 		if (!tbl.apply().hit) {
 			icmp_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);
 			meta.drop_reason = DROP_IPV6_UNROUTEABLE;
+			// Dont set meta.dropped because we want an error packet
+			// to go out.
 		} else if (hdr.ipv6.hop_limit == 1) {
 			icmp_error(ICMP6_TIME_EXCEEDED, ICMP_EXC_TTL);
 			meta.drop_reason = DROP_IPV6_TTL_EXCEEDED;
+			// Dont set meta.dropped because we want an error packet
+			// to go out.
 		} else {
 			// Set the destination port to an invalid value
         	ig_tm_md.ucast_egress_port = (PortId_t)0x1ff;
@@ -1427,22 +1397,21 @@ control MulticastRouter6 (
 control L3Router(
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
-	inout ingress_intrinsic_metadata_for_deparser_t ig_dprsr_md,
 	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
 	apply {
 		if (hdr.ipv4.isValid()) {
 			if (meta.is_mcast && !meta.is_link_local_mcastv6) {
-				MulticastRouter4.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
+				MulticastRouter4.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			} else {
-				Router4.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
+				Router4.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			}
 		} else if (hdr.ipv6.isValid()) {
 			if (meta.is_mcast && !meta.is_link_local_mcastv6) {
-				MulticastRouter6.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
+				MulticastRouter6.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			} else {
-				Router6.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
+				Router6.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			}
 		}
 	}
@@ -1544,7 +1513,6 @@ control MulticastMacRewrite(
 control MulticastIngress (
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
-	inout ingress_intrinsic_metadata_for_deparser_t ig_dprsr_md,
 	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md)
 {
@@ -1560,8 +1528,8 @@ control MulticastIngress (
 	// At this point, We should only allow replication for IPv6 packets that
 	// are admin-scoped before possible decapping.
 	action drop_mcastv4_no_group() {
-		ig_dprsr_md.drop_ctl = 1;
 		meta.drop_reason = DROP_MULTICAST_NO_GROUP;
+		meta.dropped = true;
 	}
 
 	// Drop action for IPv6 multicast packets with no group.
@@ -1569,31 +1537,31 @@ control MulticastIngress (
 	// At this point, we should only allow replication for IPv6 packets that
 	// are admin-scoped before possible decapping.
 	action drop_mcastv6_no_group() {
-		ig_dprsr_md.drop_ctl = 1;
 		meta.drop_reason = DROP_MULTICAST_NO_GROUP;
+		meta.dropped = true;
 	}
 
 	// Drop action for IPv6 multicast packets with no group
 	// that is a valid admin-scoped multicast group.
 	action drop_mcastv6_admin_scoped_no_group() {
-		ig_dprsr_md.drop_ctl = 1;
 		meta.drop_reason = DROP_MULTICAST_NO_GROUP;
+		meta.dropped = true;
 		mcast_ipv6_ctr.count();
 	}
 
 	// Drop action for IPv4 multicast packets with no source-specific multicast
 	// group.
 	action drop_mcastv4_filtered_source() {
-		ig_dprsr_md.drop_ctl = 1;
 		meta.drop_reason = DROP_MULTICAST_SOURCE_FILTERED;
+		meta.dropped = true;
 		mcast_ipv4_ssm_ctr.count();
 	}
 
 	// Drop action for IPv6 ulticast packets with no source-specific multicast
 	// group.
 	action drop_mcastv6_filtered_source() {
-		ig_dprsr_md.drop_ctl = 1;
 		meta.drop_reason = DROP_MULTICAST_SOURCE_FILTERED;
+		meta.dropped = true;
 		mcast_ipv6_ssm_ctr.count();
 	}
 
@@ -2001,38 +1969,43 @@ control Ingress(
 		ingress_ctr.count(ig_intr_md.ingress_port);
 		packet_ctr.count(meta.pkt_type);
 
-		// Always apply the filter first, as it may drop packets
-		// that are not valid for the rest of the pipeline or tag metadata
-		// accordingly.
-		//
-		// Additionally, it sets the `meta.is_valid` flag to indicate
-		// whether the packet is valid for further processing.
-		filter.apply(hdr, meta, ig_dprsr_md, ig_intr_md);
+		if (meta.ipv4_checksum_err) {
+			meta.drop_reason = DROP_IPV4_CHECKSUM_ERR;
+			meta.dropped = true;
+		} else if (!meta.dropped) {
+			// Always apply the filter first, as it may drop packets
+			// that are not valid for the rest of the pipeline or tag metadata
+			// accordingly.
+			filter.apply(hdr, meta, ig_intr_md);
+		}
 
-		if (meta.is_valid && !hdr.geneve.isValid()) {
+		// We perform NAT ingress before multicast replication to ensure
+		// that the NAT'd outer address is used for multicast
+		// replication to inbound groups
+		if (!meta.dropped && !hdr.geneve.isValid()) {
 			nat_ingress.apply(hdr, meta, ig_intr_md);
 		}
 
-		if (meta.is_valid && (!meta.is_mcast || meta.is_link_local_mcastv6)) {
-			services.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
-		}
-
-		// We perform NAT ingress before multicast replication to ensure that
-		// the NAT'd outer address is used for multicast replication to inbound
-		// groups
-		if (meta.is_valid && meta.is_mcast && !meta.is_link_local_mcastv6) {
-			mcast_ingress.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
-		}
-
-		if (meta.is_valid && !meta.service_routed && ig_dprsr_md.drop_ctl == 0) {
-			if (hdr.geneve.isValid()) {
-				nat_egress.apply(hdr, meta, ig_dprsr_md);
+		if (!meta.dropped) {
+			if (!meta.is_mcast || meta.is_link_local_mcastv6) {
+				services.apply(hdr, meta, ig_intr_md, ig_tm_md);
+			} else if (meta.is_mcast && !meta.is_link_local_mcastv6) {
+				mcast_ingress.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			}
-			l3_router.apply(hdr, meta, ig_dprsr_md, ig_intr_md, ig_tm_md);
 		}
 
-		if (meta.drop_reason != 0) {
+		if (!meta.dropped && !meta.service_routed) {
+			if (hdr.geneve.isValid()) {
+				nat_egress.apply(hdr, meta);
+			}
+			if (!meta.dropped) {
+				l3_router.apply(hdr, meta, ig_intr_md, ig_tm_md);
+			}
+		}
+
+		if (meta.dropped) {
 			// Handle dropped packets
+			ig_dprsr_md.drop_ctl = 1;
 			drop_port_ctr.count(ig_intr_md.ingress_port);
 			drop_reason_ctr.count(meta.drop_reason);
 		} else if (!meta.is_mcast) {
@@ -2110,7 +2083,7 @@ control IngressDeparser(packet_out pkt,
 				COMMON_FIELDS, IPV4_FIELDS, hdr.inner_tcp});
 		}
 		/* COMPILER BUG: I cannot convince the tofino to compute this correctly.
-		 * Conveniently, we dont actually need it, see RFC 6935.
+		 * Conveniently, we don't actually need it, see RFC 6935.
 		 *
 		 *     if (meta.nat_ingress_hit && hdr.inner_ipv4.isValid() &&
 		 *         hdr.inner_icmp.isValid()) {
@@ -2130,7 +2103,7 @@ control IngressDeparser(packet_out pkt,
 				COMMON_FIELDS, IPV6_FIELDS, hdr.inner_tcp});
 		}
 		/* COMPILER BUG: I cannot convince the tofino to compute this correctly.
-		 * Conveniently, we dont actually need it, see RFC 6935.
+		 * Conveniently, we don't actually need it, see RFC 6935.
 		 *
 		 *     if (meta.nat_ingress_hit && hdr.inner_ipv6.isValid() &&
 		 *         hdr.inner_icmp.isValid()) {

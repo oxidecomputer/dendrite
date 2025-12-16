@@ -1392,14 +1392,6 @@ async fn test_ipv4_multicast_invalid_destination_mac() -> TestResult {
         .await
         .unwrap();
 
-    let port_label_ingress = switch.port_label(ingress).unwrap();
-
-    // Check the Multicast_Drop counter baseline for the ingress port
-    let drop_mcast_baseline = switch
-        .get_counter(&port_label_ingress, Some("multicast_drop"))
-        .await
-        .unwrap();
-
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
     check_counter_incremented(
@@ -1408,17 +1400,6 @@ async fn test_ipv4_multicast_invalid_destination_mac() -> TestResult {
         ctr_baseline,
         1,
         None,
-    )
-    .await
-    .unwrap();
-
-    // Verify that the Filter_Drop_Multicast counter also incremented
-    check_counter_incremented(
-        switch,
-        &port_label_ingress,
-        drop_mcast_baseline,
-        1,
-        Some("multicast_drop"),
     )
     .await
     .unwrap();

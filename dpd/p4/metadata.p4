@@ -13,10 +13,10 @@ header bridge_h {
 }
 
 struct sidecar_ingress_meta_t {
+	bool dropped;			// has packet been dropped
 	bool ipv4_checksum_err;		// failed ipv4 checksum
 	bool is_switch_address;		// destination IP was a switch port
 	bool is_mcast;			// packet is multicast
-	bool is_valid;			// packet is valid
 	bool allow_source_mcast;	// allowed to be sent from a source address for SSM
 	bool is_link_local_mcastv6;	// packet is a IPv6 link-local multicast packet
 	bool service_routed;		// routed to or from a service routine
