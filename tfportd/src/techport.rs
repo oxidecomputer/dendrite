@@ -16,7 +16,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use tokio::time::sleep;
 
 use crate::Global;
-use crate::netsupport;
+use crate::netsupport::{self, get_dhcpv6};
 use common::illumos;
 use dpd_client::ClientInfo;
 use dpd_client::types;
@@ -32,6 +32,7 @@ const BOOTSTRAP_PREFIX_LENGTH: u8 = 64;
 const TECHPORT_RA_VALID_LIFETIME: u32 = 120;
 const TECHPORT_RA_PREFERRED_LIFETIME: u32 = 60;
 const TECHPORT_RA_INTERVAL: u64 = 30;
+const DHCPV6_SYNC_INTERVAL: u64 = 30;
 const ADDRESS_RETRY_INTERVAL: u64 = 3;
 const TECHPORT0: &str = "techport0";
 const TECHPORT1: &str = "techport1";
@@ -121,6 +122,46 @@ pub async fn advertise(
     }
 
     Ok(())
+}
+
+pub async fn sync_dhcp6(g: Arc<Global>) {
+    while g.get_running() {
+        for ifx in &[TECHPORT0, TECHPORT1] {
+            match get_dhcpv6(ifx) {
+                Ok(addrs) => {
+                    for addr in &addrs {
+                        sync_dhcp6_addr(&g, *addr).await;
+                    }
+                }
+                Err(e) => {
+                    error!(g.log, "failed to get dhcpv6 addrs for {ifx}: {e}");
+                }
+            }
+        }
+        sleep(Duration::from_secs(DHCPV6_SYNC_INTERVAL)).await;
+    }
+}
+
+pub async fn sync_dhcp6_addr(g: &Arc<Global>, addr: Ipv6Addr) {
+    // Techports are the internal port from an ASIC perspective.
+    let port = types::PortId::from(
+        dpd_client::types::Internal::from_str("int0").unwrap(),
+    );
+    let link = &types::LinkId(0);
+    let entry = types::Ipv6Entry {
+        tag: g.client.inner().tag.clone(),
+        addr,
+    };
+    if let Err(e) = g.client.link_ipv6_create(&port, link, &entry).await {
+        if e.status() != Some(http::StatusCode::CONFLICT) {
+            warn!(
+                g.log,
+                "failed to set up dpd techport dhpv6 address {addr}: {e}"
+            );
+        }
+    } else {
+        info!(g.log, "added dhcpv6 address {addr} to asic");
+    }
 }
 
 async fn address_ensure_dpd(g: &Arc<Global>, pfx0: Ipv6Addr, pfx1: Ipv6Addr) {

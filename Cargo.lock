@@ -2858,7 +2858,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.0",
+ "hashbrown 0.15.5",
  "serde",
  "serde_core",
 ]
@@ -3198,6 +3198,28 @@ checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 name = "libnet"
 version = "0.1.0"
 source = "git+https://github.com/oxidecomputer/netadm-sys?branch=main#3eb1a6ad0b713660b367ce275e0a3896eabe19d4"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "colored",
+ "dlpi 0.2.0 (git+https://github.com/oxidecomputer/dlpi-sys)",
+ "libc",
+ "num_enum 0.7.5",
+ "nvpair 0.5.0",
+ "nvpair-sys",
+ "oxnet",
+ "rand 0.9.2",
+ "rusty-doors",
+ "socket2 0.6.0",
+ "thiserror 2.0.16",
+ "tracing",
+ "winnow 0.7.14",
+]
+
+[[package]]
+name = "libnet"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/netadm-sys#2cd6617e4a768521ad66a094d66e03390001ba9b"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -4170,7 +4192,7 @@ version = "0.1.0"
 source = "git+https://github.com/oxidecomputer/opte?rev=795a1e0aeefb7a2c6fe4139779fdf66930d09b80#795a1e0aeefb7a2c6fe4139779fdf66930d09b80"
 dependencies = [
  "libc",
- "libnet",
+ "libnet 0.1.0 (git+https://github.com/oxidecomputer/netadm-sys?branch=main)",
  "opte",
  "oxide-vpc",
  "postcard",
@@ -6683,6 +6705,7 @@ dependencies = [
  "ispf",
  "kstat-rs",
  "libc",
+ "libnet 0.1.0 (git+https://github.com/oxidecomputer/netadm-sys)",
  "lldpd-client",
  "omicron-common",
  "oxide-tokio-rt",
