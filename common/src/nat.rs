@@ -47,7 +47,7 @@ impl PartialEq for Ipv4Nat {
 
 #[cfg(test)]
 mod tests {
-    use super::Vni;
+    use crate::network::Vni;
 
     #[test]
     fn test_vni() {

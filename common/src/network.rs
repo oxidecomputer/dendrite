@@ -270,7 +270,7 @@ pub fn validate_vlan(id: impl Into<u16>) -> Result<(), VlanError> {
 pub struct Vni(u32);
 
 impl Vni {
-    const MAX_VNI: u32 = 0x00FF_FFFF;
+    pub const MAX_VNI: u32 = 0x00FF_FFFF;
     const ERR_MSG: &'static str = "VNI out of 24-bit range";
 
     /// Construct a new VNI, validating that it's a valid 24-bit value.

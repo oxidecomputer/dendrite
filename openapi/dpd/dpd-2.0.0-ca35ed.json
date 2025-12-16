@@ -6446,20 +6446,6 @@
           "port_id"
         ]
       },
-      "InternalForwarding": {
-        "description": "Represents the NAT target for multicast traffic for internal/underlay forwarding.",
-        "type": "object",
-        "properties": {
-          "nat_target": {
-            "nullable": true,
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/NatTarget"
-              }
-            ]
-          }
-        }
-      },
       "InstanceTarget": {
         "description": "represents an internal target for either NAT or an external subnet mapping",
         "type": "object",
@@ -6480,6 +6466,20 @@
           "internal_ip",
           "vni"
         ]
+      },
+      "InternalForwarding": {
+        "description": "Represents the NAT target for multicast traffic for internal/underlay forwarding.",
+        "type": "object",
+        "properties": {
+          "nat_target": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/NatTarget"
+              }
+            ]
+          }
+        }
       },
       "IpSrc": {
         "description": "Source filter match key for multicast traffic.",
