@@ -335,6 +335,20 @@ impl TryFrom<types::InstanceTarget> for network::InstanceTarget {
     }
 }
 
+impl TryFrom<types::NatTarget> for network::NatTarget {
+    type Error = String;
+
+    fn try_from(
+        t: types::NatTarget,
+    ) -> Result<network::NatTarget, Self::Error> {
+        Ok(Self {
+            internal_ip: t.internal_ip,
+            inner_mac: t.inner_mac.into(),
+            vni: t.vni.try_into()?,
+        })
+    }
+}
+
 /// Return the default port on which the `dpd` API server listens for clients.
 pub const fn default_port() -> u16 {
     ::common::DEFAULT_DPD_PORT

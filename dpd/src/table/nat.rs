@@ -13,8 +13,8 @@ use slog::debug;
 use aal::{ActionParse, MatchParse, MatchRange};
 use aal_macros::*;
 
-use crate::table::*;
 use crate::Switch;
+use crate::table::*;
 use common::network::{MacAddr, NatTarget};
 
 pub const IPV4_TABLE_NAME: &str = "pipe.Ingress.nat_ingress.ingress_ipv4";

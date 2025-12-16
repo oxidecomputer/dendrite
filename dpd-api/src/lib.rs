@@ -42,7 +42,7 @@ use oxnet::{Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use transceiver_controller::{
-    message::LedState, Datapath, Monitors, PowerState,
+    Datapath, Monitors, PowerState, message::LedState,
 };
 
 api_versions!([

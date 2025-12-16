@@ -13,8 +13,8 @@ use aal::{ActionParse, MatchParse};
 use aal_macros::*;
 use oxnet::Ipv4Net;
 
-use crate::table::*;
 use crate::Switch;
+use crate::table::*;
 use common::network::{InstanceTarget, MacAddr};
 
 pub const EXT_SUBNET_TABLE_NAME: &str = "pipe.Ingress.filter.external_subnets";

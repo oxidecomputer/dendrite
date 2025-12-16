@@ -5,7 +5,7 @@
 // Copyright 2025 Oxide Computer Company
 
 use std::convert::TryFrom;
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use anyhow::Context;
@@ -14,10 +14,9 @@ use colored::*;
 use futures::stream::TryStreamExt;
 use tabwriter::TabWriter;
 
-use common::nat;
-use common::network::MacAddr;
-use dpd_client::types;
+use common::network::{MacAddr, Vni};
 use dpd_client::Client;
+use dpd_client::types;
 
 #[derive(Debug, Subcommand)]
 /// manage NAT reservations
@@ -57,7 +56,7 @@ pub enum Nat {
         inner: MacAddr,
         /// Geneve VNI
         #[clap(short = 'v')]
-        vni: nat::Vni,
+        vni: Vni,
     },
     /// delete a single NAT reservation
     Del {
@@ -127,7 +126,7 @@ async fn nat_get(
                 .nat_ipv4_get(&ipv4, port)
                 .await
                 .map(|r| {
-                    network::NatTarget::try_from(r.into_inner())
+                    common::network::NatTarget::try_from(r.into_inner())
                         .expect("Invalid NAT target from server")
                 })
                 .context("failed to get IPv4 NAT mapping")?;
@@ -138,7 +137,7 @@ async fn nat_get(
                 .nat_ipv6_get(&ipv6, port)
                 .await
                 .map(|r| {
-                    network::NatTarget::try_from(r.into_inner())
+                    common::network::NatTarget::try_from(r.into_inner())
                         .expect("Invalid NAT target from server")
                 })
                 .context("failed to get IPv6 NAT mapping")?;
@@ -155,7 +154,7 @@ async fn nat_add(
     high_port: u16,
     internal_ip: Ipv6Addr,
     inner_mac: MacAddr,
-    vni: nat::Vni,
+    vni: Vni,
 ) -> anyhow::Result<()> {
     let tgt = types::NatTarget {
         internal_ip,

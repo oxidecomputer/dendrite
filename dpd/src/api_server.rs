@@ -74,7 +74,7 @@ use crate::switch_port::FixedSideDevice;
 use crate::switch_port::LedState;
 use crate::transceivers::PowerState;
 use crate::types::DpdError;
-use crate::{arp, loopback, nat, ports, route, Switch};
+use crate::{Switch, arp, loopback, nat, ports, route};
 use common::ext_subnet::ExtSubnetEntry;
 use common::nat::{Ipv4Nat, Ipv6Nat};
 use common::network::{InstanceTarget, MacAddr, NatTarget};

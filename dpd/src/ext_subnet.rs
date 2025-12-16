@@ -8,9 +8,9 @@ use slog::{debug, error, trace};
 use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
 
+use crate::Switch;
 use crate::table::extsub;
 use crate::types::{DpdError, DpdResult};
-use crate::Switch;
 use common::ext_subnet::ExtSubnetEntry;
 use common::network::InstanceTarget;
 use oxnet::Ipv4Net;

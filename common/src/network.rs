@@ -369,9 +369,9 @@ impl From<InstanceTarget> for NatTarget {
 }
 #[cfg(test)]
 mod tests {
-    use super::generate_ipv6_link_local;
     use super::Ipv6Addr;
     use super::MacAddr;
+    use super::generate_ipv6_link_local;
 
     #[test]
     fn test_into() {
