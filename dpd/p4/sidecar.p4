@@ -861,7 +861,7 @@ control NatEgress (
 			( true, false, false, false, true ) : decap_ipv4_icmp;
 			( false, true, true, false, false ) : decap_ipv6_tcp;
 			( false, true, false, true, false ) : decap_ipv6_udp;
-			( false, true, false, true, true ) : decap_ipv6_icmp;
+			( false, true, false, false, true ) : decap_ipv6_icmp;
 		}
 		default_action = drop;
 

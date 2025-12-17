@@ -6,33 +6,31 @@
 
 use slog::{debug, error, trace};
 use std::collections::BTreeMap;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::Ipv4Addr;
 
 use crate::Switch;
-use crate::table::extsub_ipv4;
-use crate::table::extsub_ipv6;
+use crate::table::{extsub_ipv4, extsub_ipv6};
 use crate::types::{DpdError, DpdResult};
-use common::ext_subnet::{ExtSubnetIpv4Entry, ExtSubnetIpv6Entry};
+use common::ext_subnet::ExtSubnetEntry;
 use common::network::InstanceTarget;
-use oxnet::{Ipv4Net, Ipv6Net};
+use oxnet::IpNet;
 
 pub struct ExtSubnetData {
-    v4_subnets: BTreeMap<Ipv4Net, ExtSubnetIpv4Entry>,
-    v6_subnets: BTreeMap<Ipv6Net, ExtSubnetIpv6Entry>,
+    mappings: BTreeMap<IpNet, ExtSubnetEntry>,
 }
 
-/// Paginates through `ExtSubnetIpv4Entry`
-pub fn get_ipv4_mappings(
+/// Paginates through `ExtSubnetEntry`
+pub fn get_mappings(
     switch: &Switch,
-    last_subnet: Option<Ipv4Net>,
+    last_subnet: Option<IpNet>,
     mut max: usize,
-) -> Vec<ExtSubnetIpv4Entry> {
+) -> Vec<ExtSubnetEntry> {
     max = std::cmp::min(max, 64);
     let all = switch.ext_subnet.lock().unwrap();
     let subnet = last_subnet
-        .unwrap_or(Ipv4Net::new(Ipv4Addr::new(0, 0, 0, 0), 0).unwrap());
+        .unwrap_or(IpNet::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0).unwrap());
 
-    all.v4_subnets
+    all.mappings
         .values()
         .filter(|e| e.subnet > subnet)
         .take(max)
@@ -41,28 +39,28 @@ pub fn get_ipv4_mappings(
 }
 
 /// Find the target, if any, of the provided external subnet
-pub fn get_ipv4_mapping(
+pub fn get_mapping(
     switch: &Switch,
-    subnet: Ipv4Net,
+    subnet: IpNet,
 ) -> DpdResult<InstanceTarget> {
     let all = switch.ext_subnet.lock().unwrap();
-    match all.v4_subnets.get(&subnet) {
+    match all.mappings.get(&subnet) {
         Some(e) => Ok(e.tgt),
         None => Err(DpdError::Missing("no mapping".into())),
     }
 }
 
 /// Map the provided external subnet to the internal address/vni.
-pub fn set_ipv4_mapping(
+pub fn set_mapping(
     switch: &Switch,
-    subnet: Ipv4Net,
+    subnet: IpNet,
     tgt: InstanceTarget,
 ) -> DpdResult<()> {
-    let new_entry = ExtSubnetIpv4Entry { subnet, tgt };
+    let new_entry = ExtSubnetEntry { subnet, tgt };
     trace!(switch.log, "adding external subnet entry {}", new_entry);
 
     let mut all = switch.ext_subnet.lock().unwrap();
-    if let Some(e) = all.v4_subnets.get_mut(&subnet) {
+    if let Some(e) = all.mappings.get_mut(&subnet) {
         if e == &new_entry {
             // entry already exists
             return Ok(());
@@ -70,7 +68,10 @@ pub fn set_ipv4_mapping(
             return Err(DpdError::Exists("conflicting mapping".into()));
         }
     }
-    match extsub_ipv4::add_entry(switch, subnet, tgt) {
+    match match subnet {
+        IpNet::V4(subnet) => extsub_ipv4::add_entry(switch, subnet, tgt),
+        IpNet::V6(subnet) => extsub_ipv6::add_entry(switch, subnet, tgt),
+    } {
         Err(e) => {
             error!(
                 switch.log,
@@ -86,22 +87,25 @@ pub fn set_ipv4_mapping(
                 switch.log,
                 "added external subnet entry {} -> {:?}", subnet, tgt
             );
-            all.v4_subnets.insert(subnet, new_entry);
+            all.mappings.insert(subnet, new_entry);
             Ok(())
         }
     }
 }
 
 /// If a mapping exists for this external subnet, delete it.
-pub fn clear_ipv4_mapping(switch: &Switch, subnet: Ipv4Net) -> DpdResult<()> {
+pub fn clear_mapping(switch: &Switch, subnet: IpNet) -> DpdResult<()> {
     let mut all = switch.ext_subnet.lock().unwrap();
     trace!(switch.log, "clearing external subnet mapping {subnet}");
 
-    let Some(ent) = all.v4_subnets.get(&subnet) else {
+    let Some(ent) = all.mappings.get(&subnet) else {
         return Ok(());
     };
 
-    match extsub_ipv4::delete_entry(switch, subnet) {
+    match match subnet {
+        IpNet::V4(subnet) => extsub_ipv4::delete_entry(switch, subnet),
+        IpNet::V6(subnet) => extsub_ipv6::delete_entry(switch, subnet),
+    } {
         Err(e) => {
             error!(
                 switch.log,
@@ -117,110 +121,7 @@ pub fn clear_ipv4_mapping(switch: &Switch, subnet: Ipv4Net) -> DpdResult<()> {
                 switch.log,
                 "deleted external subnet entry {} -> {:?}", subnet, ent
             );
-            all.v4_subnets.remove(&subnet);
-            Ok(())
-        }
-    }
-}
-
-/// Paginates through `ExtSubnetIpv6Entry`
-pub fn get_ipv6_mappings(
-    switch: &Switch,
-    last_subnet: Option<Ipv6Net>,
-    mut max: usize,
-) -> Vec<ExtSubnetIpv6Entry> {
-    max = std::cmp::min(max, 64);
-    let all = switch.ext_subnet.lock().unwrap();
-    let subnet = last_subnet.unwrap_or(
-        Ipv6Net::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0), 0).unwrap(),
-    );
-
-    all.v6_subnets
-        .values()
-        .filter(|e| e.subnet > subnet)
-        .take(max)
-        .cloned()
-        .collect()
-}
-
-/// Find the target, if any, of the provided external subnet
-pub fn get_ipv6_mapping(
-    switch: &Switch,
-    subnet: Ipv6Net,
-) -> DpdResult<InstanceTarget> {
-    let all = switch.ext_subnet.lock().unwrap();
-    match all.v6_subnets.get(&subnet) {
-        Some(e) => Ok(e.tgt),
-        None => Err(DpdError::Missing("no mapping".into())),
-    }
-}
-
-/// Map the provided external subnet to the internal address/vni.
-pub fn set_ipv6_mapping(
-    switch: &Switch,
-    subnet: Ipv6Net,
-    tgt: InstanceTarget,
-) -> DpdResult<()> {
-    let new_entry = ExtSubnetIpv6Entry { subnet, tgt };
-    trace!(switch.log, "adding external subnet entry {}", new_entry);
-
-    let mut all = switch.ext_subnet.lock().unwrap();
-    if let Some(e) = all.v6_subnets.get_mut(&subnet) {
-        if e == &new_entry {
-            // entry already exists
-            return Ok(());
-        } else {
-            return Err(DpdError::Exists("conflicting mapping".into()));
-        }
-    }
-    match extsub_ipv6::add_entry(switch, subnet, tgt) {
-        Err(e) => {
-            error!(
-                switch.log,
-                "failed to add external subnet entry {} -> {:?}: {:?}",
-                subnet,
-                tgt,
-                e
-            );
-            Err(e)
-        }
-        _ => {
-            debug!(
-                switch.log,
-                "added external subnet entry {} -> {:?}", subnet, tgt
-            );
-            all.v6_subnets.insert(subnet, new_entry);
-            Ok(())
-        }
-    }
-}
-
-/// If a mapping exists for this external subnet, delete it.
-pub fn clear_ipv6_mapping(switch: &Switch, subnet: Ipv6Net) -> DpdResult<()> {
-    let mut all = switch.ext_subnet.lock().unwrap();
-    trace!(switch.log, "clearing external subnet mapping {subnet}");
-
-    let Some(ent) = all.v6_subnets.get(&subnet) else {
-        return Ok(());
-    };
-
-    match extsub_ipv6::delete_entry(switch, subnet) {
-        Err(e) => {
-            error!(
-                switch.log,
-                "failed to delete external subnet entry {} -> {:?}: {:?}",
-                subnet,
-                ent,
-                e
-            );
-            Err(e)
-        }
-        _ => {
-            debug!(
-                switch.log,
-                "deleted external subnet entry {} -> {:?}", subnet, ent
-            );
-            all.v6_subnets.remove(&subnet);
+            all.mappings.remove(&subnet);
             Ok(())
         }
     }
@@ -230,14 +131,13 @@ pub fn reset(switch: &Switch) -> DpdResult<()> {
     let mut all = switch.ext_subnet.lock().unwrap();
 
     debug!(switch.log, "resetting external subnet table");
-    all.v4_subnets.clear();
+    all.mappings.clear();
     if let Err(e) = extsub_ipv4::reset(switch) {
         error!(
             switch.log,
             "failed to reset external ipv4 subnet table: {:?}", e
         );
     }
-    all.v6_subnets.clear();
     if let Err(e) = extsub_ipv6::reset(switch) {
         error!(
             switch.log,
@@ -249,7 +149,6 @@ pub fn reset(switch: &Switch) -> DpdResult<()> {
 
 pub fn init() -> ExtSubnetData {
     ExtSubnetData {
-        v4_subnets: BTreeMap::new(),
-        v6_subnets: BTreeMap::new(),
+        mappings: BTreeMap::new(),
     }
 }

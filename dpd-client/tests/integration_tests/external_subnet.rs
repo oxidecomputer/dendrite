@@ -10,8 +10,10 @@ use std::sync::Arc;
 
 use ::common::network::MacAddr;
 use ::common::network::Vni;
+use anyhow::Context;
 use dpd_client::ClientInfo;
 use dpd_client::types;
+use oxnet::IpNet;
 use packet::Endpoint;
 use packet::eth;
 use packet::geneve;
@@ -38,13 +40,13 @@ async fn test_api() -> TestResult {
 
     switch
         .client
-        .external_subnet_ipv4_create(&external_subnet, &tgt)
+        .external_subnet_create(&external_subnet, &tgt)
         .await
         .expect("Should be able to add valid external subnet entry");
     assert_eq!(
         switch
             .client
-            .external_subnet_ipv4_get(&external_subnet)
+            .external_subnet_get(&external_subnet)
             .await
             .unwrap()
             .into_inner(),
@@ -53,7 +55,7 @@ async fn test_api() -> TestResult {
     );
     switch
         .client
-        .external_subnet_ipv4_delete(&external_subnet)
+        .external_subnet_delete(&external_subnet)
         .await
         .expect("Failed to delete existing NAT entry");
 
@@ -140,7 +142,8 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
             test.uplink_port,
             &test.upstream_router_ip,
         )
-        .await?;
+        .await
+        .context("setting ipv6 route")?;
         common::add_neighbor_ipv6(switch, &test.upstream_router_ip, router_mac)
             .await?;
     }
@@ -152,7 +155,7 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
     };
     switch
         .client
-        .external_subnet_ipv4_create(&external_subnet, &tgt)
+        .external_subnet_create(&external_subnet, &tgt)
         .await
         .unwrap();
 
@@ -181,7 +184,10 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
             geneve::GENEVE_UDP_PORT,
         )
         .unwrap(),
-        eth::ETHER_IPV4,
+        match external_subnet {
+            IpNet::V4(_) => eth::ETHER_IPV4,
+            IpNet::V6(_) => eth::ETHER_IPV6,
+        },
         test.geneve_vni,
         &[],
         &payload[14..],
@@ -246,7 +252,7 @@ async fn test_ingress(switch: &Switch, test: &ExternalTest) -> TestResult {
     };
     switch
         .client
-        .external_subnet_ipv4_create(&external_subnet, &tgt)
+        .external_subnet_create(&external_subnet, &tgt)
         .await
         .expect("Should be able to add valid external subnet entry");
 
@@ -500,4 +506,182 @@ async fn test_ingress_ipv4_tcp() -> TestResult {
 async fn test_ingress_ipv4_icmp() -> TestResult {
     let switch = &*get_switch().await;
     test_ingress_ipv4(switch, L4Protocol::Icmp).await
+}
+
+// ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─
+//  src: fa00:22::1 │
+// │dst: fc00:13::1     0.0.0.0 -> 169.254.10.2
+//  ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘        │
+//           ▲
+//           │    ┏━━━━━━━━━━━━┻━┓           fc00::1/10 -> ()
+//           │ ┌──┻─┐            ┃                    │
+//           └─│ p0 │  switch    ┃                          0.0.0.0/0 -> 172.30.0.5
+//             └┬─┳─┘            ┃  fd00:1::1/64      │                       │
+//         ┌ ─ ─  ┗━━━━━━━━━━━━━━┛        │┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+//                        ▲                ┃          │     sled              │ ┃
+//         │              │               │┃     ┌──────┐                       ┃
+//  169.254.10.1/31       │             ┌──┻──┐  │      │                     │ ┃
+//                        └─────────────│ phy │─▶│ OPTE │◀┐┌ ─ ─ ─ ─ ─ ─ ─ ─ ┐  ┃
+//                ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ └──┳──┘  │      │ │ src: fa00:22::1 │ ┃
+//                 src: fd00:1::1      │   ┃     └──────┘ ││dst: fc00:13::1│  ┃
+//                │dst: fd00:99::1         ┃              │ ─ ─ ─ ─ ─ ─ ─ ─ ─ │ ┃
+//                 ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ │   ┃              │     ┏━━━━━━━━━━━━━━┓┃
+//                │ src: fa00:22::1 │    ┃              │  ┌──┻──┐           ┃┃
+//                 │dst: fc00:13::1  │   ┃              └──│opte0│instance   ┃┃
+//                │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘    ┃                 └┬─┳──┘           ┃┃
+//                 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘   ┃                    ┗━━━━━━┳━━━━┳━━┛┃
+//                                         ┗━━━━━━━━━━━━━━━━━━╋━━━━━━━━━━━━━━━━━┛
+//                                                                     │    │
+//                                                      172.30.0.1
+//                                                                     │    │
+//                                                              172.30.0.5
+//                                                                          │
+//                                                                   fc00::1/10
+
+async fn test_egress_ipv6(
+    switch: &Switch,
+    l4_protocol: L4Protocol,
+) -> TestResult {
+    let test = ExternalTest {
+        pkt_src_ip: "fa00:22::1".to_string(),
+        pkt_src_mac: "a1:a2:a3:a4:a5:a6".to_string(),
+        pkt_src_port: 3333,
+        pkt_dst_ip: "fc00:13::1".to_string(),
+        pkt_dst_mac: "b1:b2:b3:b4:b5:b6".to_string(),
+        pkt_dst_port: 4444,
+
+        upstream_router_ip: "fa00:11::1".to_string(),
+        upstream_router_mac: "c1:c2:c3:c4:c5:c6".to_string(),
+
+        external_subnet: "fc00::1/10".to_string(),
+        instance_mac: "d1:d2:d3:d4:d5:d6".to_string(),
+
+        uplink_port: PhysPort(14),
+        _uplink_ip: "169.254.10.1".to_string(),
+        uplink_route: "::1/0".to_string(),
+
+        backplane_port: PhysPort(10),
+        backplane_ip: "fd00:99::1".to_string(),
+
+        gimlet_mac: "e1:e2:e3:e4:e5:e6".to_string(),
+        gimlet_ip: "fd00:1::1".to_string(),
+
+        l4_protocol,
+        geneve_vni: 32,
+    };
+
+    test_egress(switch, &test).await
+}
+
+// TCP packet to/from IPv6 addresses on the external subnet
+#[tokio::test]
+#[ignore]
+async fn test_egress_ipv6_tcp() -> TestResult {
+    let switch = &*get_switch().await;
+
+    test_egress_ipv6(switch, L4Protocol::Tcp).await
+}
+
+// UDP packet to/from IPv6 addresses on the external subnet
+#[tokio::test]
+#[ignore]
+async fn test_egress_ipv6_udp() -> TestResult {
+    let switch = &*get_switch().await;
+
+    test_egress_ipv6(switch, L4Protocol::Udp).await
+}
+
+// ICMP packet to/from IPv6 addresses on the external subnet
+#[tokio::test]
+#[ignore]
+async fn test_egress_ipv6_icmp() -> TestResult {
+    let switch = &*get_switch().await;
+
+    test_egress_ipv6(switch, L4Protocol::Icmp).await
+}
+
+// ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─
+//  src: fa00:22::1   │
+// │dst: fc00:13::1       fc00::1/10 -> (tep: fd00:1::1, vni: 38)
+//  ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘        │
+//           │
+//           │    ┏━━━━━━━━━━━━┻━┓  (prefix: fc00::1/10, vni: 38) -> port0
+//           │ ┌──┻─┐            ┃                    │
+//           └▶│ p0 │  switch    ┃
+//             └┬─┳─┘            ┃  fd00:1::1/64      │
+//         ┌ ─ ─  ┗━━━━━━━━━━━━━━┛        │┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+//                        │                ┃          │     sled                ┃
+//         │              │               │┃     ┌──────┐                       ┃
+//  169.254.10.1/31       │             ┌──┻──┐  │      │                       ┃
+//                        └────────────▶│ phy │─▶│ OPTE │─┐┌ ─ ─ ─ ─ ─ ─ ─ ─ ─  ┃
+//                ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ └──┳──┘  │      │ │ src: fc00::22::1  │ ┃
+//                 src: fd00:99::1     │   ┃     └──────┘ ││dst: fc00::13::1    ┃
+//                │dst: fd00:1::1          ┃              │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘ ┃
+//                 ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ │   ┃              │     ┏━━━━━━━━━━━━━━┓┃
+//                │ src: fa00:22::1   │    ┃              │  ┌──┻──┐           ┃┃
+//                 │dst: fc00:13::1    │   ┃              └─▶│opte0│instance   ┃┃
+//                │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘    ┃                 └┬─┳──┘           ┃┃
+//                 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘   ┃                    ┗━━━━━━┳━━━━┳━━┛┃
+//                                         ┗━━━━━━━━━━━━━━━━━━╋━━━━━━━━━━━━━━━━━┛
+//                                                                     │    │
+//                                                       172.30.0.1
+//                                                                     │    │
+//                                                               172.30.0.5
+//                                                                          │
+//                                                                   fc00::1/10
+
+async fn test_ingress_ipv6(
+    switch: &Switch,
+    l4_protocol: L4Protocol,
+) -> TestResult {
+    let test = ExternalTest {
+        pkt_src_ip: "fa00:22::1".to_string(),
+        pkt_src_mac: "a1:a2:a3:a4:a5:a6".to_string(),
+        pkt_src_port: 3333,
+        pkt_dst_ip: "fc00:13::1".to_string(),
+        pkt_dst_mac: "b1:b2:b3:b4:b5:b6".to_string(),
+        pkt_dst_port: 4444,
+
+        external_subnet: "fc00::1/10".to_string(),
+        instance_mac: "c1:c2:c3:c4:c5:c6".to_string(),
+
+        upstream_router_ip: "fb00::1".to_string(),
+        upstream_router_mac: "d1:d2:d3:d4:d5:d6".to_string(),
+
+        uplink_port: PhysPort(14),
+        _uplink_ip: "169.254.10.1".to_string(),
+        uplink_route: "::1/0".to_string(),
+
+        backplane_port: PhysPort(10),
+        backplane_ip: "fd00:99::1".to_string(),
+
+        gimlet_mac: "e1:e2:e3:e4:e5:e6".to_string(),
+        gimlet_ip: "fd00:1::1".to_string(),
+
+        l4_protocol,
+        geneve_vni: 38,
+    };
+
+    test_ingress(switch, &test).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_ingress_ipv6_udp() -> TestResult {
+    let switch = &*get_switch().await;
+    test_ingress_ipv6(switch, L4Protocol::Udp).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_ingress_ipv6_tcp() -> TestResult {
+    let switch = &*get_switch().await;
+    test_ingress_ipv6(switch, L4Protocol::Tcp).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_ingress_ipv6_icmp() -> TestResult {
+    let switch = &*get_switch().await;
+    test_ingress_ipv6(switch, L4Protocol::Icmp).await
 }

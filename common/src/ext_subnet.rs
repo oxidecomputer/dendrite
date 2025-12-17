@@ -4,7 +4,7 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use oxnet::{Ipv4Net, Ipv6Net};
+use oxnet::IpNet;
 use std::fmt;
 
 use schemars::JsonSchema;
@@ -12,27 +12,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::network::InstanceTarget;
 
-/** represents an external IPv4 subnet mapping */
+/** represents an external subnet mapping */
 #[derive(Debug, Copy, Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
-pub struct ExtSubnetIpv4Entry {
-    pub subnet: Ipv4Net,
+pub struct ExtSubnetEntry {
+    pub subnet: IpNet,
     pub tgt: InstanceTarget,
 }
 
-impl fmt::Display for ExtSubnetIpv4Entry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}->{}", self.subnet, self.tgt)
-    }
-}
-
-/** represents an external IPv6 subnet mapping */
-#[derive(Debug, Copy, Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
-pub struct ExtSubnetIpv6Entry {
-    pub subnet: Ipv6Net,
-    pub tgt: InstanceTarget,
-}
-
-impl fmt::Display for ExtSubnetIpv6Entry {
+impl fmt::Display for ExtSubnetEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}->{}", self.subnet, self.tgt)
     }

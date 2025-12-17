@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use std::{fmt, thread};
 
+use anyhow::Context;
 use anyhow::anyhow;
 use oxnet::Ipv4Net;
 use oxnet::Ipv6Net;
@@ -1088,8 +1089,8 @@ async fn set_route_ipv6_common(
     vlan_id: Option<u16>,
 ) -> TestResult {
     let (port_id, link_id) = switch.link_id(phys_port).unwrap();
-    let cidr = subnet.parse::<Ipv6Net>()?;
-    let tgt_ip: Ipv6Addr = gw.parse()?;
+    let cidr = subnet.parse::<Ipv6Net>().context("parsing route subnet")?;
+    let tgt_ip: Ipv6Addr = gw.parse().context("parsing route gateway")?;
 
     let route = types::Ipv6RouteUpdate {
         cidr,

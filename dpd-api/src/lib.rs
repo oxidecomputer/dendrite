@@ -13,7 +13,7 @@ use std::{
 
 use common::{
     counters::{FecRSCounters, PcsCounters, RMonCounters, RMonCountersAll},
-    ext_subnet::{ExtSubnetIpv4Entry, ExtSubnetIpv6Entry},
+    ext_subnet::ExtSubnetEntry,
     nat::{Ipv4Nat, Ipv6Nat},
     network::{InstanceTarget, MacAddr, NatTarget},
     ports::{
@@ -38,7 +38,7 @@ use dropshot::{
     Query, RequestContext, ResultsPage, TypedBody,
 };
 use dropshot_api_manager_types::api_versions;
-use oxnet::{Ipv4Net, Ipv6Net};
+use oxnet::{IpNet, Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use transceiver_controller::{
@@ -1155,33 +1155,33 @@ pub trait DpdApi {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
-     * Get all of the external IPv4 subnets with internal mappings
+     * Get all of the external subnets with internal mappings
      */
     #[endpoint {
         method = GET,
-        path = "/ext_subnet/ipv4",
+        path = "/ext_subnet",
 	versions = VERSION_EXTERNAL_SUBNETS..,
     }]
-    async fn external_subnet_ipv4_list(
+    async fn external_subnet_list(
         rqctx: RequestContext<Self::Context>,
-        query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<ExtSubnetIpv4Entry>>, HttpError>;
+        query: Query<PaginationParams<EmptyScanParams, ExtSubnetToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<ExtSubnetEntry>>, HttpError>;
 
     /**
-     * Get the mapping for the given external IPv4 subnet.
+     * Get the mapping for the given external subnet.
      */
     #[endpoint {
         method = GET,
-        path = "/ext_subnet/ipv4/{subnet}",
+        path = "/ext_subnet/{subnet}",
 	versions = VERSION_EXTERNAL_SUBNETS..,
     }]
-    async fn external_subnet_ipv4_get(
+    async fn external_subnet_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<SubnetPathV4>,
+        path: Path<SubnetPath>,
     ) -> Result<HttpResponseOk<InstanceTarget>, HttpError>;
 
     /**
-     * Add a mapping to an internal target for an external IPv4 subnet address.
+     * Add a mapping to an internal target for an external subnet address.
      *
      * These identify the gimlet on which a guest is running, and gives OPTE the
      * information it needs to  identify the guest VM that uses the external
@@ -1189,83 +1189,26 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = PUT,
-        path = "/ext_subnet/ipv4/{subnet}",
+        path = "/ext_subnet/{subnet}",
 	versions = VERSION_EXTERNAL_SUBNETS..,
     }]
-    async fn external_subnet_ipv4_create(
+    async fn external_subnet_create(
         rqctx: RequestContext<Self::Context>,
-        path: Path<SubnetPathV4>,
+        path: Path<SubnetPath>,
         target: TypedBody<InstanceTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
-     * Delete the mapping for an external IPv4 subnet
+     * Delete the mapping for an external subnet
      */
     #[endpoint {
         method = DELETE,
-        path = "/ext_subnet/ipv4/{subnet}",
+        path = "/ext_subnet/{subnet}",
 	versions = VERSION_EXTERNAL_SUBNETS..,
     }]
-    async fn external_subnet_ipv4_delete(
+    async fn external_subnet_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<SubnetPathV4>,
-    ) -> Result<HttpResponseDeleted, HttpError>;
-
-    /**
-     * Get all of the external IPv6 subnets with internal mappings
-     */
-    #[endpoint {
-        method = GET,
-        path = "/ext_subnet/ipv6",
-	versions = VERSION_EXTERNAL_SUBNETS..,
-    }]
-    async fn external_subnet_ipv6_list(
-        rqctx: RequestContext<Self::Context>,
-        query: Query<PaginationParams<EmptyScanParams, Ipv6RouteToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<ExtSubnetIpv6Entry>>, HttpError>;
-
-    /**
-     * Get the mapping for the given external IPv6 subnet.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/ext_subnet/ipv6/{subnet}",
-	versions = VERSION_EXTERNAL_SUBNETS..,
-    }]
-    async fn external_subnet_ipv6_get(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<SubnetPathV6>,
-    ) -> Result<HttpResponseOk<InstanceTarget>, HttpError>;
-
-    /**
-     * Add a mapping to an internal target for an external IPv6 subnet address.
-     *
-     * These identify the gimlet on which a guest is running, and gives OPTE the
-     * information it needs to  identify the guest VM that uses the external
-     * subnet.
-     */
-    #[endpoint {
-        method = PUT,
-        path = "/ext_subnet/ipv6/{subnet}",
-	versions = VERSION_EXTERNAL_SUBNETS..,
-    }]
-    async fn external_subnet_ipv6_create(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<SubnetPathV6>,
-        target: TypedBody<InstanceTarget>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
-
-    /**
-     * Delete the mapping for an external IPv6 subnet
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/ext_subnet/ipv6/{subnet}",
-	versions = VERSION_EXTERNAL_SUBNETS..,
-    }]
-    async fn external_subnet_ipv6_delete(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<SubnetPathV6>,
+        path: Path<SubnetPath>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -2115,15 +2058,9 @@ pub struct RoutePathV4 {
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
-pub struct SubnetPathV4 {
-    /// The external IPv4 subnet in CIDR notation being managed
-    pub subnet: Ipv4Net,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct SubnetPathV6 {
-    /// The external IPv6 subnet in CIDR notation being managed
-    pub subnet: Ipv6Net,
+pub struct SubnetPath {
+    /// The external subnet in CIDR notation being managed
+    pub subnet: IpNet,
 }
 
 /// Represents a single subnet->target route entry
@@ -2171,6 +2108,15 @@ pub struct Ipv4RouteToken {
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct Ipv6RouteToken {
     pub cidr: Ipv6Net,
+}
+
+/**
+ * Represents a cursor into a paginated request for the contents of the
+ * external subnets table.
+ */
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct ExtSubnetToken {
+    pub cidr: IpNet,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
