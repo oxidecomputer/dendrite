@@ -45,6 +45,7 @@ internal-dns-types = { git = "https://github.com/oxidecomputer/omicron", branch 
 ispf = { git = "https://github.com/oxidecomputer/ispf" }
 gateway-client = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 gateway-types = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
+libnet = { git = "https://github.com/oxidecomputer/netadm-sys" }
 nexus-client = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 omicron-common = { git = "https://github.com/oxidecomputer/omicron", branch= "zl/mcast-implicit-lifecycle" }
 oximeter = { git = "https://github.com/oxidecomputer/omicron", branch = "zl/mcast-implicit-lifecycle" }
