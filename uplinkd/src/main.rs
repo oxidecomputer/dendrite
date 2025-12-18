@@ -381,14 +381,13 @@ async fn create_addrobj(
             create_v6_ptp_link(iface, v6cidr.addr())
         }
         addr => {
-            if addr.is_ipv6() {
-                if let Err(e) = linklocal_add(iface, tag).await {
+            if addr.is_ipv6()
+                && let Err(e) = linklocal_add(iface, tag).await {
                     error!(
                         log,
                         "failed to create link local for {iface}: {e:?}"
                     );
                 }
-            }
             create_link(iface, tag, addr).await
         }
     }
