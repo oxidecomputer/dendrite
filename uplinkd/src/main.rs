@@ -382,12 +382,10 @@ async fn create_addrobj(
         }
         addr => {
             if addr.is_ipv6()
-                && let Err(e) = linklocal_add(iface, tag).await {
-                    error!(
-                        log,
-                        "failed to create link local for {iface}: {e:?}"
-                    );
-                }
+                && let Err(e) = linklocal_add(iface, "ll").await
+            {
+                error!(log, "failed to create link local for {iface}: {e:?}");
+            }
             create_link(iface, tag, addr).await
         }
     }
