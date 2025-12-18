@@ -39,6 +39,7 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use clap::Parser;
+use common::illumos::linklocal_add;
 use libc::c_int;
 use oxnet::IpNet;
 use oxnet::Ipv4Net;
@@ -379,7 +380,17 @@ async fn create_addrobj(
         IpNet::V6(v6cidr) if v6cidr.width() == 127 => {
             create_v6_ptp_link(iface, v6cidr.addr())
         }
-        addr => create_link(iface, tag, addr).await,
+        addr => {
+            if addr.is_ipv6() {
+                if let Err(e) = linklocal_add(iface, tag).await {
+                    error!(
+                        log,
+                        "failed to create link local for {iface}: {e:?}"
+                    );
+                }
+            }
+            create_link(iface, tag, addr).await
+        }
     }
     .map(|msg| info!(log, "{msg}"))
     .map_err(|e| {
