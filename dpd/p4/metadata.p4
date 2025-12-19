@@ -56,7 +56,7 @@ struct sidecar_egress_meta_t {
 	bit<8> drop_reason;	// reason a packet was dropped
 	bridge_h bridge_hdr;	// bridge header
 
-	// 256-bit port bitmap separated across 8 x 32-bit values
+	// 256-bit port bitmap for decap filtering, split across 8 x 32-bit fields.
 	bit<32> decap_ports_0;	// Ports 0-31
 	bit<32> decap_ports_1;	// Ports 32-63
 	bit<32> decap_ports_2;	// Ports 64-95

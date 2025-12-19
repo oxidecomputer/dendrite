@@ -60,8 +60,6 @@ const bit<128> IPV6_ULA_MASK = 0xff000000000000000000000000000000;     // Match 
 
 /* IPv6 Address Pattern Constants */
 const bit<128> IPV6_ADMIN_LOCAL_PATTERN = 0xff040000000000000000000000000000;  // ff04::/16
-const bit<128> IPV6_SITE_LOCAL_PATTERN = 0xff050000000000000000000000000000;   // ff05::/16
-const bit<128> IPV6_ORG_SCOPE_PATTERN = 0xff080000000000000000000000000000;    // ff08::/16
 const bit<128> IPV6_ULA_PATTERN = 0xfd000000000000000000000000000000;          // fd00::/8
 
 /* Reasons a packet may be dropped by the p4 pipeline */

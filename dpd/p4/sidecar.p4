@@ -877,7 +877,7 @@ control RouterLookupIndex6(
 		res.nexthop = 0;
 		index_ctr.count();
 	}
-	
+
 	/*
 	 * The select_route table contains 2048 pre-computed entries.
 	 * It lives in another file just to keep this one manageable.
@@ -1729,10 +1729,24 @@ control MulticastIngress (
 }
 
 
-/* This control is used to configure the egress port for multicast packets.
- * It includes actions for setting the decap ports bitmap and VLAN ID
- * (if necessary), as well as stripping headers and decrementing TTL or hop
- * limit.
+/* Multicast Egress - Per-Port Decapsulation
+ *
+ * Determines which replicated multicast copies should be decapsulated.
+ * Traffic bound for sleds remains encapsulated (OPTE on the destination sled
+ * handles decap). Traffic exiting via front panel ports may be decapsulated
+ * based on the per-group bitmap configuration.
+ *
+ * Flow:
+ *   1. mcast_tag_check   : Match packets with admin-local (ff04::/16) or ULA
+ *                          destination, AND mcast_tag=2 (UNDERLAY_EXTERNAL)
+ *   2. tbl_decap_ports   : Lookup by egress_rid to get 256-port decap bitmap
+ *   3. asic_id_to_port   : Map ASIC port ID to logical port number (0-255)
+ *   4. port_bitmap_check : Test port's bit in bitmap (see port_bitmap_check.p4)
+ *   5. modify_hdr        : If bitmap_result != 0, decapsulate packet (strip
+ *                          outer headers, decrement TTL/hop limit, handle VLAN)
+ *
+ * The bitmap marks which egress ports require decapsulation (typically external
+ * customer-facing ports) vs which keep encapsulation (underlay/sled-bound).
  */
 control MulticastEgress (
 	inout sidecar_headers_t hdr,
@@ -1781,21 +1795,16 @@ control MulticastEgress (
 
 		const entries = {
 			// Admin-local (scope value 4): Matches IPv6 multicast addresses
-			// with scope ff04::/16
+			// with scope ff04::/16. This is the only multicast scope used for
+			// internal/underlay traffic (RFC 7346, RFC 4291).
 			( true, IPV6_ADMIN_LOCAL_PATTERN &&& IPV6_SCOPE_MASK, true, true, 2 ) : NoAction;
-			// Site-local (scope value 5): Matches IPv6 multicast addresses with
-			// scope ff05::/16
-			( true, IPV6_SITE_LOCAL_PATTERN &&& IPV6_SCOPE_MASK, true, true, 2 ) : NoAction;
-			// Organization-local (scope value 8): Matches IPv6 multicast
-			// addresses with scope ff08::/16
-			( true, IPV6_ORG_SCOPE_PATTERN &&& IPV6_SCOPE_MASK, true, true, 2 ) : NoAction;
 			// ULA (Unique Local Address): Matches IPv6 addresses that start
 			// with fc00::/7. This is not a multicast address, but it is used
 			// for other internal routing purposes.
  			( true, IPV6_ULA_PATTERN &&& IPV6_ULA_MASK, true, true, 2 ) : NoAction;
 		}
 
-		const size = 4;
+		const size = 2;
 	}
 
 	table tbl_decap_ports {
