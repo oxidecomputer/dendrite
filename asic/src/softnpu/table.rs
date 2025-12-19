@@ -4,7 +4,7 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use slog::{error, trace};
+use slog::{debug, error};
 use softnpu_lib::{ManagementRequest, TableAdd, TableRemove};
 
 use crate::softnpu::Handle;
@@ -215,10 +215,10 @@ impl TableOps<Handle> for Table {
         let match_data = key.key_to_ir().unwrap();
         let action_data = data.action_to_ir().unwrap();
 
-        trace!(hdl.log, "entry_add called");
-        trace!(hdl.log, "table: {}", table);
-        trace!(hdl.log, "match_data:\n{:#?}", match_data);
-        trace!(hdl.log, "action_data:\n{:#?}", action_data);
+        debug!(hdl.log, "entry_add called");
+        debug!(hdl.log, "table: {}", table);
+        debug!(hdl.log, "match_data:\n{:#?}", match_data);
+        debug!(hdl.log, "action_data:\n{:#?}", action_data);
 
         let keyset_data = keyset_data(match_data.fields, &table);
 
@@ -499,11 +499,11 @@ impl TableOps<Handle> for Table {
             }
         };
         let action = action.to_string();
-        trace!(hdl.log, "sending request to softnpu");
-        trace!(hdl.log, "table: {}", table);
-        trace!(hdl.log, "action: {:#?}", action);
-        trace!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
-        trace!(hdl.log, "parameter_data:\n{:#?}", parameter_data);
+        debug!(hdl.log, "sending request to softnpu");
+        debug!(hdl.log, "table: {}", table);
+        debug!(hdl.log, "action: {:#?}", action);
+        debug!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
+        debug!(hdl.log, "parameter_data:\n{:#?}", parameter_data);
 
         let msg = ManagementRequest::TableAdd(TableAdd {
             table,
@@ -530,10 +530,10 @@ impl TableOps<Handle> for Table {
         let match_data = key.key_to_ir().unwrap();
         let action_data = data.action_to_ir().unwrap();
 
-        trace!(hdl.log, "entry_update called");
-        trace!(hdl.log, "table: {}", table);
-        trace!(hdl.log, "match_data:\n{:#?}", match_data);
-        trace!(hdl.log, "action_data:\n{:#?}", action_data);
+        debug!(hdl.log, "entry_update called");
+        debug!(hdl.log, "table: {}", table);
+        debug!(hdl.log, "match_data:\n{:#?}", match_data);
+        debug!(hdl.log, "action_data:\n{:#?}", action_data);
 
         //TODO implement in softnpu
         Ok(())
@@ -550,15 +550,15 @@ impl TableOps<Handle> for Table {
         };
         let match_data = key.key_to_ir().unwrap();
 
-        trace!(hdl.log, "entry_del called");
-        trace!(hdl.log, "table: {}", table);
-        trace!(hdl.log, "match_data:\n{:#?}", match_data);
+        debug!(hdl.log, "entry_del called");
+        debug!(hdl.log, "table: {}", table);
+        debug!(hdl.log, "match_data:\n{:#?}", match_data);
 
         let keyset_data = keyset_data(match_data.fields, &table);
 
-        trace!(hdl.log, "sending request to softnpu");
-        trace!(hdl.log, "table: {}", table);
-        trace!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
+        debug!(hdl.log, "sending request to softnpu");
+        debug!(hdl.log, "table: {}", table);
+        debug!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
 
         let msg =
             ManagementRequest::TableRemove(TableRemove { keyset_data, table });
