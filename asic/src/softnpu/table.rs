@@ -144,7 +144,7 @@ fn build_instance_target_vector(hdl: &Handle, action: &ActionData) -> Vec<u8> {
 }
 
 impl TableOps<Handle> for Table {
-    fn new(_hdl: &Handle, name: &str) -> AsicResult<Table> {
+    fn new(hdl: &Handle, name: &str) -> AsicResult<Table> {
         // TODO just mapping sidecar.p4 things onto simplified sidecar-lite.p4
         // things to get started.
         let (id, dpd_id) = match name {
@@ -176,7 +176,7 @@ impl TableOps<Handle> for Table {
                 (Some(EXT_SUBNET_V6.into()), Some(EXT_SUBNET_INGRESS6.into()))
             }
             x => {
-                println!("TABLE NOT HANDLED {x}");
+                error!(hdl.log, "TABLE NOT HANDLED {x}");
                 (None, None)
             }
         };
@@ -479,14 +479,14 @@ impl TableOps<Handle> for Table {
                 }
                 ("forward_to_sled", params)
             }
-            (EXT_SUBNET_V4, "forward_extsub_v4_to") => {
+            (EXT_SUBNET_INGRESS_V4, "forward_extsub_v4_to") => {
                 let params = build_instance_target_vector(hdl, &action_data);
                 if params.is_empty() {
                     return Ok(());
                 }
                 ("forward_to_sled", params)
             }
-            (EXT_SUBNET_V6, "forward_extsub_v6_to") => {
+            (EXT_SUBNET_INGRESS6, "forward_extsub_v6_to") => {
                 let params = build_instance_target_vector(hdl, &action_data);
                 if params.is_empty() {
                     return Ok(());
@@ -494,7 +494,7 @@ impl TableOps<Handle> for Table {
                 ("forward_to_sled", params)
             }
             (tbl, x) => {
-                println!("ACTION NOT HANDLED {tbl} {x}");
+                error!(hdl.log, "ACTION NOT HANDLED {tbl} {x}");
                 return Ok(());
             }
         };
@@ -634,7 +634,7 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: &str) -> Vec<u8> {
             MatchEntryValue::Lpm(x) => {
                 let mut data: Vec<u8> = Vec::new();
                 match table {
-                    ROUTER_V4_IDX => {
+                    ROUTER_V4_IDX | EXT_SUBNET_V4 => {
                         // prefix for longest prefix match operation
                         // "dst_addr" => hdr.ipv4.dst: lpm => bit<32>
                         serialize_value_type_be(&x.prefix, &mut data);
