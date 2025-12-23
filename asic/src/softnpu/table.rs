@@ -479,7 +479,7 @@ impl TableOps<Handle> for Table {
                 }
                 ("forward_to_sled", params)
             }
-            (EXT_SUBNET_INGRESS_V4, "forward_extsub_v4_to") => {
+            (EXT_SUBNET_INGRESS4, "forward_extsub_v4_to") => {
                 let params = build_instance_target_vector(hdl, &action_data);
                 if params.is_empty() {
                     return Ok(());
