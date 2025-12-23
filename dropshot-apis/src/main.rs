@@ -45,7 +45,6 @@ pub fn all_apis() -> anyhow::Result<ManagedApis> {
             ..Default::default()
         },
         api_description: dpd_api_mod::stub_api_description,
-        extra_validation: None,
     }];
 
     let apis = ManagedApis::new(apis).context("error creating ManagedApis")?;
