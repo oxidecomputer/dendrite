@@ -1757,7 +1757,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseOk<i64>, HttpError> {
         let switch = rqctx.context();
 
-        Ok(HttpResponseOk(nat::get_ipv4_nat_generation(switch)))
+        Ok(HttpResponseOk(nat::get_nat_generation(switch)))
     }
 
     async fn ipv4_nat_trigger_update(
@@ -1765,7 +1765,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseOk<()>, HttpError> {
         let switch = rqctx.context();
 
-        match switch.workflow_server.trigger(Task::Ipv4Nat) {
+        match switch.workflow_server.trigger(Task::Nat) {
             Ok(_) => Ok(HttpResponseOk(())),
             Err(e) => {
                 error!(rqctx.log, "unable to trigger rpw"; "error" => ?e);
