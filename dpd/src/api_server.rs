@@ -1755,12 +1755,24 @@ impl DpdApi for DpdApiImpl {
     async fn ipv4_nat_generation(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<i64>, HttpError> {
+        Self::nat_generation(rqctx).await
+    }
+
+    async fn nat_generation(
+        rqctx: RequestContext<Arc<Switch>>,
+    ) -> Result<HttpResponseOk<i64>, HttpError> {
         let switch = rqctx.context();
 
         Ok(HttpResponseOk(nat::get_nat_generation(switch)))
     }
 
     async fn ipv4_nat_trigger_update(
+        rqctx: RequestContext<Arc<Switch>>,
+    ) -> Result<HttpResponseOk<()>, HttpError> {
+        Self::nat_trigger_update(rqctx).await
+    }
+
+    async fn nat_trigger_update(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<()>, HttpError> {
         let switch = rqctx.context();
