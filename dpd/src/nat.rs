@@ -7,7 +7,7 @@
 use slog::{debug, error, trace};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Bound;
 
 use crate::Switch;
@@ -413,6 +413,19 @@ pub fn get_ipv4_mapping(
     Err(DpdError::Missing("no mapping".into()))
 }
 
+pub fn set_mapping(
+    switch: &Switch,
+    nat_ip: IpAddr,
+    low: u16,
+    high: u16,
+    tgt: NatTarget,
+) -> DpdResult<()> {
+    match nat_ip {
+        IpAddr::V4(nat_ip) => set_ipv4_mapping(switch, nat_ip, low, high, tgt),
+        IpAddr::V6(nat_ip) => set_ipv6_mapping(switch, nat_ip, low, high, tgt),
+    }
+}
+
 pub fn set_ipv4_mapping(
     switch: &Switch,
     nat_ip: Ipv4Addr,
@@ -465,6 +478,18 @@ pub fn set_ipv4_mapping(
     }
 }
 
+pub fn clear_mapping(
+    switch: &Switch,
+    nat_ip: IpAddr,
+    low: u16,
+    high: u16,
+) -> DpdResult<()> {
+    match nat_ip {
+        IpAddr::V4(nat_ip) => clear_ipv4_mapping(switch, nat_ip, low, high),
+        IpAddr::V6(nat_ip) => clear_ipv6_mapping(switch, nat_ip, low, high),
+    }
+}
+
 /// Find the first `NatTarget` where its `Ipv4NatEntry` matches the provided
 /// `Ipv4Addr` and overlaps with the provided port range, then remove it.
 pub fn clear_ipv4_mapping(
@@ -502,9 +527,25 @@ pub fn clear_ipv4_mapping(
     Ok(())
 }
 
+pub fn clear_overlapping_mappings(
+    switch: &Switch,
+    nat_ip: IpAddr,
+    low: u16,
+    high: u16,
+) -> DpdResult<()> {
+    match nat_ip {
+        IpAddr::V4(nat_ip) => {
+            clear_overlapping_mappings_v4(switch, nat_ip, low, high)
+        }
+        IpAddr::V6(nat_ip) => {
+            clear_overlapping_mappings_v6(switch, nat_ip, low, high)
+        }
+    }
+}
+
 /// Deletes any `Ipv4NatEntry` where each entry matches the provided
 /// `Ipv4Addr` and overlaps with the provided port range
-pub fn clear_overlapping_ipv4_mappings(
+pub fn clear_overlapping_mappings_v4(
     switch: &Switch,
     nat_ip: Ipv4Addr,
     low: u16,
@@ -542,6 +583,44 @@ pub fn clear_overlapping_ipv4_mappings(
     Ok(())
 }
 
+pub fn clear_overlapping_mappings_v6(
+    switch: &Switch,
+    nat_ip: Ipv6Addr,
+    low: u16,
+    high: u16,
+) -> DpdResult<()> {
+    let mut nat = switch.nat.lock().unwrap();
+    trace!(
+        switch.log,
+        "clearing all nat entries overlapping with {}/{}-{}", nat_ip, low, high
+    );
+
+    if let Some(mappings) = nat.ipv6_mappings.get_mut(&nat_ip) {
+        let mut mappings_to_delete = find_mappings(mappings, low, high);
+        // delete starting with the last index first, or you'll end up shifting the
+        // collection underneath you
+        mappings_to_delete.reverse();
+        for idx in mappings_to_delete {
+            let ent = mappings.remove(idx);
+            let full = ipv6_entry(nat_ip, &ent);
+            match nat::delete_ipv6_entry(switch, nat_ip, ent.low, ent.high) {
+                Err(e) => {
+                    error!(switch.log, "failed to clear {}: {:?}", full, e);
+                    return Err(e);
+                }
+                _ => {
+                    debug!(switch.log, "cleared nat entry {}", full);
+                }
+            };
+        }
+        if mappings.is_empty() {
+            nat.ipv6_mappings.remove(&nat_ip);
+        }
+    }
+
+    Ok(())
+}
+
 pub fn reset_ipv6(switch: &Switch) -> DpdResult<()> {
     let mut nat = switch.nat.lock().unwrap();
 
@@ -568,14 +647,14 @@ pub fn reset_ipv4(switch: &Switch) -> DpdResult<()> {
     }
 }
 
-pub fn set_ipv4_nat_generation(switch: &Switch, generation: i64) {
+pub fn set_nat_generation(switch: &Switch, generation: i64) {
     let mut nat = switch.nat.lock().unwrap();
 
     debug!(switch.log, "setting nat generation");
     nat.ipv4_generation = generation;
 }
 
-pub fn get_ipv4_nat_generation(switch: &Switch) -> i64 {
+pub fn get_nat_generation(switch: &Switch) -> i64 {
     let nat = switch.nat.lock().unwrap();
 
     debug!(switch.log, "fetching nat generation");

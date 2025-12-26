@@ -145,8 +145,16 @@ pub async fn address_add(
     addr: impl Into<oxnet::IpNet>,
 ) -> Result<()> {
     let addr_obj = format!("{iface}/{tag}");
-    let addr = addr.into().to_string();
 
+    let addr: oxnet::IpNet = addr.into();
+    if addr.is_ipv6() {
+        let tag = "ll";
+        if !address_exists(iface, tag).await? {
+            linklocal_add(iface, tag).await?;
+        }
+    }
+
+    let addr = addr.to_string();
     ipadm_quiet(&["create-addr", "-t", "-T", "static", "-a", &addr, &addr_obj])
         .await
 }
