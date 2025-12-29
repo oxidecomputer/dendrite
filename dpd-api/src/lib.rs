@@ -56,6 +56,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (2, DUAL_STACK_NAT_WORKFLOW),
     (1, INITIAL),
 ]);
 
@@ -1331,9 +1332,22 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
-        path = "/rpw/nat/ipv4/gen"
+        path = "/rpw/nat/ipv4/gen",
+        versions = ..VERSION_DUAL_STACK_NAT_WORKFLOW
     }]
     async fn ipv4_nat_generation(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<i64>, HttpError>;
+
+    /**
+     * Get NAT generation number
+     */
+    #[endpoint {
+        method = GET,
+        path = "/rpw/nat/gen",
+        versions = VERSION_DUAL_STACK_NAT_WORKFLOW..
+    }]
+    async fn nat_generation(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseOk<i64>, HttpError>;
 
@@ -1342,9 +1356,22 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = POST,
-        path = "/rpw/nat/ipv4/trigger"
+        path = "/rpw/nat/ipv4/trigger",
+        versions = ..VERSION_DUAL_STACK_NAT_WORKFLOW
     }]
     async fn ipv4_nat_trigger_update(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<()>, HttpError>;
+
+    /**
+     * Trigger NAT Reconciliation
+     */
+    #[endpoint {
+        method = POST,
+        path = "/rpw/nat/trigger",
+        versions = VERSION_DUAL_STACK_NAT_WORKFLOW..
+    }]
+    async fn nat_trigger_update(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseOk<()>, HttpError>;
 
