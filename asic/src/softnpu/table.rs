@@ -590,8 +590,6 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: &str) -> Vec<u8> {
                     }
                     NAT_V6 => {
                         // "dst_addr" => hdr.ipv6.dst: exact => bit<128>
-                        //serialize_value_type(&x, &mut data);
-                        //keyset_data.extend_from_slice(&data[..16]);
                         let mut buf = Vec::new();
                         serialize_value_type(&x, &mut buf);
                         buf.reverse();
