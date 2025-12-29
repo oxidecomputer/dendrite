@@ -139,7 +139,11 @@ async fn fetch_nat_updates(
     log: &Logger,
 ) -> Option<nexus_client::ResponseValue<Vec<NatEntryView>>> {
     debug!(log, "checking Nexus for updates");
-    // TODO change name in nexus to just `nat_changeset`
+    // TODO note that this is no longer specific to IPv4 in nexus, but right
+    // now nexus internal API names are unchangable until client side
+    // versioning gets going.
+    //
+    // https://github.com/oxidecomputer/omicron/issues/9290
     let updates = match client.ipv4_nat_changeset(generation, 100).await {
         Ok(response) => response,
         Err(e) => {
