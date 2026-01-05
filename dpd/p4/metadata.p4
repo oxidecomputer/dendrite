@@ -23,7 +23,6 @@ struct sidecar_ingress_meta_t {
 	bool nat_egress_hit;		// NATed packet from guest -> uplink
 	bool nat_ingress_hit;		// NATed packet from uplink -> guest
 	bool nat_ingress_port;		// This port accepts only NAT traffic
-	bool extsub_hit;		// Packet to an external subnet
 	bool encap_needed;
 	ipv4_addr_t nexthop_ipv4;	// ip address of next router
 	ipv6_addr_t nexthop_ipv6;	// ip address of next router

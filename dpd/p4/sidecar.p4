@@ -138,7 +138,6 @@ control Filter(
 	}
 
 	action forward_extsub_v4_to(ipv6_addr_t target, mac_addr_t inner_mac, geneve_vni_t vni) {
-		meta.extsub_hit = true;
 		meta.encap_needed = true;
 		meta.nat_ingress_tgt = target;
 		meta.nat_inner_mac = inner_mac;
@@ -155,7 +154,6 @@ control Filter(
 	}
 
 	action forward_extsub_v6_to(ipv6_addr_t target, mac_addr_t inner_mac, geneve_vni_t vni) {
-		meta.extsub_hit = true;
 		meta.encap_needed = true;
 		meta.nat_ingress_tgt = target;
 		meta.nat_inner_mac = inner_mac;

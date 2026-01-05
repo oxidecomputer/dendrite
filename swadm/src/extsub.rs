@@ -21,7 +21,7 @@ use dpd_client::types;
 
 #[derive(Debug, Subcommand)]
 /// manage external subnet mappings
-pub enum ExtSub {
+pub enum ExternalSubnet {
     /// list all external subnet mappings
     #[clap(visible_alias = "ls")]
     List {
@@ -143,16 +143,19 @@ async fn extsub_del(client: &Client, extsub: IpNet) -> anyhow::Result<()> {
         .map(|_| ())
 }
 
-pub async fn extsub_cmd(client: &Client, e: ExtSub) -> anyhow::Result<()> {
+pub async fn extsub_cmd(
+    client: &Client,
+    e: ExternalSubnet,
+) -> anyhow::Result<()> {
     match e {
-        ExtSub::List { v4, v6 } => extsub_list(client, v4, v6).await,
-        ExtSub::Get { extsub } => extsub_get(client, extsub).await,
-        ExtSub::Add {
+        ExternalSubnet::List { v4, v6 } => extsub_list(client, v4, v6).await,
+        ExternalSubnet::Get { extsub } => extsub_get(client, extsub).await,
+        ExternalSubnet::Add {
             extsub,
             internal,
             inner,
             vni,
         } => extsub_add(client, extsub, internal, inner, vni).await,
-        ExtSub::Del { extsub } => extsub_del(client, extsub).await,
+        ExternalSubnet::Del { extsub } => extsub_del(client, extsub).await,
     }
 }

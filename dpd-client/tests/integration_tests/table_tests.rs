@@ -37,7 +37,7 @@ use dpd_client::types;
 // can change depending on table layout on the ASIC.  All of this means that it
 // is normal for these table sizes to change slightly after updating the P4
 // code.  If the table size appears to change dramatically, that's worth
-// investigationg.  If it only changes by an entry or two, it's fine to just
+// investigating.  If it only changes by an entry or two, it's fine to just
 // adjust the constant below to match the observed result.
 //
 const IPV4_LPM_SIZE: usize = 8191; // ipv4 forwarding table

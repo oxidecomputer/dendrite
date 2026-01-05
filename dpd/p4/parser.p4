@@ -36,7 +36,6 @@ parser IngressParser(
 		meta.nat_ingress_tgt = 0;
 		meta.nat_inner_mac = 0;
 		meta.nat_geneve_vni = 0;
-		meta.extsub_hit = false;
 		meta.encap_needed = false;
 		meta.icmp_recalc = false;
 		meta.icmp_csum = 0;

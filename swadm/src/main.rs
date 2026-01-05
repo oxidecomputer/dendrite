@@ -65,9 +65,10 @@ enum Commands {
         #[command(subcommand)]
         cmd: nat::Nat,
     },
-    ExtSub {
+    #[clap(visible_alias = "extsub")]
+    ExternalSubnet {
         #[command(subcommand)]
-        cmd: extsub::ExtSub,
+        cmd: extsub::ExternalSubnet,
     },
     Counters {
         #[command(subcommand)]
@@ -221,7 +222,9 @@ async fn main_impl() -> anyhow::Result<()> {
         Commands::Arp { cmd: a } => arp::arp_cmd(&client, a).await,
         Commands::Route { cmd: r } => route::route_cmd(&client, r).await,
         Commands::Addr { cmd: p } => addr::addr_cmd(&client, p).await,
-        Commands::ExtSub { cmd: p } => extsub::extsub_cmd(&client, p).await,
+        Commands::ExternalSubnet { cmd: p } => {
+            extsub::extsub_cmd(&client, p).await
+        }
         Commands::Nat { cmd: p } => nat::nat_cmd(&client, p).await,
         Commands::Counters { cmd: c } => counters::ctrs_cmd(&client, c).await,
         Commands::SwitchPort { cmd: p } => {

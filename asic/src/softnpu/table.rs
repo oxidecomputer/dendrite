@@ -9,8 +9,8 @@ use softnpu_lib::{ManagementRequest, TableAdd, TableRemove};
 
 use crate::softnpu::Handle;
 use aal::{
-    ActionData, ActionParse, AsicError, AsicResult, CounterData,
-    MatchEntryField, MatchEntryValue, MatchParse, TableOps, ValueTypes,
+    ActionParse, AsicError, AsicResult, CounterData, MatchEntryField,
+    MatchEntryValue, MatchParse, TableOps, ValueTypes,
 };
 
 /// Represents a handle to a SoftNPU ASIC table. The `id` member corresponds to
@@ -61,87 +61,6 @@ const EXT_SUBNET_INGRESS6: &str = "pipe.Ingress.filter.external_subnets_v6";
 
 // All tables are defined to be 1024 entries deep
 const TABLE_SIZE: usize = 4096;
-
-fn build_instance_target_vector(hdl: &Handle, action: &ActionData) -> Vec<u8> {
-    let mut target = Vec::new();
-    let mut vni = Vec::new();
-    let mut mac = Vec::new();
-    for arg in &action.args {
-        match arg.name.as_str() {
-            "target" => {
-                // "target" is 128 bits
-                let mut data: Vec<u8> = Vec::new();
-                match &arg.value {
-                    ValueTypes::U64(_) => {
-                        // Currently the ValueType is always Ptr
-                        error!(
-                            hdl.log,
-                            "expected ValueType::Ptr, \
-                                        received ValueType::U64"
-                        );
-                        return Vec::new();
-                    }
-                    ValueTypes::Ptr(v) => {
-                        data.extend_from_slice(v.as_slice());
-                    }
-                }
-                let len = data.len();
-                let buf = &mut data[len - 16..];
-                buf.reverse();
-                target.extend_from_slice(buf);
-            }
-            "vni" => {
-                // "vni" is 24 bits
-                let mut data: Vec<u8> = Vec::new();
-                match &arg.value {
-                    ValueTypes::U64(v) => {
-                        data.extend_from_slice(&v.to_le_bytes());
-                    }
-                    ValueTypes::Ptr(_) => {
-                        // Currently the ValueType is always U64
-                        error!(
-                            hdl.log,
-                            "expected ValueType::U64, \
-                                        received ValueType::Ptr"
-                        );
-                        return Vec::new();
-                    }
-                }
-                vni.extend_from_slice(&data[0..3]);
-            }
-            "inner_mac" => {
-                // "mac" is 48 bits
-                let mut data: Vec<u8> = Vec::new();
-                match &arg.value {
-                    ValueTypes::U64(v) => {
-                        data.extend_from_slice(&v.to_le_bytes());
-                    }
-                    ValueTypes::Ptr(_) => {
-                        // Currently the ValueType is always U64
-                        error!(
-                            hdl.log,
-                            "expected ValueType::U64, \
-                                        received ValueType::Ptr"
-                        );
-                        return Vec::new();
-                    }
-                }
-                mac.extend_from_slice(&data[0..6])
-            }
-            _ => {
-                error!(hdl.log, "unknown argument: {}", arg.name);
-                return Vec::new();
-            }
-        }
-    }
-    let mut params = Vec::new();
-    // arguments currently don't arrive in the correct order,
-    // so we'll order them manually
-    params.extend_from_slice(target.as_slice());
-    params.extend_from_slice(vni.as_slice());
-    params.extend_from_slice(mac.as_slice());
-    params
-}
 
 impl TableOps<Handle> for Table {
     fn new(hdl: &Handle, name: &str) -> AsicResult<Table> {
@@ -476,10 +395,83 @@ impl TableOps<Handle> for Table {
             | (NAT_INGRESS6, "forward_ipv6_to")
             | (EXT_SUBNET_INGRESS4, "forward_extsub_v4_to")
             | (EXT_SUBNET_INGRESS6, "forward_extsub_v6_to") => {
-                let params = build_instance_target_vector(hdl, &action_data);
-                if params.is_empty() {
-                    return Ok(());
+                let mut target = Vec::new();
+                let mut vni = Vec::new();
+                let mut mac = Vec::new();
+                for arg in action_data.args {
+                    match arg.name.as_str() {
+                        "target" => {
+                            // "target" is 128 bits
+                            let mut data: Vec<u8> = Vec::new();
+                            match &arg.value {
+                                ValueTypes::U64(_) => {
+                                    // Currently the ValueType is always Ptr
+                                    error!(
+                                        hdl.log,
+                                        "expected ValueType::Ptr, \
+                                        received ValueType::U64"
+                                    );
+                                    return Ok(());
+                                }
+                                ValueTypes::Ptr(v) => {
+                                    data.extend_from_slice(v.as_slice());
+                                }
+                            }
+                            let len = data.len();
+                            let buf = &mut data[len - 16..];
+                            buf.reverse();
+                            target.extend_from_slice(buf);
+                        }
+                        "vni" => {
+                            // "vni" is 24 bits
+                            let mut data: Vec<u8> = Vec::new();
+                            match &arg.value {
+                                ValueTypes::U64(v) => {
+                                    data.extend_from_slice(&v.to_le_bytes());
+                                }
+                                ValueTypes::Ptr(_) => {
+                                    // Currently the ValueType is always U64
+                                    error!(
+                                        hdl.log,
+                                        "expected ValueType::U64, \
+                                        received ValueType::Ptr"
+                                    );
+                                    return Ok(());
+                                }
+                            }
+                            vni.extend_from_slice(&data[0..3]);
+                        }
+                        "inner_mac" => {
+                            // "mac" is 48 bits
+                            let mut data: Vec<u8> = Vec::new();
+                            match &arg.value {
+                                ValueTypes::U64(v) => {
+                                    data.extend_from_slice(&v.to_le_bytes());
+                                }
+                                ValueTypes::Ptr(_) => {
+                                    // Currently the ValueType is always U64
+                                    error!(
+                                        hdl.log,
+                                        "expected ValueType::U64, \
+                                        received ValueType::Ptr"
+                                    );
+                                    return Ok(());
+                                }
+                            }
+                            mac.extend_from_slice(&data[0..6])
+                        }
+                        _ => {
+                            error!(hdl.log, "unknown argument: {}", arg.name);
+                            return Ok(());
+                        }
+                    }
                 }
+                let mut params = Vec::new();
+                // arguments currently don't arrive in the correct order,
+                // so we'll order them manually
+                params.extend_from_slice(target.as_slice());
+                params.extend_from_slice(vni.as_slice());
+                params.extend_from_slice(mac.as_slice());
                 ("forward_to_sled", params)
             }
             (tbl, x) => {

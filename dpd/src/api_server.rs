@@ -1641,7 +1641,6 @@ impl DpdApi for DpdApiImpl {
         debug!(switch.log, "resetting settings tagged with {}", tag);
 
         arp::reset_ipv4_tag(switch, &tag);
-        arp::reset_ipv4_tag(switch, &tag);
         arp::reset_ipv6_tag(switch, &tag);
         route::reset_ipv4_tag(switch, &tag).await;
         route::reset_ipv6_tag(switch, &tag).await;
