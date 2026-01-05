@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! DPD endpoint definitions.
 
@@ -42,7 +42,7 @@ use oxnet::{IpNet, Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use transceiver_controller::{
-    message::LedState, Datapath, Monitors, PowerState,
+    Datapath, Monitors, PowerState, message::LedState,
 };
 
 api_versions!([
