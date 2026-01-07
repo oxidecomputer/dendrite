@@ -127,7 +127,7 @@ pub(crate) fn add_ipv6_entry(
     let internal_ip = Ipv6Net::new_unchecked(route, 128);
 
     // Admin-local multicast and unique local addresses are internal to the rack
-    // and don't require VLAN tagging, so always use Forward action
+    // and don't require VLAN tagging, so always use Forward action.
     let action_data: Ipv6Action = if internal_ip.is_admin_local_multicast()
         || internal_ip.is_unique_local()
     {
@@ -160,7 +160,7 @@ pub(crate) fn update_ipv6_entry(
     let internal_ip = Ipv6Net::new_unchecked(route, 128);
 
     // Admin-local multicast and unique local addresses are internal to the rack
-    // and don't require VLAN tagging, so always use Forward action
+    // and don't require VLAN tagging, so always use Forward action.
     let action_data: Ipv6Action = if internal_ip.is_admin_local_multicast()
         || internal_ip.is_unique_local()
     {

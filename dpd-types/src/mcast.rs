@@ -12,7 +12,7 @@ use std::{
 };
 
 use common::{nat::NatTarget, ports::PortId};
-use oxnet::{Ipv4Net, Ipv6Net};
+use oxnet::Ipv6Net;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -86,21 +86,24 @@ impl fmt::Display for AdminScopedIpv6 {
 }
 
 /// Source filter match key for multicast traffic.
+///
+/// For SSM groups, use `Exact` with specific source addresses.
+/// For ASM groups with any-source filtering, use `Any`.
 #[derive(
     Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
 )]
 pub enum IpSrc {
     /// Exact match for the source IP address.
     Exact(IpAddr),
-    /// Subnet match for the source IP address.
-    Subnet(Ipv4Net),
+    /// Match any source address (0.0.0.0/0 or ::/0 depending on group IP version).
+    Any,
 }
 
 impl fmt::Display for IpSrc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             IpSrc::Exact(ip) => write!(f, "{ip}"),
-            IpSrc::Subnet(subnet) => write!(f, "{subnet}"),
+            IpSrc::Any => write!(f, "any"),
         }
     }
 }
@@ -150,7 +153,9 @@ pub struct MulticastGroupUnderlayResponse {
     pub group_ip: AdminScopedIpv6,
     pub external_group_id: MulticastGroupId,
     pub underlay_group_id: MulticastGroupId,
-    pub tag: Option<String>,
+    /// Tag for ownership validation. Always present; generated as
+    /// `{uuid}:{group_ip}` if not provided at creation time.
+    pub tag: String,
     pub members: Vec<MulticastGroupMember>,
 }
 
@@ -160,7 +165,9 @@ pub struct MulticastGroupUnderlayResponse {
 pub struct MulticastGroupExternalResponse {
     pub group_ip: IpAddr,
     pub external_group_id: MulticastGroupId,
-    pub tag: Option<String>,
+    /// Tag for ownership validation. Always present; generated as
+    /// `{uuid}:{group_ip}` if not provided at creation time.
+    pub tag: String,
     pub internal_forwarding: InternalForwarding,
     pub external_forwarding: ExternalForwarding,
     pub sources: Option<Vec<IpSrc>>,

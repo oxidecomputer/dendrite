@@ -1871,11 +1871,25 @@ impl DpdApi for DpdApiImpl {
     async fn multicast_group_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
+        query: Query<MulticastGroupTagQuery>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let ip = path.into_inner().group_ip;
+        let tag = query.into_inner().tag;
+
+        mcast::del_group(switch, ip, tag.as_deref())
+            .map(|_| HttpResponseDeleted())
+            .map_err(HttpError::from)
+    }
+
+    async fn multicast_group_delete_v3(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
         let ip = path.into_inner().group_ip;
 
-        mcast::del_group(switch, ip)
+        mcast::del_group(switch, ip, None)
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
     }
@@ -1932,14 +1946,13 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
         group: TypedBody<MulticastGroupUpdateExternalEntry>,
-    ) -> Result<HttpResponseCreated<MulticastGroupExternalResponse>, HttpError>
-    {
+    ) -> Result<HttpResponseOk<MulticastGroupExternalResponse>, HttpError> {
         let switch: &Switch = rqctx.context();
         let entry = group.into_inner();
         let ip = path.into_inner().group_ip;
 
         mcast::modify_group_external(switch, ip, entry)
-            .map(HttpResponseCreated)
+            .map(HttpResponseOk)
             .map_err(HttpError::from)
     }
 
@@ -2027,6 +2040,22 @@ impl DpdApi for DpdApiImpl {
     }
 
     async fn multicast_reset_untagged(
+        _rqctx: RequestContext<Arc<Switch>>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        // All groups now have default tags, making this endpoint obsolete.
+        // Groups are cleaned up via multicast_reset_by_tag using the tag
+        // returned from group creation.
+        Err(HttpError::for_client_error(
+            None,
+            ClientErrorStatusCode::GONE,
+            "multicast_reset_untagged is deprecated; all groups now have \
+             default tags. Use multicast_reset_by_tag with the tag returned \
+             from group creation."
+                .to_string(),
+        ))
+    }
+
+    async fn multicast_reset_untagged_v3(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();

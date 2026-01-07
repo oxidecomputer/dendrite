@@ -1388,7 +1388,7 @@ control MulticastRouter6 (
 			// to go out.
 		} else {
 			// Set the destination port to an invalid value
-        	ig_tm_md.ucast_egress_port = (PortId_t)0x1ff;
+			ig_tm_md.ucast_egress_port = (PortId_t)0x1ff;
 			hdr.ipv6.hop_limit = hdr.ipv6.hop_limit - 1;
 		}
 	}
@@ -1638,7 +1638,7 @@ control MulticastIngress (
 
 	table mcast_source_filter_ipv6 {
 		key = {
-			hdr.inner_ipv6.src_addr: exact;
+			hdr.inner_ipv6.src_addr: lpm;
 			hdr.inner_ipv6.dst_addr: exact;
 		}
 		actions = {
@@ -1699,19 +1699,20 @@ control MulticastIngress (
 	// Note: SSM tables currently take one extra stage in the pipeline (17->18).
 	apply {
 		if (hdr.geneve.isValid() && hdr.inner_ipv4.isValid()) {
-			// Check if the inner destination address is an IPv4 SSM multicast
-			// address.
-			if (hdr.inner_ipv4.dst_addr[31:24] == 8w0xe8) {
+			// Check if the inner destination address is an IPv4 multicast
+			// address (224.0.0.0/4). Apply source filtering for both SSM
+			// (232.0.0.0/8) and ASM ranges.
+			if (hdr.inner_ipv4.dst_addr[31:28] == 4w0xe) {
 				mcast_source_filter_ipv4.apply();
 			} else {
 				meta.allow_source_mcast = true;
 			}
 		} else if (hdr.geneve.isValid() && hdr.inner_ipv6.isValid()) {
-			// Check if the inner destination address is an IPv6 SSM multicast
-			// address.
-			if ((hdr.inner_ipv6.dst_addr[127:120] == 8w0xff)
-				&& ((hdr.inner_ipv6.dst_addr[119:116] == 4w0x3))) {
-					mcast_source_filter_ipv6.apply();
+			// Check if the inner destination address is an IPv6 multicast
+			// address (ff00::/8). Apply source filtering for both SSM
+			// (ff3x::/16) and ASM ranges.
+			if (hdr.inner_ipv6.dst_addr[127:120] == 8w0xff) {
+				mcast_source_filter_ipv6.apply();
 			} else {
 				meta.allow_source_mcast = true;
 			}

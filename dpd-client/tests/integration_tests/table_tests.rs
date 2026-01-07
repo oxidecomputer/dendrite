@@ -14,11 +14,12 @@ use oxnet::Ipv4Net;
 use oxnet::Ipv6Net;
 use reqwest::StatusCode;
 
-use crate::integration_tests::common::prelude::*;
 use dpd_client::ClientInfo;
 use dpd_client::ResponseValue;
 use dpd_client::types;
 use dpd_types::mcast::ADMIN_LOCAL_PREFIX;
+
+use crate::integration_tests::common::prelude::*;
 
 // The expected sizes of each table.  The values are copied from constants.p4.
 //
@@ -37,8 +38,8 @@ use dpd_types::mcast::ADMIN_LOCAL_PREFIX;
 // This table has further shrunk to 4022 entries with the open source
 // compiler.  That is being tracked as issue #1092, which will presumably
 // subsume #1013.
-// update: with the move to 8192 entries we're now at 8190 entries.
-const IPV4_LPM_SIZE: usize = 8190; // ipv4 forwarding table
+// update: with the move to 8192 entries we're now at 8191 entries.
+const IPV4_LPM_SIZE: usize = 8191; // ipv4 forwarding table
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports
@@ -493,7 +494,10 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let ip = IpAddr::V6(gen_ipv6_multicast_addr(idx));
-        switch.client.multicast_group_delete(&ip).await
+        switch
+            .client
+            .multicast_group_delete(&ip, Some(MCAST_TAG))
+            .await
     }
 
     async fn count_entries(switch: &Switch) -> usize {

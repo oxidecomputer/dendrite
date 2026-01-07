@@ -174,7 +174,9 @@ async fn test_service_ipv4_wrong_port() -> TestResult {
 }
 
 // Packets sent to an IP address not assigned to a switch port should be
-// dropped.
+// dropped when the port is configured as NAT-only (see issue #172).
+// Without NAT-only, such packets would instead trigger ICMP_DEST_UNREACHABLE
+// via the router.
 #[tokio::test]
 #[ignore]
 async fn test_service_ipv4_unknown_address() -> TestResult {
@@ -205,7 +207,22 @@ async fn test_service_ipv4_unknown_address() -> TestResult {
         port: PhysPort(ingress + 1),
     };
 
-    switch.packet_test(vec![send], Vec::new())
+    // Mark the ingress port as NAT-only so packets to unknown addresses are
+    // dropped rather than triggering ICMP_UNREACHABLE (see issue #172).
+    let (ingress_port_id, ingress_link_id) =
+        switch.link_id(PhysPort(ingress + 1)).unwrap();
+    switch
+        .client
+        .link_nat_only_set(&ingress_port_id, &ingress_link_id, true)
+        .await
+        .unwrap();
+    let result = switch.packet_test(vec![send], Vec::new());
+    switch
+        .client
+        .link_nat_only_set(&ingress_port_id, &ingress_link_id, false)
+        .await
+        .unwrap();
+    result
 }
 
 #[tokio::test]

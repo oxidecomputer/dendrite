@@ -11,10 +11,13 @@
 //! rollback parameters once and provide reusable error handling throughout
 //! multi-step operations.
 
-use std::{fmt, net::IpAddr};
+use std::{
+    fmt,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+};
 
 use aal::AsicOps;
-use oxnet::Ipv4Net;
+use oxnet::{Ipv4Net, Ipv6Net};
 use slog::{debug, error};
 
 use common::{nat::NatTarget, ports::PortId};
@@ -22,7 +25,8 @@ use common::{nat::NatTarget, ports::PortId};
 use super::{
     Direction, IpSrc, LinkId, MulticastGroup, MulticastGroupId,
     MulticastGroupMember, MulticastReplicationInfo, add_source_filters,
-    remove_source_filters, update_fwding_tables, update_replication_tables,
+    remove_source_filters, sources_contain_any, update_fwding_tables,
+    update_replication_tables,
 };
 use crate::{Switch, table, types::DpdResult};
 
@@ -363,31 +367,47 @@ impl<'a> GroupCreateRollbackContext<'a> {
                 // IPv4 groups are always external-only and never create bitmap entries
                 // (only IPv6 internal groups with replication create bitmap entries)
 
-                if let Some(srcs) = self.sources {
-                    for src in srcs {
-                        match src {
-                            IpSrc::Exact(IpAddr::V4(src)) => {
-                                self.log_rollback_error(
-                                    "delete IPv4 source filter entry",
-                                    &format!("for source {src} and group {ipv4}"),
-                                    table::mcast::mcast_src_filter::del_ipv4_entry(
-                                        self.switch,
-                                        Ipv4Net::new(*src, 32).unwrap(),
-                                        ipv4,
-                                    ),
-                                );
-                            }
-                            IpSrc::Subnet(subnet) => {
-                                self.log_rollback_error(
-                                    "delete IPv4 source filter subnet entry",
-                                    &format!("for subnet {subnet} and group {ipv4}"),
-                                    table::mcast::mcast_src_filter::del_ipv4_entry(
-                                        self.switch, *subnet, ipv4,
-                                    ),
-                                );
-                            }
-                            _ => {}
+                // If Any was present, only a /0 entry was added (collapsing)
+                match self.sources {
+                    Some(srcs) if sources_contain_any(srcs) => {
+                        self.log_rollback_error(
+                            "delete IPv4 any-source filter entry",
+                            &format!("for group {ipv4}"),
+                            table::mcast::mcast_src_filter::del_ipv4_entry(
+                                self.switch,
+                                Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(),
+                                ipv4,
+                            ),
+                        );
+                    }
+                    Some(srcs) => {
+                        for src in srcs {
+                            let IpSrc::Exact(IpAddr::V4(addr)) = src else {
+                                continue;
+                            };
+                            self.log_rollback_error(
+                                "delete IPv4 source filter entry",
+                                &format!("for source {addr} and group {ipv4}"),
+                                table::mcast::mcast_src_filter::del_ipv4_entry(
+                                    self.switch,
+                                    Ipv4Net::new(*addr, 32).unwrap(),
+                                    ipv4,
+                                ),
+                            );
                         }
+                    }
+                    None => {
+                        // Normalized None means "allow any source", which
+                        // added a /0 entry.
+                        self.log_rollback_error(
+                            "delete IPv4 any-source filter entry",
+                            &format!("for group {ipv4}"),
+                            table::mcast::mcast_src_filter::del_ipv4_entry(
+                                self.switch,
+                                Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(),
+                                ipv4,
+                            ),
+                        );
                     }
                 }
                 if self.nat_target.is_some() {
@@ -430,22 +450,57 @@ impl<'a> GroupCreateRollbackContext<'a> {
                     ),
                 );
 
-                if let Some(srcs) = self.sources {
-                    for src in srcs {
-                        if let IpSrc::Exact(IpAddr::V6(src)) = src {
+                // Source filters only exist for external groups (which have
+                // NAT targets). Internal groups don't have source filtering.
+                if self.nat_target.is_some() {
+                    // If Any was present, only a ::/0 entry was added (collapsing)
+                    match self.sources {
+                        Some(srcs) if sources_contain_any(srcs) => {
                             self.log_rollback_error(
-                                "delete IPv6 source filter entry",
-                                &format!("for source {src} and group {ipv6}"),
+                                "delete IPv6 any-source filter entry",
+                                &format!("for group {ipv6}"),
                                 table::mcast::mcast_src_filter::del_ipv6_entry(
                                     self.switch,
-                                    *src,
+                                    Ipv6Net::new(Ipv6Addr::UNSPECIFIED, 0)
+                                        .unwrap(),
+                                    ipv6,
+                                ),
+                            );
+                        }
+                        Some(srcs) => {
+                            for src in srcs {
+                                let IpSrc::Exact(IpAddr::V6(addr)) = src else {
+                                    continue;
+                                };
+                                self.log_rollback_error(
+                                    "delete IPv6 source filter entry",
+                                    &format!(
+                                        "for source {addr} and group {ipv6}"
+                                    ),
+                                    table::mcast::mcast_src_filter::del_ipv6_entry(
+                                        self.switch,
+                                        Ipv6Net::new(*addr, 128).unwrap(),
+                                        ipv6,
+                                    ),
+                                );
+                            }
+                        }
+                        None => {
+                            // Normalized None means "allow any source", which
+                            // added a /0 entry.
+                            self.log_rollback_error(
+                                "delete IPv6 any-source filter entry",
+                                &format!("for group {ipv6}"),
+                                table::mcast::mcast_src_filter::del_ipv6_entry(
+                                    self.switch,
+                                    Ipv6Net::new(Ipv6Addr::UNSPECIFIED, 0)
+                                        .unwrap(),
                                     ipv6,
                                 ),
                             );
                         }
                     }
-                }
-                if self.nat_target.is_some() {
+
                     self.log_rollback_error(
                         "delete IPv6 NAT entry",
                         &format!("for group {ipv6}"),
@@ -747,7 +802,6 @@ impl<'a> GroupUpdateRollbackContext<'a> {
                 self.switch,
                 self.group_ip,
                 external_group_id,
-                underlay_group_id,
                 &prev_members,
                 vlan_id,
             ),
@@ -756,16 +810,20 @@ impl<'a> GroupUpdateRollbackContext<'a> {
     }
 
     /// Rollback external group updates.
+    ///
+    /// Note: `new_sources` should be the normalized sources that were actually
+    /// applied to the tables (not the raw request sources).
     pub(crate) fn rollback_external<E>(
         &self,
         error: E,
         new_sources: Option<&[IpSrc]>,
     ) -> E {
-        if new_sources.is_some() {
-            self.collect_rollback_result("source filter restoration", || {
-                self.rollback_source_filters(new_sources, None)
-            });
-        }
+        // Always try to rollback source filters; with normalization, even
+        // None represents a /0 "any source" entry that may need to be undone.
+        let orig_sources = self.original_group.sources.as_deref();
+        self.collect_rollback_result("source filter restoration", || {
+            self.rollback_source_filters(new_sources, orig_sources)
+        });
         error
     }
 

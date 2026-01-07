@@ -7,6 +7,3 @@ xtask = "run --package xtask --"
 [build]
 rustflags = ["--cfg", "tokio_unstable"]
 
-# TODO: remove once we're targetting omicron `main`
-[env]
-DEP_PQ_LIBDIRS = "1"

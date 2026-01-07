@@ -17,7 +17,7 @@ use omicron_common::address::{
     IPV6_INTERFACE_LOCAL_MULTICAST_SUBNET, IPV6_LINK_LOCAL_MULTICAST_SUBNET,
     IPV6_RESERVED_SCOPE_MULTICAST_SUBNET, IPV6_SSM_SUBNET,
 };
-use oxnet::{Ipv4Net, Ipv6Net};
+use oxnet::Ipv6Net;
 
 use super::IpSrc;
 use crate::types::{DpdError, DpdResult};
@@ -95,14 +95,9 @@ fn validate_ipv4_multicast(
                  requires at least one source to be defined",
             )));
         }
-        // If sources are defined for an SSM address, it's valid
         return Ok(());
-    } else if sources.is_some() && !sources.unwrap().is_empty() {
-        // If this is not SSM but sources are defined, it's invalid
-        return Err(DpdError::Invalid(format!(
-            "{addr} is not a Source-Specific Multicast address but sources were provided",
-        )));
     }
+    // ASM: sources are optional (filtering or any-source)
 
     // Check reserved subnets
     if IPV4_LINK_LOCAL_MULTICAST_SUBNET.contains(addr) {
@@ -133,13 +128,7 @@ fn validate_ipv6_multicast(
                  and requires at least one source to be defined",
             )));
         }
-        // If sources are defined for an IPv6 SSM address, it's valid
         return Ok(());
-    } else if sources.is_some() && !sources.unwrap().is_empty() {
-        // If this is not SSM but sources are defined, it's invalid
-        return Err(DpdError::Invalid(format!(
-            "{addr} is not a Source-Specific Multicast address but sources were provided",
-        )));
     }
 
     // Check reserved subnets
@@ -185,7 +174,7 @@ pub(crate) fn validate_source_addresses(
     for source in sources {
         match source {
             IpSrc::Exact(ip) => validate_exact_source_address(*ip)?,
-            IpSrc::Subnet(subnet) => validate_ipv4_source_subnet(*subnet)?,
+            IpSrc::Any => {} // Any-source is always valid
         }
     }
     Ok(())
@@ -236,25 +225,22 @@ fn validate_ipv6_source_address(ipv6: Ipv6Addr) -> DpdResult<()> {
     Ok(())
 }
 
-/// Validates IPv4 source subnets for problematic address ranges.
-fn validate_ipv4_source_subnet(subnet: Ipv4Net) -> DpdResult<()> {
-    let addr = subnet.addr();
-
-    // Reject subnets that contain multicast addresses
-    if addr.is_multicast() {
+/// Validates that the update request tag matches the existing group's tag.
+///
+/// If the request tag is `None`, the group's existing tag (set or generated
+/// at creation) is used as the default and validation succeeds. If provided,
+/// it must match the group's existing tag.
+pub(crate) fn validate_tag_for_update(
+    existing_tag: &str,
+    request_tag: &Option<String>,
+) -> DpdResult<()> {
+    if let Some(request) = request_tag
+        && request != existing_tag
+    {
         return Err(DpdError::Invalid(format!(
-            "Source subnet {subnet} contains multicast addresses and cannot be used as a source filter",
+            "tag mismatch: group has tag '{existing_tag}' but request has tag '{request}'"
         )));
     }
-
-    // Reject subnets with loopback or broadcast addresses
-    if addr.is_loopback() || addr.is_broadcast() {
-        return Err(DpdError::Invalid(format!(
-            "Source subnet {subnet} contains invalid address types \
-             (loopback/broadcast) for source filtering",
-        )));
-    }
-
     Ok(())
 }
 
@@ -263,9 +249,6 @@ mod tests {
     use super::*;
     use common::{nat::Vni, network::MacAddr};
     use dpd_types::mcast::ADMIN_LOCAL_PREFIX;
-    use oxnet::Ipv4Net;
-
-    use std::str::FromStr;
 
     #[test]
     fn test_ipv4_validation() {
@@ -344,89 +327,67 @@ mod tests {
 
     #[test]
     fn test_ipv4_ssm_with_sources() {
-        // Create test data for source specifications
         let ssm_addr = Ipv4Addr::new(232, 1, 2, 3);
-        let non_ssm_addr = Ipv4Addr::new(224, 1, 2, 3);
+        let asm_addr = Ipv4Addr::new(224, 1, 2, 3);
 
-        // Test with exact source IP
         let exact_sources =
             vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))];
+        let any_source = vec![IpSrc::Any];
 
-        // Test with subnet source specification
-        let subnet_sources =
-            vec![IpSrc::Subnet(Ipv4Net::from_str("192.168.1.0/24").unwrap())];
-
-        // Test with mixed source specifications
-        let mixed_sources = vec![
-            IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
-            IpSrc::Subnet(Ipv4Net::from_str("10.0.0.0/8").unwrap()),
-        ];
-
-        // Empty sources - should fail for SSM
+        // SSM requires sources
         assert!(validate_ipv4_multicast(ssm_addr, Some(&[])).is_err());
+        assert!(validate_ipv4_multicast(ssm_addr, None).is_err());
 
-        // SSM address with exact source - should pass
+        // SSM with exact source
         assert!(
             validate_ipv4_multicast(ssm_addr, Some(&exact_sources)).is_ok()
         );
 
-        // SSM address with subnet source - should pass
-        assert!(
-            validate_ipv4_multicast(ssm_addr, Some(&subnet_sources)).is_ok()
-        );
+        // SSM with any-source
+        assert!(validate_ipv4_multicast(ssm_addr, Some(&any_source)).is_ok());
 
-        // SSM address with mixed sources - should pass
-        assert!(
-            validate_ipv4_multicast(ssm_addr, Some(&mixed_sources)).is_ok()
-        );
+        // ASM without sources
+        assert!(validate_ipv4_multicast(asm_addr, None).is_ok());
+        assert!(validate_ipv4_multicast(asm_addr, Some(&[])).is_ok());
 
-        // Non-SSM address with sources - should fail as source specs only allowed for SSM
+        // ASM with sources
         assert!(
-            validate_ipv4_multicast(non_ssm_addr, Some(&exact_sources))
-                .is_err()
+            validate_ipv4_multicast(asm_addr, Some(&exact_sources)).is_ok()
         );
-        assert!(
-            validate_ipv4_multicast(non_ssm_addr, Some(&subnet_sources))
-                .is_err()
-        );
-        assert!(
-            validate_ipv4_multicast(non_ssm_addr, Some(&mixed_sources))
-                .is_err()
-        );
-
-        // Non-SSM address without sources - should pass
-        assert!(validate_ipv4_multicast(non_ssm_addr, None).is_ok());
-        assert!(validate_ipv4_multicast(non_ssm_addr, Some(&[])).is_ok());
+        assert!(validate_ipv4_multicast(asm_addr, Some(&any_source)).is_ok());
     }
 
     #[test]
     fn test_ipv6_ssm_with_sources() {
-        // IPv6 SSM addresses (ff3x::/32)
-        let ssm_global = Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0, 0x1234); // Global scope (e)
-        let non_ssm_global = Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 0x1234); // Non-SSM global
+        let ssm_addr = Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0, 0x1234);
+        let asm_addr = Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 0x1234);
 
-        // Create test sources for IPv6
-        let ip6_sources = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
+        let exact_sources = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
             0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x1,
         )))];
+        let any_source = vec![IpSrc::Any];
 
-        // Empty sources - should fail for SSM
-        assert!(validate_ipv6_multicast(ssm_global, Some(&[])).is_err());
+        // SSM requires sources
+        assert!(validate_ipv6_multicast(ssm_addr, Some(&[])).is_err());
+        assert!(validate_ipv6_multicast(ssm_addr, None).is_err());
 
-        // SSM address with IPv6 source - should pass
+        // SSM with exact source
         assert!(
-            validate_ipv6_multicast(ssm_global, Some(&ip6_sources)).is_ok()
+            validate_ipv6_multicast(ssm_addr, Some(&exact_sources)).is_ok()
         );
 
-        // Non-SSM address with IPv6 source - should fail
-        assert!(
-            validate_ipv6_multicast(non_ssm_global, Some(&ip6_sources))
-                .is_err()
-        );
+        // SSM with any-source
+        assert!(validate_ipv6_multicast(ssm_addr, Some(&any_source)).is_ok());
 
-        // Non-SSM address without sources - should pass
-        assert!(validate_ipv6_multicast(non_ssm_global, None).is_ok());
-        assert!(validate_ipv6_multicast(non_ssm_global, Some(&[])).is_ok());
+        // ASM without sources
+        assert!(validate_ipv6_multicast(asm_addr, None).is_ok());
+        assert!(validate_ipv6_multicast(asm_addr, Some(&[])).is_ok());
+
+        // ASM with sources
+        assert!(
+            validate_ipv6_multicast(asm_addr, Some(&exact_sources)).is_ok()
+        );
+        assert!(validate_ipv6_multicast(asm_addr, Some(&any_source)).is_ok());
     }
 
     #[test]
@@ -473,7 +434,7 @@ mod tests {
         // Valid IPv4 SSM address with sources
         let sources = vec![
             IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
-            IpSrc::Subnet(Ipv4Net::from_str("10.0.0.0/8").unwrap()),
+            IpSrc::Any,
         ];
         assert!(
             validate_multicast_address(
@@ -524,13 +485,13 @@ mod tests {
             .is_err()
         );
 
-        // IPv4 non-SSM with sources
+        // IPv4 ASM with sources
         assert!(
             validate_multicast_address(
                 IpAddr::V4(Ipv4Addr::new(224, 1, 2, 3)),
                 Some(&sources)
             )
-            .is_err()
+            .is_ok()
         );
 
         // IPv6 SSM without sources
@@ -542,13 +503,13 @@ mod tests {
             .is_err()
         );
 
-        // IPv6 non-SSM with sources
+        // IPv6 ASM with sources
         assert!(
             validate_multicast_address(
                 IpAddr::V6(Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 0x1234)),
                 Some(&ip6_sources)
             )
-            .is_err()
+            .is_ok()
         );
     }
 
@@ -598,12 +559,9 @@ mod tests {
         )))];
         assert!(validate_source_addresses(Some(&valid_ipv6_sources)).is_ok());
 
-        // Valid subnet sources
-        let valid_subnet_sources = vec![
-            IpSrc::Subnet(Ipv4Net::from_str("192.168.1.0/24").unwrap()),
-            IpSrc::Subnet(Ipv4Net::from_str("10.0.0.0/8").unwrap()),
-        ];
-        assert!(validate_source_addresses(Some(&valid_subnet_sources)).is_ok());
+        // Any-source is valid
+        let any_source = vec![IpSrc::Any];
+        assert!(validate_source_addresses(Some(&any_source)).is_ok());
 
         // Invalid multicast IPv4 source
         let invalid_mcast_ipv4 =
@@ -636,20 +594,6 @@ mod tests {
             validate_source_addresses(Some(&invalid_loopback_ipv6)).is_err()
         );
 
-        // Invalid multicast subnet
-        let invalid_mcast_subnet =
-            vec![IpSrc::Subnet(Ipv4Net::from_str("224.0.0.0/24").unwrap())];
-        assert!(
-            validate_source_addresses(Some(&invalid_mcast_subnet)).is_err()
-        );
-
-        // Invalid loopback subnet
-        let invalid_loopback_subnet =
-            vec![IpSrc::Subnet(Ipv4Net::from_str("127.0.0.0/8").unwrap())];
-        assert!(
-            validate_source_addresses(Some(&invalid_loopback_subnet)).is_err()
-        );
-
         // No sources should be valid
         assert!(validate_source_addresses(None).is_ok());
 
@@ -659,8 +603,6 @@ mod tests {
 
     #[test]
     fn test_address_validation_with_source_validation() {
-        // Test that multicast address validation now includes source validation
-
         // Valid case: SSM address with valid unicast sources
         let valid_sources =
             vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))];
@@ -701,5 +643,23 @@ mod tests {
                 .to_string()
                 .contains("is not a valid source address")
         );
+    }
+
+    #[test]
+    fn test_validate_tag_for_update() {
+        // Existing tag matches request tag
+        assert!(
+            validate_tag_for_update("my-tag", &Some("my-tag".to_string()))
+                .is_ok()
+        );
+
+        // Existing tag but request has different tag
+        let result =
+            validate_tag_for_update("owner-a", &Some("owner-b".to_string()));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("tag mismatch"));
+
+        // No tag provided uses existing tag as default (validation passes)
+        assert!(validate_tag_for_update("my-tag", &None).is_ok());
     }
 }

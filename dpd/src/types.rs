@@ -178,6 +178,14 @@ impl convert::From<DpdError> for dropshot::HttpError {
                     message,
                 )
             }
+            DpdError::Switch(AsicError::Missing(ref msg)) => {
+                // ASIC entry not found - return 404 so caller can handle
+                // (e.g., omicron delete+recreate pattern)
+                dropshot::HttpError::for_not_found(
+                    None,
+                    format!("ASIC entry not found: {msg}"),
+                )
+            }
             DpdError::TableFull(e) => dropshot::HttpError {
                 status_code: dropshot::ErrorStatusCode::INSUFFICIENT_STORAGE,
                 error_code: None,

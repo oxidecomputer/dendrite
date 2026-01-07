@@ -15,6 +15,8 @@ use crate::fault::Fault;
 ///
 /// A switch port identified by a [`PortId`] may have multiple links within it,
 /// each identified by a `LinkId`. These are unique within a switch port only.
+///
+/// [`PortId`]: common::ports::PortId
 #[derive(
     Clone,
     Copy,

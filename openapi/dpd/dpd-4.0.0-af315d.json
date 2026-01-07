@@ -7,13 +7,13 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "2.0.0"
+    "version": "4.0.0"
   },
   "paths": {
     "/all-settings": {
       "delete": {
         "summary": "Clear all settings.",
-        "description": "This removes all data entirely.",
+        "description": "This removes all data entirely, including:\n\n- All ARP and NDP table entries - All routes - All links on all switch ports - All NAT mappings - All multicast groups\n\nNote: Unlike `reset_all_tagged`, this endpoint DOES clear multicast groups.",
         "operationId": "reset_all",
         "responses": {
           "204": {
@@ -31,7 +31,7 @@
     "/all-settings/{tag}": {
       "delete": {
         "summary": "Clear all settings associated with a specific tag.",
-        "description": "This removes:\n\n- All ARP or NDP table entries. - All routes - All links on all switch ports",
+        "description": "This removes:\n\n- All ARP or NDP table entries. - All routes - All links on all switch ports\n\nNote: Multicast groups are NOT cleared by this endpoint. Use the dedicated `/multicast/tags/{tag}` endpoint to clear multicast groups by tag.",
         "operationId": "reset_all_tagged",
         "parameters": [
           {
@@ -1146,8 +1146,8 @@
           "required": true
         },
         "responses": {
-          "201": {
-            "description": "successful creation",
+          "200": {
+            "description": "successful operation",
             "content": {
               "application/json": {
                 "schema": {
@@ -1264,7 +1264,8 @@
         }
       },
       "delete": {
-        "summary": "Delete a multicast group configuration by IP address.",
+        "summary": "Delete a multicast group configuration by IP address (API version 4+).",
+        "description": "All groups have tags (auto-generated if not provided at creation). When a tag is provided in the query, it must match the group's existing tag to prove ownership. Omitting the tag skips validation.",
         "operationId": "multicast_group_delete",
         "parameters": [
           {
@@ -1274,6 +1275,15 @@
             "schema": {
               "type": "string",
               "format": "ip"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "description": "Tag that must match the group's existing tag for ownership validation. Omit to skip validation.",
+            "schema": {
+              "nullable": true,
+              "type": "string"
             }
           }
         ],
@@ -1409,8 +1419,8 @@
     },
     "/multicast/underlay-groups/{group_ip}": {
       "get": {
-        "summary": "Get an underlay (internal) multicast group configuration by admin-local",
-        "description": "IPv6 address.\n\nUnderlay groups handle admin-local IPv6 multicast traffic (ff04::/16) with replication infrastructure for external and underlay members.",
+        "summary": "Get an underlay (internal) multicast group configuration.",
+        "description": "Underlay groups handle admin-local IPv6 multicast traffic (ff04::/16) with replication infrastructure for external and underlay members.",
         "operationId": "multicast_group_get_underlay",
         "parameters": [
           {
@@ -1442,8 +1452,8 @@
         }
       },
       "put": {
-        "summary": "Update an underlay (internal) multicast group configuration for a given",
-        "description": "group IP address.\n\nUnderlay groups are used for admin-local IPv6 multicast traffic (ff04::/16) that requires replication infrastructure with external and underlay members.",
+        "summary": "Update an underlay (internal) multicast group configuration.",
+        "description": "Underlay groups are used for admin-local IPv6 multicast traffic (ff04::/16) that requires replication infrastructure with external and underlay members.",
         "operationId": "multicast_group_update_underlay",
         "parameters": [
           {
@@ -1488,6 +1498,7 @@
     "/multicast/untagged": {
       "delete": {
         "summary": "Delete all multicast groups (and associated routes) without a tag.",
+        "description": "DEPRECATED: All groups have default tags generated at creation time. This endpoint returns HTTP 410 Gone. Use `multicast_reset_by_tag` with the tag returned from group creation instead.",
         "operationId": "multicast_reset_untagged",
         "responses": {
           "204": {
@@ -6262,7 +6273,7 @@
         }
       },
       "IpSrc": {
-        "description": "Source filter match key for multicast traffic.",
+        "description": "Source filter match key for multicast traffic.\n\nFor SSM groups, use `Exact` with specific source addresses. For ASM groups with any-source filtering, use `Any`.",
         "oneOf": [
           {
             "description": "Exact match for the source IP address.",
@@ -6279,17 +6290,11 @@
             "additionalProperties": false
           },
           {
-            "description": "Subnet match for the source IP address.",
-            "type": "object",
-            "properties": {
-              "Subnet": {
-                "$ref": "#/components/schemas/Ipv4Net"
-              }
-            },
-            "required": [
-              "Subnet"
-            ],
-            "additionalProperties": false
+            "description": "Match any source address (0.0.0.0/0 or ::/0 depending on group IP version).",
+            "type": "string",
+            "enum": [
+              "Any"
+            ]
           }
         ]
       },
@@ -7229,7 +7234,7 @@
         ]
       },
       "LinkId": {
-        "description": "An identifier for a link within a switch port.\n\nA switch port identified by a [`PortId`] may have multiple links within it, each identified by a `LinkId`. These are unique within a switch port only.",
+        "description": "An identifier for a link within a switch port.\n\nA switch port identified by a [`PortId`] may have multiple links within it, each identified by a `LinkId`. These are unique within a switch port only.\n\n[`PortId`]: common::ports::PortId",
         "type": "integer",
         "format": "uint8",
         "minimum": 0
@@ -7791,7 +7796,7 @@
             }
           },
           "tag": {
-            "nullable": true,
+            "description": "Tag for ownership validation. Always present; generated as `{uuid}:{group_ip}` if not provided at creation time.",
             "type": "string"
           }
         },
@@ -7799,7 +7804,8 @@
           "external_forwarding",
           "external_group_id",
           "group_ip",
-          "internal_forwarding"
+          "internal_forwarding",
+          "tag"
         ]
       },
       "MulticastGroupMember": {
@@ -7850,7 +7856,7 @@
                 }
               },
               "tag": {
-                "nullable": true,
+                "description": "Tag for ownership validation. Always present; generated as `{uuid}:{group_ip}` if not provided at creation time.",
                 "type": "string"
               },
               "underlay_group_id": {
@@ -7864,6 +7870,7 @@
               "group_ip",
               "kind",
               "members",
+              "tag",
               "underlay_group_id"
             ]
           },
@@ -7900,7 +7907,7 @@
                 }
               },
               "tag": {
-                "nullable": true,
+                "description": "Tag for ownership validation. Always present; generated as `{uuid}:{group_ip}` if not provided at creation time.",
                 "type": "string"
               }
             },
@@ -7909,7 +7916,8 @@
               "external_group_id",
               "group_ip",
               "internal_forwarding",
-              "kind"
+              "kind",
+              "tag"
             ]
           }
         ]
@@ -7954,7 +7962,7 @@
             }
           },
           "tag": {
-            "nullable": true,
+            "description": "Tag for ownership validation. Always present; generated as `{uuid}:{group_ip}` if not provided at creation time.",
             "type": "string"
           },
           "underlay_group_id": {
@@ -7967,6 +7975,7 @@
           "external_group_id",
           "group_ip",
           "members",
+          "tag",
           "underlay_group_id"
         ]
       },
