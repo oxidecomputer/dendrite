@@ -2,13 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Client library for the Dendrite data plane daemon.
 
 pub use common::ROLLBACK_FAILURE_ERROR_CODE;
 use common::counters;
-use common::nat;
 use common::network;
 use common::ports;
 use slog::Logger;
@@ -307,25 +306,41 @@ impl From<counters::RMonCounters> for types::RMonCounters {
     }
 }
 
-impl TryFrom<types::Vni> for nat::Vni {
+impl TryFrom<types::Vni> for network::Vni {
     type Error = String;
 
-    fn try_from(t: types::Vni) -> Result<nat::Vni, String> {
-        nat::Vni::new(t.0)
+    fn try_from(t: types::Vni) -> Result<network::Vni, String> {
+        network::Vni::new(t.0)
             .ok_or_else(|| String::from("VNI is out of valid range"))
     }
 }
 
-impl From<nat::Vni> for types::Vni {
-    fn from(t: nat::Vni) -> types::Vni {
+impl From<network::Vni> for types::Vni {
+    fn from(t: network::Vni) -> types::Vni {
         types::Vni(t.as_u32())
     }
 }
 
-impl TryFrom<types::NatTarget> for nat::NatTarget {
+impl TryFrom<types::InstanceTarget> for network::InstanceTarget {
     type Error = String;
 
-    fn try_from(t: types::NatTarget) -> Result<nat::NatTarget, Self::Error> {
+    fn try_from(
+        t: types::InstanceTarget,
+    ) -> Result<network::InstanceTarget, Self::Error> {
+        Ok(Self {
+            internal_ip: t.internal_ip,
+            inner_mac: t.inner_mac.into(),
+            vni: t.vni.try_into()?,
+        })
+    }
+}
+
+impl TryFrom<types::NatTarget> for network::NatTarget {
+    type Error = String;
+
+    fn try_from(
+        t: types::NatTarget,
+    ) -> Result<network::NatTarget, Self::Error> {
         Ok(Self {
             internal_ip: t.internal_ip,
             inner_mac: t.inner_mac.into(),

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Table operations for multicast NAT entries.
 
@@ -14,7 +14,7 @@ use super::{Ipv4MatchKey, Ipv6MatchKey};
 
 use aal::ActionParse;
 use aal_macros::*;
-use common::{nat::NatTarget, network::MacAddr};
+use common::network::{MacAddr, NatTarget};
 use slog::debug;
 
 /// IPv4 Table for multicast NAT entries.

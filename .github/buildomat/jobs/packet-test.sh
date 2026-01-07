@@ -77,7 +77,7 @@ export SDE=/opt/oxide/tofino_sde
 
 banner "Build"
 cargo build --features=tofino_asic --bin dpd --bin swadm
-cargo xtask codegen --stages 19
+cargo xtask codegen --stages $TOFINO_STAGES
 
 banner "Test"
 sudo -E ./tools/veth_setup.sh

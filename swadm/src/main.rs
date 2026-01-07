@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::convert::TryFrom;
 use std::io;
@@ -21,6 +21,7 @@ mod addr;
 mod arp;
 mod compliance;
 mod counters;
+mod extsub;
 mod link;
 mod nat;
 mod route;
@@ -63,6 +64,11 @@ enum Commands {
     Nat {
         #[command(subcommand)]
         cmd: nat::Nat,
+    },
+    #[clap(visible_alias = "extsub")]
+    ExternalSubnet {
+        #[command(subcommand)]
+        cmd: extsub::ExternalSubnet,
     },
     Counters {
         #[command(subcommand)]
@@ -216,6 +222,9 @@ async fn main_impl() -> anyhow::Result<()> {
         Commands::Arp { cmd: a } => arp::arp_cmd(&client, a).await,
         Commands::Route { cmd: r } => route::route_cmd(&client, r).await,
         Commands::Addr { cmd: p } => addr::addr_cmd(&client, p).await,
+        Commands::ExternalSubnet { cmd: p } => {
+            extsub::extsub_cmd(&client, p).await
+        }
         Commands::Nat { cmd: p } => nat::nat_cmd(&client, p).await,
         Commands::Counters { cmd: c } => counters::ctrs_cmd(&client, c).await,
         Commands::SwitchPort { cmd: p } => {
