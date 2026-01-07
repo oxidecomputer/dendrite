@@ -36,6 +36,7 @@ parser IngressParser(
 		meta.nat_ingress_tgt = 0;
 		meta.nat_inner_mac = 0;
 		meta.nat_geneve_vni = 0;
+		meta.instance_packet = false;
 		meta.icmp_recalc = false;
 		meta.icmp_csum = 0;
 		meta.l4_src_port = 0;
@@ -391,6 +392,7 @@ parser IngressParser(
 			GENEVE_OPT_OXIDE_EXTERNAL: parse_geneve_ext_tag;
 			GENEVE_OPT_OXIDE_MCAST: parse_geneve_mcast_tag;
 			GENEVE_OPT_OXIDE_MSS: parse_geneve_mss_tag;
+			GENEVE_OPT_OXIDE_INSTANCE: parse_geneve_instance_tag;
 			default: geneve_unknown;
 		}
 	}
@@ -422,6 +424,17 @@ parser IngressParser(
 
 		transition select (hdr.geneve_opts.oxg_mss_tag.opt_len) {
 			1: geneve_opt_parsed;
+			_: geneve_malformed;
+		}
+	}
+
+	state parse_geneve_instance_tag {
+		meta.instance_packet = true;
+		geneve_chunks.decrement(1);
+		pkt.extract(hdr.geneve_opts.oxg_instance_tag);
+
+		transition select (hdr.geneve_opts.oxg_instance_tag.opt_len) {
+			0: geneve_opt_parsed;
 			_: geneve_malformed;
 		}
 	}
@@ -646,6 +659,7 @@ parser EgressParser(
 			GENEVE_OPT_OXIDE_EXTERNAL: parse_geneve_ext_tag;
 			GENEVE_OPT_OXIDE_MCAST: parse_geneve_mcast_tag;
 			GENEVE_OPT_OXIDE_MSS: parse_geneve_mss_tag;
+			GENEVE_OPT_OXIDE_MSS: parse_geneve_instance_tag;
 			default: reject;
 		}
 	}
@@ -677,6 +691,16 @@ parser EgressParser(
 
 		transition select (hdr.geneve_opts.oxg_mss_tag.opt_len) {
 			1: geneve_opt_parsed;
+			_: reject;
+		}
+	}
+
+	state parse_geneve_instance_tag {
+		geneve_chunks.decrement(1);
+		pkt.extract(hdr.geneve_opts.oxg_instance_tag);
+
+		transition select (hdr.geneve_opts.oxg_instance_tag.opt_len) {
+			0: geneve_opt_parsed;
 			_: reject;
 		}
 	}

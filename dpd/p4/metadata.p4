@@ -23,6 +23,7 @@ struct sidecar_ingress_meta_t {
 	bool nat_egress_hit;		// NATed packet from guest -> uplink
 	bool nat_ingress_hit;		// NATed packet from uplink -> guest
 	bool nat_ingress_port;		// This port accepts only NAT traffic
+	bool instance_packet;		// This packet originated in a guest instance
 	ipv4_addr_t nexthop_ipv4;	// ip address of next router
 	ipv6_addr_t nexthop_ipv6;	// ip address of next router
 	bit<10> pkt_type;
@@ -83,6 +84,9 @@ struct route4_result_t {
 	/* Did we successfully look up the route in the table? */
 	bool is_hit;
 
+	/* Are instance-generated packets allowed to use this route? */
+	bool instance_allowed;
+
 	/*
 	 * A hash of the (address,port) fields, which is used to choose between
 	 * multiple potential routes.
@@ -107,6 +111,9 @@ struct route6_result_t {
 
 	/* Did we successfully look up the route in the table? */
 	bool is_hit;
+
+	/* Are instance-generated packets allowed to use this route? */
+	bool instance_allowed;
 
 	/*
 	 * A hash of the (address,port) fields, which is used to choose between

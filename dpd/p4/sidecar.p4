@@ -873,6 +873,7 @@ control RouterLookupIndex6(
 		res.idx = 0;
 		res.slots = 0;
 		res.slot = 0;
+		res.instance_allowed = false;
 		res.port = 0;
 		res.nexthop = 0;
 		index_ctr.count();
@@ -884,12 +885,13 @@ control RouterLookupIndex6(
 	 */
 	#include <route_selector.p4>
 
-	action index(bit<16> idx, bit<8> slots) {
+	action index(bit<16> idx, bit<8> slots, bool instance_allowed) {
 		res.is_hit = true;
 
 		res.idx = idx;
 		res.slots = slots;
 		res.slot = 0;
+		res.instance_allowed = instance_allowed;
 
 		// The rest of this data is extracted from the target table at
 		// entry `res.idx`.
@@ -899,7 +901,7 @@ control RouterLookupIndex6(
 	}
 
 	table lookup {
-		key             = { hdr.ipv6.dst_addr: lpm; }
+		key = { hdr.ipv6.dst_addr: lpm; }
 		actions         = { index; unreachable; }
 		default_action  = unreachable;
 		// The table size is incremented by one here just to allow the
@@ -971,6 +973,7 @@ control RouterLookupIndex4(
 		res.idx = 0;
 		res.slots = 0;
 		res.slot = 0;
+		res.instance_allowed = false;
 		res.port = 0;
 		res.nexthop = 0;
 		index_ctr.count();
@@ -982,12 +985,13 @@ control RouterLookupIndex4(
 	 */
 	#include <route_selector.p4>
 
-	action index(bit<16> idx, bit<8> slots) {
+	action index(bit<16> idx, bit<8> slots, bool instance_allowed) {
 		res.is_hit = true;
 
 		res.idx = idx;
 		res.slots = slots;
 		res.slot = 0;
+		res.instance_allowed = instance_allowed;
 
 		// The rest of this data is extracted from the target table at
 		// entry `res.idx`.
@@ -997,7 +1001,7 @@ control RouterLookupIndex4(
 	}
 
 	table lookup {
-		key             = { hdr.ipv4.dst_addr: lpm; }
+		key = { hdr.ipv4.dst_addr: lpm; }
 		actions         = { index; unreachable; }
 		default_action  = unreachable;
 		const size      = IPV4_LPM_SIZE;
@@ -1147,6 +1151,7 @@ control Router4 (
 		fwd.idx = 0;
 		fwd.slots = 0;
 		fwd.slot = 0;
+		fwd.instance_allowed = false;
 		// Our route selection table is 11 bits wide, and we need 5 bits
 		// of that for our "slot count" index.  Thus, we only need 6
 		// bits of the 8-bit hash calculated here to complete the 11-bit
@@ -1170,6 +1175,8 @@ control Router4 (
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
 			meta.drop_reason = DROP_IPV4_TTL_EXCEEDED;
+		} else if (meta.instance_packet && !fwd.instance_allowed) {
+			meta.drop_reason = DROP_INSTANCE_ROUTE_VIOLATION;
 		} else {
 			hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
 			ig_tm_md.ucast_egress_port = fwd.port;
@@ -1287,6 +1294,7 @@ control Router6 (
 		fwd.idx = 0;
 		fwd.slots = 0;
 		fwd.slot = 0;
+		fwd.instance_allowed = false;
 		// Our route selection table is 11 bits wide, and we need 5 bits
 		// of that for our "slot count" index.  Thus, we only need 6
 		// bits of the 8-bit hash calculated here to complete the 11-bit
@@ -1310,6 +1318,8 @@ control Router6 (
 			meta.drop_reason = DROP_IPV6_TTL_EXCEEDED;
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
+		} else if (meta.instance_packet && !fwd.instance_allowed) {
+			meta.drop_reason = DROP_INSTANCE_ROUTE_VIOLATION;
 		} else {
 			ig_tm_md.ucast_egress_port = fwd.port;
 			hdr.ipv6.hop_limit = hdr.ipv6.hop_limit - 1;

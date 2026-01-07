@@ -160,6 +160,7 @@ const bit<16> GENEVE_OPT_CLASS_OXIDE	= 0x0129;
 const bit<7> GENEVE_OPT_OXIDE_EXTERNAL	= 0x00;
 const bit<7> GENEVE_OPT_OXIDE_MCAST	= 0x01;
 const bit<7> GENEVE_OPT_OXIDE_MSS	= 0x02;
+const bit<7> GENEVE_OPT_OXIDE_INSTANCE	= 0x03;
 
 header geneve_opt_h {
 	bit<16> class;
@@ -209,6 +210,10 @@ struct geneve_opt_headers_t {
 	// MSS option [OPTE-only] (0x02)
 	geneve_opt_h oxg_mss_tag;
 	geneve_opt_mss_h oxg_mss;
+
+	// Packet originated from instance option [OPTE-only] (0x03)
+	geneve_opt_h oxg_instance_tag;
+	// <<no body>>
 }
 
 struct sidecar_headers_t {
