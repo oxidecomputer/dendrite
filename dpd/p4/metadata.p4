@@ -78,10 +78,12 @@ struct route4_result_t {
 	 * port and a nexthop address
 	 */
 	ipv4_addr_t nexthop;
+	ipv6_addr_t nexthop6;
 	PortId_t port;
 
 	/* Did we successfully look up the route in the table? */
 	bool is_hit;
+	bool is_v6;
 
 	/*
 	 * A hash of the (address,port) fields, which is used to choose between

@@ -86,19 +86,34 @@ fn print_route_header(
 fn print_ipv4_route(
     tw: &mut TabWriter<std::io::Stdout>,
     cidr: Ipv4Net,
-    targets: &Vec<types::Ipv4Route>,
+    targets: &Vec<types::Route>,
 ) -> anyhow::Result<()> {
     let mut cidr = cidr.to_string();
     for t in targets {
-        writeln!(
-            tw,
-            "{}\t{}\t{:<}\t{}\t{}",
-            cidr,
-            t.port_id,
-            t.link_id,
-            t.tgt_ip,
-            t.vlan_id.map_or(String::new(), |id| id.to_string()),
-        )?;
+        match t {
+            types::Route::V4(t) => {
+                writeln!(
+                    tw,
+                    "{}\t{}\t{:<}\t{}\t{}",
+                    cidr,
+                    t.port_id,
+                    t.link_id,
+                    t.tgt_ip,
+                    t.vlan_id.map_or(String::new(), |id| id.to_string()),
+                )?;
+            }
+            types::Route::V6(t) => {
+                writeln!(
+                    tw,
+                    "{}\t{}\t{:<}\t{}\t{}",
+                    cidr,
+                    t.port_id,
+                    t.link_id,
+                    t.tgt_ip,
+                    t.vlan_id.map_or(String::new(), |id| id.to_string()),
+                )?;
+            }
+        }
         cidr = String::new();
     }
     Ok(())

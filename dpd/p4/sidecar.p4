@@ -944,12 +944,35 @@ control RouterLookupIndex4(
 		hdr.ethernet.ether_type = ETHERTYPE_VLAN;
 		res.port = port;
 		res.nexthop = nexthop;
+		res.is_v6 = false;
+		forward_ctr.count();
+	}
+
+	action forward_vlan_v6(PortId_t port, ipv6_addr_t nexthop, bit<12> vlan_id) {
+		hdr.vlan.setValid();
+
+		hdr.vlan.pcp = 0;
+		hdr.vlan.dei = 0;
+		hdr.vlan.vlan_id = vlan_id;
+		hdr.vlan.ether_type = hdr.ethernet.ether_type;
+		hdr.ethernet.ether_type = ETHERTYPE_VLAN;
+		res.port = port;
+		res.nexthop6 = nexthop;
+		res.is_v6 = true;
 		forward_ctr.count();
 	}
 
 	action forward(PortId_t port, ipv4_addr_t nexthop) {
 		res.port = port;
 		res.nexthop = nexthop;
+		res.is_v6 = false;
+		forward_ctr.count();
+	}
+
+	action forward_v6(PortId_t port, ipv6_addr_t nexthop) {
+		res.port = port;
+		res.nexthop6 = nexthop;
+		res.is_v6 = true;
 		forward_ctr.count();
 	}
 
@@ -1174,8 +1197,13 @@ control Router4 (
 			hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
 			ig_tm_md.ucast_egress_port = fwd.port;
 
-			meta.nexthop_ipv4 = fwd.nexthop;
-			Arp.apply(hdr, meta, ig_intr_md, ig_tm_md);
+			if (fwd.is_v6) {
+				meta.nexthop_ipv6 = fwd.nexthop6;
+				Ndp.apply(hdr, meta, ig_intr_md, ig_tm_md);
+			} else {
+				meta.nexthop_ipv4 = fwd.nexthop;
+				Arp.apply(hdr, meta, ig_intr_md, ig_tm_md);
+			}
 		}
 	}
 }
