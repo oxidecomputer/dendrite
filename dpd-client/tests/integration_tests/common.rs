@@ -1221,25 +1221,26 @@ async fn set_route_ipv4_common(
         .expect("failed to get just-added IPv4 route entry")
         .into_inner();
 
-    let types::Route::V4(route) = route else {
-        panic!("expected v4 route");
-    };
-
     assert_eq!(
         route.len(),
         1,
         "Just added IPv4-route has more than 1 entry"
     );
+
+    let types::Route::V4(r) = &route[0] else {
+        panic!("expected v4 route");
+    };
+
     assert_eq!(
-        route[0].port_id, port_id,
+        r.port_id, port_id,
         "Just-added IPv4 route entry doesn't match"
     );
     assert_eq!(
-        route[0].link_id, link_id,
+        r.link_id, link_id,
         "Just-added IPv4 route entry doesn't match"
     );
     assert_eq!(
-        route[0].tgt_ip, tgt_ip,
+        r.tgt_ip, tgt_ip,
         "Just-added IPv4 route entry doesn't match"
     );
     Ok(())
