@@ -26,8 +26,8 @@ use dpd_types::mcast::MulticastGroupUpdateExternalEntry;
 use dpd_types::mcast::MulticastGroupUpdateUnderlayEntry;
 use dpd_types::oxstats::OximeterMetadata;
 use dpd_types::port_map::BackplaneLink;
-use dpd_types::route::Ipv4Route;
 use dpd_types::route::Ipv6Route;
+use dpd_types::route::Route;
 use dpd_types::switch_identifiers::SwitchIdentifiers;
 use dpd_types::switch_port::Led;
 use dpd_types::switch_port::ManagementMode;
@@ -391,7 +391,7 @@ impl DpdApi for DpdApiImpl {
     async fn route_ipv4_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<RoutePathV4>,
-    ) -> Result<HttpResponseOk<Vec<Ipv4Route>>, HttpError> {
+    ) -> Result<HttpResponseOk<Vec<Route>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let cidr = path.into_inner().cidr;
         route::get_route_ipv4(switch, cidr)
@@ -413,6 +413,19 @@ impl DpdApi for DpdApiImpl {
             .map_err(HttpError::from)
     }
 
+    async fn route_ipv4_over_ipv6_add(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let route = update.into_inner();
+
+        route::add_route_ipv4_over_ipv6(switch, route.cidr, route.target)
+            .await
+            .map(|_| HttpResponseUpdatedNoContent())
+            .map_err(HttpError::from)
+    }
+
     async fn route_ipv4_set(
         rqctx: RequestContext<Arc<Switch>>,
         update: TypedBody<Ipv4RouteUpdate>,
@@ -423,6 +436,23 @@ impl DpdApi for DpdApiImpl {
             .await
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(HttpError::from)
+    }
+
+    async fn route_ipv4_over_ipv6_set(
+        rqctx: RequestContext<Arc<Switch>>,
+        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let route = update.into_inner();
+        route::set_route_ipv4_over_ipv6(
+            switch,
+            route.cidr,
+            route.target,
+            route.replace,
+        )
+        .await
+        .map(|_| HttpResponseUpdatedNoContent())
+        .map_err(HttpError::from)
     }
 
     async fn route_ipv4_delete(

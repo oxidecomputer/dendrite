@@ -19,6 +19,8 @@
 ####   - TESTNAME='$name'   Will just run the specified test.
 ####   - STARTUP_TIMEOUT=n  Seconds to wait for tofino-model/dpd to start.
 ####                        Defaults to 15.
+####   - NOBUILD=1          Don't build sidecar.p4 (in case you've already
+####                        built it)
 ####
 #### <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
@@ -76,8 +78,10 @@ fi
 export SDE=/opt/oxide/tofino_sde
 
 banner "Build"
-cargo build --features=tofino_asic --bin dpd --bin swadm
-cargo xtask codegen --stages $TOFINO_STAGES
+if [[ $NOBUILD -ne 1 ]]; then
+    cargo build --features=tofino_asic --bin dpd --bin swadm
+    cargo xtask codegen --stages $TOFINO_STAGES
+fi
 
 banner "Test"
 sudo -E ./tools/veth_setup.sh

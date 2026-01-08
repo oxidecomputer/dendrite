@@ -24,6 +24,7 @@ struct sidecar_ingress_meta_t {
 	bool nat_ingress_hit;		// NATed packet from uplink -> guest
 	bool nat_ingress_port;		// This port accepts only NAT traffic
 	bool encap_needed;
+	bool resolve_nexthop;		// signals nexthop needs to be resolved
 	ipv4_addr_t nexthop_ipv4;	// ip address of next router
 	ipv6_addr_t nexthop_ipv6;	// ip address of next router
 	bit<10> pkt_type;
@@ -79,10 +80,12 @@ struct route4_result_t {
 	 * port and a nexthop address
 	 */
 	ipv4_addr_t nexthop;
+	ipv6_addr_t nexthop6;
 	PortId_t port;
 
 	/* Did we successfully look up the route in the table? */
 	bool is_hit;
+	bool is_v6;
 
 	/*
 	 * A hash of the (address,port) fields, which is used to choose between
