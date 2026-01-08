@@ -1199,11 +1199,11 @@ control Router4 (
 			hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
 			ig_tm_md.ucast_egress_port = fwd.port;
 
+			meta.nexthop_ipv4 = fwd.nexthop;
+			meta.nexthop_ipv6 = fwd.nexthop6;
 			if (fwd.is_v6) {
-				meta.nexthop_ipv6 = fwd.nexthop6;
 				Ndp.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			} else {
-				meta.nexthop_ipv4 = fwd.nexthop;
 				Arp.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			}
 		}
