@@ -1164,6 +1164,8 @@ control Router4 (
 
 	apply {
 		route4_result_t fwd;
+		fwd.is_v6 = false;
+		fwd.nexthop6 = 0;
 		fwd.nexthop = 0;
 		fwd.port = 0;
 		fwd.is_hit = false;
