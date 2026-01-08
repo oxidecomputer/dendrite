@@ -351,7 +351,7 @@ pub trait DpdApi {
         path: Path<RoutePathV4>,
     ) -> Result<HttpResponseOk<Vec<Ipv4Route>>, HttpError> {
         let result = Self::route_ipv4_get(rqctx, path).await?.0;
-        return Ok(HttpResponseOk(
+        Ok(HttpResponseOk(
             result
                 .into_iter()
                 .flat_map(|r| match r {
@@ -359,7 +359,7 @@ pub trait DpdApi {
                     _ => None,
                 })
                 .collect(),
-        ));
+        ))
     }
 
     /**
