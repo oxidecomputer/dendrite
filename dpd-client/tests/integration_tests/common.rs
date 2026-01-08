@@ -1220,6 +1220,11 @@ async fn set_route_ipv4_common(
         .await
         .expect("failed to get just-added IPv4 route entry")
         .into_inner();
+
+    let types::Route::V4(route) = route else {
+        panic!("expected v4 route");
+    };
+
     assert_eq!(
         route.len(),
         1,
