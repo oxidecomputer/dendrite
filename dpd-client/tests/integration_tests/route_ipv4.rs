@@ -95,7 +95,9 @@ async fn validate_routes(
         let found = client.route_ipv4_get(&cidr).await?;
         assert_eq!(found.len(), expected.len());
         for target in expected {
-            assert!(found.iter().any(|t| t == target));
+            assert!(
+                found.iter().any(|t| t == &types::Route::V4(target.clone()))
+            );
         }
         Ok(())
     }

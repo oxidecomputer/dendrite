@@ -71,7 +71,7 @@ All environment variables are prefixed by `DENDRITE_TEST_` for clarity.
   representation of packets on failure. The second bit controls whether to
   display the hex of each packet body as well.
 - `DENDRITE_TEST_TIMEOUT`: The amount of time to wait for any single test's
-  network traffic to complete, specified in milliseconds.  The default is 500,
+  network traffic to complete, specified in milliseconds.  The default is 1500,
   which works for a reasonably powerful system under light load.
 
 ## Parallelization

@@ -15,6 +15,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::link::LinkId;
 
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub enum Route {
+    V4(Ipv4Route),
+    V6(Ipv6Route),
+}
+
 /// A route for an IPv4 subnet.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct Ipv4Route {

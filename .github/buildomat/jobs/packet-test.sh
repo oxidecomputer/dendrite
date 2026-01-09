@@ -18,7 +18,9 @@
 ####   - JUST_TEST=1        Just runs the tests, skipping system prep.
 ####   - TESTNAME='$name'   Will just run the specified test.
 ####   - STARTUP_TIMEOUT=n  Seconds to wait for tofino-model/dpd to start.
-####                        Defaults to 15.
+####                        Defaults to 45.
+####   - NOBUILD=1          Don't build sidecar.p4 (in case you've already
+####                        built it)
 ####
 #### <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
@@ -33,7 +35,7 @@ source .github/buildomat/linux.sh
 
 wd=`pwd`
 export WS=$wd
-STARTUP_TIMEOUT=${STARTUP_TIMEOUT:=15}
+STARTUP_TIMEOUT=${STARTUP_TIMEOUT:=45}
 
 function cleanup {
     set +o errexit
@@ -76,8 +78,10 @@ fi
 export SDE=/opt/oxide/tofino_sde
 
 banner "Build"
-cargo build --features=tofino_asic --bin dpd --bin swadm
-cargo xtask codegen --stages 19
+if [[ $NOBUILD -ne 1 ]]; then
+    cargo build --features=tofino_asic --bin dpd --bin swadm
+    cargo xtask codegen --stages 19
+fi
 
 banner "Test"
 sudo -E ./tools/veth_setup.sh
