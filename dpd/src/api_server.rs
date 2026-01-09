@@ -436,6 +436,23 @@ impl DpdApi for DpdApiImpl {
             .map_err(HttpError::from)
     }
 
+    async fn route_ipv4_over_ipv6_set(
+        rqctx: RequestContext<Arc<Switch>>,
+        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let route = update.into_inner();
+        route::set_route_ipv4_over_ipv6(
+            switch,
+            route.cidr,
+            route.target,
+            route.replace,
+        )
+        .await
+        .map(|_| HttpResponseUpdatedNoContent())
+        .map_err(HttpError::from)
+    }
+
     async fn route_ipv4_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<RoutePathV4>,

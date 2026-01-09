@@ -4577,6 +4577,8 @@
     },
     "/route/ipv4": {
       "get": {
+        "summary": "Fetch the configured IPv4 routes, mapping IPv4 CIDR blocks to the switch port",
+        "description": "used for sending out that traffic, and optionally a gateway.",
         "operationId": "route_ipv4_list",
         "parameters": [
           {
@@ -4797,7 +4799,35 @@
       }
     },
     "/route/ipv4-over-ipv6": {
+      "put": {
+        "summary": "Route an IPv4 subnet to a link and an IPv6 nexthop gateway.",
+        "description": "This call can be used to create a new single-path route or to replace any existing routes with a new single-path route.",
+        "operationId": "route_ipv4_over_ipv6_set",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Ipv4OverIpv6RouteUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
       "post": {
+        "summary": "Route an IPv4 subnet to a link and an IPv6 nexthop gateway.",
+        "description": "This call can be used to create a new single-path route or to add new targets to a multipath route.",
         "operationId": "route_ipv4_over_ipv6_add",
         "requestBody": {
           "content": {

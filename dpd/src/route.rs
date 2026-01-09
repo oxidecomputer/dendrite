@@ -675,6 +675,15 @@ pub async fn set_route_ipv4(
     set_route(switch, IpNet::V4(subnet), route.into(), replace).await
 }
 
+pub async fn set_route_ipv4_over_ipv6(
+    switch: &Switch,
+    subnet: Ipv4Net,
+    route: Ipv6Route,
+    replace: bool,
+) -> DpdResult<()> {
+    set_route(switch, IpNet::V4(subnet), route.into(), replace).await
+}
+
 pub async fn set_route_ipv6(
     switch: &Switch,
     subnet: Ipv6Net,

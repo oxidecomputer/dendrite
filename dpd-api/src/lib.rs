@@ -318,6 +318,10 @@ pub trait DpdApi {
         }))
     }
 
+    /**
+     * Fetch the configured IPv4 routes, mapping IPv4 CIDR blocks to the switch port
+     * used for sending out that traffic, and optionally a gateway.
+     */
     #[endpoint {
         method = GET,
         path = "/route/ipv4",
@@ -377,6 +381,12 @@ pub trait DpdApi {
         update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
+    /**
+     * Route an IPv4 subnet to a link and an IPv6 nexthop gateway.
+     *
+     * This call can be used to create a new single-path route or to add new targets
+     * to a multipath route.
+     */
     #[endpoint {
         method = POST,
         path = "/route/ipv4-over-ipv6",
@@ -400,6 +410,22 @@ pub trait DpdApi {
     async fn route_ipv4_set(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Route an IPv4 subnet to a link and an IPv6 nexthop gateway.
+     *
+     * This call can be used to create a new single-path route or to replace any
+     * existing routes with a new single-path route.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/route/ipv4-over-ipv6",
+        versions = VERSION_V4_OVER_V6_ROUTES..,
+    }]
+    async fn route_ipv4_over_ipv6_set(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
