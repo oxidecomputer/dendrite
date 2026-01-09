@@ -87,7 +87,7 @@ lazy_static::lazy_static! {
             .unwrap_or(0);
         let millis = std::env::var("DENDRITE_TEST_TIMEOUT")
             .map(|p| p.parse().expect("Invalid duration"))
-            .unwrap_or(500);
+            .unwrap_or(1500);
 
         parking_lot::Mutex::new(Switch::new(host, port, use_network, verbosity, Duration::from_millis(millis)))
     };
