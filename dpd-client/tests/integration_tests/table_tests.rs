@@ -37,7 +37,9 @@ use dpd_client::types;
 // compiler.  That is being tracked as issue #1092, which will presumably
 // subsume #1013.
 // update: with the move to 8192 entries we're now at 8190 entries.
-const IPV4_LPM_SIZE: usize = 8190; // ipv4 forwarding table
+// update: making the table wider with ipv6 nexthops brings us down to
+// 8125 entires
+const IPV4_LPM_SIZE: usize = 8125; // ipv4 forwarding table
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports
