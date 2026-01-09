@@ -984,7 +984,7 @@ control RouterLookupIndex4(
 	 */
 	table route {
 		key             = { res.idx: exact; }
-		actions         = { forward; forward_vlan; }
+		actions         = { forward; forward_v6; forward_vlan; forward_vlan_v6; }
 		const size      = IPV4_LPM_SIZE - 1;
 		counters        = forward_ctr;
 	}
