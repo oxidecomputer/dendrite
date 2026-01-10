@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::io::{Write, stdout};
 use std::net::IpAddr;
@@ -203,6 +203,7 @@ async fn route_add(
                     link_id: link_path.link_id,
                     tgt_ip,
                     vlan_id,
+                    instance_allowed: true,
                 },
                 replace: false,
             })
@@ -218,6 +219,7 @@ async fn route_add(
                     link_id: link_path.link_id,
                     tgt_ip,
                     vlan_id,
+                    instance_allowed: true,
                 },
                 replace: false,
             })

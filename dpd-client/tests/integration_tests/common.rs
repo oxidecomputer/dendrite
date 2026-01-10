@@ -1099,6 +1099,7 @@ async fn set_route_ipv6_common(
             tgt_ip,
             tag: switch.client.inner().tag.clone(),
             vlan_id,
+            instance_allowed: true,
         },
         replace: false,
     };
@@ -1205,6 +1206,7 @@ async fn set_route_ipv4_common(
             tgt_ip,
             tag: switch.client.inner().tag.clone(),
             vlan_id,
+            instance_allowed: true,
         },
         replace: false,
     };
