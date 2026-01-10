@@ -41,7 +41,7 @@ use oxnet::{Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use transceiver_controller::{
-    Datapath, Monitors, PowerState, message::LedState,
+    message::LedState, Datapath, Monitors, PowerState,
 };
 
 api_versions!([
@@ -56,9 +56,97 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (3, RESTRICTED_ROUTES),
     (2, DUAL_STACK_NAT_WORKFLOW),
     (1, INITIAL),
 ]);
+
+mod route_v1 {
+    use common::ports::PortId;
+    use dpd_types::link::LinkId;
+    use oxnet::{Ipv4Net, Ipv6Net};
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    /// A route for an IPv4 subnet.
+    #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+    pub struct Ipv4Route {
+        // The client-specific tag for this route.
+        pub tag: String,
+        // The switch port out which routed traffic is sent.
+        pub port_id: PortId,
+        // The link out which routed traffic is sent.
+        pub link_id: LinkId,
+        // Route traffic matching the subnet via this IP.
+        pub tgt_ip: Ipv4Addr,
+        // Tag traffic on this route with this vlan ID.
+        pub vlan_id: Option<u16>,
+    }
+
+    /// A route for an IPv6 subnet.
+    #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+    pub struct Ipv6Route {
+        // The client-specific tag for this route.
+        pub tag: String,
+        // The switch port out which routed traffic is sent.
+        pub port_id: PortId,
+        // The link out which routed traffic is sent.
+        pub link_id: LinkId,
+        // Route traffic matching the subnet to this IP.
+        pub tgt_ip: Ipv6Addr,
+        // Tag traffic on this route with this vlan ID.
+        pub vlan_id: Option<u16>,
+    }
+
+    /// Represents a new or replacement mapping of a subnet to a single IPv4
+    /// RouteTarget nexthop target.
+    #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+    pub struct Ipv4RouteUpdate {
+        /// Traffic destined for any address within the CIDR block is routed using
+        /// this information.
+        pub cidr: Ipv4Net,
+        /// A single Route associated with this CIDR
+        pub target: Ipv4Route,
+        /// Should this route replace any existing route?  If a route exists and
+        /// this parameter is false, then the call will fail.
+        pub replace: bool,
+    }
+
+    /// Represents a new or replacement mapping of a subnet to a single IPv6
+    /// RouteTarget nexthop target.
+    #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+    pub struct Ipv6RouteUpdate {
+        /// Traffic destined for any address within the CIDR block is routed using
+        /// this information.
+        pub cidr: Ipv6Net,
+        /// A single RouteTarget associated with this CIDR
+        pub target: Ipv6Route,
+        /// Should this route replace any existing route?  If a route exists and
+        /// this parameter is false, then the call will fail.
+        pub replace: bool,
+    }
+
+    /// Represents all mappings of an IPv4 subnet to a its nexthop target(s).
+    #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+    pub struct Ipv4Routes {
+        /// Traffic destined for any address within the CIDR block is routed using
+        /// this information.
+        pub cidr: Ipv4Net,
+        /// All RouteTargets associated with this CIDR
+        pub targets: Vec<Ipv4Route>,
+    }
+
+    /// Represents all mappings of an IPv6 subnet to a its nexthop target(s).
+    #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+    pub struct Ipv6Routes {
+        /// Traffic destined for any address within the CIDR block is routed using
+        /// this information.
+        pub cidr: Ipv6Net,
+        /// All RouteTargets associated with this CIDR
+        pub targets: Vec<Ipv6Route>,
+    }
+}
 
 // WHEN CHANGING THE API (part 2 of 2):
 //
@@ -204,11 +292,25 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/route/ipv6",
+        versions = VERSION_RESTRICTED_ROUTES..
     }]
     async fn route_ipv6_list(
         rqctx: RequestContext<Self::Context>,
         query: Query<PaginationParams<EmptyScanParams, Ipv6RouteToken>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv6Routes>>, HttpError>;
+    /**
+     * Fetch the configured IPv6 routes, mapping IPv6 CIDR blocks to the switch port
+     * used for sending out that traffic, and optionally a gateway.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/route/ipv6",
+        versions = ..VERSION_RESTRICTED_ROUTES
+    }]
+    async fn route_ipv6_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<PaginationParams<EmptyScanParams, Ipv6RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<route_v1::Ipv6Routes>>, HttpError>;
 
     /**
      * Get a single IPv6 route, by its IPv6 CIDR block.
@@ -216,11 +318,24 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/route/ipv6/{cidr}",
+        versions = VERSION_RESTRICTED_ROUTES..
     }]
     async fn route_ipv6_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<RoutePathV6>,
     ) -> Result<HttpResponseOk<Vec<Ipv6Route>>, HttpError>;
+    /**
+     * Get a single IPv6 route, by its IPv6 CIDR block.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/route/ipv6/{cidr}",
+        versions = ..VERSION_RESTRICTED_ROUTES
+    }]
+    async fn route_ipv6_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<RoutePathV6>,
+    ) -> Result<HttpResponseOk<Vec<route_v1::Ipv6Route>>, HttpError>;
 
     /**
      * Route an IPv6 subnet to a link and a nexthop gateway.
@@ -231,10 +346,26 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/route/ipv6",
+        versions = VERSION_RESTRICTED_ROUTES..
     }]
     async fn route_ipv6_add(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<Ipv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    /**
+     * Route an IPv6 subnet to a link and a nexthop gateway.
+     *
+     * This call can be used to create a new single-path route or to add new targets
+     * to a multipath route.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/route/ipv6",
+        versions = ..VERSION_RESTRICTED_ROUTES
+    }]
+    async fn route_ipv6_add_v1(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<route_v1::Ipv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -246,10 +377,26 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/route/ipv6",
+        versions = VERSION_RESTRICTED_ROUTES..
     }]
     async fn route_ipv6_set(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<Ipv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    /**
+     * Route an IPv6 subnet to a link and a nexthop gateway.
+     *
+     * This call can be used to create a new single-path route or to replace any
+     * existing routes with a new single-path route.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/route/ipv6",
+        versions = ..VERSION_RESTRICTED_ROUTES
+    }]
+    async fn route_ipv6_set_v1(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<route_v1::Ipv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -283,11 +430,25 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/route/ipv4",
+        versions = VERSION_RESTRICTED_ROUTES..
     }]
     async fn route_ipv4_list(
         rqctx: RequestContext<Self::Context>,
         query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv4Routes>>, HttpError>;
+    /**
+     * Fetch the configured IPv4 routes, mapping IPv4 CIDR blocks to the switch port
+     * used for sending out that traffic, and optionally a gateway.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/route/ipv4",
+        versions = ..VERSION_RESTRICTED_ROUTES
+    }]
+    async fn route_ipv4_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<route_v1::Ipv4Routes>>, HttpError>;
 
     /**
      * Get the configured route for the given IPv4 subnet.
@@ -295,11 +456,25 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/route/ipv4/{cidr}",
+        versions = VERSION_RESTRICTED_ROUTES..
     }]
     async fn route_ipv4_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<RoutePathV4>,
     ) -> Result<HttpResponseOk<Vec<Ipv4Route>>, HttpError>;
+
+    /**
+     * Get the configured route for the given IPv4 subnet.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/route/ipv4/{cidr}",
+        versions = ..VERSION_RESTRICTED_ROUTES
+    }]
+    async fn route_ipv4_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<RoutePathV4>,
+    ) -> Result<HttpResponseOk<Vec<route_v1::Ipv4Route>>, HttpError>;
 
     /**
      * Route an IPv4 subnet to a link and a nexthop gateway.
@@ -310,10 +485,26 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/route/ipv4",
+        versions = VERSION_RESTRICTED_ROUTES..
     }]
     async fn route_ipv4_add(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    /**
+     * Route an IPv4 subnet to a link and a nexthop gateway.
+     *
+     * This call can be used to create a new single-path route or to add new targets
+     * to a multipath route.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/route/ipv4",
+        versions = ..VERSION_RESTRICTED_ROUTES
+    }]
+    async fn route_ipv4_add_v1(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<route_v1::Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -325,10 +516,26 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/route/ipv4",
+        versions = VERSION_RESTRICTED_ROUTES..
     }]
     async fn route_ipv4_set(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    /**
+     * Route an IPv4 subnet to a link and a nexthop gateway.
+     *
+     * This call can be used to create a new single-path route or to replace any
+     * existing routes with a new single-path route.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/route/ipv4",
+        versions = ..VERSION_RESTRICTED_ROUTES
+    }]
+    async fn route_ipv4_set_v1(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<route_v1::Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**

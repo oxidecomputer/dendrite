@@ -28,6 +28,8 @@ pub struct Ipv4Route {
     pub tgt_ip: Ipv4Addr,
     // Tag traffic on this route with this vlan ID.
     pub vlan_id: Option<u16>,
+    // Instance-generated packets are allowed to transit this route
+    pub instance_allowed: bool,
 }
 
 // We implement PartialEq for Ipv4Route because we want to exclude the tag and
@@ -80,6 +82,8 @@ pub struct Ipv6Route {
     pub tgt_ip: Ipv6Addr,
     // Tag traffic on this route with this vlan ID.
     pub vlan_id: Option<u16>,
+    // Instance-generated packets are allowed to transit this route
+    pub instance_allowed: bool,
 }
 
 // See the comment above the PartialEq for IPv4Route

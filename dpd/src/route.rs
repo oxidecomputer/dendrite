@@ -133,6 +133,7 @@ struct Route {
     link_id: LinkId,
     tgt_ip: IpAddr,
     vlan_id: Option<u16>,
+    instance_allowed: bool,
 }
 
 impl From<&Route> for Ipv4Route {
@@ -144,6 +145,7 @@ impl From<&Route> for Ipv4Route {
                 link_id: r.link_id,
                 tgt_ip,
                 vlan_id: r.vlan_id,
+		instance_allowed: r.instance_allowed,
             },
             IpAddr::V6(_) => panic!("can't convert v6 route to v4"),
         }
@@ -165,6 +167,7 @@ impl From<&Route> for Ipv6Route {
                 link_id: r.link_id,
                 tgt_ip,
                 vlan_id: r.vlan_id,
+		instance_allowed: r.instance_allowed,
             },
             IpAddr::V4(_) => panic!("can't convert v4 route to v6"),
         }
@@ -185,6 +188,7 @@ impl From<&Ipv4Route> for Route {
             link_id: r.link_id,
             tgt_ip: IpAddr::V4(r.tgt_ip),
             vlan_id: r.vlan_id,
+	    instance_allowed: r.instance_allowed,
         }
     }
 }
@@ -203,6 +207,7 @@ impl From<&Ipv6Route> for Route {
             link_id: r.link_id,
             tgt_ip: IpAddr::V6(r.tgt_ip),
             vlan_id: r.vlan_id,
+	    instance_allowed: r.instance_allowed,
         }
     }
 }
@@ -717,6 +722,7 @@ pub async fn delete_route_target_ipv4(
         link_id,
         tgt_ip: IpAddr::V4(tgt_ip),
         vlan_id: None,
+	instance_allowed: false,
     };
 
     let mut route_data = switch.routes.lock().await;
@@ -743,6 +749,7 @@ pub async fn delete_route_target_ipv6(
         link_id,
         tgt_ip: IpAddr::V6(tgt_ip),
         vlan_id: None,
+	instance_allowed: false,
     };
 
     let mut route_data = switch.routes.lock().await;
