@@ -8,6 +8,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    convert::{From, TryFrom},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
@@ -41,7 +42,7 @@ use oxnet::{Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use transceiver_controller::{
-    message::LedState, Datapath, Monitors, PowerState,
+    Datapath, Monitors, PowerState, message::LedState,
 };
 
 api_versions!([
@@ -61,12 +62,18 @@ api_versions!([
     (1, INITIAL),
 ]);
 
+fn version_error(msg: impl ToString) -> HttpError {
+    HttpError::for_internal_error(format!("version error: {}", msg.to_string()))
+}
+
 mod route_v1 {
     use common::ports::PortId;
     use dpd_types::link::LinkId;
+    use dropshot::HttpError;
     use oxnet::{Ipv4Net, Ipv6Net};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
+    use std::convert::{From, TryFrom};
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     /// A route for an IPv4 subnet.
@@ -84,6 +91,38 @@ mod route_v1 {
         pub vlan_id: Option<u16>,
     }
 
+    impl From<Ipv4Route> for super::Ipv4Route {
+        fn from(value: Ipv4Route) -> Self {
+            super::Ipv4Route {
+                tag: value.tag,
+                port_id: value.port_id,
+                link_id: value.link_id,
+                tgt_ip: value.tgt_ip,
+                vlan_id: value.vlan_id,
+                instance_allowed: true,
+            }
+        }
+    }
+
+    impl TryFrom<super::Ipv4Route> for Ipv4Route {
+        type Error = HttpError;
+
+        fn try_from(value: super::Ipv4Route) -> Result<Self, Self::Error> {
+            match value.instance_allowed {
+                false => Err(super::version_error(
+                    "restricted route feature support needed",
+                )),
+                true => Ok(Ipv4Route {
+                    tag: value.tag,
+                    port_id: value.port_id,
+                    link_id: value.link_id,
+                    tgt_ip: value.tgt_ip,
+                    vlan_id: value.vlan_id,
+                }),
+            }
+        }
+    }
+
     /// A route for an IPv6 subnet.
     #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
     pub struct Ipv6Route {
@@ -97,6 +136,38 @@ mod route_v1 {
         pub tgt_ip: Ipv6Addr,
         // Tag traffic on this route with this vlan ID.
         pub vlan_id: Option<u16>,
+    }
+
+    impl From<Ipv6Route> for super::Ipv6Route {
+        fn from(value: Ipv6Route) -> Self {
+            super::Ipv6Route {
+                tag: value.tag,
+                port_id: value.port_id,
+                link_id: value.link_id,
+                tgt_ip: value.tgt_ip,
+                vlan_id: value.vlan_id,
+                instance_allowed: true,
+            }
+        }
+    }
+
+    impl TryFrom<super::Ipv6Route> for Ipv6Route {
+        type Error = HttpError;
+
+        fn try_from(value: super::Ipv6Route) -> Result<Self, Self::Error> {
+            match value.instance_allowed {
+                false => Err(super::version_error(
+                    "restricted route feature support needed",
+                )),
+                true => Ok(Ipv6Route {
+                    tag: value.tag,
+                    port_id: value.port_id,
+                    link_id: value.link_id,
+                    tgt_ip: value.tgt_ip,
+                    vlan_id: value.vlan_id,
+                }),
+            }
+        }
     }
 
     /// Represents a new or replacement mapping of a subnet to a single IPv4
@@ -113,6 +184,16 @@ mod route_v1 {
         pub replace: bool,
     }
 
+    impl From<Ipv6RouteUpdate> for super::Ipv6RouteUpdate {
+        fn from(value: Ipv6RouteUpdate) -> Self {
+            super::Ipv6RouteUpdate {
+                cidr: value.cidr,
+                target: value.target.into(),
+                replace: value.replace,
+            }
+        }
+    }
+
     /// Represents a new or replacement mapping of a subnet to a single IPv6
     /// RouteTarget nexthop target.
     #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -127,6 +208,16 @@ mod route_v1 {
         pub replace: bool,
     }
 
+    impl From<Ipv4RouteUpdate> for super::Ipv4RouteUpdate {
+        fn from(value: Ipv4RouteUpdate) -> Self {
+            super::Ipv4RouteUpdate {
+                cidr: value.cidr,
+                target: value.target.into(),
+                replace: value.replace,
+            }
+        }
+    }
+
     /// Represents all mappings of an IPv4 subnet to a its nexthop target(s).
     #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
     pub struct Ipv4Routes {
@@ -137,6 +228,21 @@ mod route_v1 {
         pub targets: Vec<Ipv4Route>,
     }
 
+    impl TryFrom<super::Ipv4Routes> for Ipv4Routes {
+        type Error = dropshot::HttpError;
+
+        fn try_from(value: super::Ipv4Routes) -> Result<Self, Self::Error> {
+            let mut targets = Vec::new();
+            for t in value.targets {
+                targets.push(t.try_into()?);
+            }
+            Ok(Ipv4Routes {
+                cidr: value.cidr,
+                targets,
+            })
+        }
+    }
+
     /// Represents all mappings of an IPv6 subnet to a its nexthop target(s).
     #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
     pub struct Ipv6Routes {
@@ -145,6 +251,21 @@ mod route_v1 {
         pub cidr: Ipv6Net,
         /// All RouteTargets associated with this CIDR
         pub targets: Vec<Ipv6Route>,
+    }
+
+    impl TryFrom<super::Ipv6Routes> for Ipv6Routes {
+        type Error = dropshot::HttpError;
+
+        fn try_from(value: super::Ipv6Routes) -> Result<Self, Self::Error> {
+            let mut targets = Vec::new();
+            for t in value.targets {
+                targets.push(t.try_into()?);
+            }
+            Ok(Ipv6Routes {
+                cidr: value.cidr,
+                targets,
+            })
+        }
     }
 }
 
@@ -298,6 +419,7 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         query: Query<PaginationParams<EmptyScanParams, Ipv6RouteToken>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv6Routes>>, HttpError>;
+
     /**
      * Fetch the configured IPv6 routes, mapping IPv6 CIDR blocks to the switch port
      * used for sending out that traffic, and optionally a gateway.
@@ -310,7 +432,17 @@ pub trait DpdApi {
     async fn route_ipv6_list_v1(
         rqctx: RequestContext<Self::Context>,
         query: Query<PaginationParams<EmptyScanParams, Ipv6RouteToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<route_v1::Ipv6Routes>>, HttpError>;
+    ) -> Result<HttpResponseOk<ResultsPage<route_v1::Ipv6Routes>>, HttpError>
+    {
+        let page = Self::route_ipv6_list(rqctx, query).await?;
+        let next_page = page.0.next_page;
+        let mut items = Vec::<route_v1::Ipv6Routes>::new();
+        for i in page.0.items {
+            items.push(i.try_into()?);
+        }
+
+        Ok(HttpResponseOk(ResultsPage { next_page, items }))
+    }
 
     /**
      * Get a single IPv6 route, by its IPv6 CIDR block.
@@ -324,6 +456,7 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<RoutePathV6>,
     ) -> Result<HttpResponseOk<Vec<Ipv6Route>>, HttpError>;
+
     /**
      * Get a single IPv6 route, by its IPv6 CIDR block.
      */
@@ -335,7 +468,14 @@ pub trait DpdApi {
     async fn route_ipv6_get_v1(
         rqctx: RequestContext<Self::Context>,
         path: Path<RoutePathV6>,
-    ) -> Result<HttpResponseOk<Vec<route_v1::Ipv6Route>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<route_v1::Ipv6Route>>, HttpError> {
+        let r = Self::route_ipv6_get(rqctx, path).await?;
+        let mut tgts = Vec::new();
+        for t in r.0.into_iter() {
+            tgts.push(t.try_into()?);
+        }
+        Ok(HttpResponseOk(tgts))
+    }
 
     /**
      * Route an IPv6 subnet to a link and a nexthop gateway.
@@ -366,7 +506,9 @@ pub trait DpdApi {
     async fn route_ipv6_add_v1(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<route_v1::Ipv6RouteUpdate>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::route_ipv6_add(rqctx, update.map(|r| r.into())).await
+    }
 
     /**
      * Route an IPv6 subnet to a link and a nexthop gateway.
@@ -397,7 +539,9 @@ pub trait DpdApi {
     async fn route_ipv6_set_v1(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<route_v1::Ipv6RouteUpdate>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::route_ipv6_set(rqctx, update.map(|r| r.into())).await
+    }
 
     /**
      * Remove an IPv6 route, by its IPv6 CIDR block.
@@ -448,7 +592,17 @@ pub trait DpdApi {
     async fn route_ipv4_list_v1(
         rqctx: RequestContext<Self::Context>,
         query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<route_v1::Ipv4Routes>>, HttpError>;
+    ) -> Result<HttpResponseOk<ResultsPage<route_v1::Ipv4Routes>>, HttpError>
+    {
+        let page = Self::route_ipv4_list(rqctx, query).await?;
+        let next_page = page.0.next_page;
+        let mut items = Vec::<route_v1::Ipv4Routes>::new();
+        for i in page.0.items {
+            items.push(i.try_into()?);
+        }
+
+        Ok(HttpResponseOk(ResultsPage { next_page, items }))
+    }
 
     /**
      * Get the configured route for the given IPv4 subnet.
@@ -474,7 +628,14 @@ pub trait DpdApi {
     async fn route_ipv4_get_v1(
         rqctx: RequestContext<Self::Context>,
         path: Path<RoutePathV4>,
-    ) -> Result<HttpResponseOk<Vec<route_v1::Ipv4Route>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<route_v1::Ipv4Route>>, HttpError> {
+        let r = Self::route_ipv4_get(rqctx, path).await?;
+        let mut tgts = Vec::new();
+        for t in r.0.into_iter() {
+            tgts.push(t.try_into()?);
+        }
+        Ok(HttpResponseOk(tgts))
+    }
 
     /**
      * Route an IPv4 subnet to a link and a nexthop gateway.
@@ -505,7 +666,9 @@ pub trait DpdApi {
     async fn route_ipv4_add_v1(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<route_v1::Ipv4RouteUpdate>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::route_ipv4_add(rqctx, update.map(|r| r.into())).await
+    }
 
     /**
      * Route an IPv4 subnet to a link and a nexthop gateway.
@@ -536,7 +699,9 @@ pub trait DpdApi {
     async fn route_ipv4_set_v1(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<route_v1::Ipv4RouteUpdate>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::route_ipv4_set(rqctx, update.map(|update| update.into())).await
+    }
 
     /**
      * Remove all targets for the given subnet
