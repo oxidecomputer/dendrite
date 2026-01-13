@@ -3783,6 +3783,10 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     Ok(())
 }
 
+/*
+ * Commented out untl https://github.com/oxidecomputer/dendrite/issues/107 is
+ * fixed
+ *
 #[tokio::test]
 #[ignore]
 async fn test_multicast_vlan_translation_not_possible() -> TestResult {
@@ -3859,6 +3863,7 @@ async fn test_multicast_vlan_translation_not_possible() -> TestResult {
         .unwrap();
     cleanup_test_group(switch, internal_multicast_ip).await
 }
+*/
 
 #[tokio::test]
 #[ignore]
