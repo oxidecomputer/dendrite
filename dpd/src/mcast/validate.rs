@@ -224,21 +224,57 @@ fn validate_ipv6_source_address(ipv6: Ipv6Addr) -> DpdResult<()> {
     Ok(())
 }
 
-/// Validates that the update request tag matches the existing group's tag.
+/// Maximum length for multicast group tags.
 ///
-/// If the request tag is `None`, the group's existing tag (set or generated
-/// at creation) is used as the default and validation succeeds. If provided,
-/// it must match the group's existing tag.
-pub(crate) fn validate_tag_for_update(
-    existing_tag: &str,
-    request_tag: &Option<String>,
-) -> DpdResult<()> {
-    if let Some(request) = request_tag
-        && request != existing_tag
-    {
+/// Keep in sync with Omicron's database schema column type for multicast group
+/// tags. This is sized to accommodate the auto-generated format
+/// `{uuid}:{group_ip}` for both IPv4 and IPv6 group IPs.
+const MAX_TAG_LENGTH: usize = 80;
+
+/// Validates tag format for group creation.
+///
+/// Tags must be 1-80 ASCII bytes containing only alphanumeric characters,
+/// hyphens, underscores, colons, or periods.
+///
+/// This character set is compatible with URL path segments, though colons are
+/// RFC 3986 reserved characters and may require percent-encoding in some HTTP
+/// client contexts.
+///
+/// Auto-generated tags use the format `{uuid}:{group_ip}`.
+pub(crate) fn validate_tag_format(tag: &str) -> DpdResult<()> {
+    if tag.is_empty() {
+        return Err(DpdError::Invalid("tag cannot be empty".to_string()));
+    }
+    if tag.len() > MAX_TAG_LENGTH {
         return Err(DpdError::Invalid(format!(
-            "tag mismatch: group has tag '{existing_tag}' but request has tag '{request}'"
+            "tag cannot exceed {MAX_TAG_LENGTH} bytes"
         )));
+    }
+    if !tag.bytes().all(|b| {
+        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'.')
+    }) {
+        return Err(DpdError::Invalid(
+            "tag must contain only ASCII alphanumeric characters, hyphens, \
+             underscores, colons, or periods"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Validates that the request tag matches the existing group's tag.
+///
+/// Tags are immutable after group creation. This validation ensures the caller
+/// created the group before allowing mutations.
+pub(crate) fn validate_tag(
+    existing_tag: &str,
+    request_tag: &str,
+) -> DpdResult<()> {
+    if request_tag != existing_tag {
+        return Err(DpdError::Invalid(
+            "tag mismatch: provided tag does not match the group's tag"
+                .to_string(),
+        ));
     }
     Ok(())
 }
@@ -645,20 +681,50 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_tag_for_update() {
+    fn test_validate_tag() {
         // Existing tag matches request tag
-        assert!(
-            validate_tag_for_update("my-tag", &Some("my-tag".to_string()))
-                .is_ok()
-        );
+        assert!(validate_tag("my-tag", "my-tag").is_ok());
 
         // Existing tag but request has different tag
-        let result =
-            validate_tag_for_update("owner-a", &Some("owner-b".to_string()));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("tag mismatch"));
+        assert!(validate_tag("owner-a", "owner-b").is_err());
+        assert!(validate_tag("owner-a", "").is_err());
+        assert!(validate_tag("owner-a", "tag/with/slashes").is_err());
+    }
 
-        // No tag provided uses existing tag as default (validation passes)
-        assert!(validate_tag_for_update("my-tag", &None).is_ok());
+    #[test]
+    fn test_validate_tag_format() {
+        use super::validate_tag_format;
+
+        // Valid tags
+        assert!(validate_tag_format("my-tag").is_ok());
+        assert!(validate_tag_format("nexus").is_ok());
+        assert!(validate_tag_format("a1b2c3").is_ok());
+        assert!(validate_tag_format("tag_with_underscore").is_ok());
+        assert!(validate_tag_format("tag.with.periods").is_ok());
+        assert!(validate_tag_format("tag:with:colons").is_ok());
+        assert!(validate_tag_format("mixed-tag_v1.0:test").is_ok());
+
+        // Auto-generated tag format (uuid:ip)
+        assert!(
+            validate_tag_format(
+                "550e8400-e29b-41d4-a716-446655440000:224.1.2.3"
+            )
+            .is_ok()
+        );
+
+        // Tag at exactly MAX_TAG_LENGTH characters is valid
+        assert!(validate_tag_format(&"a".repeat(MAX_TAG_LENGTH)).is_ok());
+
+        // Empty tag rejected
+        assert!(validate_tag_format("").is_err());
+
+        // Tag exceeding MAX_TAG_LENGTH characters rejected
+        assert!(validate_tag_format(&"a".repeat(MAX_TAG_LENGTH + 1)).is_err());
+
+        // Invalid characters rejected
+        assert!(validate_tag_format("tag with spaces").is_err());
+        assert!(validate_tag_format("tag/with/slashes").is_err());
+        assert!(validate_tag_format("tag@with@at").is_err());
+        assert!(validate_tag_format("tag#with#hash").is_err());
     }
 }

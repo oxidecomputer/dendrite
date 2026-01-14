@@ -494,10 +494,9 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let ip = IpAddr::V6(gen_ipv6_multicast_addr(idx));
-        switch
-            .client
-            .multicast_group_delete(&ip, Some(MCAST_TAG))
-            .await
+        let del_tag: types::MulticastGroupDeleteTag =
+            MCAST_TAG.parse().expect("tag should parse");
+        switch.client.multicast_group_delete(&ip, &del_tag).await
     }
 
     async fn count_entries(switch: &Switch) -> usize {

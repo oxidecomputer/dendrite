@@ -113,6 +113,8 @@ impl fmt::Display for IpSrc {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupCreateUnderlayEntry {
     pub group_ip: AdminScopedIpv6,
+    /// Tag for validating update/delete requests. If a tag is not provided,
+    /// one is auto-generated as `{uuid}:{group_ip}`.
     pub tag: Option<String>,
     pub members: Vec<MulticastGroupMember>,
 }
@@ -122,6 +124,8 @@ pub struct MulticastGroupCreateUnderlayEntry {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupCreateExternalEntry {
     pub group_ip: IpAddr,
+    /// Tag for validating update/delete requests. If a tag is not provided,
+    /// one is auto-generated as `{uuid}:{group_ip}`.
     pub tag: Option<String>,
     pub internal_forwarding: InternalForwarding,
     pub external_forwarding: ExternalForwarding,
@@ -130,43 +134,45 @@ pub struct MulticastGroupCreateExternalEntry {
 
 /// Represents a multicast replication entry for PUT requests for internal
 /// (to the rack) groups.
+///
+/// Tag validation is performed via the `tag` query parameter.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupUpdateUnderlayEntry {
-    pub tag: Option<String>,
     pub members: Vec<MulticastGroupMember>,
 }
 
 /// A multicast group update entry for PUT requests for external (to the rack)
 /// groups.
+///
+/// Tag validation is performed via the `tag` query parameter.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupUpdateExternalEntry {
-    pub tag: Option<String>,
     pub internal_forwarding: InternalForwarding,
     pub external_forwarding: ExternalForwarding,
     pub sources: Option<Vec<IpSrc>>,
 }
 
 /// Response structure for underlay/internal multicast group operations.
-/// These groups handle admin-scoped IPv6 multicast with full replication.
+/// These groups handle admin-local IPv6 multicast with full replication.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupUnderlayResponse {
     pub group_ip: AdminScopedIpv6,
     pub external_group_id: MulticastGroupId,
     pub underlay_group_id: MulticastGroupId,
-    /// Tag for ownership validation. Always present; generated as
-    /// `{uuid}:{group_ip}` if not provided at creation time.
+    /// Tag for validating update/delete requests. Always present and generated
+    /// as `{uuid}:{group_ip}` if not provided at creation time.
     pub tag: String,
     pub members: Vec<MulticastGroupMember>,
 }
 
 /// Response structure for external multicast group operations.
-/// These groups handle IPv4 and non-admin IPv6 multicast via NAT targets.
+/// These groups handle IPv4 and non-admin-local IPv6 multicast via NAT targets.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupExternalResponse {
     pub group_ip: IpAddr,
     pub external_group_id: MulticastGroupId,
-    /// Tag for ownership validation. Always present; generated as
-    /// `{uuid}:{group_ip}` if not provided at creation time.
+    /// Tag for validating update/delete requests. Always present and generated
+    /// as `{uuid}:{group_ip}` if not provided at creation time.
     pub tag: String,
     pub internal_forwarding: InternalForwarding,
     pub external_forwarding: ExternalForwarding,
@@ -187,6 +193,14 @@ impl MulticastGroupResponse {
         match self {
             Self::Underlay(resp) => resp.group_ip.into(),
             Self::External(resp) => resp.group_ip,
+        }
+    }
+
+    /// Get the tag.
+    pub fn tag(&self) -> &str {
+        match self {
+            Self::Underlay(resp) => &resp.tag,
+            Self::External(resp) => &resp.tag,
         }
     }
 }

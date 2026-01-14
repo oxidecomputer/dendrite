@@ -91,7 +91,7 @@ mod validate;
 use rollback::{GroupCreateRollbackContext, GroupUpdateRollbackContext};
 use validate::{
     validate_multicast_address, validate_nat_target,
-    validate_not_admin_local_ipv6, validate_tag_for_update,
+    validate_not_admin_local_ipv6, validate_tag, validate_tag_format,
 };
 
 #[derive(Debug)]
@@ -145,8 +145,8 @@ struct MulticastReplicationInfo {
 pub(crate) struct MulticastGroup {
     external_scoped_group: ScopedGroupId,
     underlay_scoped_group: ScopedGroupId,
-    /// Tag for ownership validation. Always present; generated as
-    /// `{uuid}:{group_ip}` if not provided at creation time.
+    /// Tag for validating update/delete requests. Always present and generated
+    /// as `{uuid}:{group_ip}` if not provided at creation time.
     pub(crate) tag: String,
     pub(crate) int_fwding: InternalForwarding,
     pub(crate) ext_fwding: ExternalForwarding,
@@ -383,9 +383,17 @@ pub(crate) fn add_group_external(
     // This validation already passed in validate_nat_target, so it cannot fail here
     let admin_local_ip = AdminScopedIpv6::new(nat_target.internal_ip)?;
 
-    let tag = group_info
-        .tag
-        .unwrap_or_else(|| generate_default_tag(group_ip));
+    let tag = match &group_info.tag {
+        Some(t) => {
+            validate_tag_format(t)?;
+            t.clone()
+        }
+        None => {
+            let generated = generate_default_tag(group_ip);
+            validate_tag_format(&generated)?;
+            generated
+        }
+    };
 
     let group = MulticastGroup {
         external_scoped_group: scoped_external_id,
@@ -482,9 +490,17 @@ pub(crate) fn add_group_internal(
         None
     };
 
-    let tag = group_info
-        .tag
-        .unwrap_or_else(|| generate_default_tag(group_ip.into()));
+    let tag = match &group_info.tag {
+        Some(t) => {
+            validate_tag_format(t)?;
+            t.clone()
+        }
+        None => {
+            let generated = generate_default_tag(group_ip.into());
+            validate_tag_format(&generated)?;
+            generated
+        }
+    };
 
     // Generic internal datastructure (vs API interface)
     let group = MulticastGroup {
@@ -510,12 +526,14 @@ pub(crate) fn add_group_internal(
 /// Delete a multicast group from the switch, including all associated tables
 /// and port mappings.
 ///
+/// This operation is idempotent: deleting a non-existent group returns
+/// `NotFound` rather than a tag mismatch error, making deletes safe to retry.
+///
 /// # Arguments
 ///
 /// * `s` - Switch instance containing the multicast state.
 /// * `group_ip` - IP address of the multicast group to delete.
-/// * `tag` - Optional tag for ownership validation. If provided, it must
-///   match the group's existing tag for the deletion to succeed.
+/// * `tag` - Tag for validation. Must match the group's existing tag.
 ///
 /// # Errors
 ///
@@ -526,7 +544,7 @@ pub(crate) fn add_group_internal(
 pub(crate) fn del_group(
     s: &Switch,
     group_ip: IpAddr,
-    tag: Option<&str>,
+    tag: &str,
 ) -> DpdResult<()> {
     let mut mcast = s.mcast.lock().expect("multicast data lock poisoned");
 
@@ -542,23 +560,15 @@ pub(crate) fn del_group(
         )));
     }
 
-    // Validate tag ownership before removing the group.
-    // If tag is None (v3 API), skip validation for backward compatibility.
-    // If tag is Some, it must match the group's existing tag.
-    if let (Some(group), Some(request_tag)) = (mcast.groups.get(&group_ip), tag)
-        && group.tag != request_tag
-    {
-        return Err(DpdError::Invalid(format!(
-            "tag mismatch: group has tag '{}' but request has tag '{request_tag}'",
-            group.tag
-        )));
-    }
-
-    let group = mcast.groups.remove(&group_ip).ok_or_else(|| {
+    // Validate tag before removing the group.
+    let group_entry = mcast.groups.get(&group_ip).ok_or_else(|| {
         DpdError::Missing(format!(
             "Multicast group for IP {group_ip} not found",
         ))
     })?;
+    validate_tag(&group_entry.tag, tag)?;
+
+    let group = mcast.groups.remove(&group_ip).unwrap();
 
     let nat_target_to_remove = group
         .int_fwding
@@ -623,6 +633,7 @@ pub(crate) fn get_group(
 pub(crate) fn modify_group_external(
     s: &Switch,
     group_ip: IpAddr,
+    tag: &str,
     new_group_info: MulticastGroupUpdateExternalEntry,
 ) -> DpdResult<MulticastGroupExternalResponse> {
     let mut mcast = s.mcast.lock().expect("multicast data lock poisoned");
@@ -633,7 +644,7 @@ pub(crate) fn modify_group_external(
             "Multicast group for IP {group_ip} not found"
         ))
     })?;
-    validate_tag_for_update(&existing_group.tag, &new_group_info.tag)?;
+    validate_tag(&existing_group.tag, tag)?;
 
     let nat_target =
         new_group_info
@@ -686,10 +697,7 @@ pub(crate) fn modify_group_external(
         }
     }
 
-    // Update the external group fields (use new tag if provided, else keep existing)
-    updated_group.tag = new_group_info
-        .tag
-        .unwrap_or_else(|| updated_group.tag.clone());
+    // Tags are immutable (validated above, never changed)
     updated_group.int_fwding.nat_target = Some(nat_target);
 
     let old_vlan_id = updated_group.ext_fwding.vlan_id;
@@ -767,6 +775,7 @@ pub(crate) fn modify_group_external(
 pub(crate) fn modify_group_internal(
     s: &Switch,
     group_ip: AdminScopedIpv6,
+    tag: &str,
     new_group_info: MulticastGroupUpdateUnderlayEntry,
 ) -> DpdResult<MulticastGroupUnderlayResponse> {
     let mut mcast = s.mcast.lock().expect("multicast data lock poisoned");
@@ -778,7 +787,7 @@ pub(crate) fn modify_group_internal(
                 "Multicast group for IP {group_ip} not found"
             ))
         })?;
-    validate_tag_for_update(&existing_group.tag, &new_group_info.tag)?;
+    validate_tag(&existing_group.tag, tag)?;
 
     let mut group_entry = mcast.groups.remove(&group_ip.into()).unwrap();
 
@@ -824,11 +833,9 @@ pub(crate) fn modify_group_internal(
         }
     };
 
-    // Early return for no-replication case - just update metadata
+    // Early return for no-replication case -> just update metadata
+    // Tags are immutable (validated above, never changed)
     if replication_info.is_none() {
-        group_entry.tag = new_group_info
-            .tag
-            .unwrap_or_else(|| group_entry.tag.clone());
         group_entry.sources = sources;
         group_entry.members = new_group_info.members;
 
@@ -930,9 +937,7 @@ pub(crate) fn modify_group_internal(
     }
 
     // Update group metadata and return success
-    group_entry.tag = new_group_info
-        .tag
-        .unwrap_or_else(|| group_entry.tag.clone());
+    // Tags are immutable (validated above, never changed)
     group_entry.sources = sources;
     group_entry.replication_info = replication_info;
     group_entry.members = new_group_info.members;
@@ -984,9 +989,9 @@ pub(crate) fn reset_tag(s: &Switch, tag: &str) -> DpdResult<()> {
     };
 
     // Delete external groups first since they reference internal groups
-    // via NAT targets. Pass the tag for ownership validation.
+    // via NAT targets. Pass the tag for validation.
     for (group_ip, _) in external_groups.into_iter().chain(internal_groups) {
-        if let Err(e) = del_group(s, group_ip, Some(tag)) {
+        if let Err(e) = del_group(s, group_ip, tag) {
             error!(
                 s.log,
                 "failed to delete multicast group for IP {group_ip}: {e:?}"
@@ -1181,7 +1186,7 @@ pub(super) fn sources_contain_any(sources: &[IpSrc]) -> bool {
 
 /// Generate a default tag for a multicast group if none is provided.
 ///
-/// Format: `{uuid}:{multicast_ip}` to match Omicron's tag format.
+/// Format: `{uuid}:{group_ip}` to match Omicron's tag format.
 /// This ensures uniqueness across the group's lifecycle and prevents
 /// tag collision when group IPs are reused after deletion.
 fn generate_default_tag(group_ip: IpAddr) -> String {

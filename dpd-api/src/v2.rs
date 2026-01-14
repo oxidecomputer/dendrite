@@ -6,7 +6,7 @@
 
 //! Types from API version 2 that changed in version 3.
 //!
-//! The `IpSrc` enum changed from `{Exact, SubnetV4, SubnetV6}` to `{Exact, Any}`.
+//! The `IpSrc` enum changed from `{Exact, Subnet}` to `{Exact, Any}`.
 
 use std::{fmt, net::IpAddr};
 
@@ -71,8 +71,12 @@ pub struct MulticastGroupCreateExternalEntry {
 
 /// A multicast group update entry for PUT requests for external (to the rack)
 /// groups (API version 2).
+///
+/// Tag validation is optional in v2 for backward compatibility.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupUpdateExternalEntry {
+    /// Tag for validating update requests. Optional in v2; if not provided,
+    /// tag validation is skipped.
     pub tag: Option<String>,
     pub internal_forwarding: InternalForwarding,
     pub external_forwarding: ExternalForwarding,
@@ -90,7 +94,7 @@ pub struct MulticastGroupExternalResponse {
     pub sources: Option<Vec<IpSrc>>,
 }
 
-/// Convert from v4 response to v2 response.
+/// Convert from API v4 response to v2 response.
 impl From<dpd_types::mcast::MulticastGroupExternalResponse>
     for MulticastGroupExternalResponse
 {
@@ -127,7 +131,7 @@ impl MulticastGroupResponse {
     }
 }
 
-/// Convert from v4 response to v2 response.
+/// Convert from API v4 response to v2 response.
 impl From<dpd_types::mcast::MulticastGroupResponse> for MulticastGroupResponse {
     fn from(resp: dpd_types::mcast::MulticastGroupResponse) -> Self {
         match resp {
@@ -180,7 +184,6 @@ impl From<MulticastGroupUpdateExternalEntry>
 {
     fn from(entry: MulticastGroupUpdateExternalEntry) -> Self {
         Self {
-            tag: entry.tag,
             internal_forwarding: entry.internal_forwarding,
             external_forwarding: entry.external_forwarding,
             sources: entry

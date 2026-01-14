@@ -7,13 +7,13 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "5.0.0"
+    "version": "4.0.0"
   },
   "paths": {
     "/all-settings": {
       "delete": {
         "summary": "Clear all settings.",
-        "description": "This removes all data entirely, including:\n\n- All ARP and NDP table entries - All routes - All links on all switch ports - All NAT mappings - All multicast groups\n\nNote: Unlike `reset_all_tagged`, this endpoint does clear multicast groups.",
+        "description": "This removes all data entirely: ARP and NDP table entries, routes, links on all switch ports, NAT mappings, and multicast groups.\n\nNote: Unlike `reset_all_tagged`, this endpoint does clear multicast groups.",
         "operationId": "reset_all",
         "responses": {
           "204": {
@@ -31,7 +31,7 @@
     "/all-settings/{tag}": {
       "delete": {
         "summary": "Clear all settings associated with a specific tag.",
-        "description": "This removes:\n\n- All ARP or NDP table entries. - All routes - All links on all switch ports\n\nNote: Multicast groups are NOT cleared by this endpoint. Use the dedicated `/multicast/tags/{tag}` endpoint to clear multicast groups by tag.",
+        "description": "This removes all ARP or NDP table entries, all routes, and all links on all switch ports.\n\nNote: Multicast groups are NOT cleared by this endpoint. Use the dedicated `/multicast/tags/{tag}` endpoint to clear multicast groups by tag.",
         "operationId": "reset_all_tagged",
         "parameters": [
           {
@@ -297,7 +297,7 @@
     "/channels": {
       "get": {
         "summary": "Get the set of available channels for all ports.",
-        "description": "This returns the unused MAC channels for each physical switch port. This can be used to determine how many additional links can be crated on a physical switch port.",
+        "description": "This returns the unused MAC channels for each physical switch port. This can be used to determine how many additional links can be created on a physical switch port.",
         "operationId": "channels_list",
         "responses": {
           "200": {
@@ -1122,7 +1122,7 @@
     "/multicast/external-groups/{group_ip}": {
       "put": {
         "summary": "Update an external-only multicast group configuration for a given group IP address.",
-        "description": "External-only groups are used for IPv4 and non-admin-local IPv6 multicast traffic that doesn't require replication infrastructure.",
+        "description": "External-only groups are used for IPv4 and non-admin-local IPv6 multicast traffic that doesn't require replication infrastructure.\n\nThe `tag` query parameter must match the group's existing tag.",
         "operationId": "multicast_group_update_external",
         "parameters": [
           {
@@ -1132,6 +1132,15 @@
             "schema": {
               "type": "string",
               "format": "ip"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "description": "Tag that must match the group's existing tag.",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -1265,7 +1274,7 @@
       },
       "delete": {
         "summary": "Delete a multicast group configuration by IP address (API version 4+).",
-        "description": "All groups have tags (auto-generated if not provided at creation). When a tag is provided in the query, it must match the group's existing tag to prove ownership. Omitting the tag skips validation.",
+        "description": "All groups have tags (auto-generated if not provided at creation). The tag query parameter must match the group's existing tag.",
         "operationId": "multicast_group_delete",
         "parameters": [
           {
@@ -1280,9 +1289,9 @@
           {
             "in": "query",
             "name": "tag",
-            "description": "Tag that must match the group's existing tag for ownership validation. Omit to skip validation.",
+            "description": "Tag that must match the group's existing tag.",
+            "required": true,
             "schema": {
-              "nullable": true,
               "type": "string"
             }
           }
@@ -1303,6 +1312,7 @@
     "/multicast/tags/{tag}": {
       "get": {
         "summary": "List all multicast groups with a given tag.",
+        "description": "Returns paginated multicast groups matching the specified tag. Tags are assigned at group creation and are immutable. Use this endpoint to find all groups associated with a specific client or component.",
         "operationId": "multicast_groups_list_by_tag",
         "parameters": [
           {
@@ -1358,6 +1368,7 @@
       },
       "delete": {
         "summary": "Delete all multicast groups (and associated routes) with a given tag.",
+        "description": "This is idempotent: if no groups exist with the given tag, the operation returns success (the desired end state of \"no groups with this tag\" is achieved). Use this endpoint for bulk cleanup of all groups associated with a specific client or component.",
         "operationId": "multicast_reset_by_tag",
         "parameters": [
           {
@@ -1453,7 +1464,7 @@
       },
       "put": {
         "summary": "Update an underlay (internal) multicast group configuration.",
-        "description": "Underlay groups are used for admin-local IPv6 multicast traffic (ff04::/16) that requires replication infrastructure with external and underlay members.",
+        "description": "Underlay groups are used for admin-local IPv6 multicast traffic (ff04::/16) that requires replication infrastructure with external and underlay members.\n\nThe `tag` query parameter must match the group's existing tag.",
         "operationId": "multicast_group_update_underlay",
         "parameters": [
           {
@@ -1462,6 +1473,15 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/AdminScopedIpv6"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "description": "Tag that must match the group's existing tag.",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -7737,6 +7757,7 @@
           },
           "tag": {
             "nullable": true,
+            "description": "Tag for validating update/delete requests. If a tag is not provided, one is auto-generated as `{uuid}:{group_ip}`.",
             "type": "string"
           }
         },
@@ -7761,6 +7782,7 @@
           },
           "tag": {
             "nullable": true,
+            "description": "Tag for validating update/delete requests. If a tag is not provided, one is auto-generated as `{uuid}:{group_ip}`.",
             "type": "string"
           }
         },
@@ -7770,7 +7792,7 @@
         ]
       },
       "MulticastGroupExternalResponse": {
-        "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin IPv6 multicast via NAT targets.",
+        "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin-local IPv6 multicast via NAT targets.",
         "type": "object",
         "properties": {
           "external_forwarding": {
@@ -7796,7 +7818,7 @@
             }
           },
           "tag": {
-            "description": "Tag for ownership validation. Always present; generated as `{uuid}:{group_ip}` if not provided at creation time.",
+            "description": "Tag for validating update/delete requests. Always present and generated as `{uuid}:{group_ip}` if not provided at creation time.",
             "type": "string"
           }
         },
@@ -7832,7 +7854,7 @@
         "description": "Unified response type for operations that return mixed group types.",
         "oneOf": [
           {
-            "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-scoped IPv6 multicast with full replication.",
+            "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-local IPv6 multicast with full replication.",
             "type": "object",
             "properties": {
               "external_group_id": {
@@ -7856,7 +7878,7 @@
                 }
               },
               "tag": {
-                "description": "Tag for ownership validation. Always present; generated as `{uuid}:{group_ip}` if not provided at creation time.",
+                "description": "Tag for validating update/delete requests. Always present and generated as `{uuid}:{group_ip}` if not provided at creation time.",
                 "type": "string"
               },
               "underlay_group_id": {
@@ -7875,7 +7897,7 @@
             ]
           },
           {
-            "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin IPv6 multicast via NAT targets.",
+            "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin-local IPv6 multicast via NAT targets.",
             "type": "object",
             "properties": {
               "external_forwarding": {
@@ -7907,7 +7929,7 @@
                 }
               },
               "tag": {
-                "description": "Tag for ownership validation. Always present; generated as `{uuid}:{group_ip}` if not provided at creation time.",
+                "description": "Tag for validating update/delete requests. Always present and generated as `{uuid}:{group_ip}` if not provided at creation time.",
                 "type": "string"
               }
             },
@@ -7944,7 +7966,7 @@
         ]
       },
       "MulticastGroupUnderlayResponse": {
-        "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-scoped IPv6 multicast with full replication.",
+        "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-local IPv6 multicast with full replication.",
         "type": "object",
         "properties": {
           "external_group_id": {
@@ -7962,7 +7984,7 @@
             }
           },
           "tag": {
-            "description": "Tag for ownership validation. Always present; generated as `{uuid}:{group_ip}` if not provided at creation time.",
+            "description": "Tag for validating update/delete requests. Always present and generated as `{uuid}:{group_ip}` if not provided at creation time.",
             "type": "string"
           },
           "underlay_group_id": {
@@ -7980,7 +8002,7 @@
         ]
       },
       "MulticastGroupUpdateExternalEntry": {
-        "description": "A multicast group update entry for PUT requests for external (to the rack) groups.",
+        "description": "A multicast group update entry for PUT requests for external (to the rack) groups.\n\nTag validation is performed via the `tag` query parameter.",
         "type": "object",
         "properties": {
           "external_forwarding": {
@@ -7995,10 +8017,6 @@
             "items": {
               "$ref": "#/components/schemas/IpSrc"
             }
-          },
-          "tag": {
-            "nullable": true,
-            "type": "string"
           }
         },
         "required": [
@@ -8007,7 +8025,7 @@
         ]
       },
       "MulticastGroupUpdateUnderlayEntry": {
-        "description": "Represents a multicast replication entry for PUT requests for internal (to the rack) groups.",
+        "description": "Represents a multicast replication entry for PUT requests for internal (to the rack) groups.\n\nTag validation is performed via the `tag` query parameter.",
         "type": "object",
         "properties": {
           "members": {
@@ -8015,10 +8033,6 @@
             "items": {
               "$ref": "#/components/schemas/MulticastGroupMember"
             }
-          },
-          "tag": {
-            "nullable": true,
-            "type": "string"
           }
         },
         "required": [

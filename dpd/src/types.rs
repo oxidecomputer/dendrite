@@ -93,6 +93,8 @@ pub enum DpdError {
     McastGroupFailure(String),
     #[error("Resource exhausted: {}", .0)]
     ResourceExhausted(String),
+    #[error("Tag is required for idempotent validation")]
+    MissingTag,
 }
 
 impl From<smf::ScfError> for DpdError {
@@ -288,6 +290,9 @@ impl convert::From<DpdError> for dropshot::HttpError {
             }
             DpdError::ResourceExhausted(e) => {
                 dropshot::HttpError::for_unavail(None, e)
+            }
+            e @ DpdError::MissingTag => {
+                dropshot::HttpError::for_bad_request(None, format!("{e}"))
             }
         }
     }

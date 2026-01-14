@@ -7,7 +7,8 @@
 //! Types from API version 3 that changed in version 4.
 //!
 //! The `tag` field in response types changed from `Option<String>` to `String`
-//! since all groups now have default tags generated at creation time.
+//! since all groups now have default tags generated at creation time, and API
+//! version 4 introduced tag validation for updates and deletes.
 
 use std::net::IpAddr;
 
@@ -29,7 +30,7 @@ pub struct MulticastGroupUnderlayResponse {
     pub members: Vec<MulticastGroupMember>,
 }
 
-/// Convert from v4 response to v3 response.
+/// Convert from API v4 response to v3 response.
 impl From<dpd_types::mcast::MulticastGroupUnderlayResponse>
     for MulticastGroupUnderlayResponse
 {
@@ -55,7 +56,7 @@ pub struct MulticastGroupExternalResponse {
     pub sources: Option<Vec<IpSrc>>,
 }
 
-/// Convert from v4 response to v3 response.
+/// Convert from API v4 response to v3 response.
 impl From<dpd_types::mcast::MulticastGroupExternalResponse>
     for MulticastGroupExternalResponse
 {
@@ -90,7 +91,7 @@ impl MulticastGroupResponse {
     }
 }
 
-/// Convert from v4 response to v3 response.
+/// Convert from API v4 response to v3 response.
 impl From<dpd_types::mcast::MulticastGroupResponse> for MulticastGroupResponse {
     fn from(resp: dpd_types::mcast::MulticastGroupResponse) -> Self {
         match resp {
@@ -100,6 +101,55 @@ impl From<dpd_types::mcast::MulticastGroupResponse> for MulticastGroupResponse {
             dpd_types::mcast::MulticastGroupResponse::External(e) => {
                 Self::External(e.into())
             }
+        }
+    }
+}
+
+/// A multicast group update entry for PUT requests for internal groups
+/// (API version 3).
+///
+/// Tags are optional in v3 for backward compatibility. If not provided,
+/// the existing tag is preserved.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct MulticastGroupUpdateUnderlayEntry {
+    /// Tag for validating update requests. Optional in v3; if not provided,
+    /// tag validation is skipped.
+    pub tag: Option<String>,
+    pub members: Vec<MulticastGroupMember>,
+}
+
+impl From<MulticastGroupUpdateUnderlayEntry>
+    for dpd_types::mcast::MulticastGroupUpdateUnderlayEntry
+{
+    fn from(entry: MulticastGroupUpdateUnderlayEntry) -> Self {
+        Self {
+            members: entry.members,
+        }
+    }
+}
+
+/// A multicast group update entry for PUT requests for external groups
+/// (API version 3).
+///
+/// Tag validation is optional in v3 for backward compatibility.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct MulticastGroupUpdateExternalEntry {
+    /// Tag for validating update requests. Optional in v3; if not provided,
+    /// tag validation is skipped.
+    pub tag: Option<String>,
+    pub internal_forwarding: InternalForwarding,
+    pub external_forwarding: ExternalForwarding,
+    pub sources: Option<Vec<IpSrc>>,
+}
+
+impl From<MulticastGroupUpdateExternalEntry>
+    for dpd_types::mcast::MulticastGroupUpdateExternalEntry
+{
+    fn from(entry: MulticastGroupUpdateExternalEntry) -> Self {
+        Self {
+            internal_forwarding: entry.internal_forwarding,
+            external_forwarding: entry.external_forwarding,
+            sources: entry.sources,
         }
     }
 }
