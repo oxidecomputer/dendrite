@@ -354,6 +354,7 @@ pub(crate) fn add_group_external(
         scoped_underlay_id.id(),
         nat_target,
         group_info.sources.as_deref(),
+        group_info.external_forwarding.vlan_id,
     );
 
     // Configure external tables and handle VLAN propagation
@@ -664,8 +665,12 @@ pub(crate) fn modify_group_external(
 
     // Create rollback context for external group update
     let group_entry_for_rollback = group_entry.clone();
-    let rollback_ctx =
-        GroupUpdateRollbackContext::new(s, group_ip, &group_entry_for_rollback);
+    let rollback_ctx = GroupUpdateRollbackContext::new(
+        s,
+        group_ip,
+        &group_entry_for_rollback,
+        new_group_info.external_forwarding.vlan_id,
+    );
 
     // Pre-compute normalized sources for rollback purposes
     let normalized_sources = normalize_sources(new_group_info.sources.clone());
@@ -701,10 +706,9 @@ pub(crate) fn modify_group_external(
     updated_group.int_fwding.nat_target = Some(nat_target);
 
     let old_vlan_id = updated_group.ext_fwding.vlan_id;
-    updated_group.ext_fwding.vlan_id = new_group_info
-        .external_forwarding
-        .vlan_id
-        .or(updated_group.ext_fwding.vlan_id);
+    // VLAN is assigned directly -> Some(x) sets VLAN, None removes VLAN
+    updated_group.ext_fwding.vlan_id =
+        new_group_info.external_forwarding.vlan_id;
     updated_group.sources = normalize_sources(
         new_group_info.sources.clone().or(updated_group.sources),
     );
@@ -797,9 +801,11 @@ pub(crate) fn modify_group_internal(
         s,
         group_ip.into(),
         &group_entry_for_rollback,
+        // Internal groups don't have VLANs, so `attempted_vlan_id` is None.
+        None,
     );
 
-    // Internal groups don't update sources - always `None`
+    // Internal groups don't update sources, so always `None`
     debug_assert!(
         group_entry.sources.is_none(),
         "Internal groups should not have sources"
@@ -1190,7 +1196,7 @@ pub(super) fn sources_contain_any(sources: &[IpSrc]) -> bool {
 /// This ensures uniqueness across the group's lifecycle and prevents
 /// tag collision when group IPs are reused after deletion.
 fn generate_default_tag(group_ip: IpAddr) -> String {
-    format!("{}:{}", Uuid::new_v4(), group_ip)
+    format!("{}:{group_ip}", Uuid::new_v4())
 }
 
 /// Multiple representations map to "allow any source" in P4:
@@ -1365,12 +1371,17 @@ fn configure_external_tables(
     add_source_filters(s, group_ip, group_info.sources.as_deref())?;
 
     // Add NAT entry
+    let vlan_id = group_info.external_forwarding.vlan_id;
     match group_ip {
         IpAddr::V4(ipv4) => {
-            table::mcast::mcast_nat::add_ipv4_entry(s, ipv4, nat_target)?;
+            table::mcast::mcast_nat::add_ipv4_entry(
+                s, ipv4, nat_target, vlan_id,
+            )?;
         }
         IpAddr::V6(ipv6) => {
-            table::mcast::mcast_nat::add_ipv6_entry(s, ipv6, nat_target)?;
+            table::mcast::mcast_nat::add_ipv6_entry(
+                s, ipv6, nat_target, vlan_id,
+            )?;
         }
     }
 
@@ -1700,46 +1711,48 @@ fn update_external_tables(
         add_source_filters(s, group_ip, new_sources.as_deref())?;
     }
 
+    let old_vlan_id = group_entry.ext_fwding.vlan_id;
+    let new_vlan_id = new_group_info.external_forwarding.vlan_id;
+
     // Update NAT target - external groups always have NAT targets
-    if Some(
-        new_group_info
-            .internal_forwarding
-            .nat_target
-            .ok_or_else(|| {
-                DpdError::Invalid(
-                    "external groups must have NAT target".to_string(),
-                )
-            })?,
-    ) != group_entry.int_fwding.nat_target
+    // Also handles VLAN changes since VLAN is part of the NAT match key
+    let new_nat_target = new_group_info
+        .internal_forwarding
+        .nat_target
+        .ok_or_else(|| {
+            DpdError::Invalid(
+                "external groups must have NAT target".to_string(),
+            )
+        })?;
+
+    if Some(new_nat_target) != group_entry.int_fwding.nat_target
+        || old_vlan_id != new_vlan_id
     {
         update_nat_tables(
             s,
             group_ip,
-            Some(new_group_info.internal_forwarding.nat_target.ok_or_else(
-                || {
-                    DpdError::Invalid(
-                        "external groups must have NAT target".to_string(),
-                    )
-                },
-            )?),
+            Some(new_nat_target),
             group_entry.int_fwding.nat_target,
+            old_vlan_id,
+            new_vlan_id,
         )?;
     }
 
-    // Update VLAN if it changed
-    if new_group_info.external_forwarding.vlan_id
-        != group_entry.ext_fwding.vlan_id
-    {
+    // Update route table VLAN if it changed
+    // Route tables use simple dst_addr matching but select forward vs forward_vlan action
+    if old_vlan_id != new_vlan_id {
         match group_ip {
             IpAddr::V4(ipv4) => table::mcast::mcast_route::update_ipv4_entry(
                 s,
                 ipv4,
-                new_group_info.external_forwarding.vlan_id,
+                old_vlan_id,
+                new_vlan_id,
             ),
             IpAddr::V6(ipv6) => table::mcast::mcast_route::update_ipv6_entry(
                 s,
                 ipv6,
-                new_group_info.external_forwarding.vlan_id,
+                old_vlan_id,
+                new_vlan_id,
             ),
         }?;
     }
@@ -1830,7 +1843,11 @@ fn delete_group_tables(
             // (which have NAT targets).
             if group.int_fwding.nat_target.is_some() {
                 remove_ipv4_source_filters(s, ipv4, group.sources.as_deref())?;
-                table::mcast::mcast_nat::del_ipv4_entry(s, ipv4)?;
+                table::mcast::mcast_nat::del_ipv4_entry(
+                    s,
+                    ipv4,
+                    group.ext_fwding.vlan_id,
+                )?;
             }
 
             delete_group_bitmap_entries(s, group)?;
@@ -1844,7 +1861,11 @@ fn delete_group_tables(
             // NAT targets). Internal groups don't have source filtering.
             if group.int_fwding.nat_target.is_some() {
                 remove_ipv6_source_filters(s, ipv6, group.sources.as_deref())?;
-                table::mcast::mcast_nat::del_ipv6_entry(s, ipv6)?;
+                table::mcast::mcast_nat::del_ipv6_entry(
+                    s,
+                    ipv6,
+                    group.ext_fwding.vlan_id,
+                )?;
             }
 
             delete_group_bitmap_entries(s, group)?;
@@ -1882,31 +1903,47 @@ fn update_nat_tables(
     group_ip: IpAddr,
     new_nat_target: Option<NatTarget>,
     old_nat_target: Option<NatTarget>,
+    old_vlan_id: Option<u16>,
+    new_vlan_id: Option<u16>,
 ) -> DpdResult<()> {
     match (group_ip, new_nat_target, old_nat_target) {
-        (IpAddr::V4(ipv4), Some(nat), Some(_)) => {
-            // NAT to NAT - update existing entry
-            table::mcast::mcast_nat::update_ipv4_entry(s, ipv4, nat)
+        (IpAddr::V4(ipv4), Some(new_nat), Some(old_nat)) => {
+            // NAT to NAT - update existing entry (handles VLAN changes internally)
+            table::mcast::mcast_nat::update_ipv4_entry(
+                s,
+                ipv4,
+                new_nat,
+                old_nat,
+                old_vlan_id,
+                new_vlan_id,
+            )
         }
-        (IpAddr::V6(ipv6), Some(nat), Some(_)) => {
-            // NAT to NAT - update existing entry
-            table::mcast::mcast_nat::update_ipv6_entry(s, ipv6, nat)
+        (IpAddr::V6(ipv6), Some(new_nat), Some(old_nat)) => {
+            // NAT to NAT - update existing entry (handles VLAN changes internally)
+            table::mcast::mcast_nat::update_ipv6_entry(
+                s,
+                ipv6,
+                new_nat,
+                old_nat,
+                old_vlan_id,
+                new_vlan_id,
+            )
         }
         (IpAddr::V4(ipv4), Some(nat), None) => {
             // No NAT to NAT - add new entry
-            table::mcast::mcast_nat::add_ipv4_entry(s, ipv4, nat)
+            table::mcast::mcast_nat::add_ipv4_entry(s, ipv4, nat, new_vlan_id)
         }
         (IpAddr::V6(ipv6), Some(nat), None) => {
             // No NAT to NAT - add new entry
-            table::mcast::mcast_nat::add_ipv6_entry(s, ipv6, nat)
+            table::mcast::mcast_nat::add_ipv6_entry(s, ipv6, nat, new_vlan_id)
         }
         (IpAddr::V4(ipv4), None, Some(_)) => {
             // NAT to no NAT - delete entry
-            table::mcast::mcast_nat::del_ipv4_entry(s, ipv4)
+            table::mcast::mcast_nat::del_ipv4_entry(s, ipv4, old_vlan_id)
         }
         (IpAddr::V6(ipv6), None, Some(_)) => {
             // NAT to no NAT - delete entry
-            table::mcast::mcast_nat::del_ipv6_entry(s, ipv6)
+            table::mcast::mcast_nat::del_ipv6_entry(s, ipv6, old_vlan_id)
         }
         _ => Ok(()), // No change (None → None)
     }
@@ -1953,33 +1990,49 @@ fn update_internal_group_bitmap_tables(
 /// Only updates the external bitmap entry since that's the only bitmap
 /// entry created during group configuration. The underlay replication
 /// is handled separately via the ASIC's multicast group primitives.
+///
+/// # Arguments
+///
+/// * `s` - Switch instance for table operations.
+/// * `group_ip` - IP address of the multicast group.
+/// * `external_group_id` - ID of the external multicast group for bitmap updates.
+/// * `members` - Group members used to recreate port bitmap.
+/// * `current_vlan_id` - VLAN currently in the table (may be the attempted new VLAN).
+/// * `target_vlan_id` - VLAN to restore to (the original VLAN).
 fn update_fwding_tables(
     s: &Switch,
     group_ip: IpAddr,
     external_group_id: MulticastGroupId,
     members: &[MulticastGroupMember],
-    vlan_id: Option<u16>,
+    current_vlan_id: Option<u16>,
+    target_vlan_id: Option<u16>,
 ) -> DpdResult<()> {
     match group_ip {
-        IpAddr::V4(ipv4) => {
-            table::mcast::mcast_route::update_ipv4_entry(s, ipv4, vlan_id)
-        }
-        IpAddr::V6(ipv6) => {
-            table::mcast::mcast_route::update_ipv6_entry(s, ipv6, vlan_id)
-                .and_then(|_| {
-                    // Update external bitmap for external members
-                    // (only external bitmap entries exist; underlay replication
-                    // uses ASIC multicast groups directly)
-                    let external_port_bitmap =
-                        create_port_bitmap(members, Direction::External);
-                    table::mcast::mcast_egress::update_bitmap_entry(
-                        s,
-                        external_group_id,
-                        &external_port_bitmap,
-                        vlan_id,
-                    )
-                })
-        }
+        IpAddr::V4(ipv4) => table::mcast::mcast_route::update_ipv4_entry(
+            s,
+            ipv4,
+            current_vlan_id,
+            target_vlan_id,
+        ),
+        IpAddr::V6(ipv6) => table::mcast::mcast_route::update_ipv6_entry(
+            s,
+            ipv6,
+            current_vlan_id,
+            target_vlan_id,
+        )
+        .and_then(|_| {
+            // Update external bitmap for external members
+            // (only external bitmap entries exist, underlay replication
+            // uses ASIC multicast groups directly)
+            let external_port_bitmap =
+                create_port_bitmap(members, Direction::External);
+            table::mcast::mcast_egress::update_bitmap_entry(
+                s,
+                external_group_id,
+                &external_port_bitmap,
+                target_vlan_id,
+            )
+        }),
     }
 }
 

@@ -51,16 +51,16 @@ pub(crate) fn validate_multicast_address(
 pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
     if !nat_target.inner_mac.is_multicast() {
         return Err(DpdError::Invalid(format!(
-            "NAT target inner MAC address {} is not a multicast MAC address",
-            nat_target.inner_mac
+            "NAT target inner MAC address {inner_mac} is not a multicast MAC address",
+            inner_mac = nat_target.inner_mac
         )));
     }
 
     if !UNDERLAY_MULTICAST_SUBNET.contains(nat_target.internal_ip) {
         return Err(DpdError::Invalid(format!(
-            "NAT target internal IP address {} is not in the reserved \
+            "NAT target internal IP address {internal_ip} is not in the reserved \
              underlay multicast subnet (ff04::/64)",
-            nat_target.internal_ip
+            internal_ip = nat_target.internal_ip
         )));
     }
 

@@ -560,8 +560,16 @@ control NatIngress (
 	}
 
 	// Separate table for IPv4 multicast packets that need to be encapsulated.
+	// Groups without VLAN match untagged only. Groups with VLAN match both
+	// untagged (for decapsulated Geneve from underlay) and correctly tagged.
+	// Packets with wrong VLAN miss and are not NAT encapsulated.
+	// When hdr.vlan.isValid()==false, vlan_id matches as 0.
 	table ingress_ipv4_mcast {
-		key = { hdr.ipv4.dst_addr : exact; }
+		key = {
+			hdr.ipv4.dst_addr : exact;
+			hdr.vlan.isValid() : exact;
+			hdr.vlan.vlan_id : exact;
+		}
 		actions = { mcast_forward_ipv4_to; }
 		const size = IPV4_MULTICAST_TABLE_SIZE;
 		counters = mcast_ipv4_ingress_ctr;
@@ -577,8 +585,16 @@ control NatIngress (
 	}
 
 	// Separate table for IPv6 multicast packets that need to be encapsulated.
+	// Groups without VLAN match untagged only. Groups with VLAN match both
+	// untagged (for decapsulated Geneve from underlay) and correctly tagged.
+	// Packets with wrong VLAN miss and are not NAT encapsulated.
+	// When hdr.vlan.isValid()==false, vlan_id matches as 0.
 	table ingress_ipv6_mcast {
-		key = { hdr.ipv6.dst_addr : exact; }
+		key = {
+			hdr.ipv6.dst_addr : exact;
+			hdr.vlan.isValid() : exact;
+			hdr.vlan.vlan_id : exact;
+		}
 		actions = { mcast_forward_ipv6_to; }
 		const size = IPV6_MULTICAST_TABLE_SIZE;
 		counters = mcast_ipv6_ingress_ctr;
@@ -1220,9 +1236,7 @@ control MulticastRouter4(
 	}
 
 	table tbl {
-		key = {
-			hdr.ipv4.dst_addr : exact;
-		}
+		key = { hdr.ipv4.dst_addr : exact; }
 		actions = { forward; forward_vlan; unreachable; }
 		default_action = unreachable;
 		const size = IPV4_MULTICAST_TABLE_SIZE;
@@ -1231,16 +1245,18 @@ control MulticastRouter4(
 
 	apply {
 		// If the packet came in with a VLAN tag, we need to invalidate
-		// the VLAN header before we do the lookup.  The VLAN header
-		// will be re-attached if set in the forward_vlan action.
+		// the VLAN header before we do the lookup. The VLAN header
+		// will be re-attached if set in the forward_vlan action (or
+		// untagged for groups without VLAN). This prevents unintended
+		// VLAN translation.
 		if (hdr.vlan.isValid()) {
 			hdr.ethernet.ether_type = hdr.vlan.ether_type;
 			hdr.vlan.setInvalid();
 		}
 
 		if (!tbl.apply().hit) {
-			icmp_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);
-			meta.drop_reason = DROP_IPV6_UNROUTEABLE;
+			icmp_error(ICMP_DEST_UNREACH, ICMP_DST_UNREACH_NET);
+			meta.drop_reason = DROP_IPV4_UNROUTEABLE;
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
 		} else if (hdr.ipv4.ttl == 1 && !meta.service_routed) {
@@ -1358,9 +1374,7 @@ control MulticastRouter6 (
 	}
 
 	table tbl {
-		key = {
-			hdr.ipv6.dst_addr : exact;
-		}
+		key = { hdr.ipv6.dst_addr : exact; }
 		actions = { forward; forward_vlan; unreachable; }
 		default_action = unreachable;
 		const size = IPV6_MULTICAST_TABLE_SIZE;
@@ -1369,8 +1383,10 @@ control MulticastRouter6 (
 
 	apply {
 		// If the packet came in with a VLAN tag, we need to invalidate
-		// the VLAN header before we do the lookup.  The VLAN header
-		// will be re-attached if set in the forward_vlan action.
+		// the VLAN header before we do the lookup. The VLAN header
+		// will be re-attached if set in the forward_vlan action (or
+		// untagged for groups without VLAN). This prevents unintended
+		// VLAN translation.
 		if (hdr.vlan.isValid()) {
 			hdr.ethernet.ether_type = hdr.vlan.ether_type;
 			hdr.vlan.setInvalid();
@@ -2193,12 +2209,18 @@ control Egress(
 
 			if (is_link_local_ipv6_mcast) {
 				link_local_mcast_ctr.count(eg_intr_md.egress_port);
-			} else if (hdr.geneve.isValid()) {
-				external_mcast_ctr.count(eg_intr_md.egress_port);
 			} else if (hdr.geneve.isValid() &&
 			           hdr.geneve_opts.oxg_mcast.isValid() &&
-			           hdr.geneve_opts.oxg_mcast.mcast_tag == MULTICAST_TAG_UNDERLAY) {
+			           hdr.geneve_opts.oxg_mcast.mcast_tag != MULTICAST_TAG_EXTERNAL) {
+				// Encapsulated multicast going to sleds. Includes both
+				// MULTICAST_TAG_UNDERLAY and MULTICAST_TAG_UNDERLAY_EXTERNAL
+				// packets that were not decapped for this egress port.
 				underlay_mcast_ctr.count(eg_intr_md.egress_port);
+			} else {
+				// Decapped external multicast going to front panel ports.
+				// Either originally tagged EXTERNAL, or UNDERLAY_EXTERNAL
+				// packets that were decapped based on port bitmap.
+				external_mcast_ctr.count(eg_intr_md.egress_port);
 			}
 		} else {
 			// non-multicast packets should bypass the egress

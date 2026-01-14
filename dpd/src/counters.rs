@@ -284,6 +284,7 @@ enum DropReason {
     GeneveOptionsTooLong,
     GeneveOptionMalformed,
     GeneveOptionUnknown,
+    VlanMismatch,
 }
 
 impl TryFrom<u8> for DropReason {
@@ -317,6 +318,7 @@ impl TryFrom<u8> for DropReason {
             23 => Ok(DropReason::GeneveOptionsTooLong),
             24 => Ok(DropReason::GeneveOptionMalformed),
             25 => Ok(DropReason::GeneveOptionUnknown),
+            26 => Ok(DropReason::VlanMismatch),
             x => Err(format!("Unrecognized drop reason: {x}")),
         }
     }
@@ -343,8 +345,8 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
         DropReason::Ipv4TtlExceeded => "ipv4_ttl_exceeded".to_string(),
         DropReason::Ipv6TtlInvalid => "ipv6_ttl_invalid".to_string(),
         DropReason::Ipv6TtlExceeded => "ipv6_ttl_exceeded".to_string(),
-        DropReason::Ipv4Unrouteable => "ipv6_unrouteable".to_string(),
-        DropReason::Ipv6Unrouteable => "ipv4_unrouteable".to_string(),
+        DropReason::Ipv4Unrouteable => "ipv4_unrouteable".to_string(),
+        DropReason::Ipv6Unrouteable => "ipv6_unrouteable".to_string(),
         DropReason::NatIngressMiss => "nat_ingress_miss".to_string(),
         DropReason::MulticastNoGroup => "multicast_no_group".to_string(),
         DropReason::MulticastInvalidMac => "multicast_invalid_mac".to_string(),
@@ -362,6 +364,7 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
             "geneve_option_malformed".to_string()
         }
         DropReason::GeneveOptionUnknown => "geneve_option_unknown".to_string(),
+        DropReason::VlanMismatch => "vlan_mismatch".to_string(),
     };
     Ok(Some(label))
 }
