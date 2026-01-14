@@ -21,7 +21,7 @@ fn collect(src: &str, dst: &str, files: Vec<&str>) -> Result<()> {
 
     let dst_dir = Path::new(&dst);
     if !dst_dir.is_dir() {
-        fs::create_dir_all(&dst_dir)?;
+        fs::create_dir_all(dst_dir)?;
     }
 
     for f in files {
