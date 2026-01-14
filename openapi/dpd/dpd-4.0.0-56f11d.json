@@ -1140,7 +1140,7 @@
             "description": "Tag that must match the group's existing tag.",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/MulticastTag"
             }
           }
         ],
@@ -1292,7 +1292,7 @@
             "description": "Tag that must match the group's existing tag.",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/MulticastTag"
             }
           }
         ],
@@ -1320,7 +1320,7 @@
             "name": "tag",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/MulticastTag"
             }
           },
           {
@@ -1376,7 +1376,7 @@
             "name": "tag",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/MulticastTag"
             }
           }
         ],
@@ -1481,7 +1481,7 @@
             "description": "Tag that must match the group's existing tag.",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/MulticastTag"
             }
           }
         ],
@@ -9651,6 +9651,13 @@
         "required": [
           "items"
         ]
+      },
+      "MulticastTag": {
+        "description": "Tag for identifying and authorizing multicast group operations.\n\nTag format: 1 to 80 ASCII bytes containing alphanumeric characters, hyphens, underscores, colons, or periods. Default format is `{uuid}:{group_ip}`.",
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9_.:-]+$",
+        "minLength": 1,
+        "maxLength": 80
       }
     },
     "responses": {

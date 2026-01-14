@@ -1592,12 +1592,7 @@ pub trait DpdApi {
 
     /**
      * Delete a multicast group configuration by IP address (API versions 1-3).
-     *
-     * Does not include tag validation.
      */
-    //  We cannot provide a default implementation that delegates to
-    //  `multicast_group_delete` because Dropshot's `Query` extractor is opaque
-    //  and cannot be constructed outside the framework.
     #[endpoint {
         method = DELETE,
         path = "/multicast/groups/{group_ip}",
@@ -1720,11 +1715,8 @@ pub trait DpdApi {
     /**
      * Update an underlay (internal) multicast group configuration (API v1-v3).
      *
-     * Tags are optional. If a tag is not provided, the existing tag is preserved.
+     * Tags are optional for backward compatibility.
      */
-    //  We cannot provide a default implementation that delegates to
-    //  `multicast_group_update_underlay` because the implementor must look up
-    //  the existing tag if not provided in the request.
     #[endpoint {
         method = PUT,
         path = "/multicast/underlay-groups/{group_ip}",
@@ -1759,12 +1751,8 @@ pub trait DpdApi {
     /**
      * Update an external-only multicast group configuration (API v3).
      *
-     * Tags are optional. If a tag is not provided, the existing tag is preserved.
-     * Returns 201 Created (API v4+ returns 200 OK).
+     * Tags are optional for backward compatibility.
      */
-    //  We cannot provide a default implementation that delegates to
-    //  `multicast_group_update_external` because the implementor must look up
-    //  the existing tag if not provided in the request.
     #[endpoint {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",
@@ -1782,12 +1770,8 @@ pub trait DpdApi {
     /**
      * Update an external-only multicast group configuration (API v1/v2).
      *
-     * Tags are optional. If a tag is not provided, the existing tag is preserved.
-     * Returns 201 Created (API v4+ returns 200 OK).
+     * Tags are optional for backward compatibility.
      */
-    //  We cannot provide a default implementation that delegates to
-    //  `multicast_group_update_external` because the implementor must look up
-    //  the existing tag if not provided in the request.
     #[endpoint {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",
@@ -2681,7 +2665,6 @@ pub struct MulticastGroupIpParam {
 #[derive(
     Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
 )]
-#[schemars(transparent)]
 pub struct MulticastTag(
     #[schemars(
         length(min = 1, max = 80),

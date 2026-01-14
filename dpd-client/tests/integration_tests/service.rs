@@ -174,9 +174,7 @@ async fn test_service_ipv4_wrong_port() -> TestResult {
 }
 
 // Packets sent to an IP address not assigned to a switch port should be
-// dropped when the port is configured as NAT-only (see issue #172).
-// Without NAT-only, such packets would instead trigger ICMP_DEST_UNREACHABLE
-// via the router.
+// dropped.
 #[tokio::test]
 #[ignore]
 async fn test_service_ipv4_unknown_address() -> TestResult {
@@ -197,6 +195,13 @@ async fn test_service_ipv4_unknown_address() -> TestResult {
         .await
         .unwrap();
 
+    // Mark the port as NAT-only
+    switch
+        .client
+        .link_nat_only_set(&port_id, &link_id, true)
+        .await
+        .unwrap();
+
     let send_pkt = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
         Endpoint::parse(router_mac, "192.10.12.1", 4444).unwrap(),
@@ -204,24 +209,17 @@ async fn test_service_ipv4_unknown_address() -> TestResult {
 
     let send = TestPacket {
         packet: Arc::new(send_pkt),
-        port: PhysPort(ingress + 1),
+        port: PhysPort(ingress),
     };
 
-    // Mark the ingress port as NAT-only so packets to unknown addresses are
-    // dropped rather than triggering ICMP_UNREACHABLE (see issue #172).
-    let (ingress_port_id, ingress_link_id) =
-        switch.link_id(PhysPort(ingress + 1)).unwrap();
-    switch
-        .client
-        .link_nat_only_set(&ingress_port_id, &ingress_link_id, true)
-        .await
-        .unwrap();
     let result = switch.packet_test(vec![send], Vec::new());
+    // Clear the port's NAT-only property
     switch
         .client
-        .link_nat_only_set(&ingress_port_id, &ingress_link_id, false)
+        .link_nat_only_set(&port_id, &link_id, false)
         .await
         .unwrap();
+
     result
 }
 

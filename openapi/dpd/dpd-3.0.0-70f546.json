@@ -1121,7 +1121,7 @@
     "/multicast/external-groups/{group_ip}": {
       "put": {
         "summary": "Update an external-only multicast group configuration (API v3).",
-        "description": "Tags are optional. If a tag is not provided, the existing tag is preserved. Returns 201 Created (API v4+ returns 200 OK).",
+        "description": "Tags are optional for backward compatibility.",
         "operationId": "multicast_group_update_external_v3",
         "parameters": [
           {
@@ -1264,7 +1264,6 @@
       },
       "delete": {
         "summary": "Delete a multicast group configuration by IP address (API versions 1-3).",
-        "description": "Does not include tag validation.",
         "operationId": "multicast_group_delete_v3",
         "parameters": [
           {
@@ -1442,7 +1441,7 @@
       },
       "put": {
         "summary": "Update an underlay (internal) multicast group configuration (API v1-v3).",
-        "description": "Tags are optional. If a tag is not provided, the existing tag is preserved.",
+        "description": "Tags are optional for backward compatibility.",
         "operationId": "multicast_group_update_underlay_v3",
         "parameters": [
           {

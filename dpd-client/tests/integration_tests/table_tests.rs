@@ -494,7 +494,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let ip = IpAddr::V6(gen_ipv6_multicast_addr(idx));
-        let del_tag: types::MulticastGroupDeleteTag =
+        let del_tag: types::MulticastTag =
             MCAST_TAG.parse().expect("tag should parse");
         switch.client.multicast_group_delete(&ip, &del_tag).await
     }
@@ -503,7 +503,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
         // Count only underlay groups with our test tag (since this tests replication table capacity)
         switch
             .client
-            .multicast_groups_list_by_tag_stream(MCAST_TAG, None)
+            .multicast_groups_list_by_tag_stream(&MCAST_TAG.parse::<types::MulticastTag>().unwrap(), None)
             .try_collect::<Vec<_>>()
             .await
             .expect("Should be able to list groups by tag paginated")

@@ -186,19 +186,7 @@ async fn create_test_multicast_group(
     }
 }
 
-fn make_del_tag(tag: &str) -> types::MulticastGroupDeleteTag {
-    tag.parse().expect("tag should parse")
-}
-
-fn make_underlay_update_tag(
-    tag: &str,
-) -> types::MulticastGroupUpdateUnderlayTag {
-    tag.parse().expect("tag should parse")
-}
-
-fn make_external_update_tag(
-    tag: &str,
-) -> types::MulticastGroupUpdateExternalTag {
+fn make_tag(tag: &str) -> types::MulticastTag {
     tag.parse().expect("tag should parse")
 }
 
@@ -208,7 +196,7 @@ async fn cleanup_test_group(
     group_ip: IpAddr,
     tag: &str,
 ) -> TestResult {
-    let del_tag = make_del_tag(tag);
+    let del_tag = make_tag(tag);
     switch
         .client
         .multicast_group_delete(&group_ip, &del_tag)
@@ -643,7 +631,7 @@ async fn test_internal_ipv6_validation() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &created.group_ip,
-            &make_underlay_update_tag(TEST_TAG),
+            &make_tag(TEST_TAG),
             &update_entry,
         )
         .await
@@ -815,7 +803,7 @@ async fn test_group_api_lifecycle() {
     // Get groups by tag
     let tagged_groups = switch
         .client
-        .multicast_groups_list_by_tag_stream(TEST_TAG, None)
+        .multicast_groups_list_by_tag_stream(&make_tag(TEST_TAG), None)
         .try_collect::<Vec<_>>()
         .await
         .expect("Should be able to get groups by tag");
@@ -872,7 +860,7 @@ async fn test_group_api_lifecycle() {
         .client
         .multicast_group_update_external(
             &group_ip,
-            &make_external_update_tag(TEST_TAG),
+            &make_tag(TEST_TAG),
             &external_update,
         )
         .await
@@ -889,7 +877,7 @@ async fn test_group_api_lifecycle() {
     assert_eq!(updated.sources, None);
 
     // Delete the group (must provide matching tag)
-    let del_tag = make_del_tag(TEST_TAG);
+    let del_tag = make_tag(TEST_TAG);
     switch
         .client
         .multicast_group_delete(&group_ip, &del_tag)
@@ -980,7 +968,7 @@ async fn test_multicast_del_tag_validation() -> TestResult {
         .expect("Should create tagged group");
 
     // Attempt delete with wrong tag - should fail
-    let del_tag = make_del_tag(TAG_B);
+    let del_tag = make_tag(TAG_B);
     let wrong_tag_result = switch
         .client
         .multicast_group_delete(&tagged_group_ip, &del_tag)
@@ -1002,7 +990,7 @@ async fn test_multicast_del_tag_validation() -> TestResult {
 
     // Case: Empty string should fail client-side validation (schema enforces minLength: 1)
     assert!(
-        "".parse::<types::MulticastGroupDeleteTag>().is_err(),
+        "".parse::<types::MulticastTag>().is_err(),
         "Empty tag should fail client-side validation"
     );
 
@@ -1015,7 +1003,7 @@ async fn test_multicast_del_tag_validation() -> TestResult {
     );
 
     // Case: Delete with correct tag should succeed
-    let del_tag = make_del_tag(TAG_A);
+    let del_tag = make_tag(TAG_A);
     switch
         .client
         .multicast_group_delete(&tagged_group_ip, &del_tag)
@@ -1060,7 +1048,7 @@ async fn test_multicast_del_tag_validation() -> TestResult {
     let auto_tag = created.tag.clone();
 
     // Delete with correct auto-generated tag should succeed
-    let del_tag = make_del_tag(auto_tag.as_str());
+    let del_tag = make_tag(auto_tag.as_str());
     switch
         .client
         .multicast_group_delete(&auto_tagged_group_ip, &del_tag)
@@ -1152,7 +1140,7 @@ async fn test_multicast_tagged_groups_management() {
     // List groups by tag
     let tagged_groups = switch
         .client
-        .multicast_groups_list_by_tag_stream(tag, None)
+        .multicast_groups_list_by_tag_stream(&make_tag(tag), None)
         .try_collect::<Vec<_>>()
         .await
         .expect("Should list groups by tag");
@@ -1168,7 +1156,7 @@ async fn test_multicast_tagged_groups_management() {
     // Delete all groups with the tag
     switch
         .client
-        .multicast_reset_by_tag(tag)
+        .multicast_reset_by_tag(&make_tag(tag))
         .await
         .expect("Should delete all groups with tag");
 
@@ -3288,7 +3276,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
         .client
         .multicast_group_update_external(
             &get_group_ip(&created_group),
-            &make_external_update_tag(TEST_TAG),
+            &make_tag(TEST_TAG),
             &external_update_entry,
         )
         .await
@@ -3323,7 +3311,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &types::AdminScopedIpv6(ipv6),
-            &make_underlay_update_tag(TEST_TAG),
+            &make_tag(TEST_TAG),
             &internal_update_entry,
         )
         .await
@@ -3900,6 +3888,10 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     Ok(())
 }
 
+/*
+ * Commented out untl https://github.com/oxidecomputer/dendrite/issues/107 is
+ * fixed
+ *
 #[tokio::test]
 #[ignore]
 async fn test_multicast_vlan_translation_not_possible() -> TestResult {
@@ -3976,6 +3968,7 @@ async fn test_multicast_vlan_translation_not_possible() -> TestResult {
         .unwrap();
     cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
 }
+*/
 
 #[tokio::test]
 #[ignore]
@@ -4461,7 +4454,7 @@ async fn test_ipv6_multicast_scope_validation() {
     let admin_local_group = admin_local_result.unwrap().into_inner();
     let target_group = target_result.into_inner();
 
-    let del_tag = make_del_tag(TEST_TAG);
+    let del_tag = make_tag(TEST_TAG);
     switch
         .client
         .multicast_group_delete(
@@ -4471,7 +4464,7 @@ async fn test_ipv6_multicast_scope_validation() {
         .await
         .ok();
 
-    let del_tag = make_del_tag(TEST_TAG);
+    let del_tag = make_tag(TEST_TAG);
     switch
         .client
         .multicast_group_delete(&target_group.group_ip.to_ip_addr(), &del_tag)
@@ -4522,7 +4515,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
     );
 
     // Delete the first group
-    let del_tag = make_del_tag(TEST_TAG);
+    let del_tag = make_tag(TEST_TAG);
     switch
         .client
         .multicast_group_delete(&group1_ip, &del_tag)
@@ -4564,7 +4557,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
     );
 
     // Create a fourth group after deleting group2, it should reuse group2's ID
-    let del_tag = make_del_tag(TEST_TAG);
+    let del_tag = make_tag(TEST_TAG);
     switch
         .client
         .multicast_group_delete(&group2_ip, &del_tag)
@@ -4792,7 +4785,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &ipv6_update,
-            &make_underlay_update_tag(TEST_TAG),
+            &make_tag(TEST_TAG),
             &update_entry,
         )
         .await
@@ -4928,7 +4921,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &ipv6_update,
-            &make_underlay_update_tag(TEST_TAG),
+            &make_tag(TEST_TAG),
             &empty_update_entry,
         )
         .await
@@ -5158,7 +5151,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &ipv6_update,
-            &make_underlay_update_tag(TEST_TAG),
+            &make_tag(TEST_TAG),
             &update_entry,
         )
         .await
@@ -5294,7 +5287,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &ipv6_update,
-            &make_underlay_update_tag(TEST_TAG),
+            &make_tag(TEST_TAG),
             &empty_update_entry,
         )
         .await
@@ -5576,7 +5569,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &ipv6_update,
-            &make_underlay_update_tag(TEST_TAG),
+            &make_tag(TEST_TAG),
             &update_request,
         )
         .await;
@@ -5688,7 +5681,7 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
         .client
         .multicast_group_update_external(
             &external_group_ip,
-            &make_external_update_tag(TEST_TAG),
+            &make_tag(TEST_TAG),
             &invalid_update,
         )
         .await;
@@ -5943,7 +5936,7 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
         .client
         .multicast_group_update_external(
             &group_ip,
-            &make_external_update_tag(TEST_TAG),
+            &make_tag(TEST_TAG),
             &failing_update_entry,
         )
         .await;
@@ -6063,7 +6056,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &ipv6_update,
-            &make_underlay_update_tag(TEST_TAG),
+            &make_tag(TEST_TAG),
             &update_request,
         )
         .await;
@@ -6397,7 +6390,7 @@ async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
 
     // Verify deletion ordering: attempting to delete internal group first should fail
     // because the external group still references it via NAT target
-    let del_tag = make_del_tag(TEST_TAG);
+    let del_tag = make_tag(TEST_TAG);
     let delete_internal_first_result = switch
         .client
         .multicast_group_delete(&internal_group_ip, &del_tag)
@@ -6510,7 +6503,7 @@ async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
     // because the external group still references it via NAT target.
     // This is particularly important for IPv6 where external groups (ff0e::*)
     // sort AFTER internal groups (ff04::*) in BTreeMap iteration order.
-    let del_tag = make_del_tag(TEST_TAG);
+    let del_tag = make_tag(TEST_TAG);
     let delete_internal_first_result = switch
         .client
         .multicast_group_delete(&internal_group_ip, &del_tag)
@@ -6627,7 +6620,7 @@ async fn test_source_filter_update_to_any() -> TestResult {
         .client
         .multicast_group_update_external(
             &external_group_ip,
-            &make_external_update_tag(TEST_TAG),
+            &make_tag(TEST_TAG),
             &update_entry,
         )
         .await
@@ -6874,7 +6867,7 @@ async fn test_update_nonexistent_group_returns_404() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &nonexistent_underlay,
-            &make_underlay_update_tag("nonexistent_test"),
+            &make_tag("nonexistent_test"),
             &underlay_update,
         )
         .await;
@@ -6900,7 +6893,7 @@ async fn test_update_nonexistent_group_returns_404() -> TestResult {
         .client
         .multicast_group_update_external(
             &nonexistent_external,
-            &make_external_update_tag("nonexistent_test"),
+            &make_tag("nonexistent_test"),
             &external_update,
         )
         .await;
@@ -6928,7 +6921,7 @@ async fn test_delete_nonexistent_group_returns_404() -> TestResult {
     // Case: Delete non-existent group with a tag provided
     let nonexistent_ip = IpAddr::V4(Ipv4Addr::new(239, 255, 255, 253));
 
-    let del_tag = make_del_tag("some_tag");
+    let del_tag = make_tag("some_tag");
     let result = switch
         .client
         .multicast_group_delete(&nonexistent_ip, &del_tag)
@@ -6984,7 +6977,7 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
     assert_eq!(created.into_inner().members.len(), 1);
 
     // Case: Delete the group (simulating recovery from stale state)
-    let del_tag = make_del_tag(tag);
+    let del_tag = make_tag(tag);
     switch
         .client
         .multicast_group_delete(&group_ip.to_ip_addr(), &del_tag)
@@ -7046,7 +7039,7 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
     // Cleanup
     switch
         .client
-        .multicast_reset_by_tag(tag)
+        .multicast_reset_by_tag(&make_tag(tag))
         .await
         .expect("Should cleanup by tag");
 
@@ -7097,7 +7090,7 @@ async fn test_tag_immutability_on_update() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &group_ip,
-            &make_underlay_update_tag(TAG_WRONG),
+            &make_tag(TAG_WRONG),
             &update_entry,
         )
         .await;
@@ -7122,7 +7115,7 @@ async fn test_tag_immutability_on_update() -> TestResult {
     }
 
     // Cleanup
-    let del_tag = make_del_tag(TAG_A);
+    let del_tag = make_tag(TAG_A);
     switch
         .client
         .multicast_group_delete(&group_ip.to_ip_addr(), &del_tag)
@@ -7165,7 +7158,7 @@ async fn test_tag_validation_on_delete() -> TestResult {
     let group_ip = created.group_ip;
 
     // Attempt delete with wrong tag
-    let del_tag = make_del_tag(TAG_WRONG);
+    let del_tag = make_tag(TAG_WRONG);
     let result = switch
         .client
         .multicast_group_delete(&group_ip.to_ip_addr(), &del_tag)
@@ -7194,7 +7187,7 @@ async fn test_tag_validation_on_delete() -> TestResult {
     assert_eq!(fetched.into_inner().tag, TAG_A, "Tag should be preserved");
 
     // Delete with correct tag
-    let del_tag = make_del_tag(TAG_A);
+    let del_tag = make_tag(TAG_A);
     switch
         .client
         .multicast_group_delete(&group_ip.to_ip_addr(), &del_tag)
@@ -7257,7 +7250,7 @@ async fn test_tag_validation() -> TestResult {
         .client
         .multicast_group_update_external(
             &external_ip,
-            &make_external_update_tag(TAG_WRONG),
+            &make_tag(TAG_WRONG),
             &update_entry,
         )
         .await;
@@ -7307,7 +7300,7 @@ async fn test_tag_validation() -> TestResult {
 
     let case_group_ip = created.group_ip;
 
-    let del_tag = make_del_tag("casesensitivetag");
+    let del_tag = make_tag("casesensitivetag");
     let result = switch
         .client
         .multicast_group_delete(&case_group_ip.to_ip_addr(), &del_tag)
@@ -7318,7 +7311,7 @@ async fn test_tag_validation() -> TestResult {
         "Case-insensitive tag should fail"
     );
 
-    let del_tag = make_del_tag("CaseSensitiveTag");
+    let del_tag = make_tag("CaseSensitiveTag");
     switch
         .client
         .multicast_group_delete(&case_group_ip.to_ip_addr(), &del_tag)
@@ -7329,7 +7322,7 @@ async fn test_tag_validation() -> TestResult {
 
     switch
         .client
-        .multicast_reset_by_tag("nonexistent_tag_xyz")
+        .multicast_reset_by_tag(&make_tag("nonexistent_tag_xyz"))
         .await
         .expect("Reset with non-existent tag should succeed");
 
