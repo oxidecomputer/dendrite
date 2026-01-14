@@ -503,7 +503,10 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
         // Count only underlay groups with our test tag (since this tests replication table capacity)
         switch
             .client
-            .multicast_groups_list_by_tag_stream(&MCAST_TAG.parse::<types::MulticastTag>().unwrap(), None)
+            .multicast_groups_list_by_tag_stream(
+                &MCAST_TAG.parse::<types::MulticastTag>().unwrap(),
+                None,
+            )
             .try_collect::<Vec<_>>()
             .await
             .expect("Should be able to list groups by tag paginated")
