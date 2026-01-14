@@ -7,13 +7,13 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "3.0.0"
+    "version": "4.0.0"
   },
   "paths": {
     "/all-settings": {
       "delete": {
         "summary": "Clear all settings.",
-        "description": "This removes all data entirely, including:\n\n- All ARP and NDP table entries - All routes - All links on all switch ports - All NAT mappings - All multicast groups\n\nNote: Unlike `reset_all_tagged`, this endpoint DOES clear multicast groups.",
+        "description": "This removes all data entirely, including:\n\n- All ARP and NDP table entries - All routes - All links on all switch ports - All NAT mappings - All multicast groups\n\nNote: Unlike `reset_all_tagged`, this endpoint does clear multicast groups.",
         "operationId": "reset_all",
         "responses": {
           "204": {
@@ -5019,10 +5019,10 @@
         }
       }
     },
-    "/rpw/nat/ipv4/gen": {
+    "/rpw/nat/gen": {
       "get": {
-        "summary": "Get NATv4 generation number",
-        "operationId": "ipv4_nat_generation",
+        "summary": "Get NAT generation number",
+        "operationId": "nat_generation",
         "responses": {
           "200": {
             "description": "successful operation",
@@ -5045,10 +5045,10 @@
         }
       }
     },
-    "/rpw/nat/ipv4/trigger": {
+    "/rpw/nat/trigger": {
       "post": {
-        "summary": "Trigger NATv4 Reconciliation",
-        "operationId": "ipv4_nat_trigger_update",
+        "summary": "Trigger NAT Reconciliation",
+        "operationId": "nat_trigger_update",
         "responses": {
           "200": {
             "description": "successful operation",

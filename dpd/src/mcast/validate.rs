@@ -97,7 +97,6 @@ fn validate_ipv4_multicast(
         }
         return Ok(());
     }
-    // ASM: sources are optional (filtering or any-source)
 
     // Check reserved subnets
     if IPV4_LINK_LOCAL_MULTICAST_SUBNET.contains(addr) {

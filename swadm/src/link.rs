@@ -5,6 +5,7 @@
 // Copyright 2025 Oxide Computer Company
 
 use std::collections::HashMap;
+use std::convert::From;
 use std::io::{Write, stdout};
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -521,25 +522,54 @@ pub enum LinkProp {
     Prbs,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum OnOff {
+    On,
+    Off,
+}
+
+impl FromStr for OnOff {
+    type Err = anyhow::Error;
+
+    // Allow on/true or off/false to be friendly to users with the original
+    // syntax stuck in their fingers.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
+            "true" | "on" => OnOff::On,
+            "false" | "off" => OnOff::Off,
+            _ => bail!("must be Off or On"),
+        })
+    }
+}
+
+impl From<OnOff> for bool {
+    fn from(value: OnOff) -> Self {
+        match value {
+            OnOff::On => true,
+            OnOff::Off => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Subcommand)]
 pub enum SetLinkProp {
     /// Set the MAC address of the link.
     Mac { mac: MacAddr },
     /// Set the KR mode for the link.
-    Kr { kr: bool },
+    Kr { kr: OnOff },
     /// Set whether autonegotiation is enabled for the link.
     #[clap(visible_alias = "an")]
-    Autoneg { autoneg: bool },
+    Autoneg { autoneg: OnOff },
     /// Set whether nat-only restrictions are enabled for the link.
-    NatOnly { nat_only: bool },
+    NatOnly { nat_only: OnOff },
     /// Set whether the link is enabled.
     #[clap(visible_alias = "ena")]
-    Enabled { enabled: bool },
+    Enabled { enabled: OnOff },
     /// Assign an IP address to the link.
     Ip { ip: IpAddr },
     /// Set  whether the link is configured for IPv6
     #[clap(visible_alias = "ipv6")]
-    Ipv6Enabled { enabled: bool },
+    Ipv6Enabled { enabled: OnOff },
     /// Set the PRBS mode for the link. (7, 9, 11, 15, 23, 31, or mission/off)
     Prbs { prbs: PortPrbsMode },
 }
@@ -1781,29 +1811,44 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
             }
             SetLinkProp::Kr { kr } => {
                 client
-                    .link_kr_set(&link.port_id, &link.link_id, kr)
+                    .link_kr_set(&link.port_id, &link.link_id, kr.into())
                     .await
                     .context("failed to set KR mode")?;
             }
             SetLinkProp::Autoneg { autoneg } => {
                 client
-                    .link_autoneg_set(&link.port_id, &link.link_id, autoneg)
+                    .link_autoneg_set(
+                        &link.port_id,
+                        &link.link_id,
+                        autoneg.into(),
+                    )
                     .await
                     .context("failed to set autonegotiation mode")?;
             }
             SetLinkProp::NatOnly { nat_only } => {
                 client
-                    .link_nat_only_set(&link.port_id, &link.link_id, nat_only)
+                    .link_nat_only_set(
+                        &link.port_id,
+                        &link.link_id,
+                        nat_only.into(),
+                    )
                     .await
                     .context("failed to set nat_only mode")?;
             }
             SetLinkProp::Enabled { enabled } => {
                 client
-                    .link_enabled_set(&link.port_id, &link.link_id, enabled)
+                    .link_enabled_set(
+                        &link.port_id,
+                        &link.link_id,
+                        enabled.into(),
+                    )
                     .await
                     .context(format!(
                         "failed to {} link",
-                        if enabled { "enable" } else { "disable" }
+                        match enabled {
+                            OnOff::On => "enable",
+                            OnOff::Off => "disable",
+                        }
                     ))?;
             }
             SetLinkProp::Ip { ip } => match ip {
@@ -1827,7 +1872,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                     .link_ipv6_enabled_set(
                         &link.port_id,
                         &link.link_id,
-                        enabled,
+                        enabled.into(),
                     )
                     .await
                     .context("failed to set ipv6-enabled flag")?;

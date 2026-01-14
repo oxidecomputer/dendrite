@@ -367,7 +367,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
                 // IPv4 groups are always external-only and never create bitmap entries
                 // (only IPv6 internal groups with replication create bitmap entries)
 
-                // If Any was present, only a /0 entry was added (collapsing)
+                // If `Any` was present, only a /0 entry was added (collapsing)
                 match self.sources {
                     Some(srcs) if sources_contain_any(srcs) => {
                         self.log_rollback_error(
@@ -453,7 +453,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
                 // Source filters only exist for external groups (which have
                 // NAT targets). Internal groups don't have source filtering.
                 if self.nat_target.is_some() {
-                    // If Any was present, only a ::/0 entry was added (collapsing)
+                    // If `Any` was present, only a ::/0 entry was added (collapsing)
                     match self.sources {
                         Some(srcs) if sources_contain_any(srcs) => {
                             self.log_rollback_error(

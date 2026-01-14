@@ -381,7 +381,8 @@ impl TableOps<Handle> for Table {
                 }
                 ("rewrite", params)
             }
-            (NAT_INGRESS4, "forward_ipv4_to") => {
+            (NAT_INGRESS4, "forward_ipv4_to")
+            | (NAT_INGRESS6, "forward_ipv6_to") => {
                 let mut target = Vec::new();
                 let mut vni = Vec::new();
                 let mut mac = Vec::new();
@@ -587,6 +588,13 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: &str) -> Vec<u8> {
                         serialize_value_type(&x, &mut data);
                         keyset_data.extend_from_slice(&data[..4]);
                     }
+                    NAT_V6 => {
+                        // "dst_addr" => hdr.ipv6.dst: exact => bit<128>
+                        let mut buf = Vec::new();
+                        serialize_value_type(&x, &mut buf);
+                        buf.reverse();
+                        keyset_data.extend_from_slice(&buf);
+                    }
                     LOCAL_V6 => {
                         let mut buf = Vec::new();
                         serialize_value_type(&x, &mut buf);
@@ -619,7 +627,7 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: &str) -> Vec<u8> {
             // Ranges (i.e. port ranges)
             MatchEntryValue::Range(x) => {
                 match table {
-                    NAT_V4 => {
+                    NAT_V4 | NAT_V6 => {
                         // "l4_dst_port" => ingress.nat_id: range =>  bit<16>
                         let low = &x.low.to_le_bytes();
                         let high = &x.high.to_le_bytes();
