@@ -13,7 +13,7 @@
     "/all-settings": {
       "delete": {
         "summary": "Clear all settings.",
-        "description": "This removes all data entirely, including:\n\n- All ARP and NDP table entries - All routes - All links on all switch ports - All NAT mappings - All multicast groups\n\nNote: Unlike `reset_all_tagged`, this endpoint does clear multicast groups.",
+        "description": "This removes all data entirely.",
         "operationId": "reset_all",
         "responses": {
           "204": {
@@ -31,7 +31,7 @@
     "/all-settings/{tag}": {
       "delete": {
         "summary": "Clear all settings associated with a specific tag.",
-        "description": "This removes:\n\n- All ARP or NDP table entries. - All routes - All links on all switch ports\n\nNote: Multicast groups are NOT cleared by this endpoint. Use the dedicated `/multicast/tags/{tag}` endpoint to clear multicast groups by tag.",
+        "description": "This removes:\n\n- All ARP or NDP table entries. - All routes - All links on all switch ports",
         "operationId": "reset_all_tagged",
         "parameters": [
           {
@@ -1086,8 +1086,9 @@
     },
     "/multicast/external-groups": {
       "post": {
-        "summary": "Create an external-only multicast group configuration (API v1/v2).",
-        "operationId": "multicast_group_create_external_v2",
+        "summary": "Create an external-only multicast group configuration.",
+        "description": "External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast traffic that doesn't require replication infrastructure. These groups use simple forwarding tables and require a NAT target.",
+        "operationId": "multicast_group_create_external",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1120,9 +1121,9 @@
     },
     "/multicast/external-groups/{group_ip}": {
       "put": {
-        "summary": "Update an external-only multicast group configuration (API v1/v2).",
-        "description": "Returns 201 Created (v4+ returns 200 OK).",
-        "operationId": "multicast_group_update_external_v2",
+        "summary": "Update an external-only multicast group configuration for a given group IP address.",
+        "description": "External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast traffic that doesn't require replication infrastructure.",
+        "operationId": "multicast_group_update_external",
         "parameters": [
           {
             "in": "path",
@@ -1166,8 +1167,8 @@
     },
     "/multicast/groups": {
       "get": {
-        "summary": "List all multicast groups (API v1/v2).",
-        "operationId": "multicast_groups_list_v2",
+        "summary": "List all multicast groups.",
+        "operationId": "multicast_groups_list",
         "parameters": [
           {
             "in": "query",
@@ -1230,8 +1231,8 @@
     },
     "/multicast/groups/{group_ip}": {
       "get": {
-        "summary": "Get the multicast group configuration for a given group IP address (API v1/v2).",
-        "operationId": "multicast_group_get_v2",
+        "summary": "Get the multicast group configuration for a given group IP address.",
+        "operationId": "multicast_group_get",
         "parameters": [
           {
             "in": "path",
@@ -1263,9 +1264,8 @@
         }
       },
       "delete": {
-        "summary": "Delete a multicast group configuration by IP address (API versions 1-3).",
-        "description": "Does not include tag validation.",
-        "operationId": "multicast_group_delete_v3",
+        "summary": "Delete a multicast group configuration by IP address.",
+        "operationId": "multicast_group_delete",
         "parameters": [
           {
             "in": "path",
@@ -1292,8 +1292,8 @@
     },
     "/multicast/tags/{tag}": {
       "get": {
-        "summary": "List all multicast groups with a given tag (API v1/v2).",
-        "operationId": "multicast_groups_list_by_tag_v2",
+        "summary": "List all multicast groups with a given tag.",
+        "operationId": "multicast_groups_list_by_tag",
         "parameters": [
           {
             "in": "path",
@@ -1374,8 +1374,9 @@
     },
     "/multicast/underlay-groups": {
       "post": {
-        "summary": "Create an underlay (internal) multicast group configuration (API v1-v3).",
-        "operationId": "multicast_group_create_underlay_v3",
+        "summary": "Create an underlay (internal) multicast group configuration.",
+        "description": "Underlay groups are used for admin-scoped IPv6 multicast traffic that requires replication infrastructure. These groups support both external and underlay members with full replication capabilities.",
+        "operationId": "multicast_group_create_underlay",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1408,8 +1409,9 @@
     },
     "/multicast/underlay-groups/{group_ip}": {
       "get": {
-        "summary": "Get an underlay (internal) multicast group configuration (API v1-v3).",
-        "operationId": "multicast_group_get_underlay_v3",
+        "summary": "Get an underlay (internal) multicast group configuration by admin-scoped",
+        "description": "IPv6 address.\n\nUnderlay groups handle admin-scoped IPv6 multicast traffic with replication infrastructure for external and underlay members.",
+        "operationId": "multicast_group_get_underlay",
         "parameters": [
           {
             "in": "path",
@@ -1440,8 +1442,9 @@
         }
       },
       "put": {
-        "summary": "Update an underlay (internal) multicast group configuration (API v1-v3).",
-        "operationId": "multicast_group_update_underlay_v3",
+        "summary": "Update an underlay (internal) multicast group configuration for a given",
+        "description": "group IP address.\n\nUnderlay groups are used for admin-scoped IPv6 multicast traffic that requires replication infrastructure with external and underlay members.",
+        "operationId": "multicast_group_update_underlay",
         "parameters": [
           {
             "in": "path",
@@ -1485,7 +1488,7 @@
     "/multicast/untagged": {
       "delete": {
         "summary": "Delete all multicast groups (and associated routes) without a tag.",
-        "operationId": "multicast_reset_untagged_v3",
+        "operationId": "multicast_reset_untagged",
         "responses": {
           "204": {
             "description": "successful deletion"
@@ -5240,7 +5243,7 @@
   "components": {
     "schemas": {
       "AdminScopedIpv6": {
-        "description": "A validated admin-local IPv6 multicast address.\n\nAdmin-local addresses are ff04::/16 (scope 4). These are used for internal/underlay multicast groups.",
+        "description": "A validated admin-scoped IPv6 multicast address.\n\nAdmin-scoped addresses are ff04::/16, ff05::/16, or ff08::/16. These are used for internal/underlay multicast groups.",
         "type": "string",
         "format": "ipv6"
       },
@@ -6259,7 +6262,7 @@
         }
       },
       "IpSrc": {
-        "description": "Source filter match key for multicast traffic (API versions 1 and 2).\n\nThis is the original `IpSrc` enum that used a single `Subnet` variant (IPv4 only) rather than the `Any` variant added in version 3.",
+        "description": "Source filter match key for multicast traffic.",
         "oneOf": [
           {
             "description": "Exact match for the source IP address.",
@@ -7226,7 +7229,7 @@
         ]
       },
       "LinkId": {
-        "description": "An identifier for a link within a switch port.\n\nA switch port identified by a [`PortId`] may have multiple links within it, each identified by a `LinkId`. These are unique within a switch port only.\n\n[`PortId`]: common::ports::PortId",
+        "description": "An identifier for a link within a switch port.\n\nA switch port identified by a [`PortId`] may have multiple links within it, each identified by a `LinkId`. These are unique within a switch port only.",
         "type": "integer",
         "format": "uint8",
         "minimum": 0
@@ -7707,7 +7710,7 @@
         }
       },
       "MulticastGroupCreateExternalEntry": {
-        "description": "A multicast group configuration for POST requests for external (to the rack) groups (API version 2).",
+        "description": "A multicast group configuration for POST requests for external (to the rack) groups.",
         "type": "object",
         "properties": {
           "external_forwarding": {
@@ -7762,7 +7765,7 @@
         ]
       },
       "MulticastGroupExternalResponse": {
-        "description": "Response structure for external multicast group operations (API version 2).",
+        "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin IPv6 multicast via NAT targets.",
         "type": "object",
         "properties": {
           "external_forwarding": {
@@ -7820,10 +7823,10 @@
         ]
       },
       "MulticastGroupResponse": {
-        "description": "Unified response type for operations that return mixed group types (API version 2).",
+        "description": "Unified response type for operations that return mixed group types.",
         "oneOf": [
           {
-            "description": "Response structure for underlay/internal multicast group operations (API version 3).",
+            "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-scoped IPv6 multicast with full replication.",
             "type": "object",
             "properties": {
               "external_group_id": {
@@ -7865,7 +7868,7 @@
             ]
           },
           {
-            "description": "Response structure for external multicast group operations (API version 2).",
+            "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin IPv6 multicast via NAT targets.",
             "type": "object",
             "properties": {
               "external_forwarding": {
@@ -7933,7 +7936,7 @@
         ]
       },
       "MulticastGroupUnderlayResponse": {
-        "description": "Response structure for underlay/internal multicast group operations (API version 3).",
+        "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-scoped IPv6 multicast with full replication.",
         "type": "object",
         "properties": {
           "external_group_id": {
@@ -7968,7 +7971,7 @@
         ]
       },
       "MulticastGroupUpdateExternalEntry": {
-        "description": "A multicast group update entry for PUT requests for external (to the rack) groups (API version 2).",
+        "description": "A multicast group update entry for PUT requests for external (to the rack) groups.",
         "type": "object",
         "properties": {
           "external_forwarding": {
