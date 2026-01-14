@@ -250,10 +250,7 @@ impl Switch {
         let drain = slog_term::FullFormat::new(decorator).build().fuse();
         let drain = slog_async::Async::new(drain).build().fuse();
         let log = slog::Logger::root(drain, slog::o!());
-        let client_state = ClientState {
-            tag: String::from("test"),
-            log,
-        };
+        let client_state = ClientState { tag: String::from("test"), log };
         let client = Client::new(
             &format!("http://{ctrl_host}:{ctrl_port}"),
             client_state,
@@ -270,12 +267,7 @@ impl Switch {
         // rear ports, and then use `swadm` to return the ASIC ID for each link.
         let ports = vec![
             None,
-            Some(Port::new(
-                8,
-                PortId::try_from("rear29").unwrap(),
-                None,
-                None,
-            )),
+            Some(Port::new(8, PortId::try_from("rear29").unwrap(), None, None)),
             Some(Port::new(
                 16,
                 PortId::try_from("rear31").unwrap(),
@@ -624,15 +616,10 @@ impl Switch {
                 }
                 pcap::Ternary::Ok(data) => {
                     let packet = packet::Packet::parse(&data).unwrap();
-                    let copy = Packet {
-                        hdrs: packet.hdrs.clone(),
-                        body: packet.body,
-                    };
+                    let copy =
+                        Packet { hdrs: packet.hdrs.clone(), body: packet.body };
 
-                    let cap = TestPacket {
-                        port,
-                        packet: Arc::new(copy),
-                    };
+                    let cap = TestPacket { port, packet: Arc::new(copy) };
                     tx.send(cap).unwrap();
                 }
             }
@@ -1114,11 +1101,7 @@ async fn set_route_ipv6_common(
         .await
         .expect("Failed to get just-added IPv6 route entry")
         .into_inner();
-    assert_eq!(
-        route.len(),
-        1,
-        "Just added Ipv6-route has more than 1 entry"
-    );
+    assert_eq!(route.len(), 1, "Just added Ipv6-route has more than 1 entry");
     assert_eq!(
         route[0].port_id, port_id,
         "Just-added IPv6 route entry doesn't match"
@@ -1166,11 +1149,7 @@ pub async fn add_neighbor_ipv6(
         tag: switch.client.inner().tag.clone(),
         update: String::new(),
     };
-    switch
-        .client
-        .ndp_create(&entry)
-        .await
-        .expect("Failed to add NDP entry");
+    switch.client.ndp_create(&entry).await.expect("Failed to add NDP entry");
 
     let neighbor = switch
         .client
@@ -1178,11 +1157,7 @@ pub async fn add_neighbor_ipv6(
         .await
         .expect("Failed to get just-added NDP entry")
         .into_inner();
-    assert_eq!(
-        neighbor.mac,
-        mac.into(),
-        "Just-added NDP entry doesn't match"
-    );
+    assert_eq!(neighbor.mac, mac.into(), "Just-added NDP entry doesn't match");
     assert_eq!(neighbor.ip, host, "Just-added NDP entry doesn't match");
     Ok(())
 }
@@ -1220,11 +1195,7 @@ async fn set_route_ipv4_common(
         .await
         .expect("failed to get just-added IPv4 route entry")
         .into_inner();
-    assert_eq!(
-        route.len(),
-        1,
-        "Just added IPv4-route has more than 1 entry"
-    );
+    assert_eq!(route.len(), 1, "Just added IPv4-route has more than 1 entry");
     assert_eq!(
         route[0].port_id, port_id,
         "Just-added IPv4 route entry doesn't match"
@@ -1262,11 +1233,7 @@ pub async fn add_arp_ipv4(
         tag: switch.client.inner().tag.clone(),
         update: String::new(),
     };
-    switch
-        .client
-        .arp_create(&entry)
-        .await
-        .expect("Failed to add ARP entry");
+    switch.client.arp_create(&entry).await.expect("Failed to add ARP entry");
 
     let arp = switch
         .client
@@ -1292,11 +1259,7 @@ pub async fn add_ndp_ipv6(
         tag: switch.client.inner().tag.clone(),
         update: String::new(),
     };
-    switch
-        .client
-        .ndp_create(&entry)
-        .await
-        .expect("Failed to add ARP entry");
+    switch.client.ndp_create(&entry).await.expect("Failed to add ARP entry");
 
     let ndp = switch
         .client

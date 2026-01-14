@@ -97,11 +97,7 @@ fn collect_sde(dst: &str, p4_root: &str) -> Result<()> {
     let xml_path = "share/cli/xml";
     let xml_src = format!("{src}/{xml_path}");
     let xml_dst = format!("{p4_root}/{xml_path}");
-    collect(
-        &xml_src,
-        &xml_dst,
-        vec!["pipemgr.xml", "startup.xml", "types.xml"],
-    )
+    collect(&xml_src, &xml_dst, vec!["pipemgr.xml", "startup.xml", "types.xml"])
 }
 
 fn illumos_package() -> Result<()> {
@@ -161,9 +157,7 @@ fn illumos_package() -> Result<()> {
 
     // populate the repo
     let status = Command::new("/usr/bin/pkgsend")
-        .args(vec![
-            "publish", "-d", proto_root, "-s", &repo_dir, &manifest,
-        ])
+        .args(vec!["publish", "-d", proto_root, "-s", &repo_dir, &manifest])
         .status()?;
     if !status.success() {
         return Err(anyhow!("repo population failed"));
@@ -191,8 +185,7 @@ fn generate_manifest(features: &str) -> Result<String> {
     let mut file = fs::File::open(manifest_path)
         .with_context(|| "attempting to open omicron manifest")?;
     let mut data = String::new();
-    file.read_to_string(&mut data)
-        .with_context(|| "reading manifest")?;
+    file.read_to_string(&mut data).with_context(|| "reading manifest")?;
 
     Ok(data)
 }
@@ -211,9 +204,8 @@ async fn omicron_package(features: Option<String>) -> Result<()> {
 
     let build_config = BuildConfig::default();
     for package in cfg.packages.values() {
-        if let Err(e) = package
-            .create(&PACKAGE_NAME, output_dir, &build_config)
-            .await
+        if let Err(e) =
+            package.create(&PACKAGE_NAME, output_dir, &build_config).await
         {
             eprintln!("omicron packaging failed: {e:?}");
             return Err(e);

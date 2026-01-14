@@ -60,20 +60,11 @@ async fn test_api() -> TestResult {
         .nat_ipv4_create(&ext0, 2000, 2000, &tgt)
         .await
         .expect_err("Should not be able to add overlapping NAT entry");
-    switch
-        .client
-        .nat_ipv4_create(&ext0, 8192, 4096, &tgt)
-        .await
-        .expect_err(
-            "Should not be able to add NAT entry with invalid port range",
-        );
+    switch.client.nat_ipv4_create(&ext0, 8192, 4096, &tgt).await.expect_err(
+        "Should not be able to add NAT entry with invalid port range",
+    );
     assert_eq!(
-        switch
-            .client
-            .nat_ipv4_get(&ext0, 2048)
-            .await
-            .unwrap()
-            .into_inner(),
+        switch.client.nat_ipv4_get(&ext0, 2048).await.unwrap().into_inner(),
         tgt,
         "Failed to retrieve existing NAT entry",
     );
@@ -214,11 +205,7 @@ async fn test_nat_egress(switch: &Switch, test: &NatTest) -> TestResult {
         addr: gimlet_port_ip,
         tag: switch.client.inner().tag.clone(),
     };
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv6_create(&port_id, &link_id, &entry).await.unwrap();
 
     if test.router_ip.parse::<Ipv4Addr>().is_ok() {
         common::set_route_ipv4(
@@ -310,14 +297,9 @@ async fn test_nat_egress(switch: &Switch, test: &NatTest) -> TestResult {
         common::gen_packet_routed(switch, test.uplink_port, &payload_pkt);
     eth::EthHdr::rewrite_dmac(&mut to_recv, router_mac);
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: test.gimlet_port,
-    };
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: test.uplink_port,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: test.gimlet_port };
+    let expected =
+        TestPacket { packet: Arc::new(to_recv), port: test.uplink_port };
 
     switch.packet_test(vec![send], vec![expected])
 }
@@ -330,11 +312,7 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
         addr: gimlet_port_ip,
         tag: switch.client.inner().tag.clone(),
     };
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv6_create(&port_id, &link_id, &entry).await.unwrap();
     let cidr = Ipv6Net::new(test.gimlet_ip.parse().unwrap(), 64).unwrap();
     let route = types::Ipv6RouteUpdate {
         cidr,
@@ -453,20 +431,14 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
     forward_icmp_pkt.hdrs.udp_hdr.as_mut().unwrap().udp_sum = 0;
 
     let send = vec![
-        TestPacket {
-            packet: Arc::new(ingress_pkt),
-            port: test.uplink_port,
-        },
+        TestPacket { packet: Arc::new(ingress_pkt), port: test.uplink_port },
         TestPacket {
             packet: Arc::new(ingress_icmp_pkt),
             port: test.uplink_port,
         },
     ];
     let expected = vec![
-        TestPacket {
-            packet: Arc::new(forward_pkt),
-            port: test.gimlet_port,
-        },
+        TestPacket { packet: Arc::new(forward_pkt), port: test.gimlet_port },
         TestPacket {
             packet: Arc::new(forward_icmp_pkt),
             port: test.gimlet_port,

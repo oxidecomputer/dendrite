@@ -49,12 +49,7 @@ pub struct PacketQueue {
 impl PacketQueue {
     /// Create a new, empty packet queue
     pub fn new(name: impl ToString, max: usize) -> Self {
-        PacketQueue {
-            name: name.to_string(),
-            max,
-            cnt: 0,
-            queue: Vec::new(),
-        }
+        PacketQueue { name: name.to_string(), max, cnt: 0, queue: Vec::new() }
     }
 
     /// Pull all of the packets from the queue that were waiting on the given IP
@@ -80,10 +75,7 @@ impl PacketQueue {
                 "iface" => &self.name,
                 "idx" => qp.idx);
 
-                pkts.push(Packet {
-                    hdrs: qp.hdrs,
-                    body: qp.body,
-                });
+                pkts.push(Packet { hdrs: qp.hdrs, body: qp.body });
             }
         }
         pkts

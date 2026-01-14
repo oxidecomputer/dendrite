@@ -57,19 +57,13 @@ pub fn init(
                 let drain = slog_bunyan::with_name(name, std::io::stdout())
                     .build()
                     .fuse();
-                slog_async::Async::new(drain)
-                    .chan_size(32768)
-                    .build()
-                    .fuse()
+                slog_async::Async::new(drain).chan_size(32768).build().fuse()
             }
             LogFormat::Human => {
                 let decorator = slog_term::TermDecorator::new().build();
                 let drain =
                     slog_term::FullFormat::new(decorator).build().fuse();
-                slog_async::Async::new(drain)
-                    .chan_size(32768)
-                    .build()
-                    .fuse()
+                slog_async::Async::new(drain).chan_size(32768).build().fuse()
             }
         },
     };

@@ -50,11 +50,7 @@ pub fn add_entry_ipv4(
     } else {
         debug!(switch.log, "new ipv4 arp entry {} -> {}", ip, mac);
         table::arp_ipv4::add_entry(switch, ip, mac)?;
-        let e = ArpEntry {
-            tag: tag.to_string(),
-            mac,
-            update: Utc::now(),
-        };
+        let e = ArpEntry { tag: tag.to_string(), mac, update: Utc::now() };
         arp_data.v4.insert(idx, e);
     }
     Ok(())
@@ -85,11 +81,7 @@ pub fn add_entry_ipv6(
     } else {
         debug!(switch.log, "new ipv6 arp entry {} -> {}", ip, mac);
         table::neighbor_ipv6::add_entry(switch, ip, mac)?;
-        let e = ArpEntry {
-            tag: tag.to_string(),
-            mac,
-            update: Utc::now(),
-        };
+        let e = ArpEntry { tag: tag.to_string(), mac, update: Utc::now() };
         arp_data.v6.insert(idx, e);
     }
     Ok(())
@@ -261,8 +253,5 @@ pub fn reset_ipv6(switch: &Switch) -> DpdResult<()> {
 }
 
 pub fn init() -> ArpData {
-    ArpData {
-        v4: BTreeMap::new(),
-        v6: BTreeMap::new(),
-    }
+    ArpData { v4: BTreeMap::new(), v6: BTreeMap::new() }
 }

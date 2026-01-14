@@ -158,11 +158,7 @@ fn parse_options(
             return Err(crate::parse_error(&pb, "tcp packet too short"));
         }
         let opt_data = pb.get_bytes(opt_len as usize)?;
-        opts.push(TcpOption {
-            opt_kind,
-            opt_len,
-            opt_data,
-        });
+        opts.push(TcpOption { opt_kind, opt_len, opt_data });
     }
     Ok(opts)
 }

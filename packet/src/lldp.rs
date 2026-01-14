@@ -40,11 +40,7 @@ impl LldpTlv {
         }
         let lldp_tlv_octets = pb.get_bytes(lldp_tlv_size as usize)?;
 
-        Ok(LldpTlv {
-            lldp_tlv_type,
-            lldp_tlv_size,
-            lldp_tlv_octets,
-        })
+        Ok(LldpTlv { lldp_tlv_type, lldp_tlv_size, lldp_tlv_octets })
     }
 }
 

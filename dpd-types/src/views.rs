@@ -176,9 +176,6 @@ pub struct TableCounterEntry {
 
 impl TableCounterEntry {
     pub fn new(key: impl aal::MatchParse, data: aal::CounterData) -> Self {
-        TableCounterEntry {
-            keys: key.key_values(),
-            data,
-        }
+        TableCounterEntry { keys: key.key_values(), data }
     }
 }

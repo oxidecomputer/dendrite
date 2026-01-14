@@ -175,10 +175,7 @@ impl AsicOps for StubHandle {
         rid: u16,
         level1_excl_id: u16,
     ) -> AsicResult<()> {
-        info!(
-            self.log,
-            "adding port {} to multicast group {}", port, group_id
-        );
+        info!(self.log, "adding port {} to multicast group {}", port, group_id);
         let mut mc_data = self.mc_data.lock().unwrap();
         mc_data.domain_port_add(group_id, port, rid, level1_excl_id)
     }

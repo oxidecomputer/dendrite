@@ -30,11 +30,7 @@ async fn test_service_ipv4_unicast() -> TestResult {
         addr: router_ip.parse().unwrap(),
         tag: switch.client.inner().tag.clone(),
     };
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
 
     let send_pkt = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
@@ -42,10 +38,7 @@ async fn test_service_ipv4_unicast() -> TestResult {
     );
     let mut recv_pkt = send_pkt.clone();
 
-    let send = TestPacket {
-        packet: Arc::new(send_pkt),
-        port: ingress,
-    };
+    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress };
 
     // The packet that gets delivered to the service port should be identical to
     // the one arriving at the ingress port, with the additional sidecar header.
@@ -58,10 +51,8 @@ async fn test_service_ipv4_unicast() -> TestResult {
         NO_PORT,
         None,
     );
-    let expected = TestPacket {
-        packet: Arc::new(recv_pkt),
-        port: SERVICE_PORT,
-    };
+    let expected =
+        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
     switch.packet_test(vec![send], vec![expected])
 }
@@ -82,11 +73,7 @@ async fn test_service_ipv4_unicast_with_nat() -> TestResult {
         addr: router_ip.parse().unwrap(),
         tag: switch.client.inner().tag.clone(),
     };
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
 
     let send_pkt = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
@@ -94,10 +81,7 @@ async fn test_service_ipv4_unicast_with_nat() -> TestResult {
     );
     let mut recv_pkt = send_pkt.clone();
 
-    let send = TestPacket {
-        packet: Arc::new(send_pkt),
-        port: ingress,
-    };
+    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress };
 
     // The packet that gets delivered to the service port should be identical to
     // the one arriving at the ingress port, with the additional sidecar header.
@@ -110,24 +94,14 @@ async fn test_service_ipv4_unicast_with_nat() -> TestResult {
         NO_PORT,
         None,
     );
-    let expected = TestPacket {
-        packet: Arc::new(recv_pkt),
-        port: SERVICE_PORT,
-    };
+    let expected =
+        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
     // Mark the port as NAT-only
-    switch
-        .client
-        .link_nat_only_set(&port_id, &link_id, true)
-        .await
-        .unwrap();
+    switch.client.link_nat_only_set(&port_id, &link_id, true).await.unwrap();
     let result = switch.packet_test(vec![send], vec![expected]);
     // Clear the port's NAT-only property
-    switch
-        .client
-        .link_nat_only_set(&port_id, &link_id, false)
-        .await
-        .unwrap();
+    switch.client.link_nat_only_set(&port_id, &link_id, false).await.unwrap();
     result
 }
 
@@ -147,11 +121,7 @@ async fn test_service_ipv4_wrong_port() -> TestResult {
         addr: router_ip.parse().unwrap(),
         tag: switch.client.inner().tag.clone(),
     };
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
 
     let send_pkt = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
@@ -159,16 +129,12 @@ async fn test_service_ipv4_wrong_port() -> TestResult {
     );
     let mut recv_pkt = send_pkt.clone();
 
-    let send = TestPacket {
-        packet: Arc::new(send_pkt),
-        port: PhysPort(ingress + 1),
-    };
+    let send =
+        TestPacket { packet: Arc::new(send_pkt), port: PhysPort(ingress + 1) };
 
     common::set_icmp_unreachable(switch, &mut recv_pkt, PhysPort(ingress + 1));
-    let expected = TestPacket {
-        packet: Arc::new(recv_pkt),
-        port: SERVICE_PORT,
-    };
+    let expected =
+        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
     switch.packet_test(vec![send], vec![expected])
 }
@@ -189,21 +155,15 @@ async fn test_service_ipv4_unknown_address() -> TestResult {
         addr: router_ip.parse().unwrap(),
         tag: switch.client.inner().tag.clone(),
     };
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
 
     let send_pkt = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
         Endpoint::parse(router_mac, "192.10.12.1", 4444).unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(send_pkt),
-        port: PhysPort(ingress + 1),
-    };
+    let send =
+        TestPacket { packet: Arc::new(send_pkt), port: PhysPort(ingress + 1) };
 
     switch.packet_test(vec![send], Vec::new())
 }
@@ -230,10 +190,7 @@ async fn test_arp_needed() -> TestResult {
         Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444).unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(send_pkt),
-        port: ingress_port,
-    };
+    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress_port };
 
     // This test is identical to the ipv4 unicast routing test, but we don't
     // add the ARP entry.  We should see the packet arrive on the service port
@@ -254,10 +211,8 @@ async fn test_arp_needed() -> TestResult {
     eth::EthHdr::rewrite_smac(&mut recv_pkt, src_eth.eth_smac);
     eth::EthHdr::rewrite_dmac(&mut recv_pkt, src_eth.eth_dmac);
 
-    let expected = TestPacket {
-        packet: Arc::new(recv_pkt),
-        port: SERVICE_PORT,
-    };
+    let expected =
+        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
     switch.packet_test(vec![send], vec![expected])
 }
@@ -292,10 +247,7 @@ async fn test_ttl_exceeded() -> TestResult {
 
     let mut recv_pkt = send_pkt.clone();
 
-    let send = TestPacket {
-        packet: Arc::new(send_pkt),
-        port: ingress,
-    };
+    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress };
 
     common::set_icmp_needed(
         switch,
@@ -305,10 +257,8 @@ async fn test_ttl_exceeded() -> TestResult {
         icmp::ICMP_TIME_EXCEEDED,
         0,
     );
-    let expected = TestPacket {
-        packet: Arc::new(recv_pkt),
-        port: SERVICE_PORT,
-    };
+    let expected =
+        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
     switch.packet_test(vec![send], vec![expected])
 }
 
@@ -330,11 +280,7 @@ async fn execute_test_service_arp(nat_only: bool) -> TestResult {
         addr: tgt_ip.parse().unwrap(),
         tag: switch.client.inner().tag.clone(),
     };
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
 
     let send_pkt = common::gen_arp_reply(
         Endpoint::parse(src_mac, src_ip, 3333).unwrap(),
@@ -342,10 +288,7 @@ async fn execute_test_service_arp(nat_only: bool) -> TestResult {
     );
     let mut recv_pkt = send_pkt.clone();
 
-    let send = TestPacket {
-        packet: Arc::new(send_pkt),
-        port: ingress,
-    };
+    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress };
 
     common::add_sidecar_hdr(
         switch,
@@ -355,10 +298,8 @@ async fn execute_test_service_arp(nat_only: bool) -> TestResult {
         NO_PORT,
         None,
     );
-    let expected = TestPacket {
-        packet: Arc::new(recv_pkt),
-        port: SERVICE_PORT,
-    };
+    let expected =
+        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
     if nat_only {
         // Mark the port as NAT-only
@@ -418,10 +359,7 @@ async fn execute_test_service_lldp(nat_only: bool) -> TestResult {
             .unwrap();
     let mut recv_pkt = send_pkt.clone();
 
-    let send = TestPacket {
-        packet: Arc::new(send_pkt),
-        port: ingress,
-    };
+    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress };
 
     common::add_sidecar_hdr(
         switch,
@@ -431,10 +369,8 @@ async fn execute_test_service_lldp(nat_only: bool) -> TestResult {
         NO_PORT,
         None,
     );
-    let expected = TestPacket {
-        packet: Arc::new(recv_pkt),
-        port: SERVICE_PORT,
-    };
+    let expected =
+        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
     if nat_only {
         // Mark the port as NAT-only

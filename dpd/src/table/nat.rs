@@ -36,21 +36,14 @@ impl Ipv6MatchKey {
     {
         Ipv6MatchKey {
             dst_addr,
-            ports: MatchRange {
-                low: low.into(),
-                high: high.into(),
-            },
+            ports: MatchRange { low: low.into(), high: high.into() },
         }
     }
 }
 
 impl fmt::Display for Ipv6MatchKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "({}/{}-{})",
-            self.dst_addr, self.ports.low, self.ports.high
-        )
+        write!(f, "({}/{}-{})", self.dst_addr, self.ports.low, self.ports.high)
     }
 }
 
@@ -69,42 +62,27 @@ impl Ipv4MatchKey {
     {
         Ipv4MatchKey {
             dst_addr,
-            ports: MatchRange {
-                low: low.into(),
-                high: high.into(),
-            },
+            ports: MatchRange { low: low.into(), high: high.into() },
         }
     }
 }
 
 impl fmt::Display for Ipv4MatchKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "({}/{}-{})",
-            self.dst_addr, self.ports.low, self.ports.high
-        )
+        write!(f, "({}/{}-{})", self.dst_addr, self.ports.low, self.ports.high)
     }
 }
 
 #[derive(ActionParse)]
 enum Ipv6Action {
     #[action_xlate(name = "forward_ipv6_to")]
-    Forward {
-        target: Ipv6Addr,
-        inner_mac: MacAddr,
-        vni: u32,
-    },
+    Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
 
 #[derive(ActionParse)]
 enum Ipv4Action {
     #[action_xlate(name = "forward_ipv4_to")]
-    Forward {
-        target: Ipv6Addr,
-        inner_mac: MacAddr,
-        vni: u32,
-    },
+    Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
 
 pub fn add_ipv6_entry(

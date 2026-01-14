@@ -484,10 +484,7 @@ fn handle_smf_refresh(
             // property.
             let mut curr_config = switch.config.lock().unwrap();
             let mac_base = curr_config.mac_base.or(new_config.mac_base);
-            *curr_config = config::Config {
-                mac_base,
-                ..new_config
-            };
+            *curr_config = config::Config { mac_base, ..new_config };
             info!(switch.log, "refreshed config: {:#?}", curr_config);
         }
         Err(e) => {
@@ -664,10 +661,7 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
         api_server::api_server_manager(switch.clone(), smf_rx.clone()),
     );
 
-    info!(
-        switch.log,
-        "spawning fetching of switch identifiers from MGS"
-    );
+    info!(switch.log, "spawning fetching of switch identifiers from MGS");
 
     tokio::task::spawn(update_switch_identifiers(switch.clone()));
 
@@ -806,10 +800,7 @@ async fn run_dpd(opt: Opt) -> anyhow::Result<()> {
     if p4_name == "sidecar" {
         sidecar_main(switch).await
     } else {
-        info!(
-            switch.log,
-            "running as stub to support p4 program: {p4_name}"
-        );
+        info!(switch.log, "running as stub to support p4 program: {p4_name}");
         stub_main(switch).await
     }
 }

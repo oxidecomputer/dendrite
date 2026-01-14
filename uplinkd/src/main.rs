@@ -133,9 +133,8 @@ fn refresh_smf_config(g: &mut Global) -> Result<()> {
     // Create an SMF context and take a snapshot of the current settings
     let scf = smf::Scf::new().context("creating scf handle")?;
     let instance = scf.get_self_instance().context("getting smf instance")?;
-    let snapshot = instance
-        .get_running_snapshot()
-        .context("getting running snapshot")?;
+    let snapshot =
+        instance.get_running_snapshot().context("getting running snapshot")?;
 
     // All the properties relevant to us fall under the "uplinks" property group
     let pg = match snapshot
@@ -320,9 +319,7 @@ async fn create_v4_ptp_link_ipadm(
     ])
     .await?;
 
-    Ok(format!(
-        "created {local} as PtP link to {remote} as {addrobj}"
-    ))
+    Ok(format!("created {local} as PtP link to {remote} as {addrobj}"))
 }
 
 // Create an IPv4 PtP link using ifconfig
@@ -366,10 +363,7 @@ async fn create_addrobj(
     tag: &str,
     addr: &IpNet,
 ) -> Result<()> {
-    debug!(
-        log,
-        "create_addrobj addr: {addr}  iface: {iface}  tag: {tag}"
-    );
+    debug!(log, "create_addrobj addr: {addr}  iface: {iface}  tag: {tag}");
     // ipadm can't create point-to-point links, so we need to special-case them
     match addr {
         IpNet::V4(v4cidr) if v4cidr.width() == 31 => match ipadm_works {
@@ -435,11 +429,8 @@ async fn reconcile_interfaces(g: &mut Global) {
     // Delete any addresses we created on these abandoned interfaces.
     for iface in unmanaged {
         debug!(g.log, "cleaning up addresses on unmanaged {iface}");
-        for addrobj in g
-            .current
-            .get(&iface)
-            .expect("existence guaranteed above")
-            .keys()
+        for addrobj in
+            g.current.get(&iface).expect("existence guaranteed above").keys()
         {
             let _ = delete_addrobj(&g.log, addrobj).await;
         }

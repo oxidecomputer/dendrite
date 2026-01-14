@@ -48,10 +48,8 @@ fn project_root() -> io::Result<String> {
 }
 
 fn emit_sde_commit_sha() -> anyhow::Result<()> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../.github/buildomat/common.sh"
-    );
+    let path =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../.github/buildomat/common.sh");
     const NEEDLE: &str = "SDE_COMMIT";
     let contents = std::fs::read_to_string(path)
         .context(format!("failed to read {path}"))?;
@@ -143,9 +141,5 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Emit detailed build information, for use in the `/build-info` endpoint.
-    vergen::EmitBuilder::builder()
-        .all_cargo()
-        .all_rustc()
-        .all_git()
-        .emit()
+    vergen::EmitBuilder::builder().all_cargo().all_rustc().all_git().emit()
 }

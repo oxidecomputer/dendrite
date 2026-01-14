@@ -68,14 +68,7 @@ async fn vlans_get(tfport: &str) -> anyhow::Result<BTreeMap<String, VlanInfo>> {
         let vid = fields[1].parse::<u16>().context("invalid vlan_id")?;
         let ifindex = crate::netsupport::get_ifindex(&link);
         let link_local = link_locals.get(&link).copied();
-        rval.insert(
-            link,
-            VlanInfo {
-                vid,
-                ifindex,
-                link_local,
-            },
-        );
+        rval.insert(link, VlanInfo { vid, ifindex, link_local });
     }
     Ok(rval)
 }
@@ -152,11 +145,7 @@ pub async fn ensure_vlans(g: &Global, link: &str) -> anyhow::Result<()> {
                 info!(g.log, "created vlan {vid}:{name} on {link}");
                 existing_vlans.insert(
                     name.to_string(),
-                    VlanInfo {
-                        vid,
-                        ifindex: None,
-                        link_local: None,
-                    },
+                    VlanInfo { vid, ifindex: None, link_local: None },
                 );
 
                 // Once the vlan is created, we can track it as a potential
@@ -226,10 +215,7 @@ pub fn init(csv_file: &str) -> anyhow::Result<Vec<Vlan>> {
     for entry in rdr.deserialize() {
         let e: PortMapEntry = entry?;
 
-        vlans.push(Vlan {
-            vid: e.port + 0x100,
-            name: e.vlan_name,
-        });
+        vlans.push(Vlan { vid: e.port + 0x100, name: e.vlan_name });
     }
     Ok(vlans)
 }

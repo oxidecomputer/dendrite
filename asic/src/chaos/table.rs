@@ -56,10 +56,7 @@ pub struct Table {
 impl TableOps<Handle> for Table {
     fn new(hdl: &Handle, name: &str) -> AsicResult<Table> {
         table_unfurl!(hdl, name, table_new);
-        Ok(Table {
-            name: name.into(),
-            keys: Mutex::new(HashSet::new()),
-        })
+        Ok(Table { name: name.into(), keys: Mutex::new(HashSet::new()) })
     }
 
     fn size(&self) -> usize {

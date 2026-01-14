@@ -40,34 +40,13 @@ const NAME_TO_TYPE: [(&str, TableType); 22] = [
     (nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4),
     (nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6),
     (port_nat::TABLE_NAME, TableType::NatOnly),
-    (
-        mcast::mcast_replication::IPV6_TABLE_NAME,
-        TableType::McastIpv6,
-    ),
-    (
-        mcast::mcast_src_filter::IPV4_TABLE_NAME,
-        TableType::McastIpv4SrcFilter,
-    ),
-    (
-        mcast::mcast_src_filter::IPV6_TABLE_NAME,
-        TableType::McastIpv6SrcFilter,
-    ),
-    (
-        mcast::mcast_nat::IPV4_TABLE_NAME,
-        TableType::NatIngressIpv4Mcast,
-    ),
-    (
-        mcast::mcast_nat::IPV6_TABLE_NAME,
-        TableType::NatIngressIpv6Mcast,
-    ),
-    (
-        mcast::mcast_route::IPV4_TABLE_NAME,
-        TableType::RouteIpv4Mcast,
-    ),
-    (
-        mcast::mcast_route::IPV6_TABLE_NAME,
-        TableType::RouteIpv6Mcast,
-    ),
+    (mcast::mcast_replication::IPV6_TABLE_NAME, TableType::McastIpv6),
+    (mcast::mcast_src_filter::IPV4_TABLE_NAME, TableType::McastIpv4SrcFilter),
+    (mcast::mcast_src_filter::IPV6_TABLE_NAME, TableType::McastIpv6SrcFilter),
+    (mcast::mcast_nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4Mcast),
+    (mcast::mcast_nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6Mcast),
+    (mcast::mcast_route::IPV4_TABLE_NAME, TableType::RouteIpv4Mcast),
+    (mcast::mcast_route::IPV6_TABLE_NAME, TableType::RouteIpv6Mcast),
     (mcast::mcast_port_mac::TABLE_NAME, TableType::PortMacMcast),
     (
         mcast::mcast_egress::DECAP_PORTS_TABLE_NAME,
@@ -236,9 +215,7 @@ impl Table {
         M: MatchParse,
         A: ActionParse,
     {
-        self.asic_data
-            .get_entries::<M, A>(hdl)
-            .map_err(|e| e.into())
+        self.asic_data.get_entries::<M, A>(hdl).map_err(|e| e.into())
     }
 
     /// Ask the ASIC-level code to fetch the counter data from the ASIC's
@@ -251,18 +228,12 @@ impl Table {
     where
         M: MatchParse,
     {
-        self.asic_data
-            .get_counters::<M>(hdl, force_sync)
-            .map_err(|e| e.into())
+        self.asic_data.get_counters::<M>(hdl, force_sync).map_err(|e| e.into())
     }
 }
 
 pub fn list(switch: &Switch) -> Vec<String> {
-    switch
-        .tables
-        .values()
-        .map(|t| t.lock().unwrap().name.to_string())
-        .collect()
+    switch.tables.values().map(|t| t.lock().unwrap().name.to_string()).collect()
 }
 
 /// Given the name of a table, call into the table-specific code to get the

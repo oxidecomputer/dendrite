@@ -56,18 +56,12 @@ progenitor::generate_api!(
 impl Client {
     /// Helper to create an `Ipv4Entry` from an address, using the client's tag.
     pub fn ipv4_entry(&self, addr: Ipv4Addr) -> types::Ipv4Entry {
-        types::Ipv4Entry {
-            tag: self.inner().tag.clone(),
-            addr,
-        }
+        types::Ipv4Entry { tag: self.inner().tag.clone(), addr }
     }
 
     /// Helper to create an `Ipv6Entry` from an address, using the client's tag.
     pub fn ipv6_entry(&self, addr: Ipv6Addr) -> types::Ipv6Entry {
-        types::Ipv6Entry {
-            tag: self.inner().tag.clone(),
-            addr,
-        }
+        types::Ipv6Entry { tag: self.inner().tag.clone(), addr }
     }
 }
 
@@ -247,19 +241,13 @@ impl From<network::MacAddr> for types::MacAddr {
 
 impl From<types::Ipv6Entry> for ports::Ipv6Entry {
     fn from(e: types::Ipv6Entry) -> Self {
-        ports::Ipv6Entry {
-            tag: e.tag,
-            addr: e.addr,
-        }
+        ports::Ipv6Entry { tag: e.tag, addr: e.addr }
     }
 }
 
 impl From<types::Ipv4Entry> for ports::Ipv4Entry {
     fn from(e: types::Ipv4Entry) -> Self {
-        ports::Ipv4Entry {
-            tag: e.tag,
-            addr: e.addr,
-        }
+        ports::Ipv4Entry { tag: e.tag, addr: e.addr }
     }
 }
 

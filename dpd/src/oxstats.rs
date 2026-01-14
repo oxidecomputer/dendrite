@@ -144,33 +144,15 @@ impl TableStats {
     pub fn new(table: SwitchTable) -> Self {
         TableStats {
             table,
-            capacity: Capacity {
-                datum: Default::default(),
-            },
-            occupancy: Occupancy {
-                datum: Default::default(),
-            },
-            inserts: Inserts {
-                datum: Default::default(),
-            },
-            deletes: Deletes {
-                datum: Default::default(),
-            },
-            updates: Updates {
-                datum: Default::default(),
-            },
-            collisions: Collisions {
-                datum: Default::default(),
-            },
-            update_misses: UpdateMisses {
-                datum: Default::default(),
-            },
-            delete_misses: DeleteMisses {
-                datum: Default::default(),
-            },
-            exhaustion: Exhaustion {
-                datum: Default::default(),
-            },
+            capacity: Capacity { datum: Default::default() },
+            occupancy: Occupancy { datum: Default::default() },
+            inserts: Inserts { datum: Default::default() },
+            deletes: Deletes { datum: Default::default() },
+            updates: Updates { datum: Default::default() },
+            collisions: Collisions { datum: Default::default() },
+            update_misses: UpdateMisses { datum: Default::default() },
+            delete_misses: DeleteMisses { datum: Default::default() },
+            exhaustion: Exhaustion { datum: Default::default() },
         }
     }
 
@@ -487,11 +469,7 @@ async fn get_oximeter_config(
         fetch_underlay_listen_address(switch, log, smf_rx.clone()).await?;
     let sled_identifiers = fetch_sled_identifiers(switch, log, smf_rx).await?;
     let switch_identifiers = wait_for_switch_identifiers(switch, log).await?;
-    Ok(OximeterConfig {
-        listen_address,
-        sled_identifiers,
-        switch_identifiers,
-    })
+    Ok(OximeterConfig { listen_address, sled_identifiers, switch_identifiers })
 }
 
 /// Extract the underlay IPv6 listening address we're provided in our SMF
@@ -510,17 +488,14 @@ async fn fetch_underlay_listen_address(
     loop {
         // Find any non-localhost IPv6 address. That should be reachable by
         // Oximeter, since it's on the underlay.
-        let maybe_listen_addr = switch
-            .config
-            .lock()
-            .unwrap()
-            .listen_addresses
-            .iter()
-            .find_map(|addr| match addr.ip() {
-                IpAddr::V4(_) => None,
-                IpAddr::V6(v6) if v6 == Ipv6Addr::LOCALHOST => None,
-                IpAddr::V6(v6) => Some(v6),
-            });
+        let maybe_listen_addr =
+            switch.config.lock().unwrap().listen_addresses.iter().find_map(
+                |addr| match addr.ip() {
+                    IpAddr::V4(_) => None,
+                    IpAddr::V6(v6) if v6 == Ipv6Addr::LOCALHOST => None,
+                    IpAddr::V6(v6) => Some(v6),
+                },
+            );
         if let Some(listen_address) = maybe_listen_addr {
             info!(
                 log,
@@ -665,10 +640,8 @@ pub async fn oximeter_register(
             ^ config.switch_identifiers.sidecar_id.as_u128(),
     );
     debug!(log, "created producer ID"; "producer_id" => %producer_id);
-    let metadata = OximeterMetadata {
-        config: config.clone(),
-        registered_at: None,
-    };
+    let metadata =
+        OximeterMetadata { config: config.clone(), registered_at: None };
     let old = switch.oximeter_meta.lock().unwrap().replace(metadata);
     assert!(old.is_none());
 

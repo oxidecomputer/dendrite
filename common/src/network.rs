@@ -56,15 +56,11 @@ impl From<[u8; 6]> for MacAddr {
 impl MacAddr {
     /// Oxide's Organizationally Unique Identifier.
     pub const OXIDE_OUI: [u8; 3] = [0xa8, 0x40, 0x25];
-    pub const ZERO: Self = MacAddr {
-        a: [0, 0, 0, 0, 0, 0],
-    };
+    pub const ZERO: Self = MacAddr { a: [0, 0, 0, 0, 0, 0] };
 
     /// Create a new MAC address from octets in network byte order.
     pub fn new(o0: u8, o1: u8, o2: u8, o3: u8, o4: u8, o5: u8) -> MacAddr {
-        MacAddr {
-            a: [o0, o1, o2, o3, o4, o5],
-        }
+        MacAddr { a: [o0, o1, o2, o3, o4, o5] }
     }
 
     /// Create a new MAC address from a slice of bytes in network byte order.
@@ -80,16 +76,12 @@ impl MacAddr {
 
     /// Convert `self` to an array of bytes in network byte order.
     pub fn to_vec(self) -> Vec<u8> {
-        vec![
-            self.a[0], self.a[1], self.a[2], self.a[3], self.a[4], self.a[5],
-        ]
+        vec![self.a[0], self.a[1], self.a[2], self.a[3], self.a[4], self.a[5]]
     }
 
     /// Return `true` if `self` is the null MAC address, all zeros.
     pub fn is_null(self) -> bool {
-        const EMPTY: MacAddr = MacAddr {
-            a: [0, 0, 0, 0, 0, 0],
-        };
+        const EMPTY: MacAddr = MacAddr { a: [0, 0, 0, 0, 0, 0] };
 
         self == EMPTY
     }
@@ -241,11 +233,7 @@ pub enum VlanError {
 pub fn validate_vlan(id: impl Into<u16>) -> Result<(), VlanError> {
     let id: u16 = id.into();
     #[allow(clippy::manual_range_contains)]
-    if id < 2 || id > 4095 {
-        Err(VlanError::InvalidVlan(id))
-    } else {
-        Ok(())
-    }
+    if id < 2 || id > 4095 { Err(VlanError::InvalidVlan(id)) } else { Ok(()) }
 }
 
 #[cfg(test)]

@@ -117,9 +117,6 @@ pub(crate) fn new_dpd_client(port: u16) -> Client {
 
     Client::new(
         &format!("http://localhost:{}", port),
-        ClientState {
-            tag: "tenagra".into(),
-            log,
-        },
+        ClientState { tag: "tenagra".into(), log },
     )
 }

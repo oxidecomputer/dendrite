@@ -40,11 +40,7 @@ impl Vni {
     /// Construct a new VNI, validating that it's a valid 24-bit value.
     pub const fn new(vni: u32) -> Option<Self> {
         // bool.then_some is not const, unforunately
-        if vni <= Self::MAX_VNI {
-            Some(Self(vni))
-        } else {
-            None
-        }
+        if vni <= Self::MAX_VNI { Some(Self(vni)) } else { None }
     }
 
     /// Return the VNI as a u32.

@@ -112,14 +112,8 @@ fn set_port_prop(name: &str, value: &str) {
 #[ignore]
 fn test_mac() {
     let test = SetTest {
-        port: PropertyValue {
-            name: "mac",
-            value: "a8:40:25:ff:ff:01",
-        },
-        link: PropertyValue {
-            name: "mac",
-            value: "a8:40:25:ff:ff:02",
-        },
+        port: PropertyValue { name: "mac", value: "a8:40:25:ff:ff:01" },
+        link: PropertyValue { name: "mac", value: "a8:40:25:ff:ff:02" },
     };
     test.run();
 }
@@ -128,14 +122,8 @@ fn test_mac() {
 #[ignore]
 fn test_an() {
     let test = SetTest {
-        port: PropertyValue {
-            name: "an",
-            value: "true",
-        },
-        link: PropertyValue {
-            name: "an",
-            value: "false",
-        },
+        port: PropertyValue { name: "an", value: "true" },
+        link: PropertyValue { name: "an", value: "false" },
     };
     test.run();
 }
@@ -144,14 +132,8 @@ fn test_an() {
 #[ignore]
 fn test_kr() {
     let test = SetTest {
-        port: PropertyValue {
-            name: "kr",
-            value: "true",
-        },
-        link: PropertyValue {
-            name: "kr",
-            value: "false",
-        },
+        port: PropertyValue { name: "kr", value: "true" },
+        link: PropertyValue { name: "kr", value: "false" },
     };
     test.run();
 }
@@ -160,14 +142,8 @@ fn test_kr() {
 #[ignore]
 fn test_enable() {
     let test = SetTest {
-        port: PropertyValue {
-            name: "ena",
-            value: "true",
-        },
-        link: PropertyValue {
-            name: "ena",
-            value: "false",
-        },
+        port: PropertyValue { name: "ena", value: "true" },
+        link: PropertyValue { name: "ena", value: "false" },
     };
     test.run();
 }
@@ -187,13 +163,7 @@ fn test_ip_addresses() {
 
     // Check that both schemes have the same addresses.
     let port_addrs = String::from_utf8(
-        swadm()
-            .arg("addr")
-            .arg("list")
-            .arg(PORT)
-            .output()
-            .unwrap()
-            .stdout,
+        swadm().arg("addr").arg("list").arg(PORT).output().unwrap().stdout,
     )
     .unwrap();
     let link_addrs = String::from_utf8(
@@ -221,13 +191,7 @@ fn test_ip_addresses() {
             .unwrap();
     }
     let port_addrs: Vec<IpAddr> = String::from_utf8(
-        swadm()
-            .arg("addr")
-            .arg("list")
-            .arg(PORT)
-            .output()
-            .unwrap()
-            .stdout,
+        swadm().arg("addr").arg("list").arg(PORT).output().unwrap().stdout,
     )
     .unwrap()
     .lines()
@@ -263,13 +227,7 @@ fn test_ip_addresses() {
             .unwrap();
     }
     let port_addrs: Vec<IpAddr> = String::from_utf8(
-        swadm()
-            .arg("addr")
-            .arg("list")
-            .arg(PORT)
-            .output()
-            .unwrap()
-            .stdout,
+        swadm().arg("addr").arg("list").arg(PORT).output().unwrap().stdout,
     )
     .unwrap()
     .lines()

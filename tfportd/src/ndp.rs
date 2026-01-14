@@ -167,22 +167,15 @@ fn parse_ndp(line: &str) -> anyhow::Result<Ndp> {
     }
 
     let iface = fields[0].to_string();
-    let mac = fields[1]
-        .parse()
-        .map_err(|_| anyhow!("bad mac: {}:", fields[1]))?;
+    let mac =
+        fields[1].parse().map_err(|_| anyhow!("bad mac: {}:", fields[1]))?;
     let ntype = fields[2].parse().map_err(|e: String| anyhow!(e))?;
     let state = fields[3].parse().map_err(|e: String| anyhow!(e))?;
     let ip = fields[4]
         .parse()
         .map_err(|_| anyhow!("bad IP address: {}:", fields[1]))?;
 
-    Ok(Ndp {
-        iface,
-        mac,
-        ip,
-        _ntype: ntype,
-        _state: state,
-    })
+    Ok(Ndp { iface, mac, ip, _ntype: ntype, _state: state })
 }
 
 // ndp doesn't have a "parseable" output option, so we have to do it by hand.  We

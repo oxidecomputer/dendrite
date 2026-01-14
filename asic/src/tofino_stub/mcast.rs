@@ -114,7 +114,5 @@ impl McGroupData {
 }
 
 pub fn init() -> McGroupData {
-    McGroupData {
-        groups: HashMap::new(),
-    }
+    McGroupData { groups: HashMap::new() }
 }

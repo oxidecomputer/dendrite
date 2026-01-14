@@ -72,17 +72,11 @@ const REPAIR_ATTEMPTS: usize = 3;
 fn match_keys_ipv4(ipv4: Ipv4Addr, port: u16) -> (Ipv4MatchKey, Ipv4MatchKey) {
     let claim_key = Ipv4MatchKey {
         dst_addr: ipv4,
-        in_port: MatchMask {
-            val: port.into(),
-            mask: 0x1ffu16.into(),
-        },
+        in_port: MatchMask { val: port.into(), mask: 0x1ffu16.into() },
     };
     let drop_key = Ipv4MatchKey {
         dst_addr: ipv4,
-        in_port: MatchMask {
-            val: port.into(),
-            mask: 0u16.into(),
-        },
+        in_port: MatchMask { val: port.into(), mask: 0u16.into() },
     };
     (claim_key, drop_key)
 }
@@ -90,17 +84,11 @@ fn match_keys_ipv4(ipv4: Ipv4Addr, port: u16) -> (Ipv4MatchKey, Ipv4MatchKey) {
 fn match_keys_ipv6(ipv6: Ipv6Addr, port: u16) -> (Ipv6MatchKey, Ipv6MatchKey) {
     let claim_key = Ipv6MatchKey {
         dst_addr: ipv6,
-        in_port: MatchMask {
-            val: port.into(),
-            mask: 0x1ffu16.into(),
-        },
+        in_port: MatchMask { val: port.into(), mask: 0x1ffu16.into() },
     };
     let drop_key = Ipv6MatchKey {
         dst_addr: ipv6,
-        in_port: MatchMask {
-            val: 0u16.into(),
-            mask: 0u16.into(),
-        },
+        in_port: MatchMask { val: 0u16.into(), mask: 0u16.into() },
     };
     (claim_key, drop_key)
 }
@@ -108,10 +96,7 @@ fn match_keys_ipv6(ipv6: Ipv6Addr, port: u16) -> (Ipv6MatchKey, Ipv6MatchKey) {
 pub fn loopback_ipv4_add(s: &Switch, ipv4: Ipv4Addr) -> DpdResult<()> {
     let claim_key = Ipv4MatchKey {
         dst_addr: ipv4,
-        in_port: MatchMask {
-            val: 0u16.into(),
-            mask: 0u16.into(),
-        },
+        in_port: MatchMask { val: 0u16.into(), mask: 0u16.into() },
     };
     s.table_entry_add(TableType::PortIpv4, &claim_key, &ActionV4::ClaimIpv4)
         .map(|_| info!(s.log, "added ipv4 loopback"; "addr" => %ipv4))
@@ -125,10 +110,7 @@ pub fn loopback_ipv4_add(s: &Switch, ipv4: Ipv4Addr) -> DpdResult<()> {
 pub fn loopback_ipv4_delete(s: &Switch, ipv4: Ipv4Addr) -> DpdResult<()> {
     let claim_key = Ipv4MatchKey {
         dst_addr: ipv4,
-        in_port: MatchMask {
-            val: 0u16.into(),
-            mask: 0u16.into(),
-        },
+        in_port: MatchMask { val: 0u16.into(), mask: 0u16.into() },
     };
     s.table_entry_del(TableType::PortIpv4, &claim_key)
         .map(|_| info!(s.log, "deleted ipv4 loopback"; "addr" => %ipv4))
@@ -142,10 +124,7 @@ pub fn loopback_ipv4_delete(s: &Switch, ipv4: Ipv4Addr) -> DpdResult<()> {
 pub fn loopback_ipv6_add(s: &Switch, ipv6: Ipv6Addr) -> DpdResult<()> {
     let claim_key = Ipv6MatchKey {
         dst_addr: ipv6,
-        in_port: MatchMask {
-            val: 0u16.into(),
-            mask: 0u16.into(),
-        },
+        in_port: MatchMask { val: 0u16.into(), mask: 0u16.into() },
     };
     s.table_entry_add(TableType::PortIpv6, &claim_key, &ActionV6::ClaimIpv6)
         .map(|_| info!(s.log, "added ipv6 loopback"; "addr" => %ipv6))
@@ -159,10 +138,7 @@ pub fn loopback_ipv6_add(s: &Switch, ipv6: Ipv6Addr) -> DpdResult<()> {
 pub fn loopback_ipv6_delete(s: &Switch, ipv6: Ipv6Addr) -> DpdResult<()> {
     let claim_key = Ipv6MatchKey {
         dst_addr: ipv6,
-        in_port: MatchMask {
-            val: 0u16.into(),
-            mask: 0u16.into(),
-        },
+        in_port: MatchMask { val: 0u16.into(), mask: 0u16.into() },
     };
     s.table_entry_del(TableType::PortIpv6, &claim_key)
         .map(|_| info!(s.log, "deleted ipv6 loopback"; "addr" => %ipv6))
@@ -225,20 +201,19 @@ fn ipv4_delete_work(s: &Switch, port: u16, ipv4: Ipv4Addr) -> DpdResult<()> {
     let (claim_key, drop_key) = match_keys_ipv4(ipv4, port);
 
     s.table_entry_del(TableType::PortIpv4, &claim_key)?;
-    s.table_entry_del(TableType::PortIpv4, &drop_key)
-        .inspect_err(|_| {
-            endeavour_to_repair(
-                s,
-                format!("ipv4 address {ipv4} only half deleted"),
-                || {
-                    s.table_entry_add(
-                        TableType::PortIpv4,
-                        &claim_key,
-                        &ActionV4::ClaimIpv4,
-                    )
-                },
-            );
-        })
+    s.table_entry_del(TableType::PortIpv4, &drop_key).inspect_err(|_| {
+        endeavour_to_repair(
+            s,
+            format!("ipv4 address {ipv4} only half deleted"),
+            || {
+                s.table_entry_add(
+                    TableType::PortIpv4,
+                    &claim_key,
+                    &ActionV4::ClaimIpv4,
+                )
+            },
+        );
+    })
 }
 
 /// Delete one IPv4 address from the ASIC tables.
@@ -303,20 +278,19 @@ fn ipv6_delete_work(s: &Switch, port: u16, ipv6: Ipv6Addr) -> DpdResult<()> {
     let (claim_key, drop_key) = match_keys_ipv6(ipv6, port);
 
     s.table_entry_del(TableType::PortIpv6, &claim_key)?;
-    s.table_entry_del(TableType::PortIpv6, &drop_key)
-        .inspect_err(|_| {
-            endeavour_to_repair(
-                s,
-                format!("ipv6 address {ipv6} only half deleted"),
-                || {
-                    s.table_entry_add(
-                        TableType::PortIpv6,
-                        &claim_key,
-                        &ActionV6::ClaimIpv6,
-                    )
-                },
-            );
-        })
+    s.table_entry_del(TableType::PortIpv6, &drop_key).inspect_err(|_| {
+        endeavour_to_repair(
+            s,
+            format!("ipv6 address {ipv6} only half deleted"),
+            || {
+                s.table_entry_add(
+                    TableType::PortIpv6,
+                    &claim_key,
+                    &ActionV6::ClaimIpv6,
+                )
+            },
+        );
+    })
 }
 
 /// Delete one IPv6 address from the ASIC tables.

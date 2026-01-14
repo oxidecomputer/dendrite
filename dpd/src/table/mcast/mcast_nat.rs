@@ -27,21 +27,13 @@ pub(crate) const IPV6_TABLE_NAME: &str =
 #[derive(ActionParse, Debug)]
 enum Ipv4Action {
     #[action_xlate(name = "mcast_forward_ipv4_to")]
-    Forward {
-        target: Ipv6Addr,
-        inner_mac: MacAddr,
-        vni: u32,
-    },
+    Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
 
 #[derive(ActionParse, Debug)]
 enum Ipv6Action {
     #[action_xlate(name = "mcast_forward_ipv6_to")]
-    Forward {
-        target: Ipv6Addr,
-        inner_mac: MacAddr,
-        vni: u32,
-    },
+    Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
 
 /// Add a NAT entry for IPv4 multicast traffic, keyed on `ip`.
@@ -57,10 +49,7 @@ pub(crate) fn add_ipv4_entry(
         vni: tgt.vni.as_u32(),
     };
 
-    debug!(
-        s.log,
-        "add ingress mcast entry {} -> {:?}", match_key, action_key
-    );
+    debug!(s.log, "add ingress mcast entry {} -> {:?}", match_key, action_key);
 
     s.table_entry_add(TableType::NatIngressIpv4Mcast, &match_key, &action_key)
 }
@@ -130,10 +119,7 @@ pub(crate) fn add_ipv6_entry(
         vni: tgt.vni.as_u32(),
     };
 
-    debug!(
-        s.log,
-        "add ingress mcast entry {} -> {:?}", match_key, action_key
-    );
+    debug!(s.log, "add ingress mcast entry {} -> {:?}", match_key, action_key);
 
     s.table_entry_add(TableType::NatIngressIpv6Mcast, &match_key, &action_key)
 }
