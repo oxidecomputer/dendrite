@@ -68,12 +68,12 @@ use common::{nat::NatTarget, ports::PortId};
 use dpd_types::{
     link::LinkId,
     mcast::{
-        AdminScopedIpv6, Direction, ExternalForwarding, InternalForwarding,
-        IpSrc, MulticastGroupCreateExternalEntry,
-        MulticastGroupCreateUnderlayEntry, MulticastGroupExternalResponse,
-        MulticastGroupId, MulticastGroupMember, MulticastGroupResponse,
-        MulticastGroupUnderlayResponse, MulticastGroupUpdateExternalEntry,
-        MulticastGroupUpdateUnderlayEntry,
+        Direction, ExternalForwarding, InternalForwarding, IpSrc,
+        MulticastGroupCreateExternalEntry, MulticastGroupCreateUnderlayEntry,
+        MulticastGroupExternalResponse, MulticastGroupId, MulticastGroupMember,
+        MulticastGroupResponse, MulticastGroupUnderlayResponse,
+        MulticastGroupUpdateExternalEntry, MulticastGroupUpdateUnderlayEntry,
+        UnderlayMulticastIpv6,
     },
 };
 use oxnet::{Ipv4Net, Ipv6Net};
@@ -188,7 +188,7 @@ impl MulticastGroup {
 
     fn to_underlay_response(
         &self,
-        group_ip: AdminScopedIpv6,
+        group_ip: UnderlayMulticastIpv6,
     ) -> MulticastGroupUnderlayResponse {
         MulticastGroupUnderlayResponse {
             group_ip,
@@ -205,8 +205,8 @@ impl MulticastGroup {
                 self.to_external_response(group_ip),
             ),
             IpAddr::V6(ipv6) => {
-                // Try to create AdminScopedIpv6 - if successful, it's an underlay group
-                match AdminScopedIpv6::new(ipv6) {
+                // Try to create UnderlayMulticastIpv6 - if successful, it's an underlay group
+                match UnderlayMulticastIpv6::new(ipv6) {
                     Ok(admin_scoped) => MulticastGroupResponse::Underlay(
                         self.to_underlay_response(admin_scoped),
                     ),
@@ -229,7 +229,7 @@ pub struct MulticastGroupData {
     free_group_ids: Arc<Mutex<Vec<MulticastGroupId>>>,
     /// 1:1 mapping from admin-local group IP to external group that uses it as NAT
     /// target (admin_local_ip -> external_group_ip)
-    nat_target_refs: BTreeMap<AdminScopedIpv6, IpAddr>,
+    nat_target_refs: BTreeMap<UnderlayMulticastIpv6, IpAddr>,
 }
 
 impl MulticastGroupData {
@@ -277,14 +277,14 @@ impl MulticastGroupData {
     fn add_forwarding_refs(
         &mut self,
         external_group_ip: IpAddr,
-        admin_scoped_ip: AdminScopedIpv6,
+        admin_scoped_ip: UnderlayMulticastIpv6,
     ) {
         self.nat_target_refs
             .insert(admin_scoped_ip, external_group_ip);
     }
 
     /// Remove 1:1 forwarding reference.
-    fn rm_forwarding_refs(&mut self, admin_scoped_ip: AdminScopedIpv6) {
+    fn rm_forwarding_refs(&mut self, admin_scoped_ip: UnderlayMulticastIpv6) {
         self.nat_target_refs.remove(&admin_scoped_ip);
     }
 
@@ -292,7 +292,7 @@ impl MulticastGroupData {
     /// the referencing external group (1:1 mapping).
     fn get_vlan_for_internal_addr(
         &self,
-        internal_ip: AdminScopedIpv6,
+        internal_ip: UnderlayMulticastIpv6,
     ) -> Option<u16> {
         self.nat_target_refs
             .get(&internal_ip)
@@ -381,7 +381,7 @@ pub(crate) fn add_group_external(
     // If adding fallible operations here, consider adding VLAN propagation rollback.
 
     // This validation already passed in validate_nat_target, so it cannot fail here
-    let admin_local_ip = AdminScopedIpv6::new(nat_target.internal_ip)?;
+    let admin_local_ip = UnderlayMulticastIpv6::new(nat_target.internal_ip)?;
 
     let tag = match &group_info.tag {
         Some(t) => {
@@ -551,7 +551,7 @@ pub(crate) fn del_group(
     // Check if this is an internal group referenced by an external group.
     // Internal groups are identified by admin-scoped IPv6 addresses (ff04::/16).
     if let IpAddr::V6(ipv6) = group_ip
-        && let Ok(admin_scoped) = AdminScopedIpv6::new(ipv6)
+        && let Ok(admin_scoped) = UnderlayMulticastIpv6::new(ipv6)
         && let Some(external_ip) = mcast.nat_target_refs.get(&admin_scoped)
     {
         return Err(DpdError::Invalid(format!(
@@ -591,7 +591,7 @@ pub(crate) fn del_group(
     }
 
     if let Some(IpAddr::V6(ipv6)) = nat_target_to_remove {
-        mcast.rm_forwarding_refs(AdminScopedIpv6::new(ipv6)?);
+        mcast.rm_forwarding_refs(UnderlayMulticastIpv6::new(ipv6)?);
     }
 
     Ok(())
@@ -600,7 +600,7 @@ pub(crate) fn del_group(
 /// Get an internal multicast group configuration by admin-local IPv6 address.
 pub(crate) fn get_group_internal(
     s: &Switch,
-    admin_local: AdminScopedIpv6,
+    admin_local: UnderlayMulticastIpv6,
 ) -> DpdResult<MulticastGroupUnderlayResponse> {
     let mcast = s.mcast.lock().expect("multicast data lock poisoned");
     let group_ip = IpAddr::V6(admin_local.into());
@@ -690,8 +690,8 @@ pub(crate) fn modify_group_external(
 
         if old_internal_ip != new_internal_ip {
             // Validate both IPs before mutating state to avoid partial updates
-            let old_admin = AdminScopedIpv6::new(old_internal_ip)?;
-            let new_admin = AdminScopedIpv6::new(new_internal_ip)?;
+            let old_admin = UnderlayMulticastIpv6::new(old_internal_ip)?;
+            let new_admin = UnderlayMulticastIpv6::new(new_internal_ip)?;
             mcast.rm_forwarding_refs(old_admin);
             mcast.add_forwarding_refs(group_ip, new_admin);
         }
@@ -750,8 +750,8 @@ pub(crate) fn modify_group_external(
                 if old_internal_ip != new_internal_ip {
                     // Restore original references (reverse of what we did above)
                     if let (Ok(old_admin), Ok(new_admin)) = (
-                        AdminScopedIpv6::new(old_internal_ip),
-                        AdminScopedIpv6::new(new_internal_ip),
+                        UnderlayMulticastIpv6::new(old_internal_ip),
+                        UnderlayMulticastIpv6::new(new_internal_ip),
                     ) {
                         mcast.rm_forwarding_refs(new_admin);
                         mcast.add_forwarding_refs(group_ip, old_admin);
@@ -774,7 +774,7 @@ pub(crate) fn modify_group_external(
 
 pub(crate) fn modify_group_internal(
     s: &Switch,
-    group_ip: AdminScopedIpv6,
+    group_ip: UnderlayMulticastIpv6,
     tag: &str,
     new_group_info: MulticastGroupUpdateUnderlayEntry,
 ) -> DpdResult<MulticastGroupUnderlayResponse> {
@@ -1319,7 +1319,7 @@ fn add_ipv6_source_filters(
 
 fn validate_internal_group_creation(
     mcast: &MulticastGroupData,
-    group_ip: AdminScopedIpv6,
+    group_ip: UnderlayMulticastIpv6,
 ) -> DpdResult<()> {
     validate_group_exists(mcast, group_ip.into())?;
     Ok(())

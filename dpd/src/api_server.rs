@@ -24,6 +24,7 @@ use dpd_types::mcast::MulticastGroupResponse;
 use dpd_types::mcast::MulticastGroupUnderlayResponse;
 use dpd_types::mcast::MulticastGroupUpdateExternalEntry;
 use dpd_types::mcast::MulticastGroupUpdateUnderlayEntry;
+use dpd_types::mcast::UnderlayMulticastIpv6;
 use dpd_types::oxstats::OximeterMetadata;
 use dpd_types::port_map::BackplaneLink;
 use dpd_types::route::Ipv4Route;
@@ -1958,7 +1959,7 @@ impl DpdApi for DpdApiImpl {
 
     async fn multicast_group_update_underlay_v3(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<MulticastUnderlayGroupIpParam>,
+        path: Path<dpd_api::v3::MulticastUnderlayGroupIpParam>,
         group: TypedBody<dpd_api::v3::MulticastGroupUpdateUnderlayEntry>,
     ) -> Result<
         HttpResponseOk<dpd_api::v3::MulticastGroupUnderlayResponse>,
@@ -1966,19 +1967,48 @@ impl DpdApi for DpdApiImpl {
     > {
         let switch: &Switch = rqctx.context();
         let admin_scoped = path.into_inner().group_ip;
+        let underlay =
+            UnderlayMulticastIpv6::try_from(admin_scoped).map_err(|e| {
+                HttpError::for_bad_request(
+                    None,
+                    format!("invalid group_ip: {e}"),
+                )
+            })?;
         let entry = group.into_inner();
 
         // Lookup current tag for backward compat (v1-v3 clients may omit tag)
         let tag = match entry.tag.as_ref() {
             Some(t) => t.clone(),
             None => {
-                mcast::get_group_internal(switch, admin_scoped)
+                mcast::get_group_internal(switch, underlay)
                     .map_err(HttpError::from)?
                     .tag
             }
         };
 
-        mcast::modify_group_internal(switch, admin_scoped, &tag, entry.into())
+        mcast::modify_group_internal(switch, underlay, &tag, entry.into())
+            .map(|resp| HttpResponseOk(resp.into()))
+            .map_err(HttpError::from)
+    }
+
+    async fn multicast_group_get_underlay_v3(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<dpd_api::v3::MulticastUnderlayGroupIpParam>,
+    ) -> Result<
+        HttpResponseOk<dpd_api::v3::MulticastGroupUnderlayResponse>,
+        HttpError,
+    > {
+        let switch: &Switch = rqctx.context();
+        let admin_scoped = path.into_inner().group_ip;
+        let underlay =
+            UnderlayMulticastIpv6::try_from(admin_scoped).map_err(|e| {
+                HttpError::for_bad_request(
+                    None,
+                    format!("invalid group_ip: {e}"),
+                )
+            })?;
+
+        mcast::get_group_internal(switch, underlay)
             .map(|resp| HttpResponseOk(resp.into()))
             .map_err(HttpError::from)
     }
@@ -1988,9 +2018,9 @@ impl DpdApi for DpdApiImpl {
         path: Path<MulticastUnderlayGroupIpParam>,
     ) -> Result<HttpResponseOk<MulticastGroupUnderlayResponse>, HttpError> {
         let switch: &Switch = rqctx.context();
-        let admin_scoped = path.into_inner().group_ip;
+        let underlay = path.into_inner().group_ip;
 
-        mcast::get_group_internal(switch, admin_scoped)
+        mcast::get_group_internal(switch, underlay)
             .map(HttpResponseOk)
             .map_err(HttpError::from)
     }

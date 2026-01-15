@@ -15,10 +15,12 @@ use crate::integration_tests::common::prelude::*;
 use ::common::network::MacAddr;
 use anyhow::anyhow;
 use dpd_client::{Error, types};
-use dpd_types::mcast::ADMIN_LOCAL_PREFIX;
 use futures::TryStreamExt;
 use oxnet::MulticastMac;
 use packet::{Endpoint, eth, geneve, ipv4, ipv6, udp};
+
+/// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
+const ADMIN_LOCAL_PREFIX: u16 = 0xFF04;
 
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
 const MULTICAST_TEST_IPV6: Ipv6Addr =
@@ -45,7 +47,7 @@ trait ToIpAddr {
     fn to_ip_addr(&self) -> IpAddr;
 }
 
-impl ToIpAddr for types::AdminScopedIpv6 {
+impl ToIpAddr for types::UnderlayMulticastIpv6 {
     fn to_ip_addr(&self) -> IpAddr {
         IpAddr::V6(self.0)
     }
@@ -135,7 +137,7 @@ async fn create_test_multicast_group(
                 .is_admin_local_multicast()
             {
                 // Admin-local IPv6 groups are internal
-                let admin_local_ip = types::AdminScopedIpv6(ipv6);
+                let admin_local_ip = types::UnderlayMulticastIpv6(ipv6);
                 let internal_entry = types::MulticastGroupCreateUnderlayEntry {
                     group_ip: admin_local_ip,
                     tag: tag.map(String::from),
@@ -3310,7 +3312,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
     switch
         .client
         .multicast_group_update_underlay(
-            &types::AdminScopedIpv6(ipv6),
+            &types::UnderlayMulticastIpv6(ipv6),
             &make_tag(TEST_TAG),
             &internal_update_entry,
         )
@@ -3630,7 +3632,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     let ipv6 = Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 2);
 
     let group_entry2b = types::MulticastGroupCreateUnderlayEntry {
-        group_ip: types::AdminScopedIpv6(ipv6),
+        group_ip: types::UnderlayMulticastIpv6(ipv6),
         tag: Some(TEST_TAG.to_string()),
         members: vec![types::MulticastGroupMember {
             port_id: switch.link_id(egress1).unwrap().0,
@@ -4776,7 +4778,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         members: vec![external_member1, external_member2, underlay_member],
     };
 
-    let ipv6_update = types::AdminScopedIpv6(match internal_group_ip {
+    let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
         _ => panic!("Expected IPv6 address"),
     });
@@ -4912,7 +4914,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         members: vec![], // Remove all members
     };
 
-    let ipv6_update = types::AdminScopedIpv6(match internal_group_ip {
+    let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
         _ => panic!("Expected IPv6 address"),
     });
@@ -5142,7 +5144,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         members: vec![external_member1, external_member2, underlay_member],
     };
 
-    let ipv6_update = types::AdminScopedIpv6(match internal_group_ip {
+    let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
         _ => panic!("Expected IPv6 address"),
     });
@@ -5278,7 +5280,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         members: vec![], // Remove all members
     };
 
-    let ipv6_update = types::AdminScopedIpv6(match internal_group_ip {
+    let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
         _ => panic!("Expected IPv6 address"),
     });
@@ -5559,7 +5561,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
         members: invalid_members,
     };
 
-    let ipv6_update = types::AdminScopedIpv6(match internal_group_ip {
+    let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
         _ => panic!("Expected IPv6 address"),
     });
@@ -6046,7 +6048,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
         members: mixed_members,
     };
 
-    let ipv6_update = types::AdminScopedIpv6(match internal_group_ip {
+    let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
         _ => panic!("Expected IPv6 address"),
     });
@@ -6246,7 +6248,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
 
     let retrieved_underlay = switch
         .client
-        .multicast_group_get_underlay(&types::AdminScopedIpv6(
+        .multicast_group_get_underlay(&types::UnderlayMulticastIpv6(
             match internal_group_ip {
                 IpAddr::V6(ipv6) => ipv6,
                 _ => panic!("Expected IPv6 address"),
@@ -6849,7 +6851,7 @@ async fn test_update_nonexistent_group_returns_404() -> TestResult {
     let switch = &*get_switch().await;
 
     // Case: Update non-existent underlay group
-    let nonexistent_underlay: types::AdminScopedIpv6 =
+    let nonexistent_underlay: types::UnderlayMulticastIpv6 =
         Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0xdead)
             .try_into()
             .unwrap();
@@ -6950,7 +6952,7 @@ async fn test_delete_nonexistent_group_returns_404() -> TestResult {
 async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
     let switch = &*get_switch().await;
 
-    let group_ip: types::AdminScopedIpv6 =
+    let group_ip: types::UnderlayMulticastIpv6 =
         Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0x501)
             .try_into()
             .unwrap();

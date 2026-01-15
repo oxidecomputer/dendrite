@@ -288,7 +288,9 @@ pub(crate) fn validate_tag(
 mod tests {
     use super::*;
     use common::{nat::Vni, network::MacAddr};
-    use dpd_types::mcast::ADMIN_LOCAL_PREFIX;
+
+    /// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
+    const ADMIN_LOCAL_PREFIX: u16 = 0xff04;
 
     #[test]
     fn test_ipv4_validation() {

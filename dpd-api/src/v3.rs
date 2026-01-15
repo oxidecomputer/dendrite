@@ -6,18 +6,101 @@
 
 //! Types from API version 3 that changed in version 4.
 //!
-//! The `tag` field in response types changed from `Option<String>` to `String`
-//! since all groups now have default tags generated at creation time, and API
-//! version 4 introduced tag validation for updates and deletes.
+//! Changes in v4 (MCAST_STRICT_UNDERLAY):
+//! - The `tag` field in response types changed from `Option<String>` to `String`
+//!   since all groups now have default tags generated at creation time.
+//! - Tag validation is now required for updates and deletes.
+//! - `AdminScopedIpv6` was renamed to `UnderlayMulticastIpv6` and validation
+//!   was tightened from ff04::/16 to ff04::/64.
 
-use std::net::IpAddr;
-
-use dpd_types::mcast::{
-    AdminScopedIpv6, ExternalForwarding, InternalForwarding, IpSrc,
-    MulticastGroupId, MulticastGroupMember,
+use std::{
+    fmt,
+    net::{IpAddr, Ipv6Addr},
 };
+
+use oxnet::Ipv6Net;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use dpd_types::mcast::{
+    ExternalForwarding, InternalForwarding, IpSrc, MulticastGroupId,
+    MulticastGroupMember, UnderlayMulticastIpv6,
+};
+
+/// A validated admin-local IPv6 multicast address (API version 3).
+///
+/// In v3, admin-local addresses are validated against ff04::/16 (scope 4).
+/// In v4+, this was renamed to `UnderlayMulticastIpv6` and tightened to
+/// ff04::/64 to match Omicron's underlay multicast subnet allocation.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+)]
+#[serde(try_from = "Ipv6Addr", into = "Ipv6Addr")]
+pub struct AdminScopedIpv6(Ipv6Addr);
+
+impl AdminScopedIpv6 {
+    /// Create a new AdminScopedIpv6 if the address is admin-local (ff04::/16).
+    pub fn new(addr: Ipv6Addr) -> Result<Self, String> {
+        if !Ipv6Net::new_unchecked(addr, 128).is_admin_local_multicast() {
+            return Err(format!(
+                "Address {} is not admin-local (must be ff04::/16)",
+                addr
+            ));
+        }
+        Ok(Self(addr))
+    }
+}
+
+impl TryFrom<Ipv6Addr> for AdminScopedIpv6 {
+    type Error = String;
+
+    fn try_from(addr: Ipv6Addr) -> Result<Self, Self::Error> {
+        Self::new(addr)
+    }
+}
+
+impl From<AdminScopedIpv6> for Ipv6Addr {
+    fn from(admin: AdminScopedIpv6) -> Self {
+        admin.0
+    }
+}
+
+impl From<AdminScopedIpv6> for IpAddr {
+    fn from(admin: AdminScopedIpv6) -> Self {
+        IpAddr::V6(admin.0)
+    }
+}
+
+impl From<UnderlayMulticastIpv6> for AdminScopedIpv6 {
+    fn from(underlay: UnderlayMulticastIpv6) -> Self {
+        // UnderlayMulticastIpv6 is a subset of AdminScopedIpv6, so this is safe
+        Self(underlay.into())
+    }
+}
+
+impl TryFrom<AdminScopedIpv6> for UnderlayMulticastIpv6 {
+    type Error = String;
+
+    fn try_from(admin: AdminScopedIpv6) -> Result<Self, Self::Error> {
+        UnderlayMulticastIpv6::new(admin.0).map_err(|e| e.to_string())
+    }
+}
+
+impl fmt::Display for AdminScopedIpv6 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// Response structure for underlay/internal multicast group operations
 /// (API version 3).
@@ -36,7 +119,7 @@ impl From<dpd_types::mcast::MulticastGroupUnderlayResponse>
 {
     fn from(resp: dpd_types::mcast::MulticastGroupUnderlayResponse) -> Self {
         Self {
-            group_ip: resp.group_ip,
+            group_ip: resp.group_ip.into(),
             external_group_id: resp.external_group_id,
             underlay_group_id: resp.underlay_group_id,
             tag: Some(resp.tag),
@@ -152,4 +235,12 @@ impl From<MulticastGroupUpdateExternalEntry>
             sources: entry.sources,
         }
     }
+}
+
+/// Path parameter for underlay multicast group endpoints (API version 3).
+///
+/// Uses `AdminScopedIpv6` which accepts the broader ff04::/16 range.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MulticastUnderlayGroupIpParam {
+    pub group_ip: AdminScopedIpv6,
 }

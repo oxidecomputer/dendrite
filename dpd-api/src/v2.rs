@@ -10,12 +10,13 @@
 
 use std::{fmt, net::IpAddr};
 
-use dpd_types::mcast::{
-    ExternalForwarding, InternalForwarding, MulticastGroupId,
-};
 use oxnet::Ipv4Net;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use dpd_types::mcast::{
+    ExternalForwarding, InternalForwarding, MulticastGroupId,
+};
 
 // Use v3 underlay response which has Option<String> tag
 pub use crate::v3::MulticastGroupUnderlayResponse;

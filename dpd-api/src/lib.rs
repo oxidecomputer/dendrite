@@ -59,7 +59,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
-    (4, MCAST_TAG_OWNERSHIP),
+    (4, MCAST_STRICT_UNDERLAY),
     (3, MCAST_SOURCE_FILTER_ANY),
     (2, DUAL_STACK_NAT_WORKFLOW),
     (1, INITIAL),
@@ -1474,7 +1474,7 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/multicast/external-groups",
-        versions = VERSION_MCAST_TAG_OWNERSHIP..,
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_group_create_external(
         rqctx: RequestContext<Self::Context>,
@@ -1488,7 +1488,7 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/multicast/external-groups",
-        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_TAG_OWNERSHIP,
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
     }]
     async fn multicast_group_create_external_v3(
         rqctx: RequestContext<Self::Context>,
@@ -1542,7 +1542,7 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/multicast/underlay-groups",
-        versions = VERSION_MCAST_TAG_OWNERSHIP..,
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_group_create_underlay(
         rqctx: RequestContext<Self::Context>,
@@ -1556,7 +1556,7 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/multicast/underlay-groups",
-        versions = ..VERSION_MCAST_TAG_OWNERSHIP,
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
     }]
     async fn multicast_group_create_underlay_v3(
         rqctx: RequestContext<Self::Context>,
@@ -1582,7 +1582,7 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/groups/{group_ip}",
-        versions = VERSION_MCAST_TAG_OWNERSHIP..,
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_group_delete(
         rqctx: RequestContext<Self::Context>,
@@ -1596,7 +1596,7 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/groups/{group_ip}",
-        versions = ..VERSION_MCAST_TAG_OWNERSHIP,
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
     }]
     async fn multicast_group_delete_v3(
         rqctx: RequestContext<Self::Context>,
@@ -1620,7 +1620,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups/{group_ip}",
-        versions = VERSION_MCAST_TAG_OWNERSHIP..,
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_group_get(
         rqctx: RequestContext<Self::Context>,
@@ -1631,7 +1631,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups/{group_ip}",
-        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_TAG_OWNERSHIP,
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
     }]
     async fn multicast_group_get_v3(
         rqctx: RequestContext<Self::Context>,
@@ -1668,7 +1668,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/underlay-groups/{group_ip}",
-        versions = VERSION_MCAST_TAG_OWNERSHIP..,
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_group_get_underlay(
         rqctx: RequestContext<Self::Context>,
@@ -1676,21 +1676,18 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
 
     /// Get an underlay (internal) multicast group configuration (API v1-v3).
+    ///
+    /// Uses the broader ff04::/16 (admin-local) address validation for backward
+    /// compatibility.
     #[endpoint {
         method = GET,
         path = "/multicast/underlay-groups/{group_ip}",
-        versions = ..VERSION_MCAST_TAG_OWNERSHIP,
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
     }]
     async fn multicast_group_get_underlay_v3(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastUnderlayGroupIpParam>,
-    ) -> Result<HttpResponseOk<v3::MulticastGroupUnderlayResponse>, HttpError>
-    {
-        match Self::multicast_group_get_underlay(rqctx, path).await {
-            Ok(HttpResponseOk(resp)) => Ok(HttpResponseOk(resp.into())),
-            Err(e) => Err(e),
-        }
-    }
+        path: Path<v3::MulticastUnderlayGroupIpParam>,
+    ) -> Result<HttpResponseOk<v3::MulticastGroupUnderlayResponse>, HttpError>;
 
     /**
      * Update an underlay (internal) multicast group configuration.
@@ -1703,7 +1700,7 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/multicast/underlay-groups/{group_ip}",
-        versions = VERSION_MCAST_TAG_OWNERSHIP..,
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_group_update_underlay(
         rqctx: RequestContext<Self::Context>,
@@ -1712,19 +1709,18 @@ pub trait DpdApi {
         group: TypedBody<mcast::MulticastGroupUpdateUnderlayEntry>,
     ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
 
-    /**
-     * Update an underlay (internal) multicast group configuration (API v1-v3).
-     *
-     * Tags are optional for backward compatibility.
-     */
+    /// Update an underlay (internal) multicast group configuration (API v1-v3).
+    ///
+    /// Uses the broader ff04::/16 (admin-local) address validation for backward
+    /// compatibility. Tags are optional in v3 for backward compatibility.
     #[endpoint {
         method = PUT,
         path = "/multicast/underlay-groups/{group_ip}",
-        versions = ..VERSION_MCAST_TAG_OWNERSHIP,
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
     }]
     async fn multicast_group_update_underlay_v3(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastUnderlayGroupIpParam>,
+        path: Path<v3::MulticastUnderlayGroupIpParam>,
         group: TypedBody<v3::MulticastGroupUpdateUnderlayEntry>,
     ) -> Result<HttpResponseOk<v3::MulticastGroupUnderlayResponse>, HttpError>;
 
@@ -1739,7 +1735,7 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",
-        versions = VERSION_MCAST_TAG_OWNERSHIP..,
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_group_update_external(
         rqctx: RequestContext<Self::Context>,
@@ -1756,7 +1752,7 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",
-        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_TAG_OWNERSHIP,
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
     }]
     async fn multicast_group_update_external_v3(
         rqctx: RequestContext<Self::Context>,
@@ -1792,7 +1788,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups",
-        versions = VERSION_MCAST_TAG_OWNERSHIP..,
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_groups_list(
         rqctx: RequestContext<Self::Context>,
@@ -1808,7 +1804,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups",
-        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_TAG_OWNERSHIP,
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
     }]
     async fn multicast_groups_list_v3(
         rqctx: RequestContext<Self::Context>,
@@ -1862,7 +1858,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/tags/{tag}",
-        versions = VERSION_MCAST_TAG_OWNERSHIP..,
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_groups_list_by_tag(
         rqctx: RequestContext<Self::Context>,
@@ -1879,7 +1875,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/tags/{tag}",
-        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_TAG_OWNERSHIP,
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
     }]
     async fn multicast_groups_list_by_tag_v3(
         rqctx: RequestContext<Self::Context>,
@@ -1948,7 +1944,7 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/tags/{tag}",
-        versions = VERSION_MCAST_TAG_OWNERSHIP..,
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_reset_by_tag(
         rqctx: RequestContext<Self::Context>,
@@ -1960,7 +1956,7 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/tags/{tag}",
-        versions = ..VERSION_MCAST_TAG_OWNERSHIP,
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
     }]
     async fn multicast_reset_by_tag_v3(
         rqctx: RequestContext<Self::Context>,
@@ -1979,7 +1975,7 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/untagged",
-        versions = VERSION_MCAST_TAG_OWNERSHIP..,
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_reset_untagged(
         rqctx: RequestContext<Self::Context>,
@@ -1991,7 +1987,7 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/untagged",
-        versions = ..VERSION_MCAST_TAG_OWNERSHIP,
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
     }]
     async fn multicast_reset_untagged_v3(
         rqctx: RequestContext<Self::Context>,
@@ -2722,7 +2718,7 @@ pub struct MulticastGroupTagQuery {
 /// [RFC 4291]: https://www.rfc-editor.org/rfc/rfc4291.html
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct MulticastUnderlayGroupIpParam {
-    pub group_ip: mcast::AdminScopedIpv6,
+    pub group_ip: mcast::UnderlayMulticastIpv6,
 }
 
 /// Used to identify a multicast group by ID.

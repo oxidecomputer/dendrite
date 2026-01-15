@@ -17,9 +17,11 @@ use reqwest::StatusCode;
 use dpd_client::ClientInfo;
 use dpd_client::ResponseValue;
 use dpd_client::types;
-use dpd_types::mcast::ADMIN_LOCAL_PREFIX;
 
 use crate::integration_tests::common::prelude::*;
+
+/// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
+const ADMIN_LOCAL_PREFIX: u16 = 0xFF04;
 
 // The expected sizes of each table.  The values are copied from constants.p4.
 //
@@ -471,7 +473,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
 
         // Admin-local IPv6 groups are internal with replication info and members
         let internal_entry = types::MulticastGroupCreateUnderlayEntry {
-            group_ip: types::AdminScopedIpv6(group_ip),
+            group_ip: types::UnderlayMulticastIpv6(group_ip),
             tag: Some(MCAST_TAG.to_string()),
             members: vec![
                 types::MulticastGroupMember {
