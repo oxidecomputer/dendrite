@@ -1738,8 +1738,9 @@ control MulticastIngress (
  * based on the per-group bitmap configuration.
  *
  * Flow:
- *   1. mcast_tag_check   : Match packets with admin-local (ff04::/16) or ULA
- *                          destination, AND mcast_tag=2 (UNDERLAY_EXTERNAL)
+ *   1. mcast_tag_check   : Match packets with reserved underlay multicast
+ *                          subnet (ff04::/64, within admin-local ff04::/16)
+ *                          and mcast_tag == UNDERLAY_EXTERNAL
  *   2. tbl_decap_ports   : Lookup by egress_rid to get 256-port decap bitmap
  *   3. asic_id_to_port   : Map ASIC port ID to logical port number (0-255)
  *   4. port_bitmap_check : Test port's bit in bitmap (see port_bitmap_check.p4)
@@ -1783,6 +1784,12 @@ control MulticastEgress (
 	}
 
 
+	// Check if packet is destined to the reserved underlay multicast subnet
+	// (ff04::/64, within admin-local scope ff04::/16) with UNDERLAY_EXTERNAL tag.
+	// This determines whether decap/bitmap processing should occur.
+	//
+	// Uses a table rather than inline control flow due to Tofino PHV input
+	// limits on complex conditions.
 	table mcast_tag_check {
 		key = {
 			hdr.ipv6.isValid(): exact;
@@ -1795,17 +1802,10 @@ control MulticastEgress (
 		actions = { NoAction; }
 
 		const entries = {
-			// Admin-local (scope value 4): Matches IPv6 multicast addresses
-			// with scope ff04::/16. This is the only multicast scope used for
-			// internal/underlay traffic (RFC 7346, RFC 4291).
-			( true, IPV6_ADMIN_LOCAL_PATTERN &&& IPV6_SCOPE_MASK, true, true, 2 ) : NoAction;
-			// ULA (Unique Local Address): Matches IPv6 addresses that start
-			// with fc00::/7. This is not a multicast address, but it is used
-			// for other internal routing purposes.
- 			( true, IPV6_ULA_PATTERN &&& IPV6_ULA_MASK, true, true, 2 ) : NoAction;
+			( true, IPV6_UNDERLAY_MULTICAST_PATTERN &&& IPV6_UNDERLAY_MASK, true, true, MULTICAST_TAG_UNDERLAY_EXTERNAL ) : NoAction;
 		}
 
-		const size = 2;
+		const size = 1;
 	}
 
 	table tbl_decap_ports {

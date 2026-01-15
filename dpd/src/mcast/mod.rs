@@ -91,7 +91,7 @@ mod validate;
 use rollback::{GroupCreateRollbackContext, GroupUpdateRollbackContext};
 use validate::{
     validate_multicast_address, validate_nat_target,
-    validate_not_admin_local_ipv6, validate_tag, validate_tag_format,
+    validate_not_underlay_subnet, validate_tag, validate_tag_format,
 };
 
 #[derive(Debug)]
@@ -1332,7 +1332,7 @@ fn validate_external_group_creation(
 ) -> DpdResult<()> {
     validate_group_exists(mcast, group_ip)?;
     validate_multicast_address(group_ip, group_info.sources.as_deref())?;
-    validate_not_admin_local_ipv6(group_ip)?;
+    validate_not_underlay_subnet(group_ip)?;
     Ok(())
 }
 

@@ -1385,7 +1385,7 @@ async fn test_api_invalid_combinations() -> TestResult {
     match result {
         Error::ErrorResponse(inner) => {
             assert_eq!(inner.status(), 400);
-            assert!(inner.message.contains("admin-local multicast address"));
+            assert!(inner.message.contains("admin-local scope"));
         }
         _ => panic!(
             "Expected ErrorResponse for admin-local external group creation"
@@ -4446,7 +4446,7 @@ async fn test_ipv6_multicast_scope_validation() {
     let external_error_msg =
         format!("{:?}", admin_external_result.unwrap_err());
     assert!(
-        external_error_msg.contains("admin-local multicast address"),
+        external_error_msg.contains("admin-local scope"),
         "Error should indicate admin-local addresses require internal API"
     );
 

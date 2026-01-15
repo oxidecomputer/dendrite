@@ -11,16 +11,15 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+use super::IpSrc;
+use crate::types::{DpdError, DpdResult};
 use common::nat::NatTarget;
 use omicron_common::address::{
     IPV4_LINK_LOCAL_MULTICAST_SUBNET, IPV4_SSM_SUBNET,
     IPV6_INTERFACE_LOCAL_MULTICAST_SUBNET, IPV6_LINK_LOCAL_MULTICAST_SUBNET,
     IPV6_RESERVED_SCOPE_MULTICAST_SUBNET, IPV6_SSM_SUBNET,
+    UNDERLAY_MULTICAST_SUBNET,
 };
-use oxnet::Ipv6Net;
-
-use super::IpSrc;
-use crate::types::{DpdError, DpdResult};
 
 /// Check if an IP address is unicast (emulating the unstable std::net API).
 /// For IP addresses, unicast means simply "not multicast".
@@ -45,7 +44,10 @@ pub(crate) fn validate_multicast_address(
     }
 }
 
-/// Validates the NAT target inner MAC address.
+/// Validates the NAT target inner MAC and internal IP address.
+///
+/// NAT targets must use addresses from the reserved underlay multicast subnet
+/// (ff04::/64) which is allocated by Omicron for internal multicast routing.
 pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
     if !nat_target.inner_mac.is_multicast() {
         return Err(DpdError::Invalid(format!(
@@ -54,12 +56,10 @@ pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
         )));
     }
 
-    let internal_nat_ip = Ipv6Net::new_unchecked(nat_target.internal_ip, 128);
-
-    if !internal_nat_ip.is_admin_local_multicast() {
+    if !UNDERLAY_MULTICAST_SUBNET.contains(nat_target.internal_ip) {
         return Err(DpdError::Invalid(format!(
-            "NAT target internal IP address {} is not a valid \
-             admin-local multicast address (must be ff04::/16)",
+            "NAT target internal IP address {} is not in the reserved \
+             underlay multicast subnet (ff04::/64)",
             nat_target.internal_ip
         )));
     }
@@ -148,14 +148,19 @@ fn validate_ipv6_multicast(
     Ok(())
 }
 
-/// Validates that IPv6 addresses are not admin-local for external group creation.
-pub(crate) fn validate_not_admin_local_ipv6(addr: IpAddr) -> DpdResult<()> {
+/// Validates that IPv6 addresses are not in the reserved underlay subnet.
+///
+/// External groups may use admin-local addresses (ff04::/16) but not the
+/// reserved underlay subnet (ff04::/64), which is used for internal underlay
+/// multicast group allocation.
+pub(crate) fn validate_not_underlay_subnet(addr: IpAddr) -> DpdResult<()> {
     if let IpAddr::V6(ipv6) = addr
-        && oxnet::Ipv6Net::new_unchecked(ipv6, 128).is_admin_local_multicast()
+        && UNDERLAY_MULTICAST_SUBNET.contains(ipv6)
     {
         return Err(DpdError::Invalid(format!(
-            "{addr} is an admin-local multicast address and \
-                 must be created via the internal multicast API",
+            "{addr} is in the reserved underlay multicast subnet (ff04::/64, \
+             within admin-local scope ff04::/16) and must be created via the \
+             internal multicast API",
         )));
     }
     Ok(())
@@ -550,17 +555,16 @@ mod tests {
 
     #[test]
     fn test_validate_nat_target() {
+        // Unicast internal IP should be rejected
         let ucast_nat_target = NatTarget {
             internal_ip: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
-            // Not a multicast MAC
             inner_mac: MacAddr::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x01),
             vni: Vni::new(100).unwrap(),
         };
-
         assert!(validate_nat_target(ucast_nat_target).is_err());
 
-        let mcast_nat_target = NatTarget {
-            // admin-local multicast (ff04::/16)
+        // Valid NAT target in reserved underlay subnet (ff04::/64)
+        let valid_nat_target = NatTarget {
             internal_ip: Ipv6Addr::new(
                 ADMIN_LOCAL_PREFIX,
                 0,
@@ -571,12 +575,28 @@ mod tests {
                 0,
                 0x1234,
             ),
-            // Multicast MAC
             inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x00, 0x00, 0x01),
             vni: Vni::new(100).unwrap(),
         };
+        assert!(validate_nat_target(valid_nat_target).is_ok());
 
-        assert!(validate_nat_target(mcast_nat_target).is_ok());
+        // Admin-local address outside ff04::/64 should be rejected
+        // ff04:0:0:1::1234 is in ff04::/16 but not in ff04::/64
+        let outside_underlay_nat_target = NatTarget {
+            internal_ip: Ipv6Addr::new(
+                ADMIN_LOCAL_PREFIX,
+                0,
+                0,
+                1, // This puts it outside ff04::/64
+                0,
+                0,
+                0,
+                0x1234,
+            ),
+            inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x00, 0x00, 0x01),
+            vni: Vni::new(100).unwrap(),
+        };
+        assert!(validate_nat_target(outside_underlay_nat_target).is_err());
     }
 
     #[test]
@@ -678,6 +698,42 @@ mod tests {
                 .to_string()
                 .contains("is not a valid source address")
         );
+    }
+
+    #[test]
+    fn test_validate_not_underlay_subnet() {
+        // Reserved underlay subnet (ff04::/64) should be rejected
+        let underlay_addr =
+            IpAddr::V6(Ipv6Addr::new(0xff04, 0, 0, 0, 0, 0, 0, 1));
+        assert!(validate_not_underlay_subnet(underlay_addr).is_err());
+
+        // Another address in ff04::/64
+        let underlay_addr2 =
+            IpAddr::V6(Ipv6Addr::new(0xff04, 0, 0, 0, 0xdead, 0xbeef, 0, 1));
+        assert!(validate_not_underlay_subnet(underlay_addr2).is_err());
+
+        // Other admin-local /64s should be allowed (e.g., ff04:0:0:1::/64)
+        let other_admin_local =
+            IpAddr::V6(Ipv6Addr::new(0xff04, 0, 0, 1, 0, 0, 0, 1));
+        assert!(validate_not_underlay_subnet(other_admin_local).is_ok());
+
+        // ff04:0:0:2::/64 should also be allowed
+        let other_admin_local2 =
+            IpAddr::V6(Ipv6Addr::new(0xff04, 0, 0, 2, 0, 0, 0, 1));
+        assert!(validate_not_underlay_subnet(other_admin_local2).is_ok());
+
+        // IPv4 multicast should always be allowed (not in underlay subnet)
+        let ipv4_mcast = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 3));
+        assert!(validate_not_underlay_subnet(ipv4_mcast).is_ok());
+
+        // Non-admin-local IPv6 multicast should be allowed
+        let global_mcast =
+            IpAddr::V6(Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 1));
+        assert!(validate_not_underlay_subnet(global_mcast).is_ok());
+
+        // Site-local multicast should be allowed
+        let site_local = IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 1));
+        assert!(validate_not_underlay_subnet(site_local).is_ok());
     }
 
     #[test]
