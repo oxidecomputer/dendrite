@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::sync::Arc;
 
@@ -157,15 +157,30 @@ async fn test_service_ipv4_unknown_address() -> TestResult {
     };
     switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
 
+    // Mark the port as NAT-only
+    switch
+        .client
+        .link_nat_only_set(&port_id, &link_id, true)
+        .await
+        .unwrap();
+
     let send_pkt = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
         Endpoint::parse(router_mac, "192.10.12.1", 4444).unwrap(),
     );
 
     let send =
-        TestPacket { packet: Arc::new(send_pkt), port: PhysPort(ingress + 1) };
+        TestPacket { packet: Arc::new(send_pkt), port: PhysPort(ingress) };
 
-    switch.packet_test(vec![send], Vec::new())
+    let result = switch.packet_test(vec![send], Vec::new());
+    // Clear the port's NAT-only property
+    switch
+        .client
+        .link_nat_only_set(&port_id, &link_id, false)
+        .await
+        .unwrap();
+
+    result
 }
 
 #[tokio::test]

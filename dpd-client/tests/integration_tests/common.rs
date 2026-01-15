@@ -695,9 +695,7 @@ impl Switch {
         let n_total_packets = send.len() + expect.len();
         let mut captured = Vec::with_capacity(n_total_packets);
         let now = std::time::Instant::now();
-        while now.elapsed() < self.packet_timeout
-            && captured.len() < n_total_packets
-        {
+        while now.elapsed() < self.packet_timeout {
             captured.extend(self.collected_packets_get());
             thread::sleep(Duration::from_millis(10));
         }

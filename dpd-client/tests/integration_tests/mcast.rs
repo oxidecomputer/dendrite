@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::{
     collections::HashSet,
@@ -3549,6 +3549,10 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     Ok(())
 }
 
+/*
+ * Commented out untl https://github.com/oxidecomputer/dendrite/issues/107 is
+ * fixed
+ *
 #[tokio::test]
 #[ignore]
 async fn test_multicast_vlan_translation_not_possible() -> TestResult {
@@ -3615,6 +3619,7 @@ async fn test_multicast_vlan_translation_not_possible() -> TestResult {
     cleanup_test_group(switch, get_group_ip(&created_group)).await.unwrap();
     cleanup_test_group(switch, internal_multicast_ip).await
 }
+*/
 
 #[tokio::test]
 #[ignore]
