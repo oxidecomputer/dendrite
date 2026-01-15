@@ -9,6 +9,7 @@
 use std::{
     fmt,
     net::{IpAddr, Ipv6Addr},
+    str::FromStr,
 };
 
 use common::{nat::NatTarget, ports::PortId};
@@ -76,6 +77,17 @@ impl From<UnderlayMulticastIpv6> for IpAddr {
 impl fmt::Display for UnderlayMulticastIpv6 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+impl FromStr for UnderlayMulticastIpv6 {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let addr: Ipv6Addr = s
+            .parse()
+            .map_err(|e| Error::InvalidIpv6Address(s.to_string(), e))?;
+        Self::new(addr)
     }
 }
 
@@ -240,4 +252,6 @@ pub enum Error {
         "Address {0} is not in underlay multicast subnet (must be ff04::/64)"
     )]
     InvalidUnderlayMulticastIp(Ipv6Addr),
+    #[error("Invalid IPv6 address '{0}': {1}")]
+    InvalidIpv6Address(String, std::net::AddrParseError),
 }

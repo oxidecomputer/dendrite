@@ -14,6 +14,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use super::IpSrc;
 use crate::types::{DpdError, DpdResult};
 use common::nat::NatTarget;
+use dpd_api::MulticastTag;
 use omicron_common::address::{
     IPV4_LINK_LOCAL_MULTICAST_SUBNET, IPV4_SSM_SUBNET,
     IPV6_INTERFACE_LOCAL_MULTICAST_SUBNET, IPV6_LINK_LOCAL_MULTICAST_SUBNET,
@@ -229,42 +230,17 @@ fn validate_ipv6_source_address(ipv6: Ipv6Addr) -> DpdResult<()> {
     Ok(())
 }
 
-/// Maximum length for multicast group tags.
-///
-/// Keep in sync with Omicron's database schema column type for multicast group
-/// tags. This is sized to accommodate the auto-generated format
-/// `{uuid}:{group_ip}` for both IPv4 and IPv6 group IPs.
-const MAX_TAG_LENGTH: usize = 80;
-
 /// Validates tag format for group creation.
 ///
-/// Tags must be 1-80 ASCII bytes containing only alphanumeric characters,
-/// hyphens, underscores, colons, or periods.
-///
-/// This character set is compatible with URL path segments, though colons are
-/// RFC 3986 reserved characters and may require percent-encoding in some HTTP
-/// client contexts.
+/// Delegates to [`MulticastTag::from_str`] which enforces:
+/// - Length: 1-80 ASCII bytes
+/// - Characters: alphanumeric, hyphens, underscores, colons, or periods
 ///
 /// Auto-generated tags use the format `{uuid}:{group_ip}`.
 pub(crate) fn validate_tag_format(tag: &str) -> DpdResult<()> {
-    if tag.is_empty() {
-        return Err(DpdError::Invalid("tag cannot be empty".to_string()));
-    }
-    if tag.len() > MAX_TAG_LENGTH {
-        return Err(DpdError::Invalid(format!(
-            "tag cannot exceed {MAX_TAG_LENGTH} bytes"
-        )));
-    }
-    if !tag.bytes().all(|b| {
-        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'.')
-    }) {
-        return Err(DpdError::Invalid(
-            "tag must contain only ASCII alphanumeric characters, hyphens, \
-             underscores, colons, or periods"
-                .to_string(),
-        ));
-    }
-    Ok(())
+    tag.parse::<MulticastTag>()
+        .map(|_| ())
+        .map_err(|e| DpdError::Invalid(e.to_string()))
 }
 
 /// Validates that the request tag matches the existing group's tag.
@@ -288,6 +264,7 @@ pub(crate) fn validate_tag(
 mod tests {
     use super::*;
     use common::{nat::Vni, network::MacAddr};
+    use dpd_api::MAX_TAG_LENGTH;
 
     /// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
     const ADMIN_LOCAL_PREFIX: u16 = 0xff04;

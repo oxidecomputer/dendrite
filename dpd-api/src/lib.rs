@@ -11,7 +11,9 @@ pub mod v3;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    str::FromStr,
 };
 
 use common::{
@@ -1678,7 +1680,7 @@ pub trait DpdApi {
     /// Get an underlay (internal) multicast group configuration (API v1-v3).
     ///
     /// Uses the broader ff04::/16 (admin-local) address validation for backward
-    /// compatibility.
+    /// compatibility. Delegates to v4 endpoint with path param conversion.
     #[endpoint {
         method = GET,
         path = "/multicast/underlay-groups/{group_ip}",
@@ -1687,7 +1689,24 @@ pub trait DpdApi {
     async fn multicast_group_get_underlay_v3(
         rqctx: RequestContext<Self::Context>,
         path: Path<v3::MulticastUnderlayGroupIpParam>,
-    ) -> Result<HttpResponseOk<v3::MulticastGroupUnderlayResponse>, HttpError>;
+    ) -> Result<HttpResponseOk<v3::MulticastGroupUnderlayResponse>, HttpError>
+    {
+        let v4_path = path.try_map(|p| {
+            mcast::UnderlayMulticastIpv6::try_from(p.group_ip)
+                .map(|group_ip| MulticastUnderlayGroupIpParam { group_ip })
+                .map_err(|e| {
+                    HttpError::for_bad_request(
+                        None,
+                        format!("invalid group_ip: {e}"),
+                    )
+                })
+        })?;
+
+        match Self::multicast_group_get_underlay(rqctx, v4_path).await {
+            Ok(HttpResponseOk(resp)) => Ok(HttpResponseOk(resp.into())),
+            Err(e) => Err(e),
+        }
+    }
 
     /**
      * Update an underlay (internal) multicast group configuration.
@@ -2684,6 +2703,48 @@ impl From<MulticastTag> for String {
 impl From<String> for MulticastTag {
     fn from(tag: String) -> Self {
         MulticastTag(tag)
+    }
+}
+
+/// Maximum length for multicast tags.
+pub const MAX_TAG_LENGTH: usize = 80;
+
+/// Error parsing a multicast tag from a string.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MulticastTagParseError(String);
+
+impl fmt::Display for MulticastTagParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for MulticastTagParseError {}
+
+impl FromStr for MulticastTag {
+    type Err = MulticastTagParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Err(MulticastTagParseError(
+                "tag cannot be empty".to_string(),
+            ));
+        }
+        if s.len() > MAX_TAG_LENGTH {
+            return Err(MulticastTagParseError(format!(
+                "tag cannot exceed {MAX_TAG_LENGTH} bytes"
+            )));
+        }
+        if !s.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'.')
+        }) {
+            return Err(MulticastTagParseError(
+                "tag must contain only ASCII alphanumeric characters, hyphens, \
+                 underscores, colons, or periods"
+                    .to_string(),
+            ));
+        }
+        Ok(MulticastTag(s.to_string()))
     }
 }
 
