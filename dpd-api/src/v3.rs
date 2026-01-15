@@ -16,6 +16,7 @@
 use std::{
     fmt,
     net::{IpAddr, Ipv6Addr},
+    str::FromStr,
 };
 
 use oxnet::Ipv6Net;
@@ -99,6 +100,16 @@ impl TryFrom<AdminScopedIpv6> for UnderlayMulticastIpv6 {
 impl fmt::Display for AdminScopedIpv6 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+impl FromStr for AdminScopedIpv6 {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let addr: Ipv6Addr =
+            s.parse().map_err(|e| format!("invalid IPv6: {e}"))?;
+        Self::new(addr)
     }
 }
 

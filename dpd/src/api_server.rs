@@ -1991,28 +1991,6 @@ impl DpdApi for DpdApiImpl {
             .map_err(HttpError::from)
     }
 
-    async fn multicast_group_get_underlay_v3(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<dpd_api::v3::MulticastUnderlayGroupIpParam>,
-    ) -> Result<
-        HttpResponseOk<dpd_api::v3::MulticastGroupUnderlayResponse>,
-        HttpError,
-    > {
-        let switch: &Switch = rqctx.context();
-        let admin_scoped = path.into_inner().group_ip;
-        let underlay =
-            UnderlayMulticastIpv6::try_from(admin_scoped).map_err(|e| {
-                HttpError::for_bad_request(
-                    None,
-                    format!("invalid group_ip: {e}"),
-                )
-            })?;
-
-        mcast::get_group_internal(switch, underlay)
-            .map(|resp| HttpResponseOk(resp.into()))
-            .map_err(HttpError::from)
-    }
-
     async fn multicast_group_get_underlay(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastUnderlayGroupIpParam>,
