@@ -1409,7 +1409,7 @@
     "/multicast/underlay-groups/{group_ip}": {
       "get": {
         "summary": "Get an underlay (internal) multicast group configuration (API v1-v3).",
-        "description": "Uses the broader ff04::/16 (admin-local) address validation for backward compatibility.",
+        "description": "Uses the broader ff04::/16 (admin-local) address validation for backward compatibility. Delegates to v4 endpoint with path param conversion.",
         "operationId": "multicast_group_get_underlay_v3",
         "parameters": [
           {
