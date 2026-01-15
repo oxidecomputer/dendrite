@@ -158,11 +158,7 @@ async fn test_service_ipv4_unknown_address() -> TestResult {
     switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
 
     // Mark the port as NAT-only
-    switch
-        .client
-        .link_nat_only_set(&port_id, &link_id, true)
-        .await
-        .unwrap();
+    switch.client.link_nat_only_set(&port_id, &link_id, true).await.unwrap();
 
     let send_pkt = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
@@ -174,11 +170,7 @@ async fn test_service_ipv4_unknown_address() -> TestResult {
 
     let result = switch.packet_test(vec![send], Vec::new());
     // Clear the port's NAT-only property
-    switch
-        .client
-        .link_nat_only_set(&port_id, &link_id, false)
-        .await
-        .unwrap();
+    switch.client.link_nat_only_set(&port_id, &link_id, false).await.unwrap();
 
     result
 }
