@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
@@ -11,8 +11,8 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use oxnet::Ipv6Net;
 
-use ::common::nat::Vni;
 use ::common::network::MacAddr;
+use ::common::network::Vni;
 use dpd_client::ClientInfo;
 use dpd_client::types;
 use packet::Endpoint;

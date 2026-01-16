@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! DPD endpoint definitions.
 
@@ -12,9 +12,10 @@ use std::{
 };
 
 use common::{
+    attached_subnet::AttachedSubnetEntry,
     counters::{FecRSCounters, PcsCounters, RMonCounters, RMonCountersAll},
-    nat::{Ipv4Nat, Ipv6Nat, NatTarget},
-    network::MacAddr,
+    nat::{Ipv4Nat, Ipv6Nat},
+    network::{InstanceTarget, MacAddr, NatTarget},
     ports::{
         Ipv4Entry, Ipv6Entry, PortFec, PortId, PortPrbsMode, PortSpeed, TxEq,
         TxEqSwHw,
@@ -37,7 +38,7 @@ use dropshot::{
     Query, RequestContext, ResultsPage, TypedBody,
 };
 use dropshot_api_manager_types::api_versions;
-use oxnet::{Ipv4Net, Ipv6Net};
+use oxnet::{IpNet, Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use transceiver_controller::{
@@ -56,6 +57,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (3, ATTACHED_SUBNETS),
     (2, DUAL_STACK_NAT_WORKFLOW),
     (1, INITIAL),
 ]);
@@ -1154,6 +1156,75 @@ pub trait DpdApi {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
+     * Get all of the external subnets with internal mappings
+     */
+    #[endpoint {
+        method = GET,
+        path = "/attached_subnet",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_list(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<PaginationParams<EmptyScanParams, AttachedSubnetToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<AttachedSubnetEntry>>, HttpError>;
+
+    /**
+     * Get the mapping for the given external subnet.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/attached_subnet/{subnet}",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPath>,
+    ) -> Result<HttpResponseOk<InstanceTarget>, HttpError>;
+
+    /**
+     * Add a mapping to an internal target for an external subnet address.
+     *
+     * These identify the gimlet on which a guest is running, and gives OPTE the
+     * information it needs to  identify the guest VM that uses the external
+     * subnet.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/attached_subnet/{subnet}",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_create(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPath>,
+        target: TypedBody<InstanceTarget>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Delete the mapping for an external subnet
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/attached_subnet/{subnet}",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_delete(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPath>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /**
+     * Clear all external subnet mappings
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/attached_subnet",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_reset(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
      * Clear all settings associated with a specific tag.
      *
      * This removes:
@@ -2013,6 +2084,12 @@ pub struct RoutePathV4 {
     pub cidr: Ipv4Net,
 }
 
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct SubnetPath {
+    /// The external subnet in CIDR notation being managed
+    pub subnet: IpNet,
+}
+
 /// Represents a single subnet->target route entry
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct RouteTargetIpv4Path {
@@ -2058,6 +2135,15 @@ pub struct Ipv4RouteToken {
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct Ipv6RouteToken {
     pub cidr: Ipv6Net,
+}
+
+/**
+ * Represents a cursor into a paginated request for the contents of the
+ * external subnets table.
+ */
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct AttachedSubnetToken {
+    pub cidr: IpNet,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]

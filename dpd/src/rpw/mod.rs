@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::{
     collections::BTreeMap,
@@ -10,10 +10,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use common::{
-    nat::{NatTarget, Vni},
-    network::MacAddr,
-};
+use common::network::{MacAddr, NatTarget, Vni};
 use internal_dns_resolver::Resolver;
 use internal_dns_types::names::ServiceName;
 use slog::{Logger, debug, error, info, o};
