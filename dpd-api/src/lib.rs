@@ -1570,12 +1570,9 @@ pub trait DpdApi {
         HttpResponseCreated<v4::MulticastGroupExternalResponse>,
         HttpError,
     > {
-        match Self::multicast_group_create_external(rqctx, group).await {
-            Ok(HttpResponseCreated(resp)) => {
-                Ok(HttpResponseCreated(resp.into()))
-            }
-            Err(e) => Err(e),
-        }
+        Self::multicast_group_create_external(rqctx, group)
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /// Create an external-only multicast group configuration (API v1-v2).
@@ -1591,17 +1588,9 @@ pub trait DpdApi {
         HttpResponseCreated<v3::MulticastGroupExternalResponse>,
         HttpError,
     > {
-        match Self::multicast_group_create_external(
-            rqctx,
-            group.map(Into::into),
-        )
-        .await
-        {
-            Ok(HttpResponseCreated(resp)) => {
-                Ok(HttpResponseCreated(resp.into()))
-            }
-            Err(e) => Err(e),
-        }
+        Self::multicast_group_create_external(rqctx, group.map(Into::into))
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /// Create an underlay (internal) multicast group configuration.
@@ -1644,12 +1633,9 @@ pub trait DpdApi {
                 })
             })
             .map_err(|e: String| HttpError::for_bad_request(None, e))?;
-        match Self::multicast_group_create_underlay(rqctx, v4_body).await {
-            Ok(HttpResponseCreated(resp)) => {
-                Ok(HttpResponseCreated(resp.into()))
-            }
-            Err(e) => Err(e),
-        }
+        Self::multicast_group_create_underlay(rqctx, v4_body)
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /**
@@ -1716,10 +1702,9 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseOk<v4::MulticastGroupResponse>, HttpError> {
-        match Self::multicast_group_get(rqctx, path).await {
-            Ok(HttpResponseOk(resp)) => Ok(HttpResponseOk(resp.into())),
-            Err(e) => Err(e),
-        }
+        Self::multicast_group_get(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /// Get the multicast group configuration for a given group IP address (API v1-v2).
@@ -1732,10 +1717,9 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseOk<v3::MulticastGroupResponse>, HttpError> {
-        match Self::multicast_group_get(rqctx, path).await {
-            Ok(HttpResponseOk(resp)) => Ok(HttpResponseOk(resp.into())),
-            Err(e) => Err(e),
-        }
+        Self::multicast_group_get(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /// Get an underlay (internal) multicast group configuration.
@@ -1773,10 +1757,9 @@ pub trait DpdApi {
                 })
         })?;
 
-        match Self::multicast_group_get_underlay(rqctx, v4_path).await {
-            Ok(HttpResponseOk(resp)) => Ok(HttpResponseOk(resp.into())),
-            Err(e) => Err(e),
-        }
+        Self::multicast_group_get_underlay(rqctx, v4_path)
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /// Update an underlay (internal) multicast group configuration.
@@ -1900,13 +1883,12 @@ pub trait DpdApi {
         HttpResponseOk<ResultsPage<v4::MulticastGroupResponse>>,
         HttpError,
     > {
-        match Self::multicast_groups_list(rqctx, query_params).await {
-            Ok(HttpResponseOk(page)) => Ok(HttpResponseOk(ResultsPage {
-                items: page.items.into_iter().map(Into::into).collect(),
-                next_page: page.next_page,
-            })),
-            Err(e) => Err(e),
-        }
+        let HttpResponseOk(page) =
+            Self::multicast_groups_list(rqctx, query_params).await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
     }
 
     /// List all multicast groups (API v1/v2).
@@ -1924,13 +1906,12 @@ pub trait DpdApi {
         HttpResponseOk<ResultsPage<v3::MulticastGroupResponse>>,
         HttpError,
     > {
-        match Self::multicast_groups_list(rqctx, query_params).await {
-            Ok(HttpResponseOk(page)) => Ok(HttpResponseOk(ResultsPage {
-                items: page.items.into_iter().map(Into::into).collect(),
-                next_page: page.next_page,
-            })),
-            Err(e) => Err(e),
-        }
+        let HttpResponseOk(page) =
+            Self::multicast_groups_list(rqctx, query_params).await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
     }
 
     /**
@@ -1972,19 +1953,16 @@ pub trait DpdApi {
         HttpResponseOk<ResultsPage<v4::MulticastGroupResponse>>,
         HttpError,
     > {
-        match Self::multicast_groups_list_by_tag(
+        let HttpResponseOk(page) = Self::multicast_groups_list_by_tag(
             rqctx,
             path.map(Into::into),
             query_params,
         )
-        .await
-        {
-            Ok(HttpResponseOk(page)) => Ok(HttpResponseOk(ResultsPage {
-                items: page.items.into_iter().map(Into::into).collect(),
-                next_page: page.next_page,
-            })),
-            Err(e) => Err(e),
-        }
+        .await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
     }
 
     /// List all multicast groups with a given tag (API v1/v2).
@@ -2003,19 +1981,16 @@ pub trait DpdApi {
         HttpResponseOk<ResultsPage<v3::MulticastGroupResponse>>,
         HttpError,
     > {
-        match Self::multicast_groups_list_by_tag(
+        let HttpResponseOk(page) = Self::multicast_groups_list_by_tag(
             rqctx,
             path.map(Into::into),
             query_params,
         )
-        .await
-        {
-            Ok(HttpResponseOk(page)) => Ok(HttpResponseOk(ResultsPage {
-                items: page.items.into_iter().map(Into::into).collect(),
-                next_page: page.next_page,
-            })),
-            Err(e) => Err(e),
-        }
+        .await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
     }
 
     /**
