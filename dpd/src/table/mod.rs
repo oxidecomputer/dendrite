@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::convert::TryFrom;
 use std::hash::Hash;
@@ -18,6 +18,8 @@ use common::network::MacAddr;
 use dpd_types::views;
 
 pub mod arp_ipv4;
+pub mod attached_subnet_v4;
+pub mod attached_subnet_v6;
 pub mod mcast;
 pub mod nat;
 pub mod neighbor_ipv6;
@@ -27,7 +29,7 @@ pub mod port_nat;
 pub mod route_ipv4;
 pub mod route_ipv6;
 
-const NAME_TO_TYPE: [(&str, TableType); 22] = [
+const NAME_TO_TYPE: [(&str, TableType); 24] = [
     (route_ipv4::INDEX_TABLE_NAME, TableType::RouteIdxIpv4),
     (route_ipv4::FORWARD_TABLE_NAME, TableType::RouteFwdIpv4),
     (route_ipv6::INDEX_TABLE_NAME, TableType::RouteIdxIpv6),
@@ -40,6 +42,14 @@ const NAME_TO_TYPE: [(&str, TableType); 22] = [
     (nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4),
     (nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6),
     (port_nat::TABLE_NAME, TableType::NatOnly),
+    (
+        attached_subnet_v4::EXT_SUBNET_IPV4_TABLE_NAME,
+        TableType::AttachedSubnetIpv4,
+    ),
+    (
+        attached_subnet_v6::EXT_SUBNET_IPV6_TABLE_NAME,
+        TableType::AttachedSubnetIpv6,
+    ),
     (mcast::mcast_replication::IPV6_TABLE_NAME, TableType::McastIpv6),
     (mcast::mcast_src_filter::IPV4_TABLE_NAME, TableType::McastIpv4SrcFilter),
     (mcast::mcast_src_filter::IPV6_TABLE_NAME, TableType::McastIpv6SrcFilter),
@@ -248,6 +258,8 @@ pub fn get_entries(switch: &Switch, name: String) -> DpdResult<views::Table> {
         TableType::ArpIpv4 => arp_ipv4::table_dump(switch),
         TableType::NatIngressIpv4 => nat::ipv4_table_dump(switch),
         TableType::NatIngressIpv6 => nat::ipv6_table_dump(switch),
+        TableType::AttachedSubnetIpv4 => attached_subnet_v4::table_dump(switch),
+        TableType::AttachedSubnetIpv6 => attached_subnet_v6::table_dump(switch),
         TableType::PortIpv4 => port_ip::ipv4_table_dump(switch),
         TableType::PortIpv6 => port_ip::ipv6_table_dump(switch),
         TableType::PortMac => {
@@ -323,6 +335,12 @@ pub fn get_counters(
         TableType::PortIpv4 => port_ip::ipv4_counter_fetch(switch, force_sync),
         TableType::PortIpv6 => port_ip::ipv6_counter_fetch(switch, force_sync),
         TableType::NatOnly => port_nat::counter_fetch(switch, force_sync),
+        TableType::AttachedSubnetIpv4 => {
+            attached_subnet_v4::counter_fetch(switch, force_sync)
+        }
+        TableType::AttachedSubnetIpv6 => {
+            attached_subnet_v6::counter_fetch(switch, force_sync)
+        }
         TableType::McastIpv6 => {
             mcast::mcast_replication::ipv6_counter_fetch(switch, force_sync)
         }
@@ -374,6 +392,8 @@ pub enum TableType {
     NatIngressIpv4,
     NatIngressIpv6,
     NatOnly,
+    AttachedSubnetIpv4,
+    AttachedSubnetIpv6,
     McastIpv6,
     McastIpv4SrcFilter,
     McastIpv6SrcFilter,

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use slog::{error, trace};
 use softnpu_lib::{ManagementRequest, TableAdd, TableRemove};
@@ -31,6 +31,8 @@ const LOCAL_V6: &str = "ingress.local.local_v6";
 const LOCAL_V4: &str = "ingress.local.local_v4";
 const NAT_V4: &str = "ingress.nat.nat_v4";
 const NAT_V6: &str = "ingress.nat.nat_v6";
+const ATTACHED_SUBNET_V4: &str = "ingress.attached.attached_subnet_v4";
+const ATTACHED_SUBNET_V6: &str = "ingress.attached.attached_subnet_v6";
 const _NAT_ICMP_V6: &str = "ingress.nat.nat_icmp_v6";
 const _NAT_ICMP_V4: &str = "ingress.nat.nat_icmp_v4";
 const RESOLVER_V4: &str = "ingress.resolver.resolver_v4";
@@ -54,12 +56,16 @@ const ARP: &str = "pipe.Ingress.l3_router.Router4.Arp.tbl";
 const DPD_MAC_REWRITE: &str = "pipe.Ingress.mac_rewrite.mac_rewrite";
 const NAT_INGRESS4: &str = "pipe.Ingress.nat_ingress.ingress_ipv4";
 const NAT_INGRESS6: &str = "pipe.Ingress.nat_ingress.ingress_ipv6";
+const ATTACHED_SUBNET_INGRESS4: &str =
+    "pipe.Ingress.attached_subnet_ingress.attached_subnets_v4";
+const ATTACHED_SUBNET_INGRESS6: &str =
+    "pipe.Ingress.attached_subnet_ingress.attached_subnets_v6";
 
 // All tables are defined to be 1024 entries deep
 const TABLE_SIZE: usize = 4096;
 
 impl TableOps<Handle> for Table {
-    fn new(_hdl: &Handle, name: &str) -> AsicResult<Table> {
+    fn new(hdl: &Handle, name: &str) -> AsicResult<Table> {
         // TODO just mapping sidecar.p4 things onto simplified sidecar-lite.p4
         // things to get started.
         let (id, dpd_id) = match name {
@@ -84,8 +90,16 @@ impl TableOps<Handle> for Table {
             }
             NAT_INGRESS4 => (Some(NAT_V4.into()), Some(NAT_INGRESS4.into())),
             NAT_INGRESS6 => (Some(NAT_V6.into()), Some(NAT_INGRESS6.into())),
+            ATTACHED_SUBNET_INGRESS4 => (
+                Some(ATTACHED_SUBNET_V4.into()),
+                Some(ATTACHED_SUBNET_INGRESS4.into()),
+            ),
+            ATTACHED_SUBNET_INGRESS6 => (
+                Some(ATTACHED_SUBNET_V6.into()),
+                Some(ATTACHED_SUBNET_INGRESS6.into()),
+            ),
             x => {
-                println!("TABLE NOT HANDLED {x}");
+                error!(hdl.log, "TABLE NOT HANDLED {x}");
                 (None, None)
             }
         };
@@ -378,7 +392,9 @@ impl TableOps<Handle> for Table {
                 ("rewrite", params)
             }
             (NAT_INGRESS4, "forward_ipv4_to")
-            | (NAT_INGRESS6, "forward_ipv6_to") => {
+            | (NAT_INGRESS6, "forward_ipv6_to")
+            | (ATTACHED_SUBNET_INGRESS4, "forward_to_v4")
+            | (ATTACHED_SUBNET_INGRESS6, "forward_to_v6") => {
                 let mut target = Vec::new();
                 let mut vni = Vec::new();
                 let mut mac = Vec::new();
@@ -459,7 +475,7 @@ impl TableOps<Handle> for Table {
                 ("forward_to_sled", params)
             }
             (tbl, x) => {
-                println!("ACTION NOT HANDLED {tbl} {x}");
+                error!(hdl.log, "ACTION NOT HANDLED {tbl} {x}");
                 return Ok(());
             }
         };
@@ -606,7 +622,7 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: &str) -> Vec<u8> {
             MatchEntryValue::Lpm(x) => {
                 let mut data: Vec<u8> = Vec::new();
                 match table {
-                    ROUTER_V4_IDX => {
+                    ROUTER_V4_IDX | ATTACHED_SUBNET_V4 => {
                         // prefix for longest prefix match operation
                         // "dst_addr" => hdr.ipv4.dst: lpm => bit<32>
                         serialize_value_type_be(&x.prefix, &mut data);

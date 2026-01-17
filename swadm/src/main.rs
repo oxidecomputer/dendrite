@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::convert::TryFrom;
 use std::io;
@@ -19,6 +19,7 @@ use dpd_client::types;
 
 mod addr;
 mod arp;
+mod attached;
 mod compliance;
 mod counters;
 mod link;
@@ -63,6 +64,11 @@ enum Commands {
     Nat {
         #[command(subcommand)]
         cmd: nat::Nat,
+    },
+    #[clap(visible_alias = "attsub")]
+    AttachedSubnet {
+        #[command(subcommand)]
+        cmd: attached::AttachedSubnet,
     },
     Counters {
         #[command(subcommand)]
@@ -210,6 +216,9 @@ async fn main_impl() -> anyhow::Result<()> {
         Commands::Arp { cmd: a } => arp::arp_cmd(&client, a).await,
         Commands::Route { cmd: r } => route::route_cmd(&client, r).await,
         Commands::Addr { cmd: p } => addr::addr_cmd(&client, p).await,
+        Commands::AttachedSubnet { cmd: p } => {
+            attached::attsub_cmd(&client, p).await
+        }
         Commands::Nat { cmd: p } => nat::nat_cmd(&client, p).await,
         Commands::Counters { cmd: c } => counters::ctrs_cmd(&client, c).await,
         Commands::SwitchPort { cmd: p } => {
