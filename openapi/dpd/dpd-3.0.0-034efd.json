@@ -1375,6 +1375,7 @@
     "/multicast/underlay-groups": {
       "post": {
         "summary": "Create an underlay (internal) multicast group configuration (API v1-v3).",
+        "description": "Accepts the broader ff04::/16 (admin-local) address range.",
         "operationId": "multicast_group_create_underlay_v3",
         "requestBody": {
           "content": {
@@ -1409,7 +1410,7 @@
     "/multicast/underlay-groups/{group_ip}": {
       "get": {
         "summary": "Get an underlay (internal) multicast group configuration (API v1-v3).",
-        "description": "Uses the broader ff04::/16 (admin-local) address validation for backward compatibility. Delegates to v4 endpoint with path param conversion.",
+        "description": "Accepts the broader ff04::/16 (admin-local) address range.",
         "operationId": "multicast_group_get_underlay_v3",
         "parameters": [
           {
@@ -1442,7 +1443,7 @@
       },
       "put": {
         "summary": "Update an underlay (internal) multicast group configuration (API v1-v3).",
-        "description": "Uses the broader ff04::/16 (admin-local) address validation for backward compatibility. Tags are optional in v3 for backward compatibility.",
+        "description": "Accepts the broader ff04::/16 (admin-local) address range. Tags are optional. If omitted, the existing tag is used.",
         "operationId": "multicast_group_update_underlay_v3",
         "parameters": [
           {
@@ -7736,11 +7737,11 @@
         ]
       },
       "MulticastGroupCreateUnderlayEntry": {
-        "description": "A multicast group configuration for POST requests for internal (to the rack) groups.",
+        "description": "Request body for creating underlay multicast groups (API version 3).\n\nUses `AdminScopedIpv6` which accepts the broader ff04::/16 range. In v4+, this was tightened to `UnderlayMulticastIpv6` (ff04::/64).",
         "type": "object",
         "properties": {
           "group_ip": {
-            "$ref": "#/components/schemas/UnderlayMulticastIpv6"
+            "$ref": "#/components/schemas/AdminScopedIpv6"
           },
           "members": {
             "type": "array",
@@ -7750,7 +7751,6 @@
           },
           "tag": {
             "nullable": true,
-            "description": "Tag for validating update/delete requests. If a tag is not provided, one is auto-generated as `{uuid}:{group_ip}`.",
             "type": "string"
           }
         },
@@ -7984,7 +7984,7 @@
           },
           "tag": {
             "nullable": true,
-            "description": "Tag for validating update requests. Optional in v3; if not provided, tag validation is skipped.",
+            "description": "Tag for validating update requests. Optional in v3. If not provided, tag validation is skipped.",
             "type": "string"
           }
         },
@@ -8005,7 +8005,7 @@
           },
           "tag": {
             "nullable": true,
-            "description": "Tag for validating update requests. Optional in v3; if not provided, tag validation is skipped.",
+            "description": "Tag for validating update requests. Optional in v3. If not provided, tag validation is skipped.",
             "type": "string"
           }
         },
@@ -9521,11 +9521,6 @@
           "hw",
           "sw"
         ]
-      },
-      "UnderlayMulticastIpv6": {
-        "description": "A validated underlay multicast IPv6 address.\n\nUnderlay multicast addresses must be within the subnet allocated by Omicron for rack-internal multicast traffic (ff04::/64). This is a subset of the admin-local scope (ff04::/16) defined in RFC 4291.",
-        "type": "string",
-        "format": "ipv6"
       },
       "Vendor": {
         "description": "Vendor-specific information about a transceiver module.",

@@ -4,9 +4,10 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-//! Types from API version 3 that changed in version 4.
+//! Types from API version 3 (MCAST_SOURCE_FILTER_ANY) that changed in
+//! version 4 (MCAST_STRICT_UNDERLAY).
 //!
-//! Changes in v4 (MCAST_STRICT_UNDERLAY):
+//! Changes in v4:
 //! - The `tag` field in response types changed from `Option<String>` to `String`
 //!   since all groups now have default tags generated at creation time.
 //! - Tag validation is now required for updates and deletes.
@@ -206,7 +207,7 @@ impl From<dpd_types::mcast::MulticastGroupResponse> for MulticastGroupResponse {
 /// the existing tag is preserved.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupUpdateUnderlayEntry {
-    /// Tag for validating update requests. Optional in v3; if not provided,
+    /// Tag for validating update requests. Optional in v3. If not provided,
     /// tag validation is skipped.
     pub tag: Option<String>,
     pub members: Vec<MulticastGroupMember>,
@@ -228,7 +229,7 @@ impl From<MulticastGroupUpdateUnderlayEntry>
 /// Tag validation is optional in v3 for backward compatibility.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupUpdateExternalEntry {
-    /// Tag for validating update requests. Optional in v3; if not provided,
+    /// Tag for validating update requests. Optional in v3. If not provided,
     /// tag validation is skipped.
     pub tag: Option<String>,
     pub internal_forwarding: InternalForwarding,
@@ -254,4 +255,15 @@ impl From<MulticastGroupUpdateExternalEntry>
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct MulticastUnderlayGroupIpParam {
     pub group_ip: AdminScopedIpv6,
+}
+
+/// Request body for creating underlay multicast groups (API version 3).
+///
+/// Uses `AdminScopedIpv6` which accepts the broader ff04::/16 range. In v4+,
+/// this was tightened to `UnderlayMulticastIpv6` (ff04::/64).
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct MulticastGroupCreateUnderlayEntry {
+    pub group_ip: AdminScopedIpv6,
+    pub tag: Option<String>,
+    pub members: Vec<MulticastGroupMember>,
 }
