@@ -12,7 +12,7 @@ use std::{
     str::FromStr,
 };
 
-use common::{nat::NatTarget, ports::PortId};
+use common::{network::NatTarget, ports::PortId};
 use omicron_common::address::UNDERLAY_MULTICAST_SUBNET;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

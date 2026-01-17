@@ -6,8 +6,8 @@
 
 //! DPD endpoint definitions.
 
-pub mod v2;
 pub mod v3;
+pub mod v4;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -17,9 +17,10 @@ use std::{
 };
 
 use common::{
+    attached_subnet::AttachedSubnetEntry,
     counters::{FecRSCounters, PcsCounters, RMonCounters, RMonCountersAll},
-    nat::{Ipv4Nat, Ipv6Nat, NatTarget},
-    network::MacAddr,
+    nat::{Ipv4Nat, Ipv6Nat},
+    network::{InstanceTarget, MacAddr, NatTarget},
     ports::{
         Ipv4Entry, Ipv6Entry, PortFec, PortId, PortPrbsMode, PortSpeed, TxEq,
         TxEqSwHw,
@@ -42,7 +43,7 @@ use dropshot::{
     Query, RequestContext, ResultsPage, TypedBody,
 };
 use dropshot_api_manager_types::api_versions;
-use oxnet::{Ipv4Net, Ipv6Net};
+use oxnet::{IpNet, Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use transceiver_controller::{
@@ -61,8 +62,9 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
-    (4, MCAST_STRICT_UNDERLAY),
-    (3, MCAST_SOURCE_FILTER_ANY),
+    (5, MCAST_STRICT_UNDERLAY),
+    (4, MCAST_SOURCE_FILTER_ANY),
+    (3, ATTACHED_SUBNETS),
     (2, DUAL_STACK_NAT_WORKFLOW),
     (1, INITIAL),
 ]);
@@ -1161,6 +1163,75 @@ pub trait DpdApi {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
+     * Get all of the external subnets with internal mappings
+     */
+    #[endpoint {
+        method = GET,
+        path = "/attached_subnet",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_list(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<PaginationParams<EmptyScanParams, AttachedSubnetToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<AttachedSubnetEntry>>, HttpError>;
+
+    /**
+     * Get the mapping for the given external subnet.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/attached_subnet/{subnet}",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPath>,
+    ) -> Result<HttpResponseOk<InstanceTarget>, HttpError>;
+
+    /**
+     * Add a mapping to an internal target for an external subnet address.
+     *
+     * These identify the gimlet on which a guest is running, and gives OPTE the
+     * information it needs to  identify the guest VM that uses the external
+     * subnet.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/attached_subnet/{subnet}",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_create(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPath>,
+        target: TypedBody<InstanceTarget>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Delete the mapping for an external subnet
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/attached_subnet/{subnet}",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_delete(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPath>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /**
+     * Clear all external subnet mappings
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/attached_subnet",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_reset(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
      * Clear all settings associated with a specific tag.
      *
      * This removes all ARP or NDP table entries, all routes, and all links
@@ -1496,15 +1567,12 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<v3::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v4::MulticastGroupExternalResponse>,
         HttpError,
     > {
-        match Self::multicast_group_create_external(rqctx, group).await {
-            Ok(HttpResponseCreated(resp)) => {
-                Ok(HttpResponseCreated(resp.into()))
-            }
-            Err(e) => Err(e),
-        }
+        Self::multicast_group_create_external(rqctx, group)
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /// Create an external-only multicast group configuration (API v1-v2).
@@ -1515,22 +1583,14 @@ pub trait DpdApi {
     }]
     async fn multicast_group_create_external_v2(
         rqctx: RequestContext<Self::Context>,
-        group: TypedBody<v2::MulticastGroupCreateExternalEntry>,
+        group: TypedBody<v3::MulticastGroupCreateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<v2::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v3::MulticastGroupExternalResponse>,
         HttpError,
     > {
-        match Self::multicast_group_create_external(
-            rqctx,
-            group.map(Into::into),
-        )
-        .await
-        {
-            Ok(HttpResponseCreated(resp)) => {
-                Ok(HttpResponseCreated(resp.into()))
-            }
-            Err(e) => Err(e),
-        }
+        Self::multicast_group_create_external(rqctx, group.map(Into::into))
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /// Create an underlay (internal) multicast group configuration.
@@ -1557,9 +1617,9 @@ pub trait DpdApi {
     }]
     async fn multicast_group_create_underlay_v3(
         rqctx: RequestContext<Self::Context>,
-        group: TypedBody<v3::MulticastGroupCreateUnderlayEntry>,
+        group: TypedBody<v4::MulticastGroupCreateUnderlayEntry>,
     ) -> Result<
-        HttpResponseCreated<v3::MulticastGroupUnderlayResponse>,
+        HttpResponseCreated<v4::MulticastGroupUnderlayResponse>,
         HttpError,
     > {
         let v4_body = group
@@ -1573,12 +1633,9 @@ pub trait DpdApi {
                 })
             })
             .map_err(|e: String| HttpError::for_bad_request(None, e))?;
-        match Self::multicast_group_create_underlay(rqctx, v4_body).await {
-            Ok(HttpResponseCreated(resp)) => {
-                Ok(HttpResponseCreated(resp.into()))
-            }
-            Err(e) => Err(e),
-        }
+        Self::multicast_group_create_underlay(rqctx, v4_body)
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /**
@@ -1644,11 +1701,10 @@ pub trait DpdApi {
     async fn multicast_group_get_v3(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
-    ) -> Result<HttpResponseOk<v3::MulticastGroupResponse>, HttpError> {
-        match Self::multicast_group_get(rqctx, path).await {
-            Ok(HttpResponseOk(resp)) => Ok(HttpResponseOk(resp.into())),
-            Err(e) => Err(e),
-        }
+    ) -> Result<HttpResponseOk<v4::MulticastGroupResponse>, HttpError> {
+        Self::multicast_group_get(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /// Get the multicast group configuration for a given group IP address (API v1-v2).
@@ -1660,11 +1716,10 @@ pub trait DpdApi {
     async fn multicast_group_get_v2(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
-    ) -> Result<HttpResponseOk<v2::MulticastGroupResponse>, HttpError> {
-        match Self::multicast_group_get(rqctx, path).await {
-            Ok(HttpResponseOk(resp)) => Ok(HttpResponseOk(resp.into())),
-            Err(e) => Err(e),
-        }
+    ) -> Result<HttpResponseOk<v3::MulticastGroupResponse>, HttpError> {
+        Self::multicast_group_get(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /// Get an underlay (internal) multicast group configuration.
@@ -1688,8 +1743,8 @@ pub trait DpdApi {
     }]
     async fn multicast_group_get_underlay_v3(
         rqctx: RequestContext<Self::Context>,
-        path: Path<v3::MulticastUnderlayGroupIpParam>,
-    ) -> Result<HttpResponseOk<v3::MulticastGroupUnderlayResponse>, HttpError>
+        path: Path<v4::MulticastUnderlayGroupIpParam>,
+    ) -> Result<HttpResponseOk<v4::MulticastGroupUnderlayResponse>, HttpError>
     {
         let v4_path = path.try_map(|p| {
             mcast::UnderlayMulticastIpv6::try_from(p.group_ip)
@@ -1702,10 +1757,9 @@ pub trait DpdApi {
                 })
         })?;
 
-        match Self::multicast_group_get_underlay(rqctx, v4_path).await {
-            Ok(HttpResponseOk(resp)) => Ok(HttpResponseOk(resp.into())),
-            Err(e) => Err(e),
-        }
+        Self::multicast_group_get_underlay(rqctx, v4_path)
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /// Update an underlay (internal) multicast group configuration.
@@ -1734,9 +1788,9 @@ pub trait DpdApi {
     }]
     async fn multicast_group_update_underlay_v3(
         rqctx: RequestContext<Self::Context>,
-        path: Path<v3::MulticastUnderlayGroupIpParam>,
-        group: TypedBody<v3::MulticastGroupUpdateUnderlayEntry>,
-    ) -> Result<HttpResponseOk<v3::MulticastGroupUnderlayResponse>, HttpError>;
+        path: Path<v4::MulticastUnderlayGroupIpParam>,
+        group: TypedBody<v4::MulticastGroupUpdateUnderlayEntry>,
+    ) -> Result<HttpResponseOk<v4::MulticastGroupUnderlayResponse>, HttpError>;
 
     /**
      * Update an external-only multicast group configuration for a given group IP address.
@@ -1771,9 +1825,9 @@ pub trait DpdApi {
     async fn multicast_group_update_external_v3(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
-        group: TypedBody<v3::MulticastGroupUpdateExternalEntry>,
+        group: TypedBody<v4::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<v3::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v4::MulticastGroupExternalResponse>,
         HttpError,
     >;
 
@@ -1790,9 +1844,9 @@ pub trait DpdApi {
     async fn multicast_group_update_external_v2(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
-        group: TypedBody<v2::MulticastGroupUpdateExternalEntry>,
+        group: TypedBody<v3::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<v2::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v3::MulticastGroupExternalResponse>,
         HttpError,
     >;
 
@@ -1826,16 +1880,15 @@ pub trait DpdApi {
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
     ) -> Result<
-        HttpResponseOk<ResultsPage<v3::MulticastGroupResponse>>,
+        HttpResponseOk<ResultsPage<v4::MulticastGroupResponse>>,
         HttpError,
     > {
-        match Self::multicast_groups_list(rqctx, query_params).await {
-            Ok(HttpResponseOk(page)) => Ok(HttpResponseOk(ResultsPage {
-                items: page.items.into_iter().map(Into::into).collect(),
-                next_page: page.next_page,
-            })),
-            Err(e) => Err(e),
-        }
+        let HttpResponseOk(page) =
+            Self::multicast_groups_list(rqctx, query_params).await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
     }
 
     /// List all multicast groups (API v1/v2).
@@ -1850,16 +1903,15 @@ pub trait DpdApi {
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
     ) -> Result<
-        HttpResponseOk<ResultsPage<v2::MulticastGroupResponse>>,
+        HttpResponseOk<ResultsPage<v3::MulticastGroupResponse>>,
         HttpError,
     > {
-        match Self::multicast_groups_list(rqctx, query_params).await {
-            Ok(HttpResponseOk(page)) => Ok(HttpResponseOk(ResultsPage {
-                items: page.items.into_iter().map(Into::into).collect(),
-                next_page: page.next_page,
-            })),
-            Err(e) => Err(e),
-        }
+        let HttpResponseOk(page) =
+            Self::multicast_groups_list(rqctx, query_params).await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
     }
 
     /**
@@ -1898,22 +1950,19 @@ pub trait DpdApi {
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
     ) -> Result<
-        HttpResponseOk<ResultsPage<v3::MulticastGroupResponse>>,
+        HttpResponseOk<ResultsPage<v4::MulticastGroupResponse>>,
         HttpError,
     > {
-        match Self::multicast_groups_list_by_tag(
+        let HttpResponseOk(page) = Self::multicast_groups_list_by_tag(
             rqctx,
             path.map(Into::into),
             query_params,
         )
-        .await
-        {
-            Ok(HttpResponseOk(page)) => Ok(HttpResponseOk(ResultsPage {
-                items: page.items.into_iter().map(Into::into).collect(),
-                next_page: page.next_page,
-            })),
-            Err(e) => Err(e),
-        }
+        .await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
     }
 
     /// List all multicast groups with a given tag (API v1/v2).
@@ -1929,22 +1978,19 @@ pub trait DpdApi {
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
     ) -> Result<
-        HttpResponseOk<ResultsPage<v2::MulticastGroupResponse>>,
+        HttpResponseOk<ResultsPage<v3::MulticastGroupResponse>>,
         HttpError,
     > {
-        match Self::multicast_groups_list_by_tag(
+        let HttpResponseOk(page) = Self::multicast_groups_list_by_tag(
             rqctx,
             path.map(Into::into),
             query_params,
         )
-        .await
-        {
-            Ok(HttpResponseOk(page)) => Ok(HttpResponseOk(ResultsPage {
-                items: page.items.into_iter().map(Into::into).collect(),
-                next_page: page.next_page,
-            })),
-            Err(e) => Err(e),
-        }
+        .await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
     }
 
     /**
@@ -2382,6 +2428,12 @@ pub struct RoutePathV4 {
     pub cidr: Ipv4Net,
 }
 
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct SubnetPath {
+    /// The external subnet in CIDR notation being managed
+    pub subnet: IpNet,
+}
+
 /// Represents a single subnet->target route entry
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct RouteTargetIpv4Path {
@@ -2427,6 +2479,15 @@ pub struct Ipv4RouteToken {
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct Ipv6RouteToken {
     pub cidr: Ipv6Net,
+}
+
+/**
+ * Represents a cursor into a paginated request for the contents of the
+ * external subnets table.
+ */
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct AttachedSubnetToken {
+    pub cidr: IpNet,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]

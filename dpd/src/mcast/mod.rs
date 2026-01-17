@@ -64,7 +64,7 @@ use std::{
 };
 
 use aal::{AsicError, AsicOps};
-use common::{nat::NatTarget, ports::PortId};
+use common::{network::NatTarget, ports::PortId};
 use dpd_types::{
     link::LinkId,
     mcast::{

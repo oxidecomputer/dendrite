@@ -35,13 +35,16 @@ const ADMIN_LOCAL_PREFIX: u16 = 0xFF04;
 // oximeter, which will let this test query dpd for the table size rather than
 // hardcoding it below.
 //
-// NOTE for this entry, we expect the size to be 4095, but there are 4 entries
-// that are unaccounted for. This is being tracked in issue #1013.
-// This table has further shrunk to 4022 entries with the open source
-// compiler.  That is being tracked as issue #1092, which will presumably
-// subsume #1013.
-// update: with the move to 8192 entries we're now at 8191 entries.
-const IPV4_LPM_SIZE: usize = 8191; // ipv4 forwarding table
+// The LPM tables are packed using a cuckoo hash algorithm. The conflict
+// resolution approach can result in some slots not being available for some
+// patterns of entries. Exactly which tables and which entries are unavailable
+// can change depending on table layout on the ASIC. All of this means that it
+// is normal for these table sizes to change slightly after updating the P4
+// code. If the table size appears to change dramatically, that's worth
+// investigating. If it only changes by an entry or two, it's fine to just
+// adjust the constant below to match the observed result.
+//
+const IPV4_LPM_SIZE: usize = 8190; // ipv4 forwarding table
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports

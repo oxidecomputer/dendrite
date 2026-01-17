@@ -13,7 +13,7 @@ use crate::{Switch, table::*};
 use super::{Ipv4VlanMatchKey, Ipv6VlanMatchKey};
 use aal::ActionParse;
 use aal_macros::*;
-use common::{nat::NatTarget, network::MacAddr};
+use common::network::{MacAddr, NatTarget};
 use slog::debug;
 
 /// IPv4 Table for multicast NAT entries.

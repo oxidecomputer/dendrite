@@ -1,9 +1,19 @@
 #!/bin/bash
 
+# The tofino2 has 20 stages, and the current sidecar.p4 needs all 20 of them.
+# Specifying the number of stages isn't strictly necessary, but it allows us to
+# track when we exceed the current ceiling. The underlying intention is to grow
+# deliberately and thoughtfully, given the limited space on the ASIC.
+#
+# Note: this now seems silly since we have maxed out the number of stages, but
+# we want to leave this check and note in place should we ever find a way to
+# reduce our footprint below 20 stages.
+TOFINO_STAGES=20
+
 # These describe which version of the SDE to download and where to find it
-SDE_COMMIT=eb08b0b0e55792bbba206202603da0fd791ea555
-SDE_PKG_SHA256=fbaea9ccd7ece70cdc20207e2f9b4750243468c6fe95c6a1fae9734201307db7
-SDE_DEB_SHA256=14050fd9a08b8b0b2ec7c827fa06a51516369a81bcf616d16699302b58d8ea9a
+SDE_COMMIT=e61fe02c3c1c384b2e212c90177fcea76a31fd4e
+SDE_PKG_SHA256=8a87a9b0bed3c5440a173a7a41361bdeb5e7a848882da6b4aa48c8fb0043f3bd
+SDE_DEB_SHA256=a292e2dd5311647c4852bb41f2532dd1fdf30325b6d04cccb7e85b873e521d5f
 
 [ `uname -s` == "SunOS" ] && SERIES=illumos
 [ `uname -s` == "SunOS" ] || SERIES=linux

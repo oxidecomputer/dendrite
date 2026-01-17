@@ -13,7 +13,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use super::IpSrc;
 use crate::types::{DpdError, DpdResult};
-use common::nat::NatTarget;
+use common::network::NatTarget;
 use dpd_api::MulticastTag;
 use omicron_common::address::{
     IPV4_LINK_LOCAL_MULTICAST_SUBNET, IPV4_SSM_SUBNET,
@@ -263,7 +263,7 @@ pub(crate) fn validate_tag(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::{nat::Vni, network::MacAddr};
+    use common::network::{MacAddr, Vni};
     use dpd_api::MAX_TAG_LENGTH;
 
     /// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
