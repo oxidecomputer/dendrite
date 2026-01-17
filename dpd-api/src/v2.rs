@@ -4,9 +4,11 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-//! Types from API version 2 that changed in version 3.
+//! Types from API version 2 (DUAL_STACK_NAT_WORKFLOW) that changed in
+//! version 3 (MCAST_SOURCE_FILTER_ANY).
 //!
-//! The `IpSrc` enum changed from `{Exact, Subnet}` to `{Exact, Any}`.
+//! Changes in v3:
+//! - The `IpSrc` enum changed from `{Exact, Subnet}` to `{Exact, Any}`.
 
 use std::{fmt, net::IpAddr};
 
@@ -76,7 +78,7 @@ pub struct MulticastGroupCreateExternalEntry {
 /// Tag validation is optional in v2 for backward compatibility.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupUpdateExternalEntry {
-    /// Tag for validating update requests. Optional in v2; if not provided,
+    /// Tag for validating update requests. Optional in v2. If not provided,
     /// tag validation is skipped.
     pub tag: Option<String>,
     pub internal_forwarding: InternalForwarding,
@@ -95,21 +97,30 @@ pub struct MulticastGroupExternalResponse {
     pub sources: Option<Vec<IpSrc>>,
 }
 
-/// Convert from API v4 response to v2 response.
-impl From<dpd_types::mcast::MulticastGroupExternalResponse>
+/// Convert from v3 response to v2 response.
+impl From<crate::v3::MulticastGroupExternalResponse>
     for MulticastGroupExternalResponse
 {
-    fn from(resp: dpd_types::mcast::MulticastGroupExternalResponse) -> Self {
+    fn from(resp: crate::v3::MulticastGroupExternalResponse) -> Self {
         Self {
             group_ip: resp.group_ip,
             external_group_id: resp.external_group_id,
-            tag: Some(resp.tag),
+            tag: resp.tag,
             internal_forwarding: resp.internal_forwarding,
             external_forwarding: resp.external_forwarding,
             sources: resp
                 .sources
                 .map(|sources| sources.into_iter().map(IpSrc::from).collect()),
         }
+    }
+}
+
+/// Convert from v4 response to v2 response (chains through v3).
+impl From<dpd_types::mcast::MulticastGroupExternalResponse>
+    for MulticastGroupExternalResponse
+{
+    fn from(resp: dpd_types::mcast::MulticastGroupExternalResponse) -> Self {
+        crate::v3::MulticastGroupExternalResponse::from(resp).into()
     }
 }
 
@@ -132,17 +143,22 @@ impl MulticastGroupResponse {
     }
 }
 
-/// Convert from API v4 response to v2 response.
-impl From<dpd_types::mcast::MulticastGroupResponse> for MulticastGroupResponse {
-    fn from(resp: dpd_types::mcast::MulticastGroupResponse) -> Self {
+/// Convert from v3 response to v2 response.
+impl From<crate::v3::MulticastGroupResponse> for MulticastGroupResponse {
+    fn from(resp: crate::v3::MulticastGroupResponse) -> Self {
         match resp {
-            dpd_types::mcast::MulticastGroupResponse::Underlay(u) => {
-                Self::Underlay(u.into())
-            }
-            dpd_types::mcast::MulticastGroupResponse::External(e) => {
+            crate::v3::MulticastGroupResponse::Underlay(u) => Self::Underlay(u),
+            crate::v3::MulticastGroupResponse::External(e) => {
                 Self::External(e.into())
             }
         }
+    }
+}
+
+/// Convert from v4 response to v2 response (chains through v3).
+impl From<dpd_types::mcast::MulticastGroupResponse> for MulticastGroupResponse {
+    fn from(resp: dpd_types::mcast::MulticastGroupResponse) -> Self {
+        crate::v3::MulticastGroupResponse::from(resp).into()
     }
 }
 

@@ -1396,7 +1396,6 @@
     "/multicast/underlay-groups": {
       "post": {
         "summary": "Create an underlay (internal) multicast group configuration.",
-        "description": "Underlay groups are used for admin-local IPv6 multicast traffic (ff04::/16, as defined in RFC 7346 and RFC 4291) that requires replication infrastructure. These groups support both external and underlay members with full replication capabilities.",
         "operationId": "multicast_group_create_underlay",
         "requestBody": {
           "content": {
@@ -1431,7 +1430,6 @@
     "/multicast/underlay-groups/{group_ip}": {
       "get": {
         "summary": "Get an underlay (internal) multicast group configuration.",
-        "description": "Underlay groups handle admin-local IPv6 multicast traffic (ff04::/16) with replication infrastructure for external and underlay members.",
         "operationId": "multicast_group_get_underlay",
         "parameters": [
           {
@@ -1464,7 +1462,7 @@
       },
       "put": {
         "summary": "Update an underlay (internal) multicast group configuration.",
-        "description": "Underlay groups are used for admin-local IPv6 multicast traffic (ff04::/16) that requires replication infrastructure with external and underlay members.\n\nThe `tag` query parameter must match the group's existing tag.",
+        "description": "The `tag` query parameter must match the group's existing tag.",
         "operationId": "multicast_group_update_underlay",
         "parameters": [
           {

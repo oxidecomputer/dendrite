@@ -1533,14 +1533,7 @@ pub trait DpdApi {
         }
     }
 
-    /**
-     * Create an underlay (internal) multicast group configuration.
-     *
-     * Underlay groups are used for admin-local IPv6 multicast traffic
-     * (ff04::/16, as defined in RFC 7346 and RFC 4291) that requires
-     * replication infrastructure. These groups support both external and
-     * underlay members with full replication capabilities.
-     */
+    /// Create an underlay (internal) multicast group configuration.
     #[endpoint {
         method = POST,
         path = "/multicast/underlay-groups",
@@ -1555,6 +1548,8 @@ pub trait DpdApi {
     >;
 
     /// Create an underlay (internal) multicast group configuration (API v1-v3).
+    ///
+    /// Accepts the broader ff04::/16 (admin-local) address range.
     #[endpoint {
         method = POST,
         path = "/multicast/underlay-groups",
@@ -1562,12 +1557,23 @@ pub trait DpdApi {
     }]
     async fn multicast_group_create_underlay_v3(
         rqctx: RequestContext<Self::Context>,
-        group: TypedBody<mcast::MulticastGroupCreateUnderlayEntry>,
+        group: TypedBody<v3::MulticastGroupCreateUnderlayEntry>,
     ) -> Result<
         HttpResponseCreated<v3::MulticastGroupUnderlayResponse>,
         HttpError,
     > {
-        match Self::multicast_group_create_underlay(rqctx, group).await {
+        let v4_body = group
+            .try_map(|entry| {
+                let group_ip =
+                    mcast::UnderlayMulticastIpv6::try_from(entry.group_ip)?;
+                Ok(mcast::MulticastGroupCreateUnderlayEntry {
+                    group_ip,
+                    tag: entry.tag,
+                    members: entry.members,
+                })
+            })
+            .map_err(|e: String| HttpError::for_bad_request(None, e))?;
+        match Self::multicast_group_create_underlay(rqctx, v4_body).await {
             Ok(HttpResponseCreated(resp)) => {
                 Ok(HttpResponseCreated(resp.into()))
             }
@@ -1661,12 +1667,7 @@ pub trait DpdApi {
         }
     }
 
-    /**
-     * Get an underlay (internal) multicast group configuration.
-     *
-     * Underlay groups handle admin-local IPv6 multicast traffic (ff04::/16) with
-     * replication infrastructure for external and underlay members.
-     */
+    /// Get an underlay (internal) multicast group configuration.
     #[endpoint {
         method = GET,
         path = "/multicast/underlay-groups/{group_ip}",
@@ -1679,8 +1680,7 @@ pub trait DpdApi {
 
     /// Get an underlay (internal) multicast group configuration (API v1-v3).
     ///
-    /// Uses the broader ff04::/16 (admin-local) address validation for backward
-    /// compatibility. Delegates to v4 endpoint with path param conversion.
+    /// Accepts the broader ff04::/16 (admin-local) address range.
     #[endpoint {
         method = GET,
         path = "/multicast/underlay-groups/{group_ip}",
@@ -1708,14 +1708,9 @@ pub trait DpdApi {
         }
     }
 
-    /**
-     * Update an underlay (internal) multicast group configuration.
-     *
-     * Underlay groups are used for admin-local IPv6 multicast traffic (ff04::/16)
-     * that requires replication infrastructure with external and underlay members.
-     *
-     * The `tag` query parameter must match the group's existing tag.
-     */
+    /// Update an underlay (internal) multicast group configuration.
+    ///
+    /// The `tag` query parameter must match the group's existing tag.
     #[endpoint {
         method = PUT,
         path = "/multicast/underlay-groups/{group_ip}",
@@ -1730,8 +1725,8 @@ pub trait DpdApi {
 
     /// Update an underlay (internal) multicast group configuration (API v1-v3).
     ///
-    /// Uses the broader ff04::/16 (admin-local) address validation for backward
-    /// compatibility. Tags are optional in v3 for backward compatibility.
+    /// Accepts the broader ff04::/16 (admin-local) address range. Tags are
+    /// optional. If omitted, the existing tag is used.
     #[endpoint {
         method = PUT,
         path = "/multicast/underlay-groups/{group_ip}",
@@ -2772,11 +2767,8 @@ pub struct MulticastGroupTagQuery {
     pub tag: MulticastTag,
 }
 
-/// Used to identify an underlay (internal) multicast group by admin-local IPv6
-/// address (ff04::/16, as defined in [RFC 7346] and [RFC 4291]).
-///
-/// [RFC 7346]: https://www.rfc-editor.org/rfc/rfc7346.html
-/// [RFC 4291]: https://www.rfc-editor.org/rfc/rfc4291.html
+/// Used to identify an underlay multicast group by IPv6 address within
+/// the underlay multicast subnet (ff04::/64).
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct MulticastUnderlayGroupIpParam {
     pub group_ip: mcast::UnderlayMulticastIpv6,
