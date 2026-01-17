@@ -206,6 +206,168 @@
         }
       }
     },
+    "/attached_subnet": {
+      "get": {
+        "summary": "Get all of the external subnets with internal mappings",
+        "operationId": "attached_subnet_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "description": "Maximum number of items returned by a single call",
+            "schema": {
+              "nullable": true,
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "description": "Token returned by previous call to retrieve the subsequent page",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachedSubnetEntryResultsPage"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-dropshot-pagination": {
+          "required": []
+        }
+      },
+      "delete": {
+        "summary": "Clear all external subnet mappings",
+        "operationId": "attached_subnet_reset",
+        "responses": {
+          "204": {
+            "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/attached_subnet/{subnet}": {
+      "get": {
+        "summary": "Get the mapping for the given external subnet.",
+        "operationId": "attached_subnet_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subnet",
+            "description": "The external subnet in CIDR notation being managed",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IpNet"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceTarget"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "summary": "Add a mapping to an internal target for an external subnet address.",
+        "description": "These identify the gimlet on which a guest is running, and gives OPTE the information it needs to  identify the guest VM that uses the external subnet.",
+        "operationId": "attached_subnet_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subnet",
+            "description": "The external subnet in CIDR notation being managed",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IpNet"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstanceTarget"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete the mapping for an external subnet",
+        "operationId": "attached_subnet_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subnet",
+            "description": "The external subnet in CIDR notation being managed",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IpNet"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/backplane-map": {
       "get": {
         "summary": "Return the full backplane map.",
@@ -1086,8 +1248,8 @@
     },
     "/multicast/external-groups": {
       "post": {
-        "summary": "Create an external-only multicast group configuration (API v3).",
-        "operationId": "multicast_group_create_external_v3",
+        "summary": "Create an external-only multicast group configuration (API v1-v2).",
+        "operationId": "multicast_group_create_external_v2",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1120,9 +1282,9 @@
     },
     "/multicast/external-groups/{group_ip}": {
       "put": {
-        "summary": "Update an external-only multicast group configuration (API v3).",
+        "summary": "Update an external-only multicast group configuration (API v1/v2).",
         "description": "Tags are optional for backward compatibility.",
-        "operationId": "multicast_group_update_external_v3",
+        "operationId": "multicast_group_update_external_v2",
         "parameters": [
           {
             "in": "path",
@@ -1166,8 +1328,8 @@
     },
     "/multicast/groups": {
       "get": {
-        "summary": "List all multicast groups (API v3).",
-        "operationId": "multicast_groups_list_v3",
+        "summary": "List all multicast groups (API v1/v2).",
+        "operationId": "multicast_groups_list_v2",
         "parameters": [
           {
             "in": "query",
@@ -1230,8 +1392,8 @@
     },
     "/multicast/groups/{group_ip}": {
       "get": {
-        "summary": "Get the multicast group configuration for a given group IP address (API v3).",
-        "operationId": "multicast_group_get_v3",
+        "summary": "Get the multicast group configuration for a given group IP address (API v1-v2).",
+        "operationId": "multicast_group_get_v2",
         "parameters": [
           {
             "in": "path",
@@ -1291,8 +1453,8 @@
     },
     "/multicast/tags/{tag}": {
       "get": {
-        "summary": "List all multicast groups with a given tag (API v3).",
-        "operationId": "multicast_groups_list_by_tag_v3",
+        "summary": "List all multicast groups with a given tag (API v1/v2).",
+        "operationId": "multicast_groups_list_by_tag_v2",
         "parameters": [
           {
             "in": "path",
@@ -5243,7 +5405,7 @@
   "components": {
     "schemas": {
       "AdminScopedIpv6": {
-        "description": "A validated admin-local IPv6 multicast address (API version 3).\n\nIn v3, admin-local addresses are validated against ff04::/16 (scope 4). In v4+, this was renamed to `UnderlayMulticastIpv6` and tightened to ff04::/64 to match Omicron's underlay multicast subnet allocation.",
+        "description": "A validated admin-local IPv6 multicast address (API version 4).\n\nIn v4, admin-local addresses are validated against ff04::/16 (scope 4). In v5+, this was renamed to `UnderlayMulticastIpv6` and tightened to ff04::/64 to match Omicron's underlay multicast subnet allocation.",
         "type": "string",
         "format": "ipv6"
       },
@@ -5412,6 +5574,43 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ArpEntry"
+            }
+          },
+          "next_page": {
+            "nullable": true,
+            "description": "token used to fetch the next page of results (if any)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "AttachedSubnetEntry": {
+        "description": "represents an external subnet mapping",
+        "type": "object",
+        "properties": {
+          "subnet": {
+            "$ref": "#/components/schemas/IpNet"
+          },
+          "tgt": {
+            "$ref": "#/components/schemas/InstanceTarget"
+          }
+        },
+        "required": [
+          "subnet",
+          "tgt"
+        ]
+      },
+      "AttachedSubnetEntryResultsPage": {
+        "description": "A single page of results",
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "list of items on this page of results",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttachedSubnetEntry"
             }
           },
           "next_page": {
@@ -6247,6 +6446,27 @@
           "port_id"
         ]
       },
+      "InstanceTarget": {
+        "description": "represents an internal target for either NAT or an external subnet mapping",
+        "type": "object",
+        "properties": {
+          "inner_mac": {
+            "$ref": "#/components/schemas/MacAddr"
+          },
+          "internal_ip": {
+            "type": "string",
+            "format": "ipv6"
+          },
+          "vni": {
+            "$ref": "#/components/schemas/Vni"
+          }
+        },
+        "required": [
+          "inner_mac",
+          "internal_ip",
+          "vni"
+        ]
+      },
       "InternalForwarding": {
         "description": "Represents the NAT target for multicast traffic for internal/underlay forwarding.",
         "type": "object",
@@ -6261,8 +6481,33 @@
           }
         }
       },
+      "IpNet": {
+        "x-rust-type": {
+          "crate": "oxnet",
+          "path": "oxnet::IpNet",
+          "version": "0.1.0"
+        },
+        "oneOf": [
+          {
+            "title": "v4",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Ipv4Net"
+              }
+            ]
+          },
+          {
+            "title": "v6",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Ipv6Net"
+              }
+            ]
+          }
+        ]
+      },
       "IpSrc": {
-        "description": "Source filter match key for multicast traffic.\n\nFor SSM groups, use `Exact` with specific source addresses. For ASM groups with any-source filtering, use `Any`.",
+        "description": "Source filter match key for multicast traffic (API versions 1, 2, and 3).\n\nThis is the original `IpSrc` enum that used a single `Subnet` variant (IPv4 only) rather than the `Any` variant added in version 4.",
         "oneOf": [
           {
             "description": "Exact match for the source IP address.",
@@ -6279,11 +6524,17 @@
             "additionalProperties": false
           },
           {
-            "description": "Match any source address (0.0.0.0/0 or ::/0 depending on group IP version).",
-            "type": "string",
-            "enum": [
-              "Any"
-            ]
+            "description": "Subnet match for the source IP address.",
+            "type": "object",
+            "properties": {
+              "Subnet": {
+                "$ref": "#/components/schemas/Ipv4Net"
+              }
+            },
+            "required": [
+              "Subnet"
+            ],
+            "additionalProperties": false
           }
         ]
       },
@@ -7704,7 +7955,7 @@
         }
       },
       "MulticastGroupCreateExternalEntry": {
-        "description": "A multicast group configuration for POST requests for external (to the rack) groups.",
+        "description": "A multicast group configuration for POST requests for external (to the rack) groups (API version 3).",
         "type": "object",
         "properties": {
           "external_forwarding": {
@@ -7726,7 +7977,6 @@
           },
           "tag": {
             "nullable": true,
-            "description": "Tag for validating update/delete requests. If a tag is not provided, one is auto-generated as `{uuid}:{group_ip}`.",
             "type": "string"
           }
         },
@@ -7737,7 +7987,7 @@
         ]
       },
       "MulticastGroupCreateUnderlayEntry": {
-        "description": "Request body for creating underlay multicast groups (API version 3).\n\nUses `AdminScopedIpv6` which accepts the broader ff04::/16 range. In v4+, this was tightened to `UnderlayMulticastIpv6` (ff04::/64).",
+        "description": "Request body for creating underlay multicast groups (API version 4).\n\nUses `AdminScopedIpv6` which accepts the broader ff04::/16 range. In v4+, this was tightened to `UnderlayMulticastIpv6` (ff04::/64).",
         "type": "object",
         "properties": {
           "group_ip": {
@@ -7821,7 +8071,7 @@
         "description": "Unified response type for operations that return mixed group types (API version 3).",
         "oneOf": [
           {
-            "description": "Response structure for underlay/internal multicast group operations (API version 3).",
+            "description": "Response structure for underlay/internal multicast group operations (API version 4).",
             "type": "object",
             "properties": {
               "external_group_id": {
@@ -7931,7 +8181,7 @@
         ]
       },
       "MulticastGroupUnderlayResponse": {
-        "description": "Response structure for underlay/internal multicast group operations (API version 3).",
+        "description": "Response structure for underlay/internal multicast group operations (API version 4).",
         "type": "object",
         "properties": {
           "external_group_id": {
@@ -7966,7 +8216,7 @@
         ]
       },
       "MulticastGroupUpdateExternalEntry": {
-        "description": "A multicast group update entry for PUT requests for external groups (API version 3).\n\nTag validation is optional in v3 for backward compatibility.",
+        "description": "A multicast group update entry for PUT requests for external (to the rack) groups (API version 3).\n\nTag validation is optional in v3 for backward compatibility.",
         "type": "object",
         "properties": {
           "external_forwarding": {
@@ -7994,7 +8244,7 @@
         ]
       },
       "MulticastGroupUpdateUnderlayEntry": {
-        "description": "A multicast group update entry for PUT requests for internal groups (API version 3).\n\nTags are optional in v3 for backward compatibility. If not provided, the existing tag is preserved.",
+        "description": "A multicast group update entry for PUT requests for internal groups (API version 4).\n\nTags are optional in v4 for backward compatibility. If not provided, the existing tag is preserved.",
         "type": "object",
         "properties": {
           "members": {
@@ -8005,7 +8255,7 @@
           },
           "tag": {
             "nullable": true,
-            "description": "Tag for validating update requests. Optional in v3. If not provided, tag validation is skipped.",
+            "description": "Tag for validating update requests. Optional in v4. If not provided, tag validation is skipped.",
             "type": "string"
           }
         },

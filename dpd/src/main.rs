@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Main application entry point for `dpd`, the Dendrite switch management API
 //! server.
@@ -54,6 +54,7 @@ cfg_if::cfg_if! {
 
 mod api_server;
 mod arp;
+mod attached_subnet;
 mod config;
 mod counters;
 mod fault;
@@ -187,6 +188,7 @@ pub struct Switch {
     pub routes: TokioMutex<route::RouteData>,
     pub arp: Mutex<arp::ArpData>,
     pub nat: Mutex<nat::NatData>,
+    pub attached_subnet: Mutex<attached_subnet::AttachedSubnetData>,
     pub loopback: Mutex<loopback::LoopbackData>,
     pub identifiers: Mutex<Option<SwitchIdentifiers>>,
     pub oximeter_producer: Mutex<Option<oximeter_producer::Server>>,
@@ -294,6 +296,7 @@ impl Switch {
             routes: TokioMutex::new(route_data),
             arp: Mutex::new(arp::init()),
             nat: Mutex::new(nat::init()),
+            attached_subnet: Mutex::new(attached_subnet::init()),
             loopback: Mutex::new(loopback::init()),
             switch_ports,
             identifiers: Mutex::new(None),

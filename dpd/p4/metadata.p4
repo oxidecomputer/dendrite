@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 /* Flexible bridge header for passing metadata between ingress and egress
  * pipelines.
@@ -23,6 +23,7 @@ struct sidecar_ingress_meta_t {
 	bool nat_egress_hit;		// NATed packet from guest -> uplink
 	bool nat_ingress_hit;		// NATed packet from uplink -> guest
 	bool nat_ingress_port;		// This port accepts only NAT traffic
+	bool encap_needed;
 	ipv4_addr_t nexthop_ipv4;	// ip address of next router
 	ipv6_addr_t nexthop_ipv6;	// ip address of next router
 	bit<10> pkt_type;

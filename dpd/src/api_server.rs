@@ -66,6 +66,7 @@ use common::ports::TxEq;
 #[cfg(any(feature = "softnpu", feature = "tofino_asic"))]
 use common::ports::TxEqSwHw;
 
+use crate::attached_subnet;
 use crate::counters;
 use crate::mcast;
 use crate::oxstats;
@@ -75,8 +76,9 @@ use crate::switch_port::LedState;
 use crate::transceivers::PowerState;
 use crate::types::DpdError;
 use crate::{Switch, arp, loopback, nat, ports, route};
-use common::nat::{Ipv4Nat, Ipv6Nat, NatTarget};
-use common::network::MacAddr;
+use common::attached_subnet::AttachedSubnetEntry;
+use common::nat::{Ipv4Nat, Ipv6Nat};
+use common::network::{InstanceTarget, MacAddr, NatTarget};
 use common::ports::PortId;
 use common::ports::QsfpPort;
 use common::ports::{Ipv4Entry, Ipv6Entry, PortPrbsMode};
@@ -1555,6 +1557,82 @@ impl DpdApi for DpdApiImpl {
         }
     }
 
+    async fn attached_subnet_list(
+        rqctx: RequestContext<Arc<Switch>>,
+        query: Query<PaginationParams<EmptyScanParams, AttachedSubnetToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<AttachedSubnetEntry>>, HttpError>
+    {
+        let switch: &Switch = rqctx.context();
+        let pag_params = query.into_inner();
+        let max = rqctx.page_limit(&pag_params)?.get();
+        let subnet = match &pag_params.page {
+            WhichPage::First(..) => None,
+            WhichPage::Next(AttachedSubnetToken { cidr }) => Some(*cidr),
+        };
+
+        let entries = attached_subnet::get_mappings(
+            switch,
+            subnet,
+            usize::try_from(max).expect("invalid usize"),
+        );
+        Ok(HttpResponseOk(ResultsPage::new(
+            entries,
+            &EmptyScanParams {},
+            |e: &AttachedSubnetEntry, _| AttachedSubnetToken { cidr: e.subnet },
+        )?))
+    }
+
+    async fn attached_subnet_get(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<SubnetPath>,
+    ) -> Result<HttpResponseOk<InstanceTarget>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        match attached_subnet::get_mapping(switch, params.subnet) {
+            Ok(tgt) => Ok(HttpResponseOk(tgt)),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn attached_subnet_create(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<SubnetPath>,
+        target: TypedBody<InstanceTarget>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        match attached_subnet::set_mapping(
+            switch,
+            params.subnet,
+            target.into_inner(),
+        ) {
+            Ok(_) => Ok(HttpResponseUpdatedNoContent()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn attached_subnet_delete(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<SubnetPath>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        attached_subnet::clear_mapping(switch, params.subnet)
+            .map(|_| HttpResponseDeleted())
+            .map_err(HttpError::from)
+    }
+
+    async fn attached_subnet_reset(
+        rqctx: RequestContext<Arc<Switch>>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+
+        match attached_subnet::reset(switch) {
+            Ok(_) => Ok(HttpResponseUpdatedNoContent()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     async fn reset_all_tagged(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<TagPath>,
@@ -1607,6 +1685,13 @@ impl DpdApi for DpdApiImpl {
         }
         if let Err(e) = mcast::reset(switch) {
             error!(switch.log, "failed to reset multicast state: {:?}", e);
+            err = Some(e);
+        }
+        if let Err(e) = attached_subnet::reset(switch) {
+            error!(
+                switch.log,
+                "failed to reset external subnet state: {:?}", e
+            );
             err = Some(e);
         }
 
@@ -1959,10 +2044,10 @@ impl DpdApi for DpdApiImpl {
 
     async fn multicast_group_update_underlay_v3(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<dpd_api::v3::MulticastUnderlayGroupIpParam>,
-        group: TypedBody<dpd_api::v3::MulticastGroupUpdateUnderlayEntry>,
+        path: Path<dpd_api::v4::MulticastUnderlayGroupIpParam>,
+        group: TypedBody<dpd_api::v4::MulticastGroupUpdateUnderlayEntry>,
     ) -> Result<
-        HttpResponseOk<dpd_api::v3::MulticastGroupUnderlayResponse>,
+        HttpResponseOk<dpd_api::v4::MulticastGroupUnderlayResponse>,
         HttpError,
     > {
         let switch: &Switch = rqctx.context();
@@ -2022,9 +2107,9 @@ impl DpdApi for DpdApiImpl {
     async fn multicast_group_update_external_v3(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
-        group: TypedBody<dpd_api::v3::MulticastGroupUpdateExternalEntry>,
+        group: TypedBody<dpd_api::v4::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<dpd_api::v3::MulticastGroupExternalResponse>,
+        HttpResponseCreated<dpd_api::v4::MulticastGroupExternalResponse>,
         HttpError,
     > {
         let switch: &Switch = rqctx.context();
@@ -2048,9 +2133,9 @@ impl DpdApi for DpdApiImpl {
     async fn multicast_group_update_external_v2(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
-        group: TypedBody<dpd_api::v2::MulticastGroupUpdateExternalEntry>,
+        group: TypedBody<dpd_api::v3::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<dpd_api::v2::MulticastGroupExternalResponse>,
+        HttpResponseCreated<dpd_api::v3::MulticastGroupExternalResponse>,
         HttpError,
     > {
         let switch: &Switch = rqctx.context();

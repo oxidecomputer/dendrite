@@ -20,7 +20,7 @@ use aal::AsicOps;
 use oxnet::{Ipv4Net, Ipv6Net};
 use slog::{debug, error};
 
-use common::{nat::NatTarget, ports::PortId};
+use common::{network::NatTarget, ports::PortId};
 
 use super::{
     Direction, IpSrc, LinkId, MulticastGroup, MulticastGroupId,
