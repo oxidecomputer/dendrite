@@ -33,10 +33,7 @@ async fn one_drop_test(
     packet: packet::Packet,
     counter: &str,
 ) -> anyhow::Result<bool> {
-    let send = TestPacket {
-        packet: Arc::new(packet),
-        port,
-    };
+    let send = TestPacket { packet: Arc::new(packet), port };
 
     let old = switch.get_counter(counter, None).await?;
     switch.packet_test(vec![send], Vec::new())?;
@@ -66,11 +63,7 @@ async fn add_switch_ipv4(switch: &Switch, port: PhysPort, addr: &str) {
         tag: switch.client.inner().tag.clone(),
     };
 
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
 }
 
 /// Assigns the address 10.10.10.11 to port 12 and then sends a packet with
@@ -112,11 +105,7 @@ async fn test_ipv6_switch_addr_miss() -> TestResult {
         tag: switch.client.inner().tag.clone(),
     };
 
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv6_create(&port_id, &link_id, &entry).await.unwrap();
 
     let packet = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:3344:0200::1", 3333)
@@ -214,11 +203,7 @@ async fn test_nat_filtering() -> TestResult {
 
     let (port_id, link_id) = switch.link_id(ingress).unwrap();
     // Mark the port as NAT-only
-    switch
-        .client
-        .link_nat_only_set(&port_id, &link_id, true)
-        .await
-        .unwrap();
+    switch.client.link_nat_only_set(&port_id, &link_id, true).await.unwrap();
 
     // We run the test now, but defer the evaluation of the result.  This lets
     // us clean up the NAT-only change even on a test failure.
@@ -226,11 +211,7 @@ async fn test_nat_filtering() -> TestResult {
         one_drop_test(switch, ingress, packet, "nat_ingress_miss").await;
 
     // Remove the NAT-only property
-    switch
-        .client
-        .link_nat_only_set(&port_id, &link_id, false)
-        .await
-        .unwrap();
+    switch.client.link_nat_only_set(&port_id, &link_id, false).await.unwrap();
 
     assert!(result?);
     Ok(())

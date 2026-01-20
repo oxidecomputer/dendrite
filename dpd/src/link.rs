@@ -1064,10 +1064,7 @@ impl Switch {
                 // Equality only considers the address, so create an entry
                 // with an empty tag.
                 use std::ops::Bound;
-                let entry = Ipv4Entry {
-                    tag: String::new(),
-                    addr,
-                };
+                let entry = Ipv4Entry { tag: String::new(), addr };
                 link.ipv4
                     .range((Bound::Excluded(entry), Bound::Unbounded))
                     .take(limit)
@@ -1085,10 +1082,7 @@ impl Switch {
         link: &mut Link,
         address: Ipv4Addr,
     ) -> DpdResult<()> {
-        let entry = Ipv4Entry {
-            tag: String::new(),
-            addr: address,
-        };
+        let entry = Ipv4Entry { tag: String::new(), addr: address };
 
         if link.ipv4.contains(&entry) {
             port_ip::ipv4_delete(self, link.asic_port_id, address)?;
@@ -1172,10 +1166,7 @@ impl Switch {
                 // Equality only considers the address, so create an entry
                 // with an empty tag.
                 use std::ops::Bound;
-                let entry = Ipv6Entry {
-                    tag: String::new(),
-                    addr,
-                };
+                let entry = Ipv6Entry { tag: String::new(), addr };
                 link.ipv6
                     .range((Bound::Excluded(entry), Bound::Unbounded))
                     .take(limit)
@@ -1193,10 +1184,7 @@ impl Switch {
         link: &mut Link,
         address: Ipv6Addr,
     ) -> DpdResult<()> {
-        let entry = Ipv6Entry {
-            tag: String::new(),
-            addr: address,
-        };
+        let entry = Ipv6Entry { tag: String::new(), addr: address };
 
         if link.ipv6.contains(&entry) {
             port_ip::ipv6_delete(self, link.asic_port_id, address)?;
@@ -1459,11 +1447,7 @@ impl Switch {
             let link = link_lock.lock().unwrap();
             let link_path = (*link).to_string();
             let (current, total) = link.linkup_tracker.get_counters();
-            all.push(LinkUpCounter {
-                link_path,
-                current,
-                total,
-            });
+            all.push(LinkUpCounter { link_path, current, total });
         }
         all
     }
@@ -1639,11 +1623,10 @@ fn plumb_link(
     mpn: &Option<String>,
 ) -> DpdResult<()> {
     debug!(log, "plumbing link");
-    let connector = switch
-        .switch_ports
-        .port_map
-        .id_to_connector(&link.port_id)
-        .ok_or(DpdError::Invalid("PortId has no matching Connector".into()))?;
+    let connector =
+        switch.switch_ports.port_map.id_to_connector(&link.port_id).ok_or(
+            DpdError::Invalid("PortId has no matching Connector".into()),
+        )?;
 
     // If the admin hasn't configured the FEC setting for this link, try to find
     // a default value for this transceiver.
@@ -1696,9 +1679,7 @@ fn plumb_link(
         log,
         "setting autonegotiation to {} at link creation", link.config.autoneg
     );
-    switch
-        .asic_hdl
-        .port_autoneg_set(link.port_hdl, link.config.autoneg)?;
+    switch.asic_hdl.port_autoneg_set(link.port_hdl, link.config.autoneg)?;
     link.plumbed.autoneg = link.config.autoneg;
 
     // Set the kr value
@@ -1971,9 +1952,8 @@ async fn reconcile_link(
                 false => "disabled",
             }
         );
-        if let Err(e) = switch
-            .asic_hdl
-            .port_enable_set(link.port_hdl, link.config.enabled)
+        if let Err(e) =
+            switch.asic_hdl.port_enable_set(link.port_hdl, link.config.enabled)
         {
             let action = match link.config.enabled {
                 true => "enabling the link",
@@ -2003,10 +1983,7 @@ pub struct LinkReconciler {
 impl LinkReconciler {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
-        LinkReconciler {
-            tx,
-            rx: Mutex::new(Some(rx)),
-        }
+        LinkReconciler { tx, rx: Mutex::new(Some(rx)) }
     }
 
     pub fn run(&self, switch: Arc<Switch>) {

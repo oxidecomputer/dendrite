@@ -178,10 +178,7 @@ macro_rules! unwrap_value_entry {
 impl From<Ipv6Net> for MatchLpm {
     fn from(cidr: Ipv6Net) -> Self {
         let v: u128 = cidr.addr().into();
-        MatchLpm {
-            prefix: v.into(),
-            len: cidr.width() as u16,
-        }
+        MatchLpm { prefix: v.into(), len: cidr.width() as u16 }
     }
 }
 
@@ -208,10 +205,7 @@ unwrap_lpm_entry!(Ipv6Net);
 impl From<Ipv4Net> for MatchLpm {
     fn from(cidr: Ipv4Net) -> Self {
         let v: u32 = cidr.addr().into();
-        MatchLpm {
-            prefix: v.into(),
-            len: cidr.width() as u16,
-        }
+        MatchLpm { prefix: v.into(), len: cidr.width() as u16 }
     }
 }
 

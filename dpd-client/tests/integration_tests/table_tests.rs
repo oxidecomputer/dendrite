@@ -67,9 +67,7 @@ fn gen_ipv4_addr(idx: usize) -> Ipv4Addr {
 }
 
 fn gen_ipv6_addr(idx: usize) -> Ipv6Addr {
-    Ipv6Addr::new(
-        0xfc00, 0xaabb, 0xccdd, 0x18, 0x8, 0x20ff, 0xfe1d, idx as u16,
-    )
+    Ipv6Addr::new(0xfc00, 0xaabb, 0xccdd, 0x18, 0x8, 0x20ff, 0xfe1d, idx as u16)
 }
 
 fn gen_ipv4_cidr(idx: usize) -> Ipv4Net {
@@ -309,10 +307,7 @@ impl TableTest for types::Ipv4Nat {
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let external_ip = Ipv4Addr::new(192, 168, 0, 1);
-        switch
-            .client
-            .nat_ipv4_delete(&external_ip, idx as u16)
-            .await
+        switch.client.nat_ipv4_delete(&external_ip, idx as u16).await
     }
 
     async fn count_entries(switch: &Switch) -> usize {
@@ -350,10 +345,7 @@ impl TableTest for types::Ipv6Nat {
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let external_ip = "fd00:1122:1122:0101::4".parse::<Ipv6Addr>().unwrap();
-        switch
-            .client
-            .nat_ipv6_delete(&external_ip, idx as u16)
-            .await
+        switch.client.nat_ipv6_delete(&external_ip, idx as u16).await
     }
 
     async fn count_entries(switch: &Switch) -> usize {
@@ -491,10 +483,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
                 },
             ],
         };
-        switch
-            .client
-            .multicast_group_create_underlay(&internal_entry)
-            .await
+        switch.client.multicast_group_create_underlay(&internal_entry).await
     }
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {

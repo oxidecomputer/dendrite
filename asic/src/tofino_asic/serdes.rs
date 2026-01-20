@@ -49,17 +49,10 @@ fn port_encoding_mode(dev_id: i32, port_id: u16) -> AsicResult<LaneEncoding> {
 
 /// Get the number of lanes configured for this port
 pub(crate) fn lane_count(hdl: &Handle, port: PortHdl) -> AsicResult<u32> {
-    match hdl
-        .phys_ports
-        .lock()
-        .unwrap()
-        .get_tofino_port(port)?
-        .channels
-        .len()
-    {
-        n if n < 1 || n > 8 => Err(AsicError::Internal(format!(
-            "configured port has {n} lanes"
-        ))),
+    match hdl.phys_ports.lock().unwrap().get_tofino_port(port)?.channels.len() {
+        n if n < 1 || n > 8 => {
+            Err(AsicError::Internal(format!("configured port has {n} lanes")))
+        }
         n => Ok(n as u32),
     }
 }
@@ -167,11 +160,7 @@ fn lane_rx_sig_info_get(
         .check_error("fetching rx signal info")?
     };
 
-    Ok(RxSigInfo {
-        sig_detect,
-        phy_ready,
-        ppm,
-    })
+    Ok(RxSigInfo { sig_detect, phy_ready, ppm })
 }
 
 /// Collect all of the per-lane rx signal info for the specified port.
@@ -836,11 +825,7 @@ pub fn an_lt_status_get(hdl: &Handle, port: PortHdl) -> AsicResult<AnLtStatus> {
         let lane_done = an_done_get(hdl, port, lane)?;
         let lane_an_status = an_status_get(hdl, port, lane)?;
         let lane_lt_status = lt_status_get(hdl, port, lane)?;
-        lanes.push(LaneStatus {
-            lane_done,
-            lane_an_status,
-            lane_lt_status,
-        })
+        lanes.push(LaneStatus { lane_done, lane_an_status, lane_lt_status })
     }
     let lp_pages = an_lp_pages_get(hdl, port)?;
     Ok(AnLtStatus { lp_pages, lanes })

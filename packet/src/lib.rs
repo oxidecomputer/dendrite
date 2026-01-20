@@ -52,10 +52,7 @@ pub enum PacketError {
 
 /// Utility function to generate a Parse error
 pub fn parse_error(pb: &ParseBuffer, message: impl ToString) -> PacketError {
-    PacketError::Parse {
-        message: message.to_string(),
-        byte: pb.offset(),
-    }
+    PacketError::Parse { message: message.to_string(), byte: pb.offset() }
 }
 
 /// Utility function to generate a Deparse error
@@ -151,11 +148,7 @@ impl L4Endpoint {
     }
 
     pub fn from_l3(l3: L3Endpoint, port: u16) -> L4Endpoint {
-        L4Endpoint {
-            mac: l3.mac,
-            ip: l3.ip,
-            port,
-        }
+        L4Endpoint { mac: l3.mac, ip: l3.ip, port }
     }
 }
 
@@ -255,10 +248,7 @@ impl From<&L4Endpoint> for L2Endpoint {
 
 impl From<L4Endpoint> for L3Endpoint {
     fn from(l4: L4Endpoint) -> Self {
-        L3Endpoint {
-            mac: l4.mac,
-            ip: l4.ip,
-        }
+        L3Endpoint { mac: l4.mac, ip: l4.ip }
     }
 }
 
@@ -281,10 +271,7 @@ impl TryFrom<Endpoint> for L3Endpoint {
                 Err(PacketError::Invalid("not an L3 endpoint".into()))
             }
             Endpoint::L3(e) => Ok(e),
-            Endpoint::L4(e) => Ok(L3Endpoint {
-                mac: e.mac,
-                ip: e.ip,
-            }),
+            Endpoint::L4(e) => Ok(L3Endpoint { mac: e.mac, ip: e.ip }),
         }
     }
 }
@@ -389,11 +376,8 @@ impl PartialEq for Packet {
         let b = &other.hdrs;
 
         let mut is_eq = test("eth hdr", a.eth_hdr.as_ref(), b.eth_hdr.as_ref());
-        is_eq &= test(
-            "sidecar hdr",
-            a.sidecar_hdr.as_ref(),
-            b.sidecar_hdr.as_ref(),
-        );
+        is_eq &=
+            test("sidecar hdr", a.sidecar_hdr.as_ref(), b.sidecar_hdr.as_ref());
         is_eq &= test("lldp hdr", a.lldp_hdr.as_ref(), b.lldp_hdr.as_ref());
         is_eq &= test("ipv4 hdr", a.ipv4_hdr.as_ref(), b.ipv4_hdr.as_ref());
         is_eq &= test("ipv6 hdr", a.ipv6_hdr.as_ref(), b.ipv6_hdr.as_ref());
@@ -415,10 +399,7 @@ impl Default for Packet {
 
 impl Packet {
     pub fn new(body: Option<&[u8]>) -> Packet {
-        Packet {
-            hdrs: Headers::new(),
-            body: body.map(|b| b.to_vec()),
-        }
+        Packet { hdrs: Headers::new(), body: body.map(|b| b.to_vec()) }
     }
 
     pub fn generate(
@@ -444,10 +425,7 @@ impl Packet {
 
         hdrs.bytes = pb.offset();
         let offset = hdrs.bytes;
-        Ok(Packet {
-            hdrs,
-            body: Some(data[offset..].to_vec()),
-        })
+        Ok(Packet { hdrs, body: Some(data[offset..].to_vec()) })
     }
 
     pub fn parse(data: &[u8]) -> PacketResult<Packet> {

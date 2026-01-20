@@ -88,11 +88,8 @@ fn write_uds(msg: ManagementRequest, socket_path: &str) {
 }
 
 fn read_uart(msg: ManagementRequest) -> String {
-    let mut f = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(SOFTNPU_TTY)
-        .unwrap();
+    let mut f =
+        OpenOptions::new().read(true).write(true).open(SOFTNPU_TTY).unwrap();
 
     let mut buf = Vec::new();
     buf.push(MANAGEMENT_MESSAGE_PREAMBLE);

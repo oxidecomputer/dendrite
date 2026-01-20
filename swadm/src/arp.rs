@@ -114,11 +114,8 @@ async fn arp_list(
     )?;
     for e in entries {
         let mac = common::network::MacAddr::from(e.mac);
-        let mac = if mac.is_null() {
-            "incomplete".into()
-        } else {
-            mac.to_string()
-        };
+        let mac =
+            if mac.is_null() { "incomplete".into() } else { mac.to_string() };
         let age = timestamp_to_age(e.update);
         writeln!(tw, "{}\t{}\t{}", e.ip, mac, age).unwrap();
     }
@@ -148,15 +145,9 @@ async fn arp_add(
         update: String::new(),
     };
     if ip.is_ipv4() {
-        client
-            .arp_create(&entry)
-            .await
-            .context("failed to add IPv4 ARP entry")
+        client.arp_create(&entry).await.context("failed to add IPv4 ARP entry")
     } else {
-        client
-            .ndp_create(&entry)
-            .await
-            .context("failed to add IPv6 NDP entry")
+        client.ndp_create(&entry).await.context("failed to add IPv6 NDP entry")
     }
     .map(|_| ())
 }

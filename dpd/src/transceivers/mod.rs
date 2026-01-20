@@ -128,12 +128,8 @@ impl Default for FakeQsfpModule {
         // Mfg date, assume 2022-01-1 with lot "ab".
         map[212..220].copy_from_slice(b"220101ab");
 
-        let mut self_ = Self {
-            map,
-            present: true,
-            lp_mode: true,
-            in_reset: true,
-        };
+        let mut self_ =
+            Self { map, present: true, lp_mode: true, in_reset: true };
 
         let (base_sum, ext_sum) = self_.compute_checksums();
         self_.map[Self::CC_BASE_CHECKSUM] = base_sum;
@@ -166,10 +162,7 @@ impl FakeQsfpModule {
     // Return the base and extended checksums.
     #[cfg(all(test, feature = "tofino_asic"))]
     fn checksums(&self) -> (u8, u8) {
-        (
-            self.map[Self::CC_BASE_CHECKSUM],
-            self.map[Self::EXTENDED_CHECKSUM],
-        )
+        (self.map[Self::CC_BASE_CHECKSUM], self.map[Self::EXTENDED_CHECKSUM])
     }
 }
 
@@ -203,10 +196,8 @@ mod mpn_test {
             serial: "serial".to_string(),
             date: None,
         };
-        let vendor_info = VendorInfo {
-            identifier: Identifier::Soldered,
-            vendor,
-        };
+        let vendor_info =
+            VendorInfo { identifier: Identifier::Soldered, vendor };
 
         let transceiver = Transceiver::Supported(TransceiverInfo {
             vendor_info: Some(vendor_info),

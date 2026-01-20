@@ -229,10 +229,7 @@ pub struct RouteEntry {
 
 impl RouteEntry {
     fn targets(&self) -> Vec<Route> {
-        self.targets
-            .iter()
-            .map(|target| target.route.clone())
-            .collect()
+        self.targets.iter().map(|target| target.route.clone()).collect()
     }
 }
 
@@ -377,10 +374,7 @@ fn replace_route_targets(
 ) -> DpdResult<()> {
     // Remove the old entry from our in-core and on-chip indexes, but don't free
     // the data yet.
-    debug!(
-        switch.log,
-        "replacing targets for {subnet} with: {targets:?}"
-    );
+    debug!(switch.log, "replacing targets for {subnet} with: {targets:?}");
     let old_entry = route_data.remove(subnet);
     if let Some(ref old) = old_entry
         && let Err(e) = match subnet {
@@ -503,14 +497,10 @@ fn add_route_locked(
     }
 
     // Get the old set of targets that we'll be adding to
-    let mut targets = route_data
-        .get(subnet)
-        .map_or(Vec::new(), |e| e.targets.clone());
+    let mut targets =
+        route_data.get(subnet).map_or(Vec::new(), |e| e.targets.clone());
     // Add the new target
-    targets.push(NextHop {
-        asic_port_id,
-        route,
-    });
+    targets.push(NextHop { asic_port_id, route });
 
     if targets.len() > max_targets {
         Err(DpdError::InvalidRoute(format!(
@@ -566,10 +556,7 @@ async fn set_route(
             Err(DpdError::Exists("route {cidr} already exists".into()))
         } else {
             info!(switch.log, "replacing subnet {subnet}");
-            let target = vec![NextHop {
-                asic_port_id,
-                route,
-            }];
+            let target = vec![NextHop { asic_port_id, route }];
             replace_route_targets(switch, &mut route_data, subnet, target)
         }
     } else {

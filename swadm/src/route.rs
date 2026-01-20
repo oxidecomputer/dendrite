@@ -280,16 +280,11 @@ pub async fn route_cmd(client: &Client, cmd: Route) -> anyhow::Result<()> {
     match cmd {
         Route::List { family } => route_list(client, family).await,
         Route::Get { cidr } => route_get(client, cidr).await,
-        Route::Add {
-            cidr,
-            link_path,
-            gw,
-            vlan_id,
-        } => route_add(client, cidr, link_path, gw, vlan_id).await,
-        Route::Del {
-            cidr,
-            link_path,
-            gw,
-        } => route_del(client, cidr, link_path, gw).await,
+        Route::Add { cidr, link_path, gw, vlan_id } => {
+            route_add(client, cidr, link_path, gw, vlan_id).await
+        }
+        Route::Del { cidr, link_path, gw } => {
+            route_del(client, cidr, link_path, gw).await
+        }
     }
 }

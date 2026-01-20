@@ -268,8 +268,7 @@ fn get_nat_target(
     match response {
         types::MulticastGroupResponse::Underlay { .. } => None,
         types::MulticastGroupResponse::External {
-            internal_forwarding,
-            ..
+            internal_forwarding, ..
         } => internal_forwarding.nat_target.as_ref(),
     }
 }
@@ -394,10 +393,8 @@ fn prepare_expected_pkt(
                 encapped.deparse().unwrap().to_vec()
             };
 
-            let switch_port_mac = switch
-                .get_port_mac(switch_port.unwrap())
-                .unwrap()
-                .to_string();
+            let switch_port_mac =
+                switch.get_port_mac(switch_port.unwrap()).unwrap().to_string();
 
             let mut forward_pkt = common::gen_external_geneve_packet(
                 Endpoint::parse(
@@ -584,9 +581,7 @@ async fn test_group_creation_with_validation() -> TestResult {
     );
 
     // Clean up external first (references internal via NAT target), then internal
-    cleanup_test_group(switch, created.group_ip, TEST_TAG)
-        .await
-        .unwrap();
+    cleanup_test_group(switch, created.group_ip, TEST_TAG).await.unwrap();
     cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
 }
 
@@ -797,9 +792,8 @@ async fn test_group_api_lifecycle() {
         .await
         .expect("Should be able to list groups");
 
-    let found_in_list = groups
-        .iter()
-        .any(|g| get_external_group_id(g) == external_group_id);
+    let found_in_list =
+        groups.iter().any(|g| get_external_group_id(g) == external_group_id);
     assert!(found_in_list, "Created group should be in the list");
 
     // Get groups by tag
@@ -810,10 +804,7 @@ async fn test_group_api_lifecycle() {
         .await
         .expect("Should be able to get groups by tag");
 
-    assert!(
-        !tagged_groups.is_empty(),
-        "Tagged group list should not be empty"
-    );
+    assert!(!tagged_groups.is_empty(), "Tagged group list should not be empty");
     let found_by_tag = tagged_groups
         .iter()
         .any(|g| get_external_group_id(g) == external_group_id);
@@ -913,18 +904,15 @@ async fn test_group_api_lifecycle() {
         .expect("Should be able to list groups");
 
     // Check if the specific deleted group is still in the list
-    let deleted_group_still_in_list = groups_after_delete
-        .iter()
-        .any(|g| get_group_ip(g) == group_ip);
+    let deleted_group_still_in_list =
+        groups_after_delete.iter().any(|g| get_group_ip(g) == group_ip);
     assert!(
         !deleted_group_still_in_list,
         "Deleted group should not be in the list"
     );
 
     // Clean up the internal group (external was already deleted above)
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG)
-        .await
-        .unwrap();
+    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await.unwrap();
 }
 
 /// Tests tag validation behavior on multicast group deletion.
@@ -971,10 +959,8 @@ async fn test_multicast_del_tag_validation() -> TestResult {
 
     // Attempt delete with wrong tag - should fail
     let del_tag = make_tag(TAG_B);
-    let wrong_tag_result = switch
-        .client
-        .multicast_group_delete(&tagged_group_ip, &del_tag)
-        .await;
+    let wrong_tag_result =
+        switch.client.multicast_group_delete(&tagged_group_ip, &del_tag).await;
 
     match &wrong_tag_result {
         Err(Error::ErrorResponse(resp)) => {
@@ -1043,10 +1029,7 @@ async fn test_multicast_del_tag_validation() -> TestResult {
         .into_inner();
 
     // The group should have an auto-generated tag
-    assert!(
-        !created.tag.is_empty(),
-        "Group should have auto-generated tag"
-    );
+    assert!(!created.tag.is_empty(), "Group should have auto-generated tag");
     let auto_tag = created.tag.clone();
 
     // Delete with correct auto-generated tag should succeed
@@ -1394,9 +1377,7 @@ async fn test_api_invalid_combinations() -> TestResult {
         ),
     }
 
-    cleanup_test_group(switch, created_ipv4.group_ip, TEST_TAG)
-        .await
-        .unwrap();
+    cleanup_test_group(switch, created_ipv4.group_ip, TEST_TAG).await.unwrap();
     cleanup_test_group(switch, created_non_admin.group_ip, TEST_TAG)
         .await
         .unwrap();
@@ -1472,18 +1453,13 @@ async fn test_ipv4_multicast_invalid_destination_mac() -> TestResult {
     // Generate packet with invalid MAC
     let to_send = common::gen_udp_packet(src_endpoint, dst_endpoint);
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     // Expect no output packets (invalid MAC should be dropped)
     let expected_pkts = vec![];
 
-    let ctr_baseline = switch
-        .get_counter("multicast_invalid_mac", None)
-        .await
-        .unwrap();
+    let ctr_baseline =
+        switch.get_counter("multicast_invalid_mac", None).await.unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
@@ -1548,18 +1524,13 @@ async fn test_ipv6_multicast_invalid_destination_mac() -> TestResult {
     // Generate packet with invalid MAC
     let to_send = common::gen_udp_packet(src_endpoint, dst_endpoint);
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     // Expect no output packets (invalid MAC should be dropped)
     let expected_pkts = vec![];
 
-    let ctr_baseline = switch
-        .get_counter("multicast_invalid_mac", None)
-        .await
-        .unwrap();
+    let ctr_baseline =
+        switch.get_counter("multicast_invalid_mac", None).await.unwrap();
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
 
@@ -1650,10 +1621,7 @@ async fn test_multicast_ttl_zero() -> TestResult {
     // Set TTL to 0 (should be dropped)
     ipv4::Ipv4Hdr::adjust_ttl(&mut to_send, -255); // Set to 0
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     // Expect no output packets (should be dropped due to TTL=0)
     let expected_pkts = vec![];
@@ -1734,10 +1702,7 @@ async fn test_multicast_ttl_one() -> TestResult {
     // because the switch decrements it to 0 during processing
     ipv4::Ipv4Hdr::adjust_ttl(&mut to_send, -254); // Set to 1
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     // Expect no output packets (should be dropped due to TTL=1)
     let expected_pkts = vec![];
@@ -1860,28 +1825,17 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
         Some(egress3),
     );
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     let expected_pkts = vec![
-        TestPacket {
-            packet: Arc::new(to_recv1),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv2),
-            port: egress3,
-        },
+        TestPacket { packet: Arc::new(to_recv1), port: egress1 },
+        TestPacket { packet: Arc::new(to_recv2), port: egress3 },
     ];
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
 
-    let ctr_baseline_ingress = switch
-        .get_counter(&port_label_ingress, Some("ingress"))
-        .await
-        .unwrap();
+    let ctr_baseline_ingress =
+        switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
@@ -2001,30 +1955,19 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
         &payload,
     );
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(geneve_pkt),
-        port: ingress,
-    };
+    let test_pkt = TestPacket { packet: Arc::new(geneve_pkt), port: ingress };
 
     // We expect the packet to be decapsulated and forwarded to both egress
     // ports
     let expected_pkts = vec![
-        TestPacket {
-            packet: Arc::new(expected_pkt1),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(expected_pkt2),
-            port: egress2,
-        },
+        TestPacket { packet: Arc::new(expected_pkt1), port: egress1 },
+        TestPacket { packet: Arc::new(expected_pkt2), port: egress2 },
     ];
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
 
-    let ctr_baseline_ingress = switch
-        .get_counter(&port_label_ingress, Some("ingress"))
-        .await
-        .unwrap();
+    let ctr_baseline_ingress =
+        switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
@@ -2134,10 +2077,8 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
         &payload,
     );
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(geneve_pkt.clone()),
-        port: ingress,
-    };
+    let test_pkt =
+        TestPacket { packet: Arc::new(geneve_pkt.clone()), port: ingress };
 
     // Vlan should be stripped and we only replicate to underlay ports
     let recv_pkt1 =
@@ -2148,22 +2089,14 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
     // We expect the packet not be decapped and forwarded to both egress
     // ports
     let expected_pkts = vec![
-        TestPacket {
-            packet: Arc::new(recv_pkt1),
-            port: egress3,
-        },
-        TestPacket {
-            packet: Arc::new(recv_pkt2),
-            port: egress4,
-        },
+        TestPacket { packet: Arc::new(recv_pkt1), port: egress3 },
+        TestPacket { packet: Arc::new(recv_pkt2), port: egress4 },
     ];
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
 
-    let ctr_baseline_ingress = switch
-        .get_counter(&port_label_ingress, Some("ingress"))
-        .await
-        .unwrap();
+    let ctr_baseline_ingress =
+        switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
@@ -2277,10 +2210,8 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
         &payload,
     );
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(geneve_pkt.clone()),
-        port: ingress,
-    };
+    let test_pkt =
+        TestPacket { packet: Arc::new(geneve_pkt.clone()), port: ingress };
 
     // External ports should be replicated with Vlan information
     let recv_pkt1 =
@@ -2298,30 +2229,16 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     // We expect 2 packets to be decapped and forwarded to external ports
     // and 2 packets to be forwarded to underlay ports (still encapped)
     let expected_pkts = vec![
-        TestPacket {
-            packet: Arc::new(recv_pkt1),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(recv_pkt2),
-            port: egress2,
-        },
-        TestPacket {
-            packet: Arc::new(recv_pkt3),
-            port: egress3,
-        },
-        TestPacket {
-            packet: Arc::new(recv_pkt4),
-            port: egress4,
-        },
+        TestPacket { packet: Arc::new(recv_pkt1), port: egress1 },
+        TestPacket { packet: Arc::new(recv_pkt2), port: egress2 },
+        TestPacket { packet: Arc::new(recv_pkt3), port: egress3 },
+        TestPacket { packet: Arc::new(recv_pkt4), port: egress4 },
     ];
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
 
-    let ctr_baseline_ingress = switch
-        .get_counter(&port_label_ingress, Some("ingress"))
-        .await
-        .unwrap();
+    let ctr_baseline_ingress =
+        switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
@@ -2391,19 +2308,14 @@ async fn test_ipv4_multicast_drops_ingress_is_egress_port() -> TestResult {
         dst_port,
     );
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     let expected_pkts = vec![];
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
 
-    let ctr_baseline_ingress = switch
-        .get_counter(&port_label_ingress, Some("ingress"))
-        .await
-        .unwrap();
+    let ctr_baseline_ingress =
+        switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
@@ -2478,10 +2390,7 @@ async fn test_ipv6_multicast_hop_limit_zero() -> TestResult {
     // Set Hop Limit to 0 (should be dropped)
     ipv6::Ipv6Hdr::adjust_hlim(&mut to_send, -255); // Set to 0
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     // Expect no output packets (should be dropped due to Hop Limit=0)
     let expected_pkts = vec![];
@@ -2566,10 +2475,7 @@ async fn test_ipv6_multicast_hop_limit_one() -> TestResult {
     // because the switch decrements it to 0 during processing
     ipv6::Ipv6Hdr::adjust_hlim(&mut to_send, -254); // Set to 1 (255 - 254 = 1)
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     // Expect no output packets (should be dropped due to Hop Limit=1)
     let expected_pkts = vec![];
@@ -2664,22 +2570,15 @@ async fn test_ipv6_multicast_basic_replication_nat_ingress() -> TestResult {
         Some(egress1),
     );
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
 
-    let expected_pkts = vec![TestPacket {
-        packet: Arc::new(to_recv1),
-        port: egress1,
-    }];
+    let expected_pkts =
+        vec![TestPacket { packet: Arc::new(to_recv1), port: egress1 }];
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
 
-    let ctr_baseline_ingress = switch
-        .get_counter(&port_label_ingress, Some("ingress"))
-        .await
-        .unwrap();
+    let ctr_baseline_ingress =
+        switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
@@ -2783,32 +2682,18 @@ async fn test_ipv4_multicast_source_filtering_exact_match() -> TestResult {
     );
 
     let test_pkts = vec![
-        TestPacket {
-            packet: Arc::new(allowed_pkt),
-            port: ingress1,
-        },
-        TestPacket {
-            packet: Arc::new(filtered_pkt),
-            port: ingress2,
-        },
+        TestPacket { packet: Arc::new(allowed_pkt), port: ingress1 },
+        TestPacket { packet: Arc::new(filtered_pkt), port: ingress2 },
     ];
 
     // Only expect packets from the allowed source
     let expected_pkts = vec![
-        TestPacket {
-            packet: Arc::new(to_recv11),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv12),
-            port: egress2,
-        },
+        TestPacket { packet: Arc::new(to_recv11), port: egress1 },
+        TestPacket { packet: Arc::new(to_recv12), port: egress2 },
     ];
 
-    let ctr_baseline = switch
-        .get_counter("multicast_src_filtered", None)
-        .await
-        .unwrap();
+    let ctr_baseline =
+        switch.get_counter("multicast_src_filtered", None).await.unwrap();
 
     switch.packet_test(test_pkts, expected_pkts).unwrap();
 
@@ -2943,44 +2828,21 @@ async fn test_ipv4_multicast_source_filtering_multiple_exact() -> TestResult {
     );
 
     let test_pkts = vec![
-        TestPacket {
-            packet: Arc::new(allowed_pkt1),
-            port: ingress1,
-        },
-        TestPacket {
-            packet: Arc::new(allowed_pkt2),
-            port: ingress2,
-        },
-        TestPacket {
-            packet: Arc::new(filtered_pkt),
-            port: ingress2,
-        },
+        TestPacket { packet: Arc::new(allowed_pkt1), port: ingress1 },
+        TestPacket { packet: Arc::new(allowed_pkt2), port: ingress2 },
+        TestPacket { packet: Arc::new(filtered_pkt), port: ingress2 },
     ];
 
     // Only expect packets from the allowed sources
     let expected_pkts = vec![
-        TestPacket {
-            packet: Arc::new(to_recv11),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv22),
-            port: egress2,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv12),
-            port: egress2,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv21),
-            port: egress1,
-        },
+        TestPacket { packet: Arc::new(to_recv11), port: egress1 },
+        TestPacket { packet: Arc::new(to_recv22), port: egress2 },
+        TestPacket { packet: Arc::new(to_recv12), port: egress2 },
+        TestPacket { packet: Arc::new(to_recv21), port: egress1 },
     ];
 
-    let ctr_baseline = switch
-        .get_counter("multicast_src_filtered", None)
-        .await
-        .unwrap();
+    let ctr_baseline =
+        switch.get_counter("multicast_src_filtered", None).await.unwrap();
 
     switch.packet_test(test_pkts, expected_pkts).unwrap();
 
@@ -3115,46 +2977,23 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
     );
 
     let test_pkts = vec![
-        TestPacket {
-            packet: Arc::new(allowed_pkt1),
-            port: ingress1,
-        },
-        TestPacket {
-            packet: Arc::new(allowed_pkt2),
-            port: ingress2,
-        },
-        TestPacket {
-            packet: Arc::new(filtered_pkt),
-            port: ingress3,
-        },
+        TestPacket { packet: Arc::new(allowed_pkt1), port: ingress1 },
+        TestPacket { packet: Arc::new(allowed_pkt2), port: ingress2 },
+        TestPacket { packet: Arc::new(filtered_pkt), port: ingress3 },
     ];
 
     // Only expect packets from the allowed sources
     let expected_pkts = vec![
         // First allowed source
-        TestPacket {
-            packet: Arc::new(to_recv11),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv12),
-            port: egress2,
-        },
+        TestPacket { packet: Arc::new(to_recv11), port: egress1 },
+        TestPacket { packet: Arc::new(to_recv12), port: egress2 },
         // Second allowed source
-        TestPacket {
-            packet: Arc::new(to_recv21),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv22),
-            port: egress2,
-        },
+        TestPacket { packet: Arc::new(to_recv21), port: egress1 },
+        TestPacket { packet: Arc::new(to_recv22), port: egress2 },
     ];
 
-    let ctr_baseline = switch
-        .get_counter("multicast_src_filtered", None)
-        .await
-        .unwrap();
+    let ctr_baseline =
+        switch.get_counter("multicast_src_filtered", None).await.unwrap();
 
     switch.packet_test(test_pkts, expected_pkts).unwrap();
 
@@ -3244,20 +3083,12 @@ async fn test_multicast_dynamic_membership() -> TestResult {
         Some(egress2),
     );
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send.clone()),
-        port: ingress,
-    };
+    let test_pkt =
+        TestPacket { packet: Arc::new(to_send.clone()), port: ingress };
 
     let expected_pkts = vec![
-        TestPacket {
-            packet: Arc::new(to_recv1),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv2),
-            port: egress2,
-        },
+        TestPacket { packet: Arc::new(to_recv1), port: egress1 },
+        TestPacket { packet: Arc::new(to_recv2), port: egress2 },
     ];
 
     let result1 = switch.packet_test(vec![test_pkt], expected_pkts);
@@ -3335,25 +3166,14 @@ async fn test_multicast_dynamic_membership() -> TestResult {
         Some(egress3),
     );
 
-    let test_pkt_new = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let test_pkt_new = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     let expected_pkts_new = vec![
-        TestPacket {
-            packet: Arc::new(to_recv1_new),
-            port: egress2,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv2_new),
-            port: egress3,
-        },
+        TestPacket { packet: Arc::new(to_recv1_new), port: egress2 },
+        TestPacket { packet: Arc::new(to_recv2_new), port: egress3 },
     ];
 
-    switch
-        .packet_test(vec![test_pkt_new], expected_pkts_new)
-        .unwrap();
+    switch.packet_test(vec![test_pkt_new], expected_pkts_new).unwrap();
 
     cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
         .await
@@ -3509,51 +3329,21 @@ async fn test_multicast_multiple_groups() -> TestResult {
     );
 
     let test_pkts = vec![
-        TestPacket {
-            packet: Arc::new(to_send1),
-            port: ingress,
-        },
-        TestPacket {
-            packet: Arc::new(to_send2),
-            port: ingress,
-        },
+        TestPacket { packet: Arc::new(to_send1), port: ingress },
+        TestPacket { packet: Arc::new(to_send2), port: ingress },
     ];
 
     let expected_pkts = vec![
         // First multicast group - replicates to all ports since both groups share same NAT target
-        TestPacket {
-            packet: Arc::new(to_recv1_1),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv1_2),
-            port: egress2,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv1_3),
-            port: egress3,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv1_4),
-            port: egress4,
-        },
+        TestPacket { packet: Arc::new(to_recv1_1), port: egress1 },
+        TestPacket { packet: Arc::new(to_recv1_2), port: egress2 },
+        TestPacket { packet: Arc::new(to_recv1_3), port: egress3 },
+        TestPacket { packet: Arc::new(to_recv1_4), port: egress4 },
         // Second multicast group - also replicates to all ports
-        TestPacket {
-            packet: Arc::new(to_recv2_3),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv2_4),
-            port: egress2,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv2_1),
-            port: egress3,
-        },
-        TestPacket {
-            packet: Arc::new(to_recv2_2),
-            port: egress4,
-        },
+        TestPacket { packet: Arc::new(to_recv2_3), port: egress1 },
+        TestPacket { packet: Arc::new(to_recv2_4), port: egress2 },
+        TestPacket { packet: Arc::new(to_recv2_1), port: egress3 },
+        TestPacket { packet: Arc::new(to_recv2_2), port: egress4 },
     ];
 
     switch.packet_test(test_pkts, expected_pkts).unwrap();
@@ -3865,10 +3655,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
         .await
         .expect("Should be able to list groups");
 
-    assert!(
-        groups_after.is_empty(),
-        "No groups should exist after reset"
-    );
+    assert!(groups_after.is_empty(), "No groups should exist after reset");
 
     // Try to get each group specifically
     for group_ip in [
@@ -4062,31 +3849,20 @@ async fn test_multicast_multiple_packets() -> TestResult {
             Some(egress3),
         );
 
-        test_pkts.push(TestPacket {
-            packet: Arc::new(to_send),
-            port: ingress,
-        });
+        test_pkts.push(TestPacket { packet: Arc::new(to_send), port: ingress });
 
-        expected_pkts.push(TestPacket {
-            packet: Arc::new(to_recv1),
-            port: egress1,
-        });
-        expected_pkts.push(TestPacket {
-            packet: Arc::new(to_recv2),
-            port: egress2,
-        });
-        expected_pkts.push(TestPacket {
-            packet: Arc::new(to_recv3),
-            port: egress3,
-        });
+        expected_pkts
+            .push(TestPacket { packet: Arc::new(to_recv1), port: egress1 });
+        expected_pkts
+            .push(TestPacket { packet: Arc::new(to_recv2), port: egress2 });
+        expected_pkts
+            .push(TestPacket { packet: Arc::new(to_recv3), port: egress3 });
     }
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
 
-    let ctr_baseline_ingress = switch
-        .get_counter(&port_label_ingress, Some("ingress"))
-        .await
-        .unwrap();
+    let ctr_baseline_ingress =
+        switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
 
     switch.packet_test(test_pkts, expected_pkts).unwrap();
 
@@ -4122,10 +3898,8 @@ async fn test_multicast_no_group_configured() -> TestResult {
     let src_mac = switch.get_port_mac(ingress).unwrap();
 
     // Get baseline counter before any test packets
-    let initial_ctr_baseline = switch
-        .get_counter("multicast_no_group", None)
-        .await
-        .unwrap();
+    let initial_ctr_baseline =
+        switch.get_counter("multicast_no_group", None).await.unwrap();
 
     // Test IPv4 multicast with no configured group
     {
@@ -4137,10 +3911,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
             4444,
         );
 
-        let test_pkt = TestPacket {
-            packet: Arc::new(to_send),
-            port: ingress,
-        };
+        let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
 
         let expected_pkts = vec![];
 
@@ -4170,10 +3941,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
             4444,
         );
 
-        let test_pkt = TestPacket {
-            packet: Arc::new(to_send),
-            port: ingress,
-        };
+        let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
 
         // Expect no output packets - should be dropped
         let expected_pkts = vec![];
@@ -4335,10 +4103,8 @@ async fn test_ipv6_multicast_scope_validation() {
         }],
     };
 
-    let admin_local_result = switch
-        .client
-        .multicast_group_create_underlay(&admin_local_group)
-        .await;
+    let admin_local_result =
+        switch.client.multicast_group_create_underlay(&admin_local_group).await;
     assert!(
         admin_local_result.is_ok(),
         "Admin-local scope (ff04::/16) should work with internal API"
@@ -4355,10 +4121,8 @@ async fn test_ipv6_multicast_scope_validation() {
         }],
     };
 
-    let site_local_result = switch
-        .client
-        .multicast_group_create_underlay(&site_local_group)
-        .await;
+    let site_local_result =
+        switch.client.multicast_group_create_underlay(&site_local_group).await;
     assert!(
         site_local_result.is_err(),
         "Site-local scope (ff05::/16) should be rejected - only admin-local (ff04) allowed"
@@ -4375,10 +4139,8 @@ async fn test_ipv6_multicast_scope_validation() {
         }],
     };
 
-    let org_local_result = switch
-        .client
-        .multicast_group_create_underlay(&org_local_group)
-        .await;
+    let org_local_result =
+        switch.client.multicast_group_create_underlay(&org_local_group).await;
     assert!(
         org_local_result.is_err(),
         "Organization-local scope (ff08::/16) should be rejected - only admin-local (ff04) allowed"
@@ -4511,10 +4273,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
     )
     .await;
 
-    assert_ne!(
-        get_external_group_id(&group1),
-        get_external_group_id(&group2)
-    );
+    assert_ne!(get_external_group_id(&group1), get_external_group_id(&group2));
 
     // Delete the first group
     let del_tag = make_tag(TEST_TAG);
@@ -4532,9 +4291,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
         .await
         .expect("Should be able to list groups");
     assert!(
-        !groups_after_delete1
-            .iter()
-            .any(|g| get_group_ip(g) == group1_ip),
+        !groups_after_delete1.iter().any(|g| get_group_ip(g) == group1_ip),
         "Group1 should be deleted"
     );
 
@@ -4574,9 +4331,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
         .await
         .expect("Should be able to list groups");
     assert!(
-        !groups_after_delete2
-            .iter()
-            .any(|g| get_group_ip(g) == group2_ip),
+        !groups_after_delete2.iter().any(|g| get_group_ip(g) == group2_ip),
         "Group2 should be deleted"
     );
 
@@ -4600,9 +4355,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
         "Fourth group should reuse Group2's underlay ID due to LIFO recycling"
     );
 
-    cleanup_test_group(switch, group3_ip, TEST_TAG)
-        .await
-        .unwrap();
+    cleanup_test_group(switch, group3_ip, TEST_TAG).await.unwrap();
     cleanup_test_group(switch, group4_ip, TEST_TAG).await
 }
 
@@ -4675,15 +4428,11 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         .expect("Should find the created external group");
 
     assert!(
-        get_members(internal_group)
-            .map(|m| m.is_empty())
-            .unwrap_or(true),
+        get_members(internal_group).map(|m| m.is_empty()).unwrap_or(true),
         "Empty internal group should have no members initially"
     );
     assert!(
-        get_members(external_group)
-            .map(|m| m.is_empty())
-            .unwrap_or(true),
+        get_members(external_group).map(|m| m.is_empty()).unwrap_or(true),
         "Empty external group should have no members initially"
     );
 
@@ -4726,10 +4475,8 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         &payload,
     );
 
-    let send = TestPacket {
-        packet: Arc::new(geneve_pkt.clone()),
-        port: ingress_port,
-    };
+    let send =
+        TestPacket { packet: Arc::new(geneve_pkt.clone()), port: ingress_port };
 
     // Verify no packets are replicated when group is empty
     switch.packet_test(vec![send], Vec::new())?;
@@ -4873,24 +4620,13 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         Some(egress3),
     );
 
-    let send_again = TestPacket {
-        packet: Arc::new(to_send_again),
-        port: ingress_port,
-    };
+    let send_again =
+        TestPacket { packet: Arc::new(to_send_again), port: ingress_port };
 
     let expected_pkts = vec![
-        TestPacket {
-            packet: Arc::new(expected1),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(expected2),
-            port: egress2,
-        },
-        TestPacket {
-            packet: Arc::new(expected3),
-            port: egress3,
-        },
+        TestPacket { packet: Arc::new(expected1), port: egress1 },
+        TestPacket { packet: Arc::new(expected2), port: egress2 },
+        TestPacket { packet: Arc::new(expected3), port: egress3 },
     ];
 
     // Verify packets are now replicated to all 3 members (2 external + 1 underlay)
@@ -4960,19 +4696,15 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         "Bitmap table should be empty again when group has no members"
     );
 
-    let send_final = TestPacket {
-        packet: Arc::new(to_send_final),
-        port: ingress_port,
-    };
+    let send_final =
+        TestPacket { packet: Arc::new(to_send_final), port: ingress_port };
 
     // Should only see packet on ingress, no replication to egress ports
     let expected_final = vec![];
 
     switch.packet_test(vec![send_final], expected_final)?;
 
-    cleanup_test_group(&switch, external_group_ip, TEST_TAG)
-        .await
-        .unwrap();
+    cleanup_test_group(&switch, external_group_ip, TEST_TAG).await.unwrap();
     cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
 }
 
@@ -5042,15 +4774,11 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         .expect("Should find the created external group");
 
     assert!(
-        get_members(internal_group)
-            .map(|m| m.is_empty())
-            .unwrap_or(true),
+        get_members(internal_group).map(|m| m.is_empty()).unwrap_or(true),
         "Empty internal group should have no members initially"
     );
     assert!(
-        get_members(external_group)
-            .map(|m| m.is_empty())
-            .unwrap_or(true),
+        get_members(external_group).map(|m| m.is_empty()).unwrap_or(true),
         "Empty external group should have no members initially"
     );
 
@@ -5093,10 +4821,8 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         &payload,
     );
 
-    let send = TestPacket {
-        packet: Arc::new(geneve_pkt.clone()),
-        port: ingress_port,
-    };
+    let send =
+        TestPacket { packet: Arc::new(geneve_pkt.clone()), port: ingress_port };
 
     // Verify no packets are replicated when group is empty
     switch.packet_test(vec![send], Vec::new())?;
@@ -5239,24 +4965,13 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         Some(egress3),
     );
 
-    let send_again = TestPacket {
-        packet: Arc::new(test_packet2),
-        port: ingress_port,
-    };
+    let send_again =
+        TestPacket { packet: Arc::new(test_packet2), port: ingress_port };
 
     let expected_pkts = vec![
-        TestPacket {
-            packet: Arc::new(expected1),
-            port: egress1,
-        },
-        TestPacket {
-            packet: Arc::new(expected2),
-            port: egress2,
-        },
-        TestPacket {
-            packet: Arc::new(expected3),
-            port: egress3,
-        },
+        TestPacket { packet: Arc::new(expected1), port: egress1 },
+        TestPacket { packet: Arc::new(expected2), port: egress2 },
+        TestPacket { packet: Arc::new(expected3), port: egress3 },
     ];
 
     // Verify packets are now replicated to all 3 members via NAT target
@@ -5327,19 +5042,15 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     );
 
     // Test: Send packet again - should now only reach ingress (no replication)
-    let send_final = TestPacket {
-        packet: Arc::new(to_send_final),
-        port: ingress_port,
-    };
+    let send_final =
+        TestPacket { packet: Arc::new(to_send_final), port: ingress_port };
 
     // Should only see packet on ingress, no replication to egress ports
     let expected_final = vec![];
 
     switch.packet_test(vec![send_final], expected_final)?;
 
-    cleanup_test_group(&switch, external_group_ip, TEST_TAG)
-        .await
-        .unwrap();
+    cleanup_test_group(&switch, external_group_ip, TEST_TAG).await.unwrap();
     cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
 }
 
@@ -5426,16 +5137,11 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
     };
 
     // This should fail and trigger rollback
-    let result = switch
-        .client
-        .multicast_group_create_external(&external_entry)
-        .await;
+    let result =
+        switch.client.multicast_group_create_external(&external_entry).await;
 
     // Verify the creation failed
-    assert!(
-        result.is_err(),
-        "External group creation should have failed"
-    );
+    assert!(result.is_err(), "External group creation should have failed");
 
     // Verify rollback worked - check that no state was left behind
 
@@ -5544,9 +5250,8 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
         .multicast_group_get(&internal_group_ip)
         .await
         .expect("Should be able to get initial group state");
-    let initial_member_count = get_members(&initial_group.into_inner())
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let initial_member_count =
+        get_members(&initial_group.into_inner()).map(|m| m.len()).unwrap_or(0);
 
     // Try to add a member that should cause ASIC operations to fail
     // Use a valid port but with an invalid link ID that should cause issues
@@ -5557,9 +5262,8 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
         direction: types::Direction::External,
     }];
 
-    let update_request = types::MulticastGroupUpdateUnderlayEntry {
-        members: invalid_members,
-    };
+    let update_request =
+        types::MulticastGroupUpdateUnderlayEntry { members: invalid_members };
 
     let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
@@ -5588,9 +5292,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
         .into_inner();
 
     assert_eq!(
-        get_members(&post_failure_group)
-            .map(|m| m.len())
-            .unwrap_or(0),
+        get_members(&post_failure_group).map(|m| m.len()).unwrap_or(0),
         initial_member_count,
         "Member count should be unchanged after rollback"
     );
@@ -5692,11 +5394,10 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
     assert!(result.is_err(), "NAT update should have failed");
 
     // Verify rollback worked - external group should be unchanged
-    let post_failure_external_group = switch
-        .client
-        .multicast_group_get(&external_group_ip)
-        .await
-        .expect("Should be able to get external group state after rollback");
+    let post_failure_external_group =
+        switch.client.multicast_group_get(&external_group_ip).await.expect(
+            "Should be able to get external group state after rollback",
+        );
 
     // NAT target should be unchanged
     let initial_group_inner = initial_external_group.into_inner();
@@ -5705,14 +5406,8 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
     let initial_nat = get_nat_target(&initial_group_inner);
     let current_nat = get_nat_target(&post_failure_group_inner);
 
-    assert!(
-        initial_nat.is_some(),
-        "Initial group should have NAT target"
-    );
-    assert!(
-        current_nat.is_some(),
-        "Current group should have NAT target"
-    );
+    assert!(initial_nat.is_some(), "Initial group should have NAT target");
+    assert!(current_nat.is_some(), "Current group should have NAT target");
 
     if let (Some(original), Some(current)) = (initial_nat, current_nat) {
         assert_eq!(
@@ -5738,9 +5433,7 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
         "NAT table should be unchanged after rollback"
     );
 
-    cleanup_test_group(&switch, external_group_ip, TEST_TAG)
-        .await
-        .unwrap();
+    cleanup_test_group(&switch, external_group_ip, TEST_TAG).await.unwrap();
     cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
 }
 
@@ -5813,10 +5506,8 @@ async fn test_multicast_rollback_vlan_propagation_consistency() {
     };
 
     // This should fail because the NAT target (internal group) no longer exists
-    let result = switch
-        .client
-        .multicast_group_create_external(&external_entry)
-        .await;
+    let result =
+        switch.client.multicast_group_create_external(&external_entry).await;
 
     assert!(
         result.is_err(),
@@ -5980,9 +5671,7 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
     );
 
     // Clean up external group first (it references internal group via NAT target)
-    cleanup_test_group(&switch, group_ip, TEST_TAG)
-        .await
-        .unwrap();
+    cleanup_test_group(&switch, group_ip, TEST_TAG).await.unwrap();
     cleanup_test_group(&switch, internal_multicast_ip, TEST_TAG).await
 }
 
@@ -6014,9 +5703,8 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
         .multicast_group_get(&internal_group_ip)
         .await
         .expect("Should be able to get initial group state");
-    let initial_member_count = get_members(&initial_group.into_inner())
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let initial_member_count =
+        get_members(&initial_group.into_inner()).map(|m| m.len()).unwrap_or(0);
 
     // Create a mix of valid and invalid members to trigger partial addition failure
     let (valid_port_1, valid_link_1) = switch.link_id(PhysPort(17)).unwrap();
@@ -6044,9 +5732,8 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
         },
     ];
 
-    let update_request = types::MulticastGroupUpdateUnderlayEntry {
-        members: mixed_members,
-    };
+    let update_request =
+        types::MulticastGroupUpdateUnderlayEntry { members: mixed_members };
 
     let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
@@ -6078,9 +5765,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
         .into_inner();
 
     assert_eq!(
-        get_members(&post_failure_group)
-            .map(|m| m.len())
-            .unwrap_or(0),
+        get_members(&post_failure_group).map(|m| m.len()).unwrap_or(0),
         initial_member_count,
         "Member count should be unchanged after partial addition rollback"
     );
@@ -6155,10 +5840,8 @@ async fn test_multicast_rollback_table_operation_failure() {
     };
 
     // This should fail because the NAT target (internal group) doesn't exist
-    let result = switch
-        .client
-        .multicast_group_create_external(&external_entry)
-        .await;
+    let result =
+        switch.client.multicast_group_create_external(&external_entry).await;
 
     // Verify the creation failed
     assert!(
@@ -6414,9 +6097,7 @@ async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
     }
 
     // Cleanup in correct order: external first, then internal
-    cleanup_test_group(switch, external_group_ip, TEST_TAG)
-        .await
-        .unwrap();
+    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
     cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
@@ -6527,9 +6208,7 @@ async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
     }
 
     // Cleanup in correct order: external first, then internal
-    cleanup_test_group(switch, external_group_ip, TEST_TAG)
-        .await
-        .unwrap();
+    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
     cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
@@ -6649,9 +6328,7 @@ async fn test_source_filter_update_to_any() -> TestResult {
     );
 
     // Cleanup in correct order: external first, then internal
-    cleanup_test_group(switch, external_group_ip, TEST_TAG)
-        .await
-        .unwrap();
+    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
     cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
@@ -6824,9 +6501,7 @@ async fn test_source_filter_empty_vec_normalizes_to_any() -> TestResult {
     );
 
     // Cleanup
-    cleanup_test_group(switch, external_group_ip, TEST_TAG)
-        .await
-        .unwrap();
+    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
 
     // Verify the /0 entry was removed
     let after_delete_table = switch
@@ -6924,10 +6599,8 @@ async fn test_delete_nonexistent_group_returns_404() -> TestResult {
     let nonexistent_ip = IpAddr::V4(Ipv4Addr::new(239, 255, 255, 253));
 
     let del_tag = make_tag("some_tag");
-    let result = switch
-        .client
-        .multicast_group_delete(&nonexistent_ip, &del_tag)
-        .await;
+    let result =
+        switch.client.multicast_group_delete(&nonexistent_ip, &del_tag).await;
 
     match result {
         Err(Error::ErrorResponse(resp)) => {
@@ -7272,12 +6945,8 @@ async fn test_tag_validation() -> TestResult {
         _ => panic!("Expected ErrorResponse for tag mismatch"),
     }
 
-    cleanup_test_group(switch, external_ip, TAG_A)
-        .await
-        .unwrap();
-    cleanup_test_group(switch, internal_ip, TEST_TAG)
-        .await
-        .unwrap();
+    cleanup_test_group(switch, external_ip, TAG_A).await.unwrap();
+    cleanup_test_group(switch, internal_ip, TEST_TAG).await.unwrap();
 
     // Case: Case-sensitive tag matching
 

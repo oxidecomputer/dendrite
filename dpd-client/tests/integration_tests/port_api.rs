@@ -52,12 +52,7 @@ async fn test_bad_port() -> TestResult {
 async fn test_list_all_links() -> TestResult {
     let switch = &*get_switch().await;
     let mut expected_links: Vec<_> = switch.iter_links().collect();
-    let links = switch
-        .client
-        .link_list_all(None)
-        .await
-        .unwrap()
-        .into_inner();
+    let links = switch.client.link_list_all(None).await.unwrap().into_inner();
     for link in links {
         let ix = expected_links
             .iter()
@@ -134,11 +129,7 @@ async fn test_ipv4_set() -> TestResult {
 
     // Add one address at a time, assert we get back the new set.
     let entry = switch.client.ipv4_entry(a);
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
     let l = switch
         .client
         .link_ipv4_list_stream(&port_id, &link_id, None)
@@ -149,11 +140,7 @@ async fn test_ipv4_set() -> TestResult {
     addr_compare(vec![a], l).unwrap();
 
     let entry = switch.client.ipv4_entry(b);
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
     let l = switch
         .client
         .link_ipv4_list_stream(&port_id, &link_id, None)
@@ -164,11 +151,7 @@ async fn test_ipv4_set() -> TestResult {
     addr_compare(vec![a, b], l).unwrap();
 
     let entry = switch.client.ipv4_entry(c);
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
     let l = switch
         .client
         .link_ipv4_list_stream(&port_id, &link_id, None)
@@ -206,21 +189,9 @@ async fn test_ipv4_clear() -> TestResult {
         .await
         .unwrap();
 
-    switch
-        .client
-        .link_ipv4_delete(&port_id, &link_id, &a)
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv4_delete(&port_id, &link_id, &b)
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv4_delete(&port_id, &link_id, &c)
-        .await
-        .unwrap();
+    switch.client.link_ipv4_delete(&port_id, &link_id, &a).await.unwrap();
+    switch.client.link_ipv4_delete(&port_id, &link_id, &b).await.unwrap();
+    switch.client.link_ipv4_delete(&port_id, &link_id, &c).await.unwrap();
     let l = switch
         .client
         .link_ipv4_list_stream(&port_id, &link_id, None)
@@ -258,11 +229,7 @@ async fn test_ipv4_delete() -> TestResult {
         .await
         .unwrap();
 
-    switch
-        .client
-        .link_ipv4_delete(&port_id, &link_id, &b)
-        .await
-        .unwrap();
+    switch.client.link_ipv4_delete(&port_id, &link_id, &b).await.unwrap();
     let l = switch
         .client
         .link_ipv4_list_stream(&port_id, &link_id, None)
@@ -272,11 +239,7 @@ async fn test_ipv4_delete() -> TestResult {
         .unwrap();
     addr_compare(vec![a, c], l).unwrap();
 
-    switch
-        .client
-        .link_ipv4_delete(&port_id, &link_id, &a)
-        .await
-        .unwrap();
+    switch.client.link_ipv4_delete(&port_id, &link_id, &a).await.unwrap();
     let l = switch
         .client
         .link_ipv4_list_stream(&port_id, &link_id, None)
@@ -367,21 +330,9 @@ async fn test_ipv6_clear() -> TestResult {
         .await
         .unwrap();
 
-    switch
-        .client
-        .link_ipv6_delete(&port_id, &link_id, &a)
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv6_delete(&port_id, &link_id, &b)
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv6_delete(&port_id, &link_id, &c)
-        .await
-        .unwrap();
+    switch.client.link_ipv6_delete(&port_id, &link_id, &a).await.unwrap();
+    switch.client.link_ipv6_delete(&port_id, &link_id, &b).await.unwrap();
+    switch.client.link_ipv6_delete(&port_id, &link_id, &c).await.unwrap();
     assert!(
         switch
             .client
@@ -420,11 +371,7 @@ async fn test_ipv6_delete() -> TestResult {
         .await
         .unwrap();
 
-    switch
-        .client
-        .link_ipv6_delete(&port_id, &link_id, &b)
-        .await
-        .unwrap();
+    switch.client.link_ipv6_delete(&port_id, &link_id, &b).await.unwrap();
     let l = switch
         .client
         .link_ipv6_list_stream(&port_id, &link_id, None)
@@ -434,11 +381,7 @@ async fn test_ipv6_delete() -> TestResult {
         .unwrap();
     addr_compare(vec![a, c], l).unwrap();
 
-    switch
-        .client
-        .link_ipv6_delete(&port_id, &link_id, &a)
-        .await
-        .unwrap();
+    switch.client.link_ipv6_delete(&port_id, &link_id, &a).await.unwrap();
     let l = switch
         .client
         .link_ipv6_list_stream(&port_id, &link_id, None)
@@ -785,11 +728,7 @@ async fn test_set_mac_on_new_link_succeeds() -> TestResult {
         .first()
         .map(Clone::clone)
         .unwrap();
-    switch
-        .client
-        .link_delete(&link.port_id, &link.link_id)
-        .await
-        .unwrap();
+    switch.client.link_delete(&link.port_id, &link.link_id).await.unwrap();
 
     // Put the link back, and then try to set the MAC on it.
     //
@@ -810,9 +749,7 @@ async fn test_set_mac_on_new_link_succeeds() -> TestResult {
         .unwrap()
         .into_inner();
     let new_mac = types::MacAddr::from(
-        "a8:40:25:ff:ff:ff"
-            .parse::<common::network::MacAddr>()
-            .unwrap(),
+        "a8:40:25:ff:ff:ff".parse::<common::network::MacAddr>().unwrap(),
     );
     switch
         .client

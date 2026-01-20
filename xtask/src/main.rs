@@ -221,11 +221,8 @@ fn collect_binaries<T: ToString>(
         false => "./target/debug",
     };
 
-    let mut binaries = vec![
-        "tfportd".to_string(),
-        "swadm".to_string(),
-        "uplinkd".to_string(),
-    ];
+    let mut binaries =
+        vec!["tfportd".to_string(), "swadm".to_string(), "uplinkd".to_string()];
     for name in names {
         if name.to_string() == "sidecar" {
             binaries.push("dpd".to_string());
@@ -253,12 +250,9 @@ async fn main() {
         XtaskCommands::Codegen { name, sde, stages } => {
             codegen::build(name, sde, stages)
         }
-        XtaskCommands::Dist {
-            features,
-            names,
-            release,
-            format,
-        } => plat::dist(features, names, release, format).await,
+        XtaskCommands::Dist { features, names, release, format } => {
+            plat::dist(features, names, release, format).await
+        }
     } {
         eprintln!("failed: {e}");
         std::process::exit(-1);

@@ -62,21 +62,11 @@ fn parse_tfport_line(line: &str) -> Result<TfportInfo> {
     // separator, so the `:` separating the MAC address octets are escaped.
     // Remove the escaping before parsing, and then return whether the data
     // matches exactly or not.
-    let mac = maybe_mac
-        .trim()
-        .replace('\\', "")
-        .parse::<MacAddr>()
-        .map_err(|_| {
-            anyhow!("unable to parse {maybe_mac} as a mac address for {name}")
-        })?;
+    let mac = maybe_mac.trim().replace('\\', "").parse::<MacAddr>().map_err(
+        |_| anyhow!("unable to parse {maybe_mac} as a mac address for {name}"),
+    )?;
 
-    Ok(TfportInfo {
-        name,
-        port,
-        mac,
-        ifindex: None,
-        link_local: None,
-    })
+    Ok(TfportInfo { name, port, mac, ifindex: None, link_local: None })
 }
 
 async fn lldp_toggle_disabled(
@@ -273,17 +263,13 @@ pub async fn tfport_cleanup(g: &Global) {
 /// If tfport0 doesn't already exist, create it.
 pub async fn create_tfport0(g: &Global) {
     // Once the tfport0 is created or re-created, we can then start tracking it.
-    if let Err(e) = g
-        .link_tracker
-        .track_link("tfport0", link::ModelType::Tfport)
+    if let Err(e) =
+        g.link_tracker.track_link("tfport0", link::ModelType::Tfport)
     {
         error!(g.log, "failed to track tfport0: {e}");
     }
 
-    match illumos::tfport_exists("tfport0")
-        .await
-        .expect("dladm failed")
-    {
+    match illumos::tfport_exists("tfport0").await.expect("dladm failed") {
         true => {
             info!(
                 g.log,

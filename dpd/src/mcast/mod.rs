@@ -260,10 +260,8 @@ impl MulticastGroupData {
     /// Returns a ScopedGroupId that will automatically return the ID to the
     /// free pool when dropped.
     fn generate_group_id(&mut self) -> DpdResult<ScopedGroupId> {
-        let mut pool = self
-            .free_group_ids
-            .lock()
-            .expect("group ID pool lock poisoned");
+        let mut pool =
+            self.free_group_ids.lock().expect("group ID pool lock poisoned");
         let id = pool.pop().ok_or_else(|| {
             DpdError::ResourceExhausted(
                 "no free multicast group IDs available (exhausted range 100-65534)".to_string(),
@@ -279,8 +277,7 @@ impl MulticastGroupData {
         external_group_ip: IpAddr,
         admin_scoped_ip: UnderlayMulticastIpv6,
     ) {
-        self.nat_target_refs
-            .insert(admin_scoped_ip, external_group_ip);
+        self.nat_target_refs.insert(admin_scoped_ip, external_group_ip);
     }
 
     /// Remove 1:1 forwarding reference.
@@ -570,10 +567,8 @@ pub(crate) fn del_group(
 
     let group = mcast.groups.remove(&group_ip).unwrap();
 
-    let nat_target_to_remove = group
-        .int_fwding
-        .nat_target
-        .map(|nat| nat.internal_ip.into());
+    let nat_target_to_remove =
+        group.int_fwding.nat_target.map(|nat| nat.internal_ip.into());
 
     debug!(s.log, "deleting multicast group for IP {group_ip}");
 
@@ -647,14 +642,11 @@ pub(crate) fn modify_group_external(
     validate_tag(&existing_group.tag, tag)?;
 
     let nat_target =
-        new_group_info
-            .internal_forwarding
-            .nat_target
-            .ok_or_else(|| {
-                DpdError::Invalid(
-                    "external groups must have NAT target".to_string(),
-                )
-            })?;
+        new_group_info.internal_forwarding.nat_target.ok_or_else(|| {
+            DpdError::Invalid(
+                "external groups must have NAT target".to_string(),
+            )
+        })?;
 
     validate_multicast_address(group_ip, new_group_info.sources.as_deref())?;
     validate_nat_target(nat_target)?;
@@ -1447,14 +1439,12 @@ fn create_asic_group(
     group_id: MulticastGroupId,
     group_ip: IpAddr,
 ) -> DpdResult<()> {
-    s.asic_hdl
-        .mc_group_create(group_id)
-        .map_err(|e: AsicError| {
-            DpdError::McastGroupFailure(format!(
-                "failed to create multicast group for IP {group_ip} with ID \
+    s.asic_hdl.mc_group_create(group_id).map_err(|e: AsicError| {
+        DpdError::McastGroupFailure(format!(
+            "failed to create multicast group for IP {group_ip} with ID \
                  {group_id}: {e:?}"
-            ))
-        })
+        ))
+    })
 }
 
 fn add_ports_to_groups(
@@ -1503,9 +1493,7 @@ fn process_membership_changes(
 ) -> DpdResult<(Vec<MulticastGroupMember>, Vec<MulticastGroupMember>)> {
     // First validate that IPv4 doesn't have underlay members
     if group_ip.is_ipv4()
-        && new_members
-            .iter()
-            .any(|m| m.direction == Direction::Underlay)
+        && new_members.iter().any(|m| m.direction == Direction::Underlay)
     {
         return Err(DpdError::Invalid(format!(
             "multicast group for IPv4 {group_ip} cannot have underlay members"
@@ -1701,16 +1689,9 @@ fn update_external_tables(
     }
 
     // Update NAT target - external groups always have NAT targets
-    if Some(
-        new_group_info
-            .internal_forwarding
-            .nat_target
-            .ok_or_else(|| {
-                DpdError::Invalid(
-                    "external groups must have NAT target".to_string(),
-                )
-            })?,
-    ) != group_entry.int_fwding.nat_target
+    if Some(new_group_info.internal_forwarding.nat_target.ok_or_else(|| {
+        DpdError::Invalid("external groups must have NAT target".to_string())
+    })?) != group_entry.int_fwding.nat_target
     {
         update_nat_tables(
             s,

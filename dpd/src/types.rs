@@ -49,11 +49,7 @@ pub enum DpdError {
     #[error(
         "Address {address} is not associated with port \"{port_id}\" link \"{link_id}\""
     )]
-    NoSuchAddress {
-        port_id: PortId,
-        link_id: LinkId,
-        address: IpAddr,
-    },
+    NoSuchAddress { port_id: PortId, link_id: LinkId, address: IpAddr },
     #[error("no matching route found")]
     NoSuchRoute,
     #[error("No such table: {0}")]
@@ -69,10 +65,7 @@ pub enum DpdError {
     #[error("Port \"{port_id}\" is not a QSFP port")]
     NotAQsfpPort { port_id: PortId },
     #[error("Unwind: initial: {initial}, unwind: {unwind}")]
-    Unwind {
-        initial: Box<DpdError>,
-        unwind: Box<DpdError>,
-    },
+    Unwind { initial: Box<DpdError>, unwind: Box<DpdError> },
     #[error("No transceiver controller initialized")]
     NoTransceiverController,
     #[error("Failed to operate on transceivers")]

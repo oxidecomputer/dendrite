@@ -712,11 +712,7 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         group_ip: IpAddr,
         original_group: &'a MulticastGroup,
     ) -> Self {
-        Self {
-            switch,
-            group_ip,
-            original_group,
-        }
+        Self { switch, group_ip, original_group }
     }
 
     /// Restore tables and return error.

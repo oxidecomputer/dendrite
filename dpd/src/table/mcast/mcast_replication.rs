@@ -69,10 +69,7 @@ pub(crate) fn add_ipv6_entry(
         level2_excl_id,
     };
 
-    debug!(
-        s.log,
-        "add mcast_ipv6 entry {} -> {:?}", dst_addr, action_data
-    );
+    debug!(s.log, "add mcast_ipv6 entry {} -> {:?}", dst_addr, action_data);
 
     s.table_entry_add(TableType::McastIpv6, &match_key, &action_data)
 }
@@ -107,10 +104,7 @@ pub(crate) fn update_ipv6_entry(
         level2_excl_id,
     };
 
-    debug!(
-        s.log,
-        "update mcast_ipv6 entry {} -> {:?}", dst_addr, action_data
-    );
+    debug!(s.log, "update mcast_ipv6 entry {} -> {:?}", dst_addr, action_data);
 
     s.table_entry_update(TableType::McastIpv6, &match_key, &action_data)
 }

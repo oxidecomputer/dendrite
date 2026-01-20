@@ -141,11 +141,7 @@ impl PortMap {
         };
         let connector_to_id =
             id_to_connector.iter().map(|(k, v)| (*v, *k)).collect();
-        Self {
-            _revision: revision,
-            id_to_connector,
-            connector_to_id,
-        }
+        Self { _revision: revision, id_to_connector, connector_to_id }
     }
 
     /// Return the internal `Connector` corresponding to the physical switch port,

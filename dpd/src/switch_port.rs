@@ -138,11 +138,7 @@ impl SwitchPorts {
             None => BTreeMap::new(),
         };
 
-        Ok(Self {
-            port_map,
-            ports,
-            xcvr_defaults,
-        })
+        Ok(Self { port_map, ports, xcvr_defaults })
     }
 
     pub fn verify_exists(&self, port_id: PortId) -> DpdResult<()> {
@@ -197,9 +193,7 @@ impl SwitchPort {
         mode: ManagementMode,
     ) -> DpdResult<()> {
         let Some(device) = self.as_qsfp_mut() else {
-            return Err(DpdError::NotAQsfpPort {
-                port_id: self.port_id(),
-            });
+            return Err(DpdError::NotAQsfpPort { port_id: self.port_id() });
         };
         device.management_mode = mode;
         Ok(())
@@ -209,9 +203,7 @@ impl SwitchPort {
     /// this is another kind of port.
     pub fn management_mode(&self) -> DpdResult<ManagementMode> {
         let Some(device) = self.as_qsfp() else {
-            return Err(DpdError::NotAQsfpPort {
-                port_id: self.port_id(),
-            });
+            return Err(DpdError::NotAQsfpPort { port_id: self.port_id() });
         };
         Ok(device.management_mode)
     }
@@ -285,10 +277,7 @@ impl From<&SwitchPort> for views::SwitchPort {
             FixedSideDevice::Qsfp { device, .. } => Some(device.clone()),
             _ => None,
         };
-        Self {
-            port_id: p.port_id(),
-            qsfp_device,
-        }
+        Self { port_id: p.port_id(), qsfp_device }
     }
 }
 
@@ -333,11 +322,9 @@ impl crate::Switch {
 
         if let Some(tx_eq) = match (link.tx_eq, &mpn) {
             (Some(user_defined), _) => Some(user_defined),
-            (None, Some(mpn)) => self
-                .switch_ports
-                .xcvr_defaults
-                .get(mpn)
-                .and_then(|x| x.tx_eq),
+            (None, Some(mpn)) => {
+                self.switch_ports.xcvr_defaults.get(mpn).and_then(|x| x.tx_eq)
+            }
             (_, _) => None,
         } {
             let mpn = mpn
@@ -366,11 +353,7 @@ impl crate::Switch {
     /// also fail.
     pub fn qsfp_default_fec(&self, qsfp_mpn: &str) -> DpdResult<PortFec> {
         slog::debug!(self.log, "looking up default FEC for {qsfp_mpn}");
-        match self
-            .switch_ports
-            .xcvr_defaults
-            .get(qsfp_mpn)
-            .and_then(|x| x.fec)
+        match self.switch_ports.xcvr_defaults.get(qsfp_mpn).and_then(|x| x.fec)
         {
             Some(fec) => Ok(fec),
             None => Err(DpdError::Missing(
@@ -397,12 +380,10 @@ impl crate::Switch {
         };
         let (controller, mut sp) =
             self.acquire_transceiver_resources(qsfp_port).await?;
-        let led_policy = sp
-            .led_policy_mut()
-            .ok_or(DpdError::NotAQsfpPort { port_id })?;
-        let result = controller
-            .set_leds(module_id_from_qsfp(qsfp_port), state)
-            .await?;
+        let led_policy =
+            sp.led_policy_mut().ok_or(DpdError::NotAQsfpPort { port_id })?;
+        let result =
+            controller.set_leds(module_id_from_qsfp(qsfp_port), state).await?;
         if result.is_success() {
             *led_policy = LedPolicy::Override;
             Ok(())
@@ -456,10 +437,7 @@ impl crate::Switch {
         let controller = self.transceiver_controller().await?;
         let result = controller.leds(module_id_from_qsfp(qsfp_port)).await?;
         if result.is_success() {
-            Ok(Led {
-                policy,
-                state: result.data[0],
-            })
+            Ok(Led { policy, state: result.data[0] })
         } else {
             Err(DpdError::from(
                 result.error_iter().next().map(|(_, err)| err).unwrap(),

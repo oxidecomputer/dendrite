@@ -57,10 +57,7 @@ pub(crate) fn add_ipv4_entry(
         }
     };
 
-    debug!(
-        s.log,
-        "add multicast route entry {} -> {:?}", route, action_data
-    );
+    debug!(s.log, "add multicast route entry {} -> {:?}", route, action_data);
 
     s.table_entry_add(TableType::RouteIpv4Mcast, &match_key, &action_data)
 }
@@ -141,10 +138,7 @@ pub(crate) fn add_ipv6_entry(
         }
     };
 
-    debug!(
-        s.log,
-        "add multicast route entry {} -> {:?}", route, action_data
-    );
+    debug!(s.log, "add multicast route entry {} -> {:?}", route, action_data);
 
     s.table_entry_add(TableType::RouteIpv6Mcast, &match_key, &action_data)
 }

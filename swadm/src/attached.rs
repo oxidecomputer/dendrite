@@ -150,12 +150,9 @@ pub async fn attsub_cmd(
     match e {
         AttachedSubnet::List { v4, v6 } => attsub_list(client, v4, v6).await,
         AttachedSubnet::Get { attsub } => attsub_get(client, attsub).await,
-        AttachedSubnet::Add {
-            attsub,
-            internal,
-            inner,
-            vni,
-        } => attsub_add(client, attsub, internal, inner, vni).await,
+        AttachedSubnet::Add { attsub, internal, inner, vni } => {
+            attsub_add(client, attsub, internal, inner, vni).await
+        }
         AttachedSubnet::Del { attsub } => attsub_del(client, attsub).await,
     }
 }

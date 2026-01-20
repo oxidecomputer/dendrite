@@ -104,11 +104,7 @@ impl TableOps<Handle> for Table {
             }
         };
 
-        Ok(Table {
-            id,
-            dpd_id,
-            size: TABLE_SIZE,
-        })
+        Ok(Table { id, dpd_id, size: TABLE_SIZE })
     }
 
     fn size(&self) -> usize {

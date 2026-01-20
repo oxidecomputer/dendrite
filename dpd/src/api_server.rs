@@ -460,13 +460,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<PortId>>, HttpError> {
         Ok(HttpResponseOk(
-            rqctx
-                .context()
-                .switch_ports
-                .port_map
-                .port_ids()
-                .copied()
-                .collect(),
+            rqctx.context().switch_ports.port_map.port_ids().copied().collect(),
         ))
     }
 
@@ -636,11 +630,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<BTreeMap<PortId, Led>>, HttpError> {
         let switch = rqctx.context();
-        switch
-            .all_leds()
-            .await
-            .map(HttpResponseOk)
-            .map_err(HttpError::from)
+        switch.all_leds().await.map(HttpResponseOk).map_err(HttpError::from)
     }
 
     async fn led_set_auto(
@@ -817,10 +807,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseOk<Vec<views::Link>>, HttpError> {
         let switch = &rqctx.context();
         let port_id = path.into_inner().port_id;
-        switch
-            .list_links(port_id)
-            .map(HttpResponseOk)
-            .map_err(HttpError::from)
+        switch.list_links(port_id).map(HttpResponseOk).map_err(HttpError::from)
     }
 
     async fn link_list_all(
@@ -2287,11 +2274,7 @@ impl DpdApi for DpdApiImpl {
                     "failed to lookup port and link ID from \
                 an existing port handle: {port_hdl}"
                 )))?;
-            out.push(LinkPcsCounters {
-                port_id,
-                link_id,
-                counters,
-            });
+            out.push(LinkPcsCounters { port_id, link_id, counters });
         }
         Ok(HttpResponseOk(out))
     }
@@ -2318,11 +2301,7 @@ impl DpdApi for DpdApiImpl {
         let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
         stats::port_get_pcs_counters(&switch.asic_hdl, port_handle)
             .map(|counters| {
-                HttpResponseOk(LinkPcsCounters {
-                    port_id,
-                    link_id,
-                    counters,
-                })
+                HttpResponseOk(LinkPcsCounters { port_id, link_id, counters })
             })
             .map_err(|e| HttpError::from(DpdError::from(e)))
     }
@@ -2355,11 +2334,7 @@ impl DpdApi for DpdApiImpl {
                     "failed to lookup port and link ID from \
                 an existing port handle: {port_hdl}"
                 )))?;
-            out.push(LinkFecRSCounters {
-                port_id,
-                link_id,
-                counters,
-            });
+            out.push(LinkFecRSCounters { port_id, link_id, counters });
         }
         Ok(HttpResponseOk(out))
     }
@@ -2386,11 +2361,7 @@ impl DpdApi for DpdApiImpl {
         let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
         stats::port_get_fec_rs_counters(&switch.asic_hdl, port_handle)
             .map(|counters| {
-                HttpResponseOk(LinkFecRSCounters {
-                    port_id,
-                    link_id,
-                    counters,
-                })
+                HttpResponseOk(LinkFecRSCounters { port_id, link_id, counters })
             })
             .map_err(|e| HttpError::from(DpdError::from(e)))
     }
@@ -2418,11 +2389,7 @@ impl DpdApi for DpdApiImpl {
         let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
         stats::port_get_rmon_counters(&switch.asic_hdl, port_handle)
             .map(|counters| {
-                HttpResponseOk(LinkRMonCounters {
-                    port_id,
-                    link_id,
-                    counters,
-                })
+                HttpResponseOk(LinkRMonCounters { port_id, link_id, counters })
             })
             .map_err(|e| HttpError::from(DpdError::from(e)))
     }
@@ -2510,10 +2477,7 @@ impl DpdApi for DpdApiImpl {
             serdes::port_tx_eq_get(&switch.asic_hdl, port_handle)
                 .map_err(|e| HttpError::from(DpdError::from(e)))?
                 .into_iter()
-                .map(|t| TxEqSwHw {
-                    sw: t.sw.into(),
-                    hw: t.hw.into(),
-                })
+                .map(|t| TxEqSwHw { sw: t.sw.into(), hw: t.hw.into() })
                 .collect(),
         ))
     }
@@ -2537,16 +2501,10 @@ impl DpdApi for DpdApiImpl {
             .asic_hdl
             .port_tx_eq_get(port_handle)
             .map_err(|e| HttpError::from(DpdError::from(e)))?;
-        let softnpu_tx_eq = TxEq {
-            main: Some(tx_eq),
-            ..Default::default()
-        };
+        let softnpu_tx_eq = TxEq { main: Some(tx_eq), ..Default::default() };
         Ok(HttpResponseOk(
             (0..lane_cnt)
-                .map(|_| TxEqSwHw {
-                    sw: softnpu_tx_eq,
-                    hw: softnpu_tx_eq,
-                })
+                .map(|_| TxEqSwHw { sw: softnpu_tx_eq, hw: softnpu_tx_eq })
                 .collect(),
         ))
     }
@@ -2930,11 +2888,8 @@ mod tests {
     fn test_build_info() {
         let info = build_info();
         println!("{info:#?}");
-        let out = Command::new("git")
-            .arg("rev-parse")
-            .arg("HEAD")
-            .output()
-            .unwrap();
+        let out =
+            Command::new("git").arg("rev-parse").arg("HEAD").output().unwrap();
         assert!(out.status.success());
         let ours = std::str::from_utf8(&out.stdout).unwrap().trim();
         assert_eq!(info.git_sha, ours);
