@@ -20,10 +20,7 @@ pub struct LoopbackData {
 
 /// Initialize loopback data to empty sets of IPv4 and IPv6 addresses.
 pub fn init() -> LoopbackData {
-    LoopbackData {
-        v4_addrs: BTreeSet::new(),
-        v6_addrs: BTreeSet::new(),
-    }
+    LoopbackData { v4_addrs: BTreeSet::new(), v6_addrs: BTreeSet::new() }
 }
 
 /// Add a loopback IPv4 address to the switch.
@@ -53,10 +50,7 @@ pub fn add_loopback_ipv4(switch: &Switch, addr: &Ipv4Entry) -> DpdResult<()> {
 /// Delete a loopback IPv4 address from the switch.
 pub fn delete_loopback_ipv4(switch: &Switch, addr: &Ipv4Addr) -> DpdResult<()> {
     let mut loopback_data = switch.loopback.lock().unwrap();
-    let entry = Ipv4Entry {
-        addr: *addr,
-        tag: "".into(),
-    };
+    let entry = Ipv4Entry { addr: *addr, tag: "".into() };
     if !loopback_data.v4_addrs.contains(&entry) {
         debug!(switch.log, "loopback entry {} not set", addr);
         return Ok(());
@@ -106,10 +100,7 @@ pub fn add_loopback_ipv6(switch: &Switch, addr: &Ipv6Entry) -> DpdResult<()> {
 /// Delete a loopback IPv6 address from the switch.
 pub fn delete_loopback_ipv6(switch: &Switch, addr: &Ipv6Addr) -> DpdResult<()> {
     let mut loopback_data = switch.loopback.lock().unwrap();
-    let entry = Ipv6Entry {
-        addr: *addr,
-        tag: "".into(),
-    };
+    let entry = Ipv6Entry { addr: *addr, tag: "".into() };
     if !loopback_data.v6_addrs.contains(&entry) {
         debug!(switch.log, "loopback entry {} not set", addr);
         return Ok(());

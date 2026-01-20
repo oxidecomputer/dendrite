@@ -52,9 +52,7 @@ pub enum Ternary<T, E> {
 impl Pcap {
     fn get_error(hdl: *mut ffi::pcap) -> String {
         unsafe {
-            CStr::from_ptr(ffi::pcap_geterr(hdl))
-                .to_string_lossy()
-                .into_owned()
+            CStr::from_ptr(ffi::pcap_geterr(hdl)).to_string_lossy().into_owned()
         }
     }
 
@@ -249,10 +247,8 @@ impl Pcap {
         program: &str,
         netmask: u32,
     ) -> Result<ffi::bpf_program, String> {
-        let mut bpf = ffi::bpf_program {
-            bf_len: 0,
-            bf_insns: std::ptr::null_mut(),
-        };
+        let mut bpf =
+            ffi::bpf_program { bf_len: 0, bf_insns: std::ptr::null_mut() };
 
         match unsafe {
             let arg = CString::new(program).expect("CString::new failed");

@@ -9,7 +9,5 @@ extern crate cc;
 fn main() {
     println!("cargo:rustc-link-lib=socket");
 
-    cc::Build::new()
-        .file("src/netsupport.c")
-        .compile("netsupport");
+    cc::Build::new().file("src/netsupport.c").compile("netsupport");
 }

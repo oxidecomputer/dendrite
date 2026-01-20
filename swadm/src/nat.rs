@@ -226,14 +226,9 @@ pub async fn nat_cmd(client: &Client, n: Nat) -> anyhow::Result<()> {
     match n {
         Nat::List { external } => nat_list(client, external).await,
         Nat::Get { external, port } => nat_get(client, external, port).await,
-        Nat::Add {
-            external,
-            low,
-            high,
-            internal,
-            inner,
-            vni,
-        } => nat_add(client, external, low, high, internal, inner, vni).await,
+        Nat::Add { external, low, high, internal, inner, vni } => {
+            nat_add(client, external, low, high, internal, inner, vni).await
+        }
         Nat::Del { external, port } => nat_del(client, external, port).await,
     }
 }

@@ -116,10 +116,7 @@ impl P4Config {
             agent0: "lib/libpltfm_mgr.so".to_string(),
         };
 
-        P4Config {
-            chip_list: vec![chip],
-            p4_devices: vec![device],
-        }
+        P4Config { chip_list: vec![chip], p4_devices: vec![device] }
     }
 }
 

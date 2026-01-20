@@ -669,9 +669,7 @@ async fn link_fec_rs_counters(
             .map(|r| r.into_inner())
             .context("failed to get FEC counters")?;
         counters.sort_by(|a, b| {
-            a.port_id
-                .cmp(&b.port_id)
-                .then_with(|| a.link_id.cmp(&b.link_id))
+            a.port_id.cmp(&b.port_id).then_with(|| a.link_id.cmp(&b.link_id))
         });
         counters
     };
@@ -820,11 +818,7 @@ fn port_rmon_counters_brief(old: &RMonCounters, new: &RMonCounters) {
 
 macro_rules! print_one {
     ($field:ident, $old:ident, $new:ident) => {
-        println!(
-            "{:35} {:>10}",
-            stringify!($field),
-            $new.$field - $old.$field
-        )
+        println!("{:35} {:>10}", stringify!($field), $new.$field - $old.$field)
     };
 }
 
@@ -1067,9 +1061,7 @@ async fn link_serdes_eye(
         print_eye_fields!("eye3", eye3_data);
         Ok(())
     } else {
-        Err(anyhow::anyhow!(
-            "link_eye_get() returned mixed NRZ and PAM4 data"
-        ))
+        Err(anyhow::anyhow!("link_eye_get() returned mixed NRZ and PAM4 data"))
     }
 }
 
@@ -1153,13 +1145,7 @@ async fn link_serdes_tx_eq_set(
     post1: Option<i32>,
     post2: Option<i32>,
 ) -> anyhow::Result<()> {
-    let settings = types::TxEq {
-        pre2,
-        pre1,
-        main,
-        post1,
-        post2,
-    };
+    let settings = types::TxEq { pre2, pre1, main, post1, post2 };
     let port = link.port_id;
     let link = link.link_id;
     client
@@ -1545,14 +1531,7 @@ fn display_link_history(
 
 pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
     match link {
-        Link::Create(LinkCreate {
-            port_id,
-            speed,
-            lane,
-            fec,
-            autoneg,
-            kr,
-        }) => {
+        Link::Create(LinkCreate { port_id, speed, lane, fec, autoneg, kr }) => {
             let params = types::LinkCreate {
                 lane,
                 speed: speed.into(),
@@ -1602,13 +1581,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 tw.flush()?;
             }
         }
-        Link::List {
-            port_id,
-            parseable,
-            fields,
-            sep,
-            list_fields,
-        } => {
+        Link::List { port_id, parseable, fields, sep, list_fields } => {
             if list_fields {
                 print_link_fields();
                 return Ok(());
@@ -1635,21 +1608,13 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 tw.flush()?;
             }
         }
-        Link::Delete {
-            link_path: LinkPath { port_id, link_id },
-        } => {
+        Link::Delete { link_path: LinkPath { port_id, link_id } } => {
             client
                 .link_delete(&port_id, &link_id)
                 .await
                 .context("failed to delete link")?;
         }
-        Link::ListAll {
-            parseable,
-            fields,
-            sep,
-            list_fields,
-            filter,
-        } => {
+        Link::ListAll { parseable, fields, sep, list_fields, filter } => {
             if list_fields {
                 print_link_fields();
                 return Ok(());
@@ -1896,12 +1861,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 .await
                 .with_context(|| "failed to disable link")?;
         }
-        Link::History {
-            link,
-            raw,
-            reverse,
-            n,
-        } => {
+        Link::History { link, raw, reverse, n } => {
             let history = client
                 .link_history_get(&link.port_id, &link.link_id)
                 .await
@@ -1937,11 +1897,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
             }
         },
         Link::Counters { cmd: counters } => match counters {
-            LinkCounters::Rmon {
-                link,
-                level,
-                interval,
-            } => {
+            LinkCounters::Rmon { link, level, interval } => {
                 link_rmon_counters(client, &link, level, interval)
                     .await
                     .context("failed to fetch link RMON counters")?;
@@ -2042,9 +1998,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
             post2,
         } => {
             let port_id = &link.port_id;
-            let mut body = types::PortSettings {
-                links: HashMap::default(),
-            };
+            let mut body = types::PortSettings { links: HashMap::default() };
 
             let txeq = if pre1.is_none()
                 && pre2.is_none()
@@ -2060,13 +2014,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                     post2: Some(x),
                 })
             } else {
-                Some(types::TxEq {
-                    pre1,
-                    pre2,
-                    main,
-                    post1,
-                    post2,
-                })
+                Some(types::TxEq { pre1, pre2, main, post1, post2 })
             };
             body.links.insert(
                 String::from("0"),

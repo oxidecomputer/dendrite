@@ -177,13 +177,7 @@ impl SdeTransceiverMessage {
         oneshot::Receiver<Result<SdeTransceiverResponse, ControllerError>>,
     ) {
         let (response_tx, rx) = oneshot::channel();
-        (
-            Self {
-                request,
-                response_tx,
-            },
-            rx,
-        )
+        (Self { request, response_tx }, rx)
     }
 }
 
@@ -355,10 +349,8 @@ pub extern "C" fn bf_pltfm_qsfp_init(_: *mut c_void) -> c_int {
 
     // Provide the SDE with our implementations of the module read/write
     // routines.
-    const IMPL: bf_qsfp_vec_t = bf_qsfp_vec_t {
-        write: write_qsfp_module,
-        read: read_qsfp_module,
-    };
+    const IMPL: bf_qsfp_vec_t =
+        bf_qsfp_vec_t { write: write_qsfp_module, read: read_qsfp_module };
     let ret = unsafe { bf_qsfp_vec_init(&IMPL as *const _ as *mut _) };
     if ret == 0 {
         debug!(log, "initialized QSFP management with {} ports", n_ports);
@@ -512,13 +504,7 @@ pub unsafe extern "C" fn write_qsfp_module(
     };
     let data =
         unsafe { std::slice::from_raw_parts(src, usize::from(len)) }.to_vec();
-    let body = WriteRequest {
-        module,
-        bank,
-        page,
-        offset,
-        data,
-    };
+    let body = WriteRequest { module, bank, page, offset, data };
     let message = SdeTransceiverRequest::Write(body);
     let (request, response_rx) = SdeTransceiverMessage::new(message.clone());
     match send_to_dpd(tx, request, response_rx) {
@@ -605,13 +591,7 @@ pub unsafe extern "C" fn read_qsfp_module(
         );
         return -1;
     };
-    let body = ReadRequest {
-        module,
-        bank,
-        page,
-        offset,
-        len,
-    };
+    let body = ReadRequest { module, bank, page, offset, len };
     let message = SdeTransceiverRequest::Read(body);
     let (request, response_rx) = SdeTransceiverMessage::new(message.clone());
     match send_to_dpd(tx, request, response_rx) {

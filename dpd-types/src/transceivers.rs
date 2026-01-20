@@ -33,10 +33,7 @@ pub struct QsfpDevice {
 
 impl Default for QsfpDevice {
     fn default() -> Self {
-        Self {
-            transceiver: None,
-            management_mode: ManagementMode::Automatic,
-        }
+        Self { transceiver: None, management_mode: ManagementMode::Automatic }
     }
 }
 

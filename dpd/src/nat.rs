@@ -141,21 +141,9 @@ fn test_mapping() {
     };
 
     let entries = vec![
-        Ipv4NatEntry {
-            low: 1,
-            high: 4,
-            tgt: dummy_target,
-        },
-        Ipv4NatEntry {
-            low: 7,
-            high: 10,
-            tgt: dummy_target,
-        },
-        Ipv4NatEntry {
-            low: 12,
-            high: 18,
-            tgt: dummy_target,
-        },
+        Ipv4NatEntry { low: 1, high: 4, tgt: dummy_target },
+        Ipv4NatEntry { low: 7, high: 10, tgt: dummy_target },
+        Ipv4NatEntry { low: 12, high: 18, tgt: dummy_target },
     ];
 
     assert_eq!(find_first_mapping(&entries, 2, 2), Some(0));
@@ -193,11 +181,7 @@ pub fn get_ipv6_addrs_range(
         None => (Bound::Unbounded, Bound::Unbounded),
     };
 
-    nat.ipv6_mappings
-        .range(range)
-        .take(max)
-        .map(|(ip, _)| *ip)
-        .collect()
+    nat.ipv6_mappings.range(range).take(max).map(|(ip, _)| *ip).collect()
 }
 
 /// Paginates through `Ipv6Nat` using `last_port` as the starting offset
@@ -353,11 +337,7 @@ pub fn get_ipv4_addrs_range(
         None => (Bound::Unbounded, Bound::Unbounded),
     };
 
-    nat.ipv4_mappings
-        .range(range)
-        .take(max)
-        .map(|(ip, _)| *ip)
-        .collect()
+    nat.ipv4_mappings.range(range).take(max).map(|(ip, _)| *ip).collect()
 }
 
 /// Paginates through `Ipv4Nat` using `last_port` as the starting offset

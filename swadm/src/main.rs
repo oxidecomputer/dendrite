@@ -132,10 +132,7 @@ impl FromStr for LinkPath {
         let Ok(port_id) = types::PortId::try_from(port_id) else {
             anyhow::bail!("Invalid switch port: {port_id}");
         };
-        Ok(Self {
-            port_id,
-            link_id: link_id.parse()?,
-        })
+        Ok(Self { port_id, link_id: link_id.parse()? })
     }
 }
 
@@ -211,10 +208,7 @@ async fn main_impl() -> anyhow::Result<()> {
     let port = opts.port.unwrap_or_else(default_port);
     let host = opts.host.unwrap_or_else(|| "localhost".to_string());
     let log = slog::Logger::root(slog::Discard, slog::o!());
-    let client_state = ClientState {
-        tag: String::from("cli"),
-        log,
-    };
+    let client_state = ClientState { tag: String::from("cli"), log };
     let client = Client::new(&format!("http://{host}:{port}"), client_state);
 
     match opts.cmd {

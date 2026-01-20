@@ -29,11 +29,7 @@ struct AttachedSubnetV6MatchKey {
 #[derive(ActionParse)]
 enum AttachedSubnetV6Action {
     #[action_xlate(name = "forward_to_v6")]
-    Forward {
-        target: Ipv6Addr,
-        inner_mac: MacAddr,
-        vni: u32,
-    },
+    Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
 
 pub fn add_entry(

@@ -202,10 +202,7 @@ impl<'a> LockedController<'a> {
         // modified. We also check that the contained Option is none, so the
         // unwrap is safe.
         let guard = MutexGuard::map(guard, |f| f.as_mut().unwrap());
-        Ok(LockedController {
-            guard,
-            id: StdMutex::new(id),
-        })
+        Ok(LockedController { guard, id: StdMutex::new(id) })
     }
 }
 
@@ -379,12 +376,7 @@ impl TransceiverState {
             }
         }
 
-        Self {
-            controller: ctl,
-            can_be_notified,
-            rebuild: notify,
-            channels,
-        }
+        Self { controller: ctl, can_be_notified, rebuild: notify, channels }
     }
 
     /// Trigger a rebuild of the transceiver controller.
@@ -713,11 +705,7 @@ mod transceiver_chaos {
 
         // Create the new response, potentially with injected errors, and notify
         // about any injections.
-        let new = StatusResult {
-            modules,
-            data,
-            failures,
-        };
+        let new = StatusResult { modules, data, failures };
         if !injected_failures.modules.is_empty() {
             debug!(
                 log,
@@ -756,11 +744,7 @@ mod transceiver_chaos {
             }
         }
         let failures = res.failures.merge(&injected_failures);
-        let new = ModuleResult {
-            modules,
-            data,
-            failures,
-        };
+        let new = ModuleResult { modules, data, failures };
         if !injected_failures.modules.is_empty() {
             debug!(
                 log,
@@ -1700,10 +1684,8 @@ impl Switch {
         let mut sp_request_rx =
             self.transceivers.channels.sp_request_rx.lock().await;
 
-        while let Some(SpRequest {
-            request,
-            response_tx,
-        }) = sp_request_rx.recv().await
+        while let Some(SpRequest { request, response_tx }) =
+            sp_request_rx.recv().await
         {
             // TODO-implement We need to actually handle requests here, such as
             // by updating the control plane if, say, a module is removed or
@@ -1754,10 +1736,8 @@ impl Switch {
         // Await a possible request from the SDE.
         loop {
             probes::sde__request__queue__wait__start!(|| ());
-            let Some(SdeTransceiverMessage {
-                request,
-                response_tx,
-            }) = sde_request_rx.recv().await
+            let Some(SdeTransceiverMessage { request, response_tx }) =
+                sde_request_rx.recv().await
             else {
                 break;
             };
@@ -2182,9 +2162,7 @@ async fn handle_detect_request(
                 "module" => module,
                 "present" => device.present,
             );
-            Ok(SdeTransceiverResponse::Detect {
-                present: device.present,
-            })
+            Ok(SdeTransceiverResponse::Detect { present: device.present })
         }
         PortId::Qsfp(qsfp) => {
             let Ok(controller) = LockedController::new(controller).await else {
@@ -2661,13 +2639,7 @@ async fn handle_write_request(
     controller: &Arc<Mutex<Option<Controller>>>,
     write: WriteRequest,
 ) -> Result<SdeTransceiverResponse, ControllerError> {
-    let WriteRequest {
-        module,
-        bank,
-        page,
-        offset,
-        data,
-    } = write;
+    let WriteRequest { module, bank, page, offset, data } = write;
     let port_id =
         tofino_connector_to_port_id(&switch_ports.port_map, log, module)?;
     match port_id {
@@ -2757,13 +2729,7 @@ async fn handle_read_request(
     controller: &Arc<Mutex<Option<Controller>>>,
     read: ReadRequest,
 ) -> Result<SdeTransceiverResponse, ControllerError> {
-    let ReadRequest {
-        module,
-        bank,
-        page,
-        offset,
-        len,
-    } = read;
+    let ReadRequest { module, bank, page, offset, len } = read;
     let port_id =
         tofino_connector_to_port_id(&switch_ports.port_map, log, module)?;
     match port_id {
@@ -4079,10 +4045,8 @@ mod tests {
         // We set the backplane module corresponding to cubby 0 into LPMode. We
         // need to map that into the bit position of the Tofino connector number
         // we use to report that to the SDE.
-        let Connector::QSFP(connector) = switch_ports
-            .port_map
-            .id_to_connector(&backplane_port)
-            .unwrap()
+        let Connector::QSFP(connector) =
+            switch_ports.port_map.id_to_connector(&backplane_port).unwrap()
         else {
             unreachable!();
         };
@@ -4117,9 +4081,8 @@ mod tests {
         let controller = Arc::new(Mutex::new(Some(controller)));
 
         let log = logger();
-        let result = handle_interrupt_mask_request(&log, &controller)
-            .await
-            .unwrap();
+        let result =
+            handle_interrupt_mask_request(&log, &controller).await.unwrap();
         let SdeTransceiverResponse::InterruptMask { backplane, qsfp } = result
         else {
             panic!("Expected a `SdeTransceiverResponse::InterruptMask`");
@@ -4811,13 +4774,7 @@ mod tests {
         let offset = 100;
         let expected_data = vec![0, 1, 2, 3];
         let len = expected_data.len() as u8;
-        let read = ReadRequest {
-            module,
-            bank,
-            page,
-            offset,
-            len,
-        };
+        let read = ReadRequest { module, bank, page, offset, len };
 
         // Describe the read operation we expect the controller to be called
         // with.
@@ -4874,13 +4831,7 @@ mod tests {
         let offset = 200;
         let expected_data = vec![0, 1, 2, 3];
         let len = expected_data.len() as u8;
-        let read = ReadRequest {
-            module,
-            bank,
-            page,
-            offset,
-            len,
-        };
+        let read = ReadRequest { module, bank, page, offset, len };
 
         // Describe the read operation we expect the controller to be called
         // with.
@@ -4943,13 +4894,7 @@ mod tests {
         let page = 0;
         let offset = 100;
         let len = 4;
-        let read = ReadRequest {
-            module,
-            bank,
-            page,
-            offset,
-            len,
-        };
+        let read = ReadRequest { module, bank, page, offset, len };
 
         // The function should call to the controller to check the Identifier.
         // Upon finding an SFF-8636 module, it should fail any request with a
@@ -4994,13 +4939,7 @@ mod tests {
         let offset = 100;
         let expected_data = vec![0, 1, 2, 3];
         let len = expected_data.len() as u8;
-        let read = ReadRequest {
-            module,
-            bank,
-            page,
-            offset,
-            len,
-        };
+        let read = ReadRequest { module, bank, page, offset, len };
 
         // Describe the read operation we expect the controller to be called
         // with.
@@ -5060,13 +4999,7 @@ mod tests {
         let offset = 100;
         let expected_data = vec![0; 24];
         let len = expected_data.len() as u8;
-        let read = ReadRequest {
-            module,
-            bank,
-            page,
-            offset,
-            len,
-        };
+        let read = ReadRequest { module, bank, page, offset, len };
 
         // Describe the read operations we expect the controller to be called
         // with.

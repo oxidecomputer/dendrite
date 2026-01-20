@@ -479,10 +479,6 @@ pub extern "C" fn bf_pm_fsm_transition_callback(
     };
     bf_wrapper::send_port_update(
         "port_fsm_transition_cb()",
-        aal::PortUpdate::FSM {
-            asic_port_id,
-            fsm,
-            state: to,
-        },
+        aal::PortUpdate::FSM { asic_port_id, fsm, state: to },
     )
 }

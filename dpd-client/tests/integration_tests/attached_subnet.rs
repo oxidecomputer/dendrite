@@ -115,11 +115,7 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
         addr: backplane_ip,
         tag: switch.client.inner().tag.clone(),
     };
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv6_create(&port_id, &link_id, &entry).await.unwrap();
 
     // populate the ndp/arp table with the upstream router's mac and IP.
     if test.upstream_router_ip.parse::<Ipv4Addr>().is_ok() {
@@ -150,11 +146,7 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
         inner_mac: test.instance_mac.parse::<MacAddr>()?.into(),
         vni: test.geneve_vni.into(),
     };
-    switch
-        .client
-        .attached_subnet_create(&attached_subnet, &tgt)
-        .await
-        .unwrap();
+    switch.client.attached_subnet_create(&attached_subnet, &tgt).await.unwrap();
 
     // Build a packet coming from an instance on an external subnet.
     // The inner packet may be IPv4 or IPv6 with a source address on the
@@ -171,10 +163,8 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
         L4Protocol::Icmp => common::gen_icmp_packet(src, dst),
     };
 
-    let switch_mac = switch
-        .get_port_mac(test.backplane_port)
-        .unwrap()
-        .to_string();
+    let switch_mac =
+        switch.get_port_mac(test.backplane_port).unwrap().to_string();
     let payload = payload_pkt.deparse().unwrap().to_vec();
     let to_send = common::gen_geneve_packet(
         Endpoint::parse(&test.gimlet_mac, &test.gimlet_ip, 3333).unwrap(),
@@ -197,14 +187,10 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
         common::gen_packet_routed(switch, test.uplink_port, &payload_pkt);
     eth::EthHdr::rewrite_dmac(&mut to_recv, router_mac);
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: test.backplane_port,
-    };
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: test.uplink_port,
-    };
+    let send =
+        TestPacket { packet: Arc::new(to_send), port: test.backplane_port };
+    let expected =
+        TestPacket { packet: Arc::new(to_recv), port: test.uplink_port };
 
     switch.packet_test(vec![send], vec![expected])
 }
@@ -222,11 +208,7 @@ async fn test_ingress(switch: &Switch, test: &ExternalTest) -> TestResult {
     };
 
     // Create the backplane port on the sidecar, linking to the gimlet
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv6_create(&port_id, &link_id, &entry).await.unwrap();
     let cidr =
         oxnet::Ipv6Net::new(test.gimlet_ip.parse().unwrap(), 64).unwrap();
     let route = types::Ipv6RouteUpdate {
@@ -289,10 +271,8 @@ async fn test_ingress(switch: &Switch, test: &ExternalTest) -> TestResult {
 
     // build the encapsulated packet for transporting the packet from the
     // switch to OPTE
-    let backplane_port_mac = switch
-        .get_port_mac(test.backplane_port)
-        .unwrap()
-        .to_string();
+    let backplane_port_mac =
+        switch.get_port_mac(test.backplane_port).unwrap().to_string();
 
     // XXX: The switch should be using the switch port IP, but isn't yet.
     let switch_port_ip = "::0";

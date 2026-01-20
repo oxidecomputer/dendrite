@@ -27,12 +27,7 @@ struct Router {
 impl Router {
     pub fn new(port: u16, ip: &str, mac: &str, vlan: Option<u16>) -> Self {
         let mac = mac.parse().unwrap();
-        Router {
-            port,
-            ip: ip.to_string(),
-            mac,
-            vlan,
-        }
+        Router { port, ip: ip.to_string(), mac, vlan }
     }
 
     pub fn build_route(&self, switch: &Switch) -> types::Ipv4Route {
@@ -118,14 +113,8 @@ async fn test_route_ipv4_unicast_impl(switch: &Switch) -> TestResult {
         Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444).unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     switch.packet_test(vec![send], vec![expected])
 }
 
@@ -154,16 +143,10 @@ async fn test_deleted_route_ipv4_impl(switch: &Switch) -> TestResult {
     );
     let mut to_recv = to_send.clone();
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     common::set_icmp_unreachable(switch, &mut to_recv, ingress);
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
 
     switch.packet_test(vec![send], vec![expected])
 }
@@ -195,22 +178,13 @@ async fn test_route_ipv4_unicast_vlan() -> TestResult {
         Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444).unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     // Add the VLAN tag to the expected packet
-    to_recv.hdrs.eth_hdr.as_mut().unwrap().eth_8021q = Some(EthQHdr {
-        eth_pcp: 0,
-        eth_dei: 0,
-        eth_vlan_tag: vlan,
-    });
+    to_recv.hdrs.eth_hdr.as_mut().unwrap().eth_8021q =
+        Some(EthQHdr { eth_pcp: 0, eth_dei: 0, eth_vlan_tag: vlan });
 
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     switch.packet_test(vec![send], vec![expected])
 }
 
@@ -237,14 +211,8 @@ async fn test_updated_route_ipv4() -> TestResult {
         Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444).unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     switch.packet_test(vec![send], vec![expected])
 }
 
@@ -278,16 +246,10 @@ async fn test_route_ipv4_unrouteable() -> TestResult {
     );
     let mut to_recv = to_send.clone();
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     common::set_icmp_unreachable(switch, &mut to_recv, ingress);
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
 
     switch.packet_test(vec![send], vec![expected])
 }
@@ -319,14 +281,8 @@ async fn test_short_hit_ipv4_unicast() -> TestResult {
         Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444).unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     switch.packet_test(vec![send], vec![expected])
 }
 
@@ -357,14 +313,8 @@ async fn test_long_hit_ipv4_unicast() -> TestResult {
         Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.20.11", 4444).unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     switch.packet_test(vec![send], vec![expected])
 }
 
@@ -431,10 +381,7 @@ async fn test_create_and_set_semantics_v4() -> TestResult {
     // Setting a new route should work
     client.route_ipv4_set(&route_set_47).await?;
     // Attempting to replace the route with "replace = false" should fail
-    client
-        .route_ipv4_set(&route_set_33)
-        .await
-        .expect_err("expected conflict");
+    client.route_ipv4_set(&route_set_33).await.expect_err("expected conflict");
     // Re-setting the existing route should succeed
     client.route_ipv4_set(&route_set_47).await?;
 
@@ -457,10 +404,8 @@ async fn do_multipath_add(
         add_route(switch, *subnet, r).await?;
     }
 
-    let routes: Vec<types::Ipv4Route> = routers
-        .iter()
-        .map(|router| router.build_route(switch))
-        .collect();
+    let routes: Vec<types::Ipv4Route> =
+        routers.iter().map(|router| router.build_route(switch)).collect();
     // Verify that the set of routes on the switch match those we just set
     validate_routes(client, subnet, &routes).await
 }
@@ -531,10 +476,8 @@ async fn test_multipath_delete() -> TestResult {
     ];
     do_multipath_add(switch, &cidr, &routers).await?;
 
-    let mut routes: Vec<types::Ipv4Route> = routers
-        .iter()
-        .map(|router| router.build_route(switch))
-        .collect();
+    let mut routes: Vec<types::Ipv4Route> =
+        routers.iter().map(|router| router.build_route(switch)).collect();
     while let Some(route) = routes.pop() {
         delete_ipv4_route_target(client, &cidr, &route).await?;
         validate_routes(client, &cidr, &routes).await?;
@@ -582,18 +525,13 @@ async fn test_multipath(switch: &Switch, routers: &[Router]) -> TestResult {
         Endpoint::parse("e0:d5:5e:67:89:ac", dst_ip, dst_port).unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: PhysPort(ingress),
-    };
+    let send =
+        TestPacket { packet: Arc::new(to_send), port: PhysPort(ingress) };
 
     // Add the VLAN tag to the expected packet
     if let Some(vlan) = routers[expected_egress].vlan {
-        to_recv.hdrs.eth_hdr.as_mut().unwrap().eth_8021q = Some(EthQHdr {
-            eth_pcp: 0,
-            eth_dei: 0,
-            eth_vlan_tag: vlan,
-        });
+        to_recv.hdrs.eth_hdr.as_mut().unwrap().eth_8021q =
+            Some(EthQHdr { eth_pcp: 0, eth_dei: 0, eth_vlan_tag: vlan });
     }
 
     let expected = TestPacket {

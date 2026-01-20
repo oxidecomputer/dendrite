@@ -121,11 +121,8 @@ async fn table_dump(
             continue;
         }
 
-        let keys: Vec<String> = schema
-            .keys
-            .iter()
-            .map(|key| entry.keys[key].clone())
-            .collect();
+        let keys: Vec<String> =
+            schema.keys.iter().map(|key| entry.keys[key].clone()).collect();
 
         if parseable {
             let mut output = keys;
@@ -164,10 +161,7 @@ async fn table_counters(
     force_sync: bool,
     parseable: bool,
 ) -> anyhow::Result<()> {
-    let ctrs = client
-        .table_counters(&table, force_sync)
-        .await?
-        .into_inner();
+    let ctrs = client.table_counters(&table, force_sync).await?.into_inner();
     if ctrs.is_empty() {
         return Ok(());
     }
@@ -241,16 +235,11 @@ pub async fn table_cmd(
             }
             Ok(())
         }
-        Table::Dump {
-            schema,
-            parseable,
-            action,
-            name,
-        } => table_dump(client, name, schema, parseable, action).await,
-        Table::Counters {
-            force_sync,
-            parseable,
-            name,
-        } => table_counters(client, name, force_sync, parseable).await,
+        Table::Dump { schema, parseable, action, name } => {
+            table_dump(client, name, schema, parseable, action).await
+        }
+        Table::Counters { force_sync, parseable, name } => {
+            table_counters(client, name, force_sync, parseable).await
+        }
     }
 }

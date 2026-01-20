@@ -148,10 +148,7 @@ pub async fn sync_dhcp6_addr(g: &Arc<Global>, addr: Ipv6Addr) {
         dpd_client::types::Internal::from_str("int0").unwrap(),
     );
     let link = &types::LinkId(0);
-    let entry = types::Ipv6Entry {
-        tag: g.client.inner().tag.clone(),
-        addr,
-    };
+    let entry = types::Ipv6Entry { tag: g.client.inner().tag.clone(), addr };
     if let Err(e) = g.client.link_ipv6_create(&port, link, &entry).await {
         if e.status() != Some(http::StatusCode::CONFLICT) {
             warn!(
@@ -179,10 +176,7 @@ async fn address_ensure_dpd(g: &Arc<Global>, pfx0: Ipv6Addr, pfx1: Ipv6Addr) {
         // Use the tfportd tag for making dpd entries.
         let tag = g.client.inner().tag.clone();
 
-        let addr = types::Ipv6Entry {
-            tag: tag.clone(),
-            addr: addr0,
-        };
+        let addr = types::Ipv6Entry { tag: tag.clone(), addr: addr0 };
         if let Err(e) = g.client.link_ipv6_create(&port, link, &addr).await {
             if e.status() != Some(http::StatusCode::CONFLICT) {
                 warn!(g.log, "failed to set up dpd techport address: {e}");
@@ -193,10 +187,7 @@ async fn address_ensure_dpd(g: &Arc<Global>, pfx0: Ipv6Addr, pfx1: Ipv6Addr) {
             info!(g.log, "dpd techport0 addressing setup complete");
         }
 
-        let addr = types::Ipv6Entry {
-            tag: tag.clone(),
-            addr: addr1,
-        };
+        let addr = types::Ipv6Entry { tag: tag.clone(), addr: addr1 };
         if let Err(e) = g.client.link_ipv6_create(&port, link, &addr).await {
             if e.status() != Some(http::StatusCode::CONFLICT) {
                 warn!(g.log, "failed to set up dpd techport address: {e}");

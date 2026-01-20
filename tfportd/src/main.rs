@@ -291,11 +291,7 @@ async fn main_impl() -> anyhow::Result<()> {
         client_state,
     );
 
-    info!(
-        log,
-        "connected to dpd running {}",
-        dpd_version(&log, &client).await
-    );
+    info!(log, "connected to dpd running {}", dpd_version(&log, &client).await);
 
     // If the reset fails, we'll just log the error and continue, as we will
     // try to clean-up the any stale settings during the normal reconciliation

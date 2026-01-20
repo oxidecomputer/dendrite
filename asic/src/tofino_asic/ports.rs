@@ -94,10 +94,7 @@ impl FrontPortHandle {
 
     /// Given a 16-bit ASIC ID, determine which front-panel port it maps to
     pub fn from_dev_port(hdl: &Handle, port: PortId) -> AsicResult<Self> {
-        let mut fp_hdl = bf_pal_front_port_handle_t {
-            conn_id: 0,
-            chnl_id: 0,
-        };
+        let mut fp_hdl = bf_pal_front_port_handle_t { conn_id: 0, chnl_id: 0 };
         unsafe {
             bf_pm_port_dev_port_to_front_panel_port_get(
                 hdl.dev_id,
@@ -106,10 +103,7 @@ impl FrontPortHandle {
             )
         }
         .check_error("getting front port handle")?;
-        Ok(FrontPortHandle {
-            dev_id: hdl.dev_id,
-            fp_hdl,
-        })
+        Ok(FrontPortHandle { dev_id: hdl.dev_id, fp_hdl })
     }
 
     /// Given a PortHdl, return the front-panel port it maps to
@@ -123,11 +117,7 @@ impl FrontPortHandle {
             },
             Connector::QSFP(c) => Ok(c),
         }?;
-        Ok(FrontPortHandle::new(
-            hdl.dev_id,
-            connector,
-            port_hdl.channel,
-        ))
+        Ok(FrontPortHandle::new(hdl.dev_id, connector, port_hdl.channel))
     }
 
     /// Get the first front-panel port.  Whether this is actually "first" in any
@@ -135,10 +125,7 @@ impl FrontPortHandle {
     /// is just used as an anchor point when iterating over all of the ports in the
     /// system.
     pub fn get_first(dev_id: i32) -> AsicResult<FrontPortHandle> {
-        let mut fp_hdl = bf_pal_front_port_handle_t {
-            conn_id: 0,
-            chnl_id: 0,
-        };
+        let mut fp_hdl = bf_pal_front_port_handle_t { conn_id: 0, chnl_id: 0 };
 
         unsafe { bf_pm_port_front_panel_port_get_first(dev_id, &mut fp_hdl) }
             .check_error("getting first front port handle")?;
@@ -149,10 +136,7 @@ impl FrontPortHandle {
     /// Get the next front-panel port according to some consistent, well-known
     /// but opaque algorithm.
     pub fn get_next(&self) -> AsicResult<FrontPortHandle> {
-        let mut fp_hdl = bf_pal_front_port_handle_t {
-            conn_id: 0,
-            chnl_id: 0,
-        };
+        let mut fp_hdl = bf_pal_front_port_handle_t { conn_id: 0, chnl_id: 0 };
 
         unsafe {
             // The get_next() routine doesn't modify the old handle, so there is
@@ -167,10 +151,7 @@ impl FrontPortHandle {
         }
         .check_error("getting first front port handle")?;
 
-        Ok(FrontPortHandle {
-            dev_id: self.dev_id,
-            fp_hdl,
-        })
+        Ok(FrontPortHandle { dev_id: self.dev_id, fp_hdl })
     }
 
     /// Get a raw pointer to the front_panel structure, so we can pass it as
@@ -439,10 +420,7 @@ struct BerLanes {
 
 impl BerLanes {
     const fn all() -> Self {
-        Self {
-            start: 0,
-            end: MAX_N_LANES - 1,
-        }
+        Self { start: 0, end: MAX_N_LANES - 1 }
     }
 
     // Return the BER counters used for the provided number of lanes.
@@ -462,9 +440,8 @@ impl BerLanes {
         // Add the number of lanes, being very conservative. We'll always return
         // all the counters, rather than overflow anything.
         let n_lanes = usize::try_from(n_lanes).unwrap_or(MAX_N_LANES - 1);
-        let Some(end) = start
-            .checked_add(n_lanes)
-            .map(|end| end.min(MAX_N_LANES - 1))
+        let Some(end) =
+            start.checked_add(n_lanes).map(|end| end.min(MAX_N_LANES - 1))
         else {
             return Self::all();
         };

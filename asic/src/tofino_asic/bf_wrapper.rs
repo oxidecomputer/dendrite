@@ -165,8 +165,7 @@ fn sanitize_dev_port(
     if dev_id != DEVICE_ID {
         Err(format!("invalid device id: {dev_id}"))
     } else {
-        port.try_into()
-            .map_err(|_| format!("invalid asic id: {port}"))
+        port.try_into().map_err(|_| format!("invalid asic id: {port}"))
     }
 }
 
@@ -205,10 +204,7 @@ extern "C" fn port_admin_state_cb(
     };
     send_port_update(
         "port_admin_state_cb()",
-        PortUpdate::Enable {
-            asic_port_id,
-            enabled,
-        },
+        PortUpdate::Enable { asic_port_id, enabled },
     );
     BF_SUCCESS
 }
@@ -229,10 +225,7 @@ extern "C" fn port_status_int_cb(
     };
     send_port_update(
         "port_status_int_cb()",
-        PortUpdate::LinkUp {
-            asic_port_id,
-            linkup,
-        },
+        PortUpdate::LinkUp { asic_port_id, linkup },
     );
     BF_SUCCESS
 }
@@ -254,10 +247,7 @@ extern "C" fn port_presence_cb(
 
     send_port_update(
         "port_presence_cb()",
-        PortUpdate::Presence {
-            asic_port_id,
-            presence,
-        },
+        PortUpdate::Presence { asic_port_id, presence },
     );
     BF_SUCCESS
 }
@@ -373,10 +363,7 @@ pub fn bf_init(
         let log = log.new(o!("unit" => "callback"));
 
         assert!(cb.is_none());
-        *cb = Some(CallbackState {
-            log,
-            update_tx: None,
-        });
+        *cb = Some(CallbackState { log, update_tx: None });
     }
 
     let devpath = bf_driver_path(devpath)?;

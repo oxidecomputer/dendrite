@@ -63,11 +63,7 @@ pub struct AsicConfig {
 
 impl Default for AsicConfig {
     fn default() -> Self {
-        Self {
-            devpath: None,
-            xcvr_iface: None,
-            board_rev: String::from("B"),
-        }
+        Self { devpath: None, xcvr_iface: None, board_rev: String::from("B") }
     }
 }
 
@@ -276,16 +272,8 @@ fn wafer_loc_from_coords(
     y_sign: u8,
     y_pos: u8,
 ) -> (i16, i16) {
-    let x = if x_sign == 0 {
-        i16::from(x_pos)
-    } else {
-        -i16::from(x_pos)
-    };
-    let y = if y_sign == 0 {
-        i16::from(y_pos)
-    } else {
-        -i16::from(y_pos)
-    };
+    let x = if x_sign == 0 { i16::from(x_pos) } else { -i16::from(x_pos) };
+    let y = if y_sign == 0 { i16::from(y_pos) } else { -i16::from(y_pos) };
 
     (x, y)
 }
