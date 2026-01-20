@@ -239,9 +239,21 @@ async fn route_add(
             .await
             .context("adding IPv6 route")
             .map(|_| ()),
-        (IpAddr::V6(_), IpNet::V4(_)) => {
-            Err(anyhow!("cannot have an IPv4 route to an IPv6 address"))
-        }
+        (IpAddr::V6(tgt_ip), IpNet::V4(cidr)) => client
+            .route_ipv4_over_ipv6_add(&types::Ipv4OverIpv6RouteUpdate {
+                cidr,
+                target: types::Ipv6Route {
+                    tag: client.inner().tag.clone(),
+                    port_id: link_path.port_id,
+                    link_id: link_path.link_id,
+                    tgt_ip,
+                    vlan_id,
+                },
+                replace: false,
+            })
+            .await
+            .context("adding IPv4 or IPv6 route")
+            .map(|_| ()),
         (IpAddr::V4(_), IpNet::V6(_)) => {
             Err(anyhow!("cannot have an IPv6 route to an IPv4 address"))
         }
