@@ -227,11 +227,7 @@ impl FreeMap {
 
     #[cfg(test)]
     fn first(&self) -> Option<Span> {
-        if self.freelist.is_empty() {
-            None
-        } else {
-            Some(self.freelist[0])
-        }
+        if self.freelist.is_empty() { None } else { Some(self.freelist[0]) }
     }
 }
 

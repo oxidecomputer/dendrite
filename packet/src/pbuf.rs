@@ -19,12 +19,7 @@ pub struct ParseBuffer<'a> {
 
 impl ParseBuffer<'_> {
     pub fn new_from_slice(d: &[u8]) -> ParseBuffer<'_> {
-        ParseBuffer {
-            data: d,
-            byte: 0,
-            bit: 0,
-            len: d.len() * 8,
-        }
+        ParseBuffer { data: d, byte: 0, bit: 0, len: d.len() * 8 }
     }
 
     pub fn offset(&self) -> usize {
@@ -206,9 +201,7 @@ impl ParseBuffer<'_> {
             w[i] = ((x[2 * i] as u16) << 8) | (x[2 * i + 1] as u16);
         }
 
-        Ok(Ipv6Addr::new(
-            w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7],
-        ))
+        Ok(Ipv6Addr::new(w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]))
     }
 }
 

@@ -29,12 +29,7 @@ struct Router {
 impl Router {
     pub fn new(port: u16, ip: &str, mac: &str, vlan: Option<u16>) -> Self {
         let mac = mac.parse().unwrap();
-        Router {
-            port,
-            ip: ip.to_string(),
-            mac,
-            vlan,
-        }
+        Router { port, ip: ip.to_string(), mac, vlan }
     }
 
     pub fn build_route(&self, switch: &Switch) -> types::Ipv6Route {
@@ -131,10 +126,7 @@ async fn test_unicast_impl(
             .unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     // Add the VLAN tag to the expected packet
     if let Some(vlan) = vlan_id {
@@ -145,10 +137,7 @@ async fn test_unicast_impl(
                 eth_vlan_tag: vlan,
             });
     }
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     switch.packet_test(vec![send], vec![expected])
 }
 
@@ -176,16 +165,10 @@ async fn test_deleted_unicast_impl(switch: &Switch) -> TestResult {
     );
     let mut to_recv = to_send.clone();
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     common::set_icmp6_unreachable(switch, &mut to_recv, ingress);
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     switch.packet_test(vec![send], vec![expected])
 }
 
@@ -226,14 +209,8 @@ async fn test_updated_unicast() -> TestResult {
             .unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     switch.packet_test(vec![send], vec![expected])
 }
 
@@ -266,16 +243,10 @@ async fn test_unrouteable() -> TestResult {
     );
     let mut to_recv = to_send.clone();
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     common::set_icmp6_unreachable(switch, &mut to_recv, ingress);
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
 
     switch.packet_test(vec![send], vec![expected])
 }
@@ -315,14 +286,8 @@ async fn test_short_hit_unicast() -> TestResult {
             .unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     switch.packet_test(vec![send], vec![expected])
 }
 
@@ -361,14 +326,8 @@ async fn test_long_hit_unicast() -> TestResult {
             .unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     switch.packet_test(vec![send], vec![expected])
 }
 
@@ -413,14 +372,8 @@ async fn test_middle_hit_unicast() -> TestResult {
             .unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     switch.packet_test(vec![send], vec![expected])
 }
 
@@ -437,10 +390,7 @@ async fn test_interface_local_multicast() -> TestResult {
     let dst = Endpoint::parse("33:33:00:00:00:01", "ff01::1", 4444).unwrap();
 
     let send = Arc::new(common::gen_udp_packet(src, dst));
-    let send = TestPacket {
-        packet: send,
-        port: ingress,
-    };
+    let send = TestPacket { packet: send, port: ingress };
 
     switch.packet_test(vec![send], Vec::new())
 }
@@ -458,10 +408,7 @@ async fn test_link_local_multicast_inbound() -> TestResult {
     let dst = Endpoint::parse("33:33:00:00:00:01", "ff02::1", 4444).unwrap();
 
     let send = Arc::new(common::gen_udp_packet(src, dst));
-    let send = TestPacket {
-        packet: send,
-        port: ingress,
-    };
+    let send = TestPacket { packet: send, port: ingress };
 
     let mut recv = common::gen_udp_packet(src, dst);
 
@@ -476,10 +423,7 @@ async fn test_link_local_multicast_inbound() -> TestResult {
         None,
     );
     let recv = Arc::new(recv);
-    let expected = vec![TestPacket {
-        packet: recv,
-        port: SERVICE_PORT,
-    }];
+    let expected = vec![TestPacket { packet: recv, port: SERVICE_PORT }];
 
     switch.packet_test(vec![send], expected)
 }
@@ -510,16 +454,10 @@ async fn test_link_local_multicast_outbound() -> TestResult {
     );
     let send = Arc::new(send);
 
-    let send = TestPacket {
-        packet: send,
-        port: SERVICE_PORT,
-    };
+    let send = TestPacket { packet: send, port: SERVICE_PORT };
 
     let recv = Arc::new(common::gen_udp_packet(src, dst));
-    let expected = vec![TestPacket {
-        packet: recv,
-        port: egress,
-    }];
+    let expected = vec![TestPacket { packet: recv, port: egress }];
 
     switch.packet_test(vec![send], expected)
 }
@@ -539,10 +477,7 @@ async fn test_ipv6_link_local_multicast_hop_limit_one() -> TestResult {
     // Set hop limit to 1 - this should be ALLOWED for link-local multicast
     ipv6::Ipv6Hdr::adjust_hlim(&mut send, -254); // Set to 1 (255 - 254 = 1)
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(send.clone()),
-        port: ingress,
-    };
+    let test_pkt = TestPacket { packet: Arc::new(send.clone()), port: ingress };
 
     // Link-local multicast packets should be forwarded to userspace with sidecar header
     let mut recv = send.clone();
@@ -555,10 +490,8 @@ async fn test_ipv6_link_local_multicast_hop_limit_one() -> TestResult {
         None,
     );
 
-    let expected = vec![TestPacket {
-        packet: Arc::new(recv),
-        port: SERVICE_PORT,
-    }];
+    let expected =
+        vec![TestPacket { packet: Arc::new(recv), port: SERVICE_PORT }];
 
     // Verify that the hop limit invalid counter does NOT increment
     let ctr_baseline_hop_limit =
@@ -642,11 +575,8 @@ async fn test_create_and_set_semantics_v6() -> TestResult {
     let mut target33 = target47.clone();
     target33.tgt_ip = "fe80::1701:c:2000:33".parse().unwrap();
 
-    let route47 = types::Ipv6RouteUpdate {
-        cidr,
-        target: target47,
-        replace: false,
-    };
+    let route47 =
+        types::Ipv6RouteUpdate { cidr, target: target47, replace: false };
 
     let mut route33 = types::Ipv6RouteUpdate {
         cidr,
@@ -658,10 +588,7 @@ async fn test_create_and_set_semantics_v6() -> TestResult {
     client.route_ipv6_set(&route47).await?;
 
     // Attempting to replace the route with "replace = false" should fail
-    client
-        .route_ipv6_set(&route33)
-        .await
-        .expect_err("expected conflict");
+    client.route_ipv6_set(&route33).await.expect_err("expected conflict");
     // Re-setting the existing route should succeed
     client.route_ipv6_set(&route47).await?;
     // Attempting to replace the route with "replace = true" should success
@@ -705,18 +632,13 @@ async fn test_multipath(switch: &Switch, routers: &[Router]) -> TestResult {
         Endpoint::parse("e0:d5:5e:67:89:ac", dst_ip, dst_port).unwrap(),
     );
 
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: PhysPort(ingress),
-    };
+    let send =
+        TestPacket { packet: Arc::new(to_send), port: PhysPort(ingress) };
 
     // Add the VLAN tag to the expected packet
     if let Some(vlan) = routers[expected_egress].vlan {
-        to_recv.hdrs.eth_hdr.as_mut().unwrap().eth_8021q = Some(EthQHdr {
-            eth_pcp: 0,
-            eth_dei: 0,
-            eth_vlan_tag: vlan,
-        });
+        to_recv.hdrs.eth_hdr.as_mut().unwrap().eth_8021q =
+            Some(EthQHdr { eth_pcp: 0, eth_dei: 0, eth_vlan_tag: vlan });
     }
 
     let expected = TestPacket {

@@ -26,21 +26,13 @@ pub(crate) const IPV6_TABLE_NAME: &str =
 #[derive(ActionParse, Debug)]
 enum Ipv4Action {
     #[action_xlate(name = "mcast_forward_ipv4_to")]
-    Forward {
-        target: Ipv6Addr,
-        inner_mac: MacAddr,
-        vni: u32,
-    },
+    Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
 
 #[derive(ActionParse, Debug)]
 enum Ipv6Action {
     #[action_xlate(name = "mcast_forward_ipv6_to")]
-    Forward {
-        target: Ipv6Addr,
-        inner_mac: MacAddr,
-        vni: u32,
-    },
+    Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
 
 /// Add NAT entries for IPv4 multicast traffic.

@@ -148,7 +148,5 @@ pub fn reset(switch: &Switch) -> DpdResult<()> {
 }
 
 pub fn init() -> AttachedSubnetData {
-    AttachedSubnetData {
-        mappings: BTreeMap::new(),
-    }
+    AttachedSubnetData { mappings: BTreeMap::new() }
 }

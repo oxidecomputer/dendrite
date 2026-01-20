@@ -320,10 +320,7 @@ impl Handle {
 /// `Chaos` member of [`AsicConfig`]. The `handle` is a [`Handle`] object.
 macro_rules! unfurl {
     ($handle:ident, $name:ident) => {
-        $handle
-            .config
-            .$name
-            .unfurled(&$handle.log, stringify!($name))?
+        $handle.config.$name.unfurled(&$handle.log, stringify!($name))?
     };
 }
 pub(crate) use unfurl;
@@ -332,10 +329,7 @@ pub(crate) use unfurl;
 /// `TableChaos` member of [`AsicConfig`]. The `handle` is a [`Handle`] object.
 macro_rules! table_unfurl {
     ($handle:ident, $id: expr, $name:ident) => {
-        $handle
-            .config
-            .$name
-            .unfurled(&$handle.log, $id, stringify!($name))?
+        $handle.config.$name.unfurled(&$handle.log, $id, stringify!($name))?
     };
 }
 pub(crate) use table_unfurl;

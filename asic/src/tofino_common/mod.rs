@@ -64,12 +64,7 @@ impl TableInfo {
     pub fn new(bfrt: &BfRt, name: &str) -> AsicResult<Self> {
         let (keys, actions, data, size) = bfrt.get_table(name)?;
 
-        Ok(TableInfo {
-            keys,
-            actions,
-            data,
-            size: size as usize,
-        })
+        Ok(TableInfo { keys, actions, data, size: size as usize })
     }
 
     #[cfg(feature = "tofino_asic")]

@@ -92,10 +92,7 @@ pub(crate) fn update_ipv4_entry(
         }
     };
 
-    debug!(
-        s.log,
-        "update multicast route entry {match_key} -> {action:?}"
-    );
+    debug!(s.log, "update multicast route entry {match_key} -> {action:?}");
     s.table_entry_update(TableType::RouteIpv4Mcast, &match_key, &action)
 }
 
@@ -188,10 +185,7 @@ pub(crate) fn update_ipv6_entry(
         }
     };
 
-    debug!(
-        s.log,
-        "update multicast route entry {match_key} -> {action:?}"
-    );
+    debug!(s.log, "update multicast route entry {match_key} -> {action:?}");
     s.table_entry_update(TableType::RouteIpv6Mcast, &match_key, &action)
 }
 

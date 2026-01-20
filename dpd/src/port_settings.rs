@@ -435,19 +435,11 @@ impl PortSettingsDiff {
         });
 
         // ipv4 addrs
-        let v4_add: BTreeSet<Ipv4Addr> = spec
-            .after
-            .ipv4
-            .difference(&spec.before.ipv4)
-            .copied()
-            .collect();
+        let v4_add: BTreeSet<Ipv4Addr> =
+            spec.after.ipv4.difference(&spec.before.ipv4).copied().collect();
 
-        let v4_del: BTreeSet<Ipv4Addr> = spec
-            .before
-            .ipv4
-            .difference(&spec.after.ipv4)
-            .copied()
-            .collect();
+        let v4_del: BTreeSet<Ipv4Addr> =
+            spec.before.ipv4.difference(&spec.after.ipv4).copied().collect();
 
         for addr in v4_add {
             Self::addr_add_v4(ctx, &mut link, rb, addr)?;
@@ -457,19 +449,11 @@ impl PortSettingsDiff {
         }
 
         // ipv6 addrs
-        let v6_add: BTreeSet<Ipv6Addr> = spec
-            .after
-            .ipv6
-            .difference(&spec.before.ipv6)
-            .copied()
-            .collect();
+        let v6_add: BTreeSet<Ipv6Addr> =
+            spec.after.ipv6.difference(&spec.before.ipv6).copied().collect();
 
-        let v6_del: BTreeSet<Ipv6Addr> = spec
-            .before
-            .ipv6
-            .difference(&spec.after.ipv6)
-            .copied()
-            .collect();
+        let v6_del: BTreeSet<Ipv6Addr> =
+            spec.before.ipv6.difference(&spec.after.ipv6).copied().collect();
 
         for addr in v6_add {
             Self::addr_add_v6(ctx, &mut link, rb, addr)?;
@@ -489,10 +473,8 @@ impl PortSettingsDiff {
     ) -> DpdResult<()> {
         trace!(ctx.log, "ipv4 add {addr}");
         // Create address on ASIC first.
-        let entry = Ipv4Entry {
-            tag: ctx.tag.clone().unwrap_or("".into()),
-            addr,
-        };
+        let entry =
+            Ipv4Entry { tag: ctx.tag.clone().unwrap_or("".into()), addr };
         let switch = ctx.switch;
         switch.create_ipv4_address_locked(link, entry)?;
 
@@ -513,10 +495,8 @@ impl PortSettingsDiff {
         addr: Ipv4Addr,
     ) -> DpdResult<()> {
         trace!(ctx.log, "ipv4 del {addr}");
-        let entry = Ipv4Entry {
-            tag: ctx.tag.clone().unwrap_or("".into()),
-            addr,
-        };
+        let entry =
+            Ipv4Entry { tag: ctx.tag.clone().unwrap_or("".into()), addr };
         let switch = ctx.switch;
         let link_id = link.link_id;
         switch.delete_ipv4_address_locked(link, addr)?;
@@ -538,10 +518,8 @@ impl PortSettingsDiff {
     ) -> DpdResult<()> {
         trace!(ctx.log, "ipv6 add {addr}");
         // Create address on ASIC first.
-        let entry = Ipv6Entry {
-            tag: ctx.tag.clone().unwrap_or("".into()),
-            addr,
-        };
+        let entry =
+            Ipv6Entry { tag: ctx.tag.clone().unwrap_or("".into()), addr };
         let switch = ctx.switch;
         let link_id = link.link_id;
         switch.create_ipv6_address_locked(link, entry)?;
@@ -567,10 +545,8 @@ impl PortSettingsDiff {
         switch.delete_ipv6_address_locked(link, addr)?;
 
         rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
-            let entry = Ipv6Entry {
-                tag: ctx.tag.clone().unwrap_or("".into()),
-                addr,
-            };
+            let entry =
+                Ipv6Entry { tag: ctx.tag.clone().unwrap_or("".into()), addr };
             let switch = ctx.switch;
             let link_lock = ctx.link(link_id)?;
             let mut link = link_lock.lock().unwrap();

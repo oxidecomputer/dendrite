@@ -2812,9 +2812,7 @@ pub struct MulticastTagPath {
 
 impl From<TagPath> for MulticastTagPath {
     fn from(path: TagPath) -> Self {
-        Self {
-            tag: path.tag.into(),
-        }
+        Self { tag: path.tag.into() }
     }
 }
 

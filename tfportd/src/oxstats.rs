@@ -73,13 +73,7 @@ impl LinkTracker {
     /// The Receiver will be notified whenever links are added or removed.
     pub fn new() -> (Self, watch::Receiver<()>) {
         let (tx, rx) = watch::channel(());
-        (
-            Self {
-                tracked_links: RwLock::new(HashSet::new()),
-                tx,
-            },
-            rx,
-        )
+        (Self { tracked_links: RwLock::new(HashSet::new()), tx }, rx)
     }
 
     /// Track a new link by name and model type, which updates [LinkTracker]
@@ -89,10 +83,8 @@ impl LinkTracker {
         name: impl Into<String>,
         model_type: ModelType,
     ) -> anyhow::Result<()> {
-        let mut links = self
-            .tracked_links
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut links =
+            self.tracked_links.write().unwrap_or_else(|e| e.into_inner());
         if links.insert((name.into(), model_type)) {
             // Only notify if change occurred
             let _ = self.tx.send(());
@@ -107,10 +99,8 @@ impl LinkTracker {
         name: impl Into<String>,
     ) -> anyhow::Result<()> {
         let name = name.into();
-        let mut links = self
-            .tracked_links
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut links =
+            self.tracked_links.write().unwrap_or_else(|e| e.into_inner());
 
         let len_before = links.len();
         links.retain(|(link_name, _)| link_name != &name);
@@ -338,9 +328,7 @@ fn start_producer_server(
     // Listen on any available socket, using our underlay address.
     let address = SocketAddr::new(listen_address.into(), 0);
     let registry = ProducerRegistry::with_id(producer_id);
-    registry
-        .register_producer(sampler)
-        .expect("actually infallible");
+    registry.register_producer(sampler).expect("actually infallible");
 
     let config = oximeter_producer::Config {
         server_info: ProducerEndpoint {
@@ -383,11 +371,7 @@ async fn get_oximeter_config(
             e
         })?;
 
-    Ok(OximeterConfig {
-        listen_address,
-        sled_identifiers,
-        switch_identifiers,
-    })
+    Ok(OximeterConfig { listen_address, sled_identifiers, switch_identifiers })
 }
 
 /// Extract the underlay IPv6 listening address we're provided in our SMF
@@ -410,15 +394,12 @@ async fn fetch_underlay_listen_address(
 
         // Find any non-localhost IPv6 address. That should be reachable by
         // Oximeter, since it's on the underlay.
-        let maybe_listen_addr = g
-            .config
-            .lock()
-            .unwrap()
-            .listen_addresses
-            .iter()
-            .find_map(|addr| match *addr.ip() {
-                v6 if v6.is_loopback() => None,
-                v6 => Some(v6),
+        let maybe_listen_addr =
+            g.config.lock().unwrap().listen_addresses.iter().find_map(|addr| {
+                match *addr.ip() {
+                    v6 if v6.is_loopback() => None,
+                    v6 => Some(v6),
+                }
             });
         if let Some(listen_address) = maybe_listen_addr {
             info!(

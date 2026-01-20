@@ -736,12 +736,7 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         original_group: &'a MulticastGroup,
         attempted_vlan_id: Option<u16>,
     ) -> Self {
-        Self {
-            switch,
-            group_ip,
-            original_group,
-            attempted_vlan_id,
-        }
+        Self { switch, group_ip, original_group, attempted_vlan_id }
     }
 
     /// Restore tables and return error.

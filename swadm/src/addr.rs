@@ -422,12 +422,9 @@ async fn addr_del_loopback(
 
 pub async fn addr_cmd(client: &Client, a: Addr) -> anyhow::Result<()> {
     match a {
-        Addr::List {
-            ipv4,
-            ipv6,
-            parseable,
-            link,
-        } => addr_list(client, ipv4, ipv6, parseable, link).await,
+        Addr::List { ipv4, ipv6, parseable, link } => {
+            addr_list(client, ipv4, ipv6, parseable, link).await
+        }
         Addr::Add { link, addr } => match &link {
             LinkName::Loopback => addr_add_loopback(client, addr).await,
             LinkName::Link(l) => addr_add(client, l, addr).await,

@@ -319,9 +319,7 @@ fn stringify_optional_item<T>(item: &Option<T>) -> String
 where
     T: std::string::ToString,
 {
-    item.as_ref()
-        .map(|i| i.to_string())
-        .unwrap_or_else(|| String::from("-"))
+    item.as_ref().map(|i| i.to_string()).unwrap_or_else(|| String::from("-"))
 }
 
 fn print_transceiver_header(
@@ -414,11 +412,8 @@ fn print_supported_transceiver_row(
 }
 
 fn extract_trailing_integer(s: &str, offset: usize) -> u32 {
-    let s = s
-        .get(offset..)
-        .expect("parse succeeded, so this length is valid");
-    s.parse()
-        .expect("parse succeeded, so this ends with an integer")
+    let s = s.get(offset..).expect("parse succeeded, so this length is valid");
+    s.parse().expect("parse succeeded, so this ends with an integer")
 }
 
 fn order_by_trailing_integer(
@@ -664,10 +659,8 @@ async fn transceivers_cmd(
             }
         }
         Transceiver::Datapath { port_id } => {
-            let datapath = client
-                .transceiver_datapath_get(&port_id)
-                .await?
-                .into_inner();
+            let datapath =
+                client.transceiver_datapath_get(&port_id).await?.into_inner();
             print_transceiver_datapath(port_id, datapath);
         }
     }
@@ -677,18 +670,10 @@ async fn transceivers_cmd(
 // Print the datapath for a single transceiver in a switch port.
 fn print_transceiver_datapath(port_id: PortId, datapath: types::Datapath) {
     match datapath {
-        types::Datapath::Cmis {
-            connector,
-            datapaths,
-            ..
-        } => {
+        types::Datapath::Cmis { connector, datapaths, .. } => {
             print_cmis_datapath(port_id, &connector, datapaths);
         }
-        types::Datapath::Sff8636 {
-            connector,
-            lanes,
-            specification,
-        } => {
+        types::Datapath::Sff8636 { connector, lanes, specification } => {
             print_sff_datapath(port_id, &connector, lanes, specification);
         }
     }
@@ -746,8 +731,7 @@ fn print_sff_datapath(
 
 // Display a value that's optional, with `-` for `None`.
 fn display_optional<T: std::fmt::Display>(val: Option<T>) -> String {
-    val.map(|v| v.to_string())
-        .unwrap_or_else(|| String::from("-"))
+    val.map(|v| v.to_string()).unwrap_or_else(|| String::from("-"))
 }
 
 // Given the lane assignment options and count in a CMIS datapath, return
@@ -784,34 +768,24 @@ fn print_cmis_datapath(
     type GetFn = fn(&CmisLaneStatus) -> String;
     const GETTERS: [(&str, GetFn); 15] = [
         ("State", |st| st.state.to_string()),
-        ("Rx Output Enabled", |st| {
-            display_optional(st.rx_output_enabled)
-        }),
+        ("Rx Output Enabled", |st| display_optional(st.rx_output_enabled)),
         ("Rx Output Status", |st| st.rx_output_status.to_string()),
         ("Rx Loss-of-lock", |st| display_optional(st.rx_lol)),
         ("Rx Loss-of-signal", |st| display_optional(st.rx_los)),
         ("Rx Auto-squelch Disable", |st| {
             display_optional(st.rx_auto_squelch_disable)
         }),
-        ("Tx Output Enabled", |st| {
-            display_optional(st.tx_output_enabled)
-        }),
+        ("Tx Output Enabled", |st| display_optional(st.tx_output_enabled)),
         ("Tx Output Status", |st| st.tx_output_status.to_string()),
         ("Tx Loss-of-lock", |st| display_optional(st.tx_lol)),
         ("Tx Loss-of-signal", |st| display_optional(st.tx_los)),
         ("Tx Auto-squelch Disable", |st| {
             display_optional(st.tx_auto_squelch_disable)
         }),
-        ("Tx Adaptive EQ Fail", |st| {
-            display_optional(st.tx_adaptive_eq_fail)
-        }),
+        ("Tx Adaptive EQ Fail", |st| display_optional(st.tx_adaptive_eq_fail)),
         ("Tx Failure", |st| display_optional(st.tx_failure)),
-        ("Tx Force Squelch", |st| {
-            display_optional(st.tx_force_squelch)
-        }),
-        ("Tx Input Polarity", |st| {
-            display_optional(st.tx_input_polarity)
-        }),
+        ("Tx Force Squelch", |st| display_optional(st.tx_force_squelch)),
+        ("Tx Input Polarity", |st| display_optional(st.tx_input_polarity)),
     ];
 
     // The datapaths are keyed by index, which is actually an integer. The
@@ -824,13 +798,7 @@ fn print_cmis_datapath(
             (index, dp)
         })
         .collect();
-    for (
-        i,
-        CmisDatapath {
-            application,
-            lane_status,
-        },
-    ) in datapaths.into_iter()
+    for (i, CmisDatapath { application, lane_status }) in datapaths.into_iter()
     {
         // Print general information about the datapath and the lanes it uses.
         println!();
@@ -866,11 +834,8 @@ fn print_cmis_datapath(
 
         // Print each piece of state as a row.
         for (name, getter) in GETTERS.iter() {
-            let cols = lane_status
-                .values()
-                .map(getter)
-                .collect::<Vec<_>>()
-                .join("\t");
+            let cols =
+                lane_status.values().map(getter).collect::<Vec<_>>().join("\t");
             writeln!(tw, "{name:>WIDTH$}: {cols}").unwrap();
         }
         tw.flush().unwrap();
@@ -882,10 +847,7 @@ fn print_cmis_datapath(
 fn display_list<T: std::fmt::Display>(
     items: impl Iterator<Item = T>,
 ) -> String {
-    items
-        .map(|i| format!("{i:0.4}"))
-        .collect::<Vec<_>>()
-        .join(",")
+    items.map(|i| format!("{i:0.4}")).collect::<Vec<_>>().join(",")
 }
 
 async fn led_cmd(client: &Client, led: Led) -> anyhow::Result<()> {
@@ -993,11 +955,7 @@ pub async fn switch_cmd(
             client.management_mode_set(&port_id, mode).await?;
         }
         SwitchPort::Led { cmd: led } => led_cmd(client, led).await?,
-        SwitchPort::BackplaneMap {
-            parseable,
-            fields,
-            list_fields,
-        } => {
+        SwitchPort::BackplaneMap { parseable, fields, list_fields } => {
             if list_fields {
                 print_backplane_map_fields();
                 return Ok(());

@@ -35,10 +35,7 @@ fn test_p4_counter_list() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Verify output is not empty and contains expected counter information
-    assert!(
-        !stdout.is_empty(),
-        "Counter list output should not be empty"
-    );
+    assert!(!stdout.is_empty(), "Counter list output should not be empty");
 
     // Expected P4 counters from dpd/src/counters.rs COUNTERS array
     let expected_counters = [

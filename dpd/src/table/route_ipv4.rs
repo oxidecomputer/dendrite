@@ -34,11 +34,7 @@ enum RouteAction {
     #[action_xlate(name = "forward")]
     Forward { port: u16, nexthop: Ipv4Addr },
     #[action_xlate(name = "forward_vlan")]
-    ForwardVlan {
-        port: u16,
-        nexthop: Ipv4Addr,
-        vlan_id: u16,
-    },
+    ForwardVlan { port: u16, nexthop: Ipv4Addr, vlan_id: u16 },
 }
 
 // Used to identify entries in the route->index table
@@ -112,11 +108,7 @@ pub fn add_route_target(
         None => RouteAction::Forward { port, nexthop },
         Some(vlan_id) => {
             common::network::validate_vlan(vlan_id)?;
-            RouteAction::ForwardVlan {
-                port,
-                nexthop,
-                vlan_id,
-            }
+            RouteAction::ForwardVlan { port, nexthop, vlan_id }
         }
     };
 

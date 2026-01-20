@@ -217,9 +217,7 @@ impl From<MulticastGroupUpdateUnderlayEntry>
     for dpd_types::mcast::MulticastGroupUpdateUnderlayEntry
 {
     fn from(entry: MulticastGroupUpdateUnderlayEntry) -> Self {
-        Self {
-            members: entry.members,
-        }
+        Self { members: entry.members }
     }
 }
 

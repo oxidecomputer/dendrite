@@ -73,16 +73,8 @@ pub(super) struct Ipv4VlanMatchKey {
 impl Ipv4VlanMatchKey {
     pub(super) fn new(dst_addr: Ipv4Addr, vlan_id: Option<u16>) -> Self {
         match vlan_id {
-            Some(id) => Self {
-                dst_addr,
-                vlan_valid: true,
-                vlan_id: id,
-            },
-            None => Self {
-                dst_addr,
-                vlan_valid: false,
-                vlan_id: 0,
-            },
+            Some(id) => Self { dst_addr, vlan_valid: true, vlan_id: id },
+            None => Self { dst_addr, vlan_valid: false, vlan_id: 0 },
         }
     }
 }
@@ -114,16 +106,8 @@ pub(super) struct Ipv6VlanMatchKey {
 impl Ipv6VlanMatchKey {
     pub(super) fn new(dst_addr: Ipv6Addr, vlan_id: Option<u16>) -> Self {
         match vlan_id {
-            Some(id) => Self {
-                dst_addr,
-                vlan_valid: true,
-                vlan_id: id,
-            },
-            None => Self {
-                dst_addr,
-                vlan_valid: false,
-                vlan_id: 0,
-            },
+            Some(id) => Self { dst_addr, vlan_valid: true, vlan_id: id },
+            None => Self { dst_addr, vlan_valid: false, vlan_id: 0 },
         }
     }
 }

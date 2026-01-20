@@ -112,9 +112,9 @@ impl Handle {
         let mgmt_config = match config.softnpu_management {
             mgmt::SoftnpuManagement::UART => mgmt::ManagementConfig::UART,
             mgmt::SoftnpuManagement::UDS => match &config.uds_path {
-                Some(s) => mgmt::ManagementConfig::UDS {
-                    socket_path: s.to_string(),
-                },
+                Some(s) => {
+                    mgmt::ManagementConfig::UDS { socket_path: s.to_string() }
+                }
                 None => {
                     return Err(AsicError::InvalidArg(
                         "softnpu unix domain socket missing".to_string(),
@@ -198,14 +198,9 @@ impl AsicOps for Handle {
             // When a port is enabled in softnpu, it automatically comes online.
             // When switching between enabled and disabled, we send the main body
             // of dpd the PortUpdate events we would expect to see on real hardware.
-            let present = PortUpdate::Presence {
-                asic_port_id,
-                presence: enabled,
-            };
-            let ena = PortUpdate::Enable {
-                asic_port_id,
-                enabled,
-            };
+            let present =
+                PortUpdate::Presence { asic_port_id, presence: enabled };
+            let ena = PortUpdate::Enable { asic_port_id, enabled };
             let fsm_state = match enabled {
                 false => PortFsmState::Idle,
                 true => PortFsmState::LinkUp,
@@ -215,10 +210,7 @@ impl AsicOps for Handle {
                 fsm: FsmType::Port.into(),
                 state: fsm_state.into(),
             };
-            let link = PortUpdate::LinkUp {
-                asic_port_id,
-                linkup: enabled,
-            };
+            let link = PortUpdate::LinkUp { asic_port_id, linkup: enabled };
 
             for event in &[present, ena, fsm, link] {
                 if let Err(e) = tx.send(*event) {
@@ -296,13 +288,7 @@ impl AsicOps for Handle {
                 "Port {port_hdl:?} exists"
             )));
         }
-        ports.insert(
-            port_hdl,
-            Port {
-                enabled: true,
-                tx_eq: 0,
-            },
-        );
+        ports.insert(port_hdl, Port { enabled: true, tx_eq: 0 });
         self.port_to_asic_id(port_hdl).map(|id| (port_hdl, id))
     }
 

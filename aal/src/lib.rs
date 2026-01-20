@@ -295,9 +295,15 @@ pub trait TableOps<H: AsicOps> {
 #[derive(Clone, Copy, Debug)]
 pub enum PortUpdate {
     /// Signal that a port's "enable" state has changed
-    Enable { asic_port_id: AsicId, enabled: bool },
+    Enable {
+        asic_port_id: AsicId,
+        enabled: bool,
+    },
     /// Signal that the linkup/linkdown state of a port has changed
-    LinkUp { asic_port_id: AsicId, linkup: bool },
+    LinkUp {
+        asic_port_id: AsicId,
+        linkup: bool,
+    },
     /// Signal that the port has transitioned from one state to another in the AN/LT finite state
     /// machine
     FSM {

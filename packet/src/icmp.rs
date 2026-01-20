@@ -160,10 +160,7 @@ impl Protocol for IcmpHdr {
         (
             None,
             None,
-            Some(format!(
-                "type: {}  code: {}",
-                self.icmp_type, self.icmp_code
-            )),
+            Some(format!("type: {}  code: {}", self.icmp_type, self.icmp_code)),
         )
     }
 }
@@ -268,12 +265,8 @@ fn test_v4_checksum() {
         0x00, 0x00, 0x00, 0x00, 0x00,
     ];
 
-    let icmp_hdr = IcmpHdr {
-        icmp_type: 11,
-        icmp_code: 0,
-        icmp_sum: 0,
-        icmp_data: 0,
-    };
+    let icmp_hdr =
+        IcmpHdr { icmp_type: 11, icmp_code: 0, icmp_sum: 0, icmp_data: 0 };
 
     let mut pkt = Packet::new(Some(&data));
     pkt.hdrs.icmp_hdr = Some(icmp_hdr);
