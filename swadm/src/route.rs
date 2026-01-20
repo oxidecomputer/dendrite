@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::io::{Write, stdout};
 use std::net::IpAddr;
@@ -86,19 +86,34 @@ fn print_route_header(
 fn print_ipv4_route(
     tw: &mut TabWriter<std::io::Stdout>,
     cidr: Ipv4Net,
-    targets: &Vec<types::Ipv4Route>,
+    targets: &Vec<types::Route>,
 ) -> anyhow::Result<()> {
     let mut cidr = cidr.to_string();
     for t in targets {
-        writeln!(
-            tw,
-            "{}\t{}\t{:<}\t{}\t{}",
-            cidr,
-            t.port_id,
-            t.link_id,
-            t.tgt_ip,
-            t.vlan_id.map_or(String::new(), |id| id.to_string()),
-        )?;
+        match t {
+            types::Route::V4(t) => {
+                writeln!(
+                    tw,
+                    "{}\t{}\t{:<}\t{}\t{}",
+                    cidr,
+                    t.port_id,
+                    t.link_id,
+                    t.tgt_ip,
+                    t.vlan_id.map_or(String::new(), |id| id.to_string()),
+                )?;
+            }
+            types::Route::V6(t) => {
+                writeln!(
+                    tw,
+                    "{}\t{}\t{:<}\t{}\t{}",
+                    cidr,
+                    t.port_id,
+                    t.link_id,
+                    t.tgt_ip,
+                    t.vlan_id.map_or(String::new(), |id| id.to_string()),
+                )?;
+            }
+        }
         cidr = String::new();
     }
     Ok(())
@@ -224,9 +239,21 @@ async fn route_add(
             .await
             .context("adding IPv6 route")
             .map(|_| ()),
-        (IpAddr::V6(_), IpNet::V4(_)) => {
-            Err(anyhow!("cannot have an IPv4 route to an IPv6 address"))
-        }
+        (IpAddr::V6(tgt_ip), IpNet::V4(cidr)) => client
+            .route_ipv4_over_ipv6_add(&types::Ipv4OverIpv6RouteUpdate {
+                cidr,
+                target: types::Ipv6Route {
+                    tag: client.inner().tag.clone(),
+                    port_id: link_path.port_id,
+                    link_id: link_path.link_id,
+                    tgt_ip,
+                    vlan_id,
+                },
+                replace: false,
+            })
+            .await
+            .context("adding IPv4 or IPv6 route")
+            .map(|_| ()),
         (IpAddr::V4(_), IpNet::V6(_)) => {
             Err(anyhow!("cannot have an IPv6 route to an IPv4 address"))
         }

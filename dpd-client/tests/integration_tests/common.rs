@@ -1194,19 +1194,16 @@ async fn set_route_ipv4_common(
         .await
         .expect("failed to get just-added IPv4 route entry")
         .into_inner();
+
     assert_eq!(route.len(), 1, "Just added IPv4-route has more than 1 entry");
-    assert_eq!(
-        route[0].port_id, port_id,
-        "Just-added IPv4 route entry doesn't match"
-    );
-    assert_eq!(
-        route[0].link_id, link_id,
-        "Just-added IPv4 route entry doesn't match"
-    );
-    assert_eq!(
-        route[0].tgt_ip, tgt_ip,
-        "Just-added IPv4 route entry doesn't match"
-    );
+
+    let types::Route::V4(r) = &route[0] else {
+        panic!("expected v4 route");
+    };
+
+    assert_eq!(r.port_id, port_id, "Just-added IPv4 route entry doesn't match");
+    assert_eq!(r.link_id, link_id, "Just-added IPv4 route entry doesn't match");
+    assert_eq!(r.tgt_ip, tgt_ip, "Just-added IPv4 route entry doesn't match");
     Ok(())
 }
 
@@ -1217,6 +1214,61 @@ pub async fn set_route_ipv4(
     gw: &str,
 ) -> TestResult {
     set_route_ipv4_common(switch, subnet, phys_port, gw, None).await
+}
+
+async fn set_route_ipv4_over_ipv6_common(
+    switch: &Switch,
+    subnet: &str,
+    phys_port: PhysPort,
+    gw: &str,
+    vlan_id: Option<u16>,
+) -> TestResult {
+    let cidr = subnet.parse::<Ipv4Net>()?;
+    let tgt_ip: Ipv6Addr = gw.parse()?;
+    let (port_id, link_id) = switch.link_id(phys_port).unwrap();
+    let route = types::Ipv4OverIpv6RouteUpdate {
+        cidr,
+        target: types::Ipv6Route {
+            port_id: port_id.clone(),
+            link_id: link_id.clone(),
+            tgt_ip,
+            tag: switch.client.inner().tag.clone(),
+            vlan_id,
+        },
+        replace: false,
+    };
+    switch
+        .client
+        .route_ipv4_over_ipv6_set(&route)
+        .await
+        .expect("Failed to add IPv4 route entry");
+
+    let route = switch
+        .client
+        .route_ipv4_get(&cidr)
+        .await
+        .expect("failed to get just-added IPv4 route entry")
+        .into_inner();
+
+    assert_eq!(route.len(), 1, "Just added IPv4-route has more than 1 entry");
+
+    let types::Route::V6(r) = &route[0] else {
+        panic!("expected v4 route");
+    };
+
+    assert_eq!(r.port_id, port_id, "Just-added IPv4 route entry doesn't match");
+    assert_eq!(r.link_id, link_id, "Just-added IPv4 route entry doesn't match");
+    assert_eq!(r.tgt_ip, tgt_ip, "Just-added IPv4 route entry doesn't match");
+    Ok(())
+}
+
+pub async fn set_route_ipv4_over_ipv6(
+    switch: &Switch,
+    subnet: &str,
+    phys_port: PhysPort,
+    gw: &str,
+) -> TestResult {
+    set_route_ipv4_over_ipv6_common(switch, subnet, phys_port, gw, None).await
 }
 
 pub async fn add_arp_ipv4(

@@ -26,7 +26,7 @@ use dpd_types::{
     link::{LinkFsmCounters, LinkId, LinkUpCounter},
     mcast, oxstats,
     port_map::BackplaneLink,
-    route::{Ipv4Route, Ipv6Route},
+    route::{Ipv4Route, Ipv6Route, Route},
     switch_identifiers::SwitchIdentifiers,
     switch_port::{Led, ManagementMode},
     transceivers::Transceiver,
@@ -45,6 +45,8 @@ use transceiver_controller::{
     Datapath, Monitors, PowerState, message::LedState,
 };
 
+mod v1;
+
 api_versions!([
     // WHEN CHANGING THE API (part 1 of 2):
     //
@@ -57,6 +59,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (4, V4_OVER_V6_ROUTES),
     (3, ATTACHED_SUBNETS),
     (2, DUAL_STACK_NAT_WORKFLOW),
     (1, INITIAL),
@@ -285,6 +288,46 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/route/ipv4",
+        versions = ..VERSION_V4_OVER_V6_ROUTES
+    }]
+    async fn route_ipv4_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<v1::Ipv4Routes>>, HttpError> {
+        let result = Self::route_ipv4_list(rqctx, query).await?.0;
+
+        let mut v2_result = Vec::default();
+        for x in result.items {
+            let mut v2_routes =
+                v1::Ipv4Routes { cidr: x.cidr, targets: Vec::default() };
+            for t in x.targets {
+                if let Route::V4(r) = &t {
+                    v2_routes.targets.push(Ipv4Route {
+                        tag: r.tag.clone(),
+                        port_id: r.port_id,
+                        link_id: r.link_id,
+                        tgt_ip: r.tgt_ip,
+                        vlan_id: r.vlan_id,
+                    });
+                }
+            }
+            v2_result.push(v2_routes);
+        }
+
+        Ok(HttpResponseOk(ResultsPage {
+            next_page: result.next_page,
+            items: v2_result,
+        }))
+    }
+
+    /**
+     * Fetch the configured IPv4 routes, mapping IPv4 CIDR blocks to the switch port
+     * used for sending out that traffic, and optionally a gateway.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/route/ipv4",
+        versions = VERSION_V4_OVER_V6_ROUTES..
     }]
     async fn route_ipv4_list(
         rqctx: RequestContext<Self::Context>,
@@ -297,11 +340,33 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/route/ipv4/{cidr}",
+        versions = VERSION_V4_OVER_V6_ROUTES..
     }]
     async fn route_ipv4_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<RoutePathV4>,
-    ) -> Result<HttpResponseOk<Vec<Ipv4Route>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<Route>>, HttpError>;
+
+    #[endpoint {
+        method = GET,
+        path = "/route/ipv4/{cidr}",
+        versions = ..VERSION_V4_OVER_V6_ROUTES
+    }]
+    async fn route_ipv4_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<RoutePathV4>,
+    ) -> Result<HttpResponseOk<Vec<Ipv4Route>>, HttpError> {
+        let result = Self::route_ipv4_get(rqctx, path).await?.0;
+        Ok(HttpResponseOk(
+            result
+                .into_iter()
+                .flat_map(|r| match r {
+                    Route::V4(r) => Some(r),
+                    _ => None,
+                })
+                .collect(),
+        ))
+    }
 
     /**
      * Route an IPv4 subnet to a link and a nexthop gateway.
@@ -319,6 +384,22 @@ pub trait DpdApi {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
+     * Route an IPv4 subnet to a link and an IPv6 nexthop gateway.
+     *
+     * This call can be used to create a new single-path route or to add new targets
+     * to a multipath route.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/route/ipv4-over-ipv6",
+        versions = VERSION_V4_OVER_V6_ROUTES..,
+    }]
+    async fn route_ipv4_over_ipv6_add(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
      * Route an IPv4 subnet to a link and a nexthop gateway.
      *
      * This call can be used to create a new single-path route or to replace any
@@ -331,6 +412,22 @@ pub trait DpdApi {
     async fn route_ipv4_set(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Route an IPv4 subnet to a link and an IPv6 nexthop gateway.
+     *
+     * This call can be used to create a new single-path route or to replace any
+     * existing routes with a new single-path route.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/route/ipv4-over-ipv6",
+        versions = VERSION_V4_OVER_V6_ROUTES..,
+    }]
+    async fn route_ipv4_over_ipv6_set(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -2000,6 +2097,18 @@ pub struct Ipv4RouteUpdate {
     pub replace: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct Ipv4OverIpv6RouteUpdate {
+    /// Traffic destined for any address within the CIDR block is routed using
+    /// this information.
+    pub cidr: Ipv4Net,
+    /// A single Route associated with this CIDR
+    pub target: Ipv6Route,
+    /// Should this route replace any existing route?  If a route exists and
+    /// this parameter is false, then the call will fail.
+    pub replace: bool,
+}
+
 /// Represents a new or replacement mapping of a subnet to a single IPv6
 /// RouteTarget nexthop target.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -2014,14 +2123,13 @@ pub struct Ipv6RouteUpdate {
     pub replace: bool,
 }
 
-/// Represents all mappings of an IPv4 subnet to a its nexthop target(s).
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct Ipv4Routes {
     /// Traffic destined for any address within the CIDR block is routed using
     /// this information.
     pub cidr: Ipv4Net,
     /// All RouteTargets associated with this CIDR
-    pub targets: Vec<Ipv4Route>,
+    pub targets: Vec<Route>,
 }
 
 /// Represents all mappings of an IPv6 subnet to a its nexthop target(s).

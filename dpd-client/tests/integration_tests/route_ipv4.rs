@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -90,7 +90,9 @@ async fn validate_routes(
         let found = client.route_ipv4_get(&cidr).await?;
         assert_eq!(found.len(), expected.len());
         for target in expected {
-            assert!(found.iter().any(|t| t == target));
+            assert!(
+                found.iter().any(|t| t == &types::Route::V4(target.clone()))
+            );
         }
         Ok(())
     }
@@ -602,4 +604,36 @@ async fn test_multipath_traffic_vlan() -> TestResult {
         test_multipath(switch, &routers[0..r + 1]).await?;
     }
     Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_v4_over_v6() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let ingress = PhysPort(10);
+    let egress = PhysPort(9);
+    let dmac = "02:78:39:45:b9:02".parse()?;
+
+    common::set_route_ipv4_over_ipv6(
+        switch,
+        "10.10.10.0/24",
+        egress,
+        "fe80::1",
+    )
+    .await?;
+    common::add_neighbor_ipv6(switch, "fe80::1", dmac).await?;
+
+    let (to_send, to_recv) = common::gen_udp_routed_pair(
+        switch,
+        egress,
+        dmac,
+        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
+        Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444).unwrap(),
+    );
+
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
+
+    switch.packet_test(vec![send], vec![expected])
 }
