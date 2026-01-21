@@ -537,6 +537,15 @@ impl Switch {
         Ok(())
     }
 
+    pub async fn set_uplink(&self, phys_port: PhysPort, uplink: bool) {
+        let (port_id, link_id) = self.link_id(phys_port).unwrap();
+        self.client
+            .link_uplink_set(&port_id, &link_id, uplink)
+            .await
+            .unwrap()
+            .into_inner()
+    }
+
     pub fn tofino_port(&self, phys_port: PhysPort) -> u16 {
         let idx: usize = phys_port.into();
         if phys_port == NO_PORT {

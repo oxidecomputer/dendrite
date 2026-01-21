@@ -88,22 +88,14 @@ async fn execute_ping_reply_test(
 
     if enable_nat_filtering {
         // Mark the port as NAT-only
-        switch
-            .client
-            .link_nat_only_set(&port_id, &link_id, true)
-            .await
-            .unwrap();
+        switch.client.link_uplink_set(&port_id, &link_id, true).await.unwrap();
     }
 
     let result = switch.packet_test(vec![send], vec![recv]);
 
     if enable_nat_filtering {
         // Mark the port as NAT-only
-        switch
-            .client
-            .link_nat_only_set(&port_id, &link_id, false)
-            .await
-            .unwrap();
+        switch.client.link_uplink_set(&port_id, &link_id, false).await.unwrap();
     }
     result
 }
@@ -116,7 +108,7 @@ async fn test_ping_ipv4_reply() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_ping_ipv4_reply_nat_only() -> TestResult {
+async fn test_ping_ipv4_reply_uplink() -> TestResult {
     execute_ping_reply_test(true, false).await
 }
 
@@ -128,7 +120,7 @@ async fn test_ping_ipv4_vlan_reply() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_ping_ipv4_vlan_reply_nat_only() -> TestResult {
+async fn test_ping_ipv4_vlan_reply_uplink() -> TestResult {
     execute_ping_reply_test(true, true).await
 }
 
@@ -177,22 +169,14 @@ async fn execute_ping_ipv4_forward_test(
 
     if enable_nat_filtering {
         // Mark the port as NAT-only
-        switch
-            .client
-            .link_nat_only_set(&port_id, &link_id, true)
-            .await
-            .unwrap();
+        switch.client.link_uplink_set(&port_id, &link_id, true).await.unwrap();
     }
 
     let result = switch.packet_test(vec![send], vec![recv]);
 
     if enable_nat_filtering {
         // Mark the port as NAT-only
-        switch
-            .client
-            .link_nat_only_set(&port_id, &link_id, false)
-            .await
-            .unwrap();
+        switch.client.link_uplink_set(&port_id, &link_id, false).await.unwrap();
     }
     result
 }
@@ -205,6 +189,6 @@ async fn test_ping_ipv4_forward() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_ping_ipv4_forward_nat_only() -> TestResult {
+async fn test_ping_ipv4_forward_uplink() -> TestResult {
     execute_ping_ipv4_forward_test(true).await
 }

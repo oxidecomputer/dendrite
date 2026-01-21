@@ -59,6 +59,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (5, UPLINK_PORTS),
     (4, V4_OVER_V6_ROUTES),
     (3, ATTACHED_SUBNETS),
     (2, DUAL_STACK_NAT_WORKFLOW),
@@ -988,8 +989,22 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/nat_only",
+	versions = ..VERSION_UPLINK_PORTS
     }]
     async fn link_nat_only_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<bool>, HttpError> {
+        Self::link_uplink_get(rqctx, path).await
+    }
+
+    /// Return whether a port is intended to carry uplink traffic
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/uplink",
+	versions = VERSION_UPLINK_PORTS..
+    }]
+    async fn link_uplink_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError>;
@@ -998,8 +1013,23 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/ports/{port_id}/links/{link_id}/nat_only",
+	versions = ..VERSION_UPLINK_PORTS
     }]
     async fn link_nat_only_set(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+        body: TypedBody<bool>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::link_uplink_set(rqctx, path, body).await
+    }
+
+    /// Set whether a port is intended to carry uplink traffic
+    #[endpoint {
+        method = PUT,
+        path = "/ports/{port_id}/links/{link_id}/uplink",
+	versions = VERSION_UPLINK_PORTS..
+    }]
+    async fn link_uplink_set(
         rqctx: RequestContext<Self::Context>,
         path: Path<LinkPath>,
         body: TypedBody<bool>,
