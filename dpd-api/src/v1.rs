@@ -36,9 +36,7 @@ pub struct Ipv4Routes {
     pub targets: Vec<Ipv4Route>,
 }
 
-// ============================================================================
 // Multicast types introduced in v1
-// ============================================================================
 
 /// Source filter match key for multicast traffic.
 #[derive(
@@ -174,9 +172,7 @@ impl FromStr for AdminScopedIpv6 {
     }
 }
 
-// ============================================================================
 // External multicast types (v1-v4, before IpSrc changed in v5)
-// ============================================================================
 
 /// A multicast group configuration for POST requests for external (to the
 /// rack) groups.
@@ -268,9 +264,7 @@ impl From<dpd_types::mcast::MulticastGroupExternalResponse>
     }
 }
 
-// ============================================================================
 // Underlay multicast types (v1-v5, before AdminScopedIpv6 changed in v6)
-// ============================================================================
 
 /// Path parameter for underlay multicast group endpoints.
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -329,9 +323,7 @@ impl From<dpd_types::mcast::MulticastGroupUnderlayResponse>
     }
 }
 
-// ============================================================================
-// Unified response types
-// ============================================================================
+// Multicast unified response types
 
 /// Unified response type for operations that return mixed group types.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]

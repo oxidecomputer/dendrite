@@ -1248,7 +1248,7 @@
     },
     "/multicast/external-groups": {
       "post": {
-        "summary": "Create an external-only multicast group configuration (API v5).",
+        "summary": "Create an external-only multicast group configuration.",
         "operationId": "multicast_group_create_external_v5",
         "requestBody": {
           "content": {
@@ -1282,7 +1282,7 @@
     },
     "/multicast/external-groups/{group_ip}": {
       "put": {
-        "summary": "Update an external-only multicast group configuration (API v5).",
+        "summary": "Update an external-only multicast group configuration.",
         "description": "Tags are optional for backward compatibility.",
         "operationId": "multicast_group_update_external_v5",
         "parameters": [
@@ -1328,7 +1328,7 @@
     },
     "/multicast/groups": {
       "get": {
-        "summary": "List all multicast groups (API v5).",
+        "summary": "List all multicast groups.",
         "operationId": "multicast_groups_list_v5",
         "parameters": [
           {
@@ -1392,7 +1392,7 @@
     },
     "/multicast/groups/{group_ip}": {
       "get": {
-        "summary": "Get the multicast group configuration for a given group IP address (API v5).",
+        "summary": "Get the multicast group configuration for a given group IP address.",
         "operationId": "multicast_group_get_v5",
         "parameters": [
           {
@@ -1453,7 +1453,7 @@
     },
     "/multicast/tags/{tag}": {
       "get": {
-        "summary": "List all multicast groups with a given tag (API v5).",
+        "summary": "List all multicast groups with a given tag.",
         "operationId": "multicast_groups_list_by_tag_v5",
         "parameters": [
           {

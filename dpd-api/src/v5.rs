@@ -27,9 +27,7 @@ pub use crate::v1::MulticastGroupUnderlayResponse;
 pub use crate::v1::MulticastGroupUpdateUnderlayEntry;
 pub use crate::v1::MulticastUnderlayGroupIpParam;
 
-// ============================================================================
 // External multicast types changed in v5 (use new IpSrc with Any variant)
-// ============================================================================
 
 /// Response structure for external multicast group operations.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -79,9 +77,7 @@ impl From<MulticastGroupUpdateExternalEntry>
     }
 }
 
-// ============================================================================
-// Unified response types
-// ============================================================================
+// Multicast unified response types
 
 /// Unified response type for operations that return mixed group types.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]

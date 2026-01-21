@@ -1664,7 +1664,7 @@ pub trait DpdApi {
         HttpError,
     >;
 
-    /// Create an external-only multicast group configuration (API v5).
+    /// Create an external-only multicast group configuration.
     #[endpoint {
         method = POST,
         path = "/multicast/external-groups",
@@ -1812,7 +1812,7 @@ pub trait DpdApi {
         path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError>;
 
-    /// Get the multicast group configuration for a given group IP address (API v5).
+    /// Get the multicast group configuration for a given group IP address.
     #[endpoint {
         method = GET,
         path = "/multicast/groups/{group_ip}",
@@ -1945,7 +1945,7 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<mcast::MulticastGroupExternalResponse>, HttpError>;
 
     /**
-     * Update an external-only multicast group configuration (API v5).
+     * Update an external-only multicast group configuration.
      *
      * Tags are optional for backward compatibility.
      */
@@ -2002,7 +2002,7 @@ pub trait DpdApi {
         HttpError,
     >;
 
-    /// List all multicast groups (API v5).
+    /// List all multicast groups.
     #[endpoint {
         method = GET,
         path = "/multicast/groups",
@@ -2074,7 +2074,7 @@ pub trait DpdApi {
         HttpError,
     >;
 
-    /// List all multicast groups with a given tag (API v5).
+    /// List all multicast groups with a given tag.
     #[endpoint {
         method = GET,
         path = "/multicast/tags/{tag}",
