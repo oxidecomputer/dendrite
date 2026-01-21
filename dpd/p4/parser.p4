@@ -32,7 +32,7 @@ parser IngressParser(
 		meta.service_routed = false;
 		meta.nat_egress_hit = false;
 		meta.nat_ingress_hit = false;
-		meta.nat_ingress_port = false;
+		meta.uplink_ingress = false;
 		meta.nat_ingress_tgt = 0;
 		meta.nat_inner_mac = 0;
 		meta.nat_geneve_vni = 0;

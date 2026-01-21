@@ -25,11 +25,11 @@ pub mod nat;
 pub mod neighbor_ipv6;
 pub mod port_ip;
 pub mod port_mac;
-pub mod port_nat;
 pub mod route_ipv4;
 pub mod route_ipv6;
+pub mod uplink;
 
-const NAME_TO_TYPE: [(&str, TableType); 24] = [
+const NAME_TO_TYPE: [(&str, TableType); 25] = [
     (route_ipv4::INDEX_TABLE_NAME, TableType::RouteIdxIpv4),
     (route_ipv4::FORWARD_TABLE_NAME, TableType::RouteFwdIpv4),
     (route_ipv6::INDEX_TABLE_NAME, TableType::RouteIdxIpv6),
@@ -41,7 +41,8 @@ const NAME_TO_TYPE: [(&str, TableType); 24] = [
     (port_ip::IPV6_TABLE_NAME, TableType::PortIpv6),
     (nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4),
     (nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6),
-    (port_nat::TABLE_NAME, TableType::NatOnly),
+    (uplink::INGRESS_TABLE_NAME, TableType::UplinkIngress),
+    (uplink::EGRESS_TABLE_NAME, TableType::UplinkEgress),
     (
         attached_subnet_v4::EXT_SUBNET_IPV4_TABLE_NAME,
         TableType::AttachedSubnetIpv4,
@@ -265,7 +266,6 @@ pub fn get_entries(switch: &Switch, name: String) -> DpdResult<views::Table> {
         TableType::PortMac => {
             MacOps::<port_mac::PortMacTable>::table_dump(switch)
         }
-        TableType::NatOnly => port_nat::table_dump(switch),
         TableType::McastIpv6 => {
             mcast::mcast_replication::ipv6_table_dump(switch)
         }
@@ -281,6 +281,8 @@ pub fn get_entries(switch: &Switch, name: String) -> DpdResult<views::Table> {
         TableType::NatIngressIpv6Mcast => {
             mcast::mcast_nat::ipv6_table_dump(switch)
         }
+        TableType::UplinkEgress => uplink::egress_table_dump(switch),
+        TableType::UplinkIngress => uplink::ingress_table_dump(switch),
         TableType::RouteIpv4Mcast => {
             mcast::mcast_route::ipv4_table_dump(switch)
         }
@@ -334,7 +336,6 @@ pub fn get_counters(
         }
         TableType::PortIpv4 => port_ip::ipv4_counter_fetch(switch, force_sync),
         TableType::PortIpv6 => port_ip::ipv6_counter_fetch(switch, force_sync),
-        TableType::NatOnly => port_nat::counter_fetch(switch, force_sync),
         TableType::AttachedSubnetIpv4 => {
             attached_subnet_v4::counter_fetch(switch, force_sync)
         }
@@ -355,6 +356,12 @@ pub fn get_counters(
         }
         TableType::NatIngressIpv6Mcast => {
             mcast::mcast_nat::ipv6_counter_fetch(switch, force_sync)
+        }
+        TableType::UplinkEgress => {
+            uplink::egress_counter_fetch(switch, force_sync)
+        }
+        TableType::UplinkIngress => {
+            uplink::ingress_counter_fetch(switch, force_sync)
         }
         TableType::RouteIpv4Mcast => {
             mcast::mcast_route::ipv4_counter_fetch(switch, force_sync)
@@ -391,7 +398,8 @@ pub enum TableType {
     PortIpv6,
     NatIngressIpv4,
     NatIngressIpv6,
-    NatOnly,
+    UplinkIngress,
+    UplinkEgress,
     AttachedSubnetIpv4,
     AttachedSubnetIpv6,
     McastIpv6,
