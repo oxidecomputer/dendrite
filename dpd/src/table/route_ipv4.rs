@@ -2,10 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::convert::TryInto;
 use std::net::Ipv4Addr;
+use std::net::Ipv6Addr;
 
 use crate::Switch;
 use crate::table::*;
@@ -33,8 +34,12 @@ struct IndexKey {
 enum RouteAction {
     #[action_xlate(name = "forward")]
     Forward { port: u16, nexthop: Ipv4Addr },
+    #[action_xlate(name = "forward_v6")]
+    ForwardV6 { port: u16, nexthop: Ipv6Addr },
     #[action_xlate(name = "forward_vlan")]
     ForwardVlan { port: u16, nexthop: Ipv4Addr, vlan_id: u16 },
+    #[action_xlate(name = "forward_vlan_v6")]
+    ForwardVlanV6 { port: u16, nexthop: Ipv6Addr, vlan_id: u16 },
 }
 
 // Used to identify entries in the route->index table
@@ -109,6 +114,43 @@ pub fn add_route_target(
         Some(vlan_id) => {
             common::network::validate_vlan(vlan_id)?;
             RouteAction::ForwardVlan { port, nexthop, vlan_id }
+        }
+    };
+
+    match s.table_entry_add(TableType::RouteFwdIpv4, &match_key, &action_data) {
+        Ok(()) => {
+            info!(s.log, "added ipv4 route entry";
+		    "index" => idx,
+		    "port" => port,
+		    "nexthop" => %nexthop,
+		    "vlan_id" => ?vlan_id);
+            Ok(())
+        }
+        Err(e) => {
+            error!(s.log, "failed to add ipv4 route entry";
+		    "index" => idx,
+		    "port" => port,
+		    "nexthop" => %nexthop,
+		    "error" => %e);
+            Err(e)
+        }
+    }
+}
+
+// Add a target into the route_data table at the given index
+pub fn add_route_target_v6(
+    s: &Switch,
+    idx: u16,
+    port: u16,
+    nexthop: Ipv6Addr,
+    vlan_id: Option<u16>,
+) -> DpdResult<()> {
+    let match_key = IndexKey { idx };
+    let action_data = match vlan_id {
+        None => RouteAction::ForwardV6 { port, nexthop },
+        Some(vlan_id) => {
+            common::network::validate_vlan(vlan_id)?;
+            RouteAction::ForwardVlanV6 { port, nexthop, vlan_id }
         }
     };
 

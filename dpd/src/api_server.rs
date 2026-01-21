@@ -27,8 +27,8 @@ use dpd_types::mcast::MulticastGroupUpdateUnderlayEntry;
 use dpd_types::mcast::UnderlayMulticastIpv6;
 use dpd_types::oxstats::OximeterMetadata;
 use dpd_types::port_map::BackplaneLink;
-use dpd_types::route::Ipv4Route;
 use dpd_types::route::Ipv6Route;
+use dpd_types::route::Route;
 use dpd_types::switch_identifiers::SwitchIdentifiers;
 use dpd_types::switch_port::Led;
 use dpd_types::switch_port::ManagementMode;
@@ -392,7 +392,7 @@ impl DpdApi for DpdApiImpl {
     async fn route_ipv4_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<RoutePathV4>,
-    ) -> Result<HttpResponseOk<Vec<Ipv4Route>>, HttpError> {
+    ) -> Result<HttpResponseOk<Vec<Route>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let cidr = path.into_inner().cidr;
         route::get_route_ipv4(switch, cidr)
@@ -414,6 +414,19 @@ impl DpdApi for DpdApiImpl {
             .map_err(HttpError::from)
     }
 
+    async fn route_ipv4_over_ipv6_add(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let route = update.into_inner();
+
+        route::add_route_ipv4_over_ipv6(switch, route.cidr, route.target)
+            .await
+            .map(|_| HttpResponseUpdatedNoContent())
+            .map_err(HttpError::from)
+    }
+
     async fn route_ipv4_set(
         rqctx: RequestContext<Arc<Switch>>,
         update: TypedBody<Ipv4RouteUpdate>,
@@ -424,6 +437,23 @@ impl DpdApi for DpdApiImpl {
             .await
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(HttpError::from)
+    }
+
+    async fn route_ipv4_over_ipv6_set(
+        rqctx: RequestContext<Arc<Switch>>,
+        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let route = update.into_inner();
+        route::set_route_ipv4_over_ipv6(
+            switch,
+            route.cidr,
+            route.target,
+            route.replace,
+        )
+        .await
+        .map(|_| HttpResponseUpdatedNoContent())
+        .map_err(HttpError::from)
     }
 
     async fn route_ipv4_delete(
@@ -1967,7 +1997,7 @@ impl DpdApi for DpdApiImpl {
             .map_err(HttpError::from)
     }
 
-    async fn multicast_group_delete_v3(
+    async fn multicast_group_delete_v1(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseDeleted, HttpError> {
@@ -1975,7 +2005,7 @@ impl DpdApi for DpdApiImpl {
         let ip = path.into_inner().group_ip;
 
         // For backward compat: lookup current tag to pass validation
-        // (v1-v3 API did not require tag, so we allow deletion without caller knowing it)
+        // (v1-v5 API did not require tag, so we allow deletion without caller knowing it)
         let existing_tag = mcast::get_group(switch, ip)
             .map_err(HttpError::from)?
             .tag()
@@ -2029,12 +2059,12 @@ impl DpdApi for DpdApiImpl {
         .map_err(HttpError::from)
     }
 
-    async fn multicast_group_update_underlay_v3(
+    async fn multicast_group_update_underlay_v1(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<dpd_api::v4::MulticastUnderlayGroupIpParam>,
-        group: TypedBody<dpd_api::v4::MulticastGroupUpdateUnderlayEntry>,
+        path: Path<dpd_api::v5::MulticastUnderlayGroupIpParam>,
+        group: TypedBody<dpd_api::v5::MulticastGroupUpdateUnderlayEntry>,
     ) -> Result<
-        HttpResponseOk<dpd_api::v4::MulticastGroupUnderlayResponse>,
+        HttpResponseOk<dpd_api::v5::MulticastGroupUnderlayResponse>,
         HttpError,
     > {
         let switch: &Switch = rqctx.context();
@@ -2048,7 +2078,7 @@ impl DpdApi for DpdApiImpl {
             })?;
         let entry = group.into_inner();
 
-        // Lookup current tag for backward compat (v1-v3 clients may omit tag)
+        // Lookup current tag for backward compat (v1-v5 clients may omit tag)
         let tag = match entry.tag.as_ref() {
             Some(t) => t.clone(),
             None => {
@@ -2091,19 +2121,19 @@ impl DpdApi for DpdApiImpl {
             .map_err(HttpError::from)
     }
 
-    async fn multicast_group_update_external_v3(
+    async fn multicast_group_update_external_v5(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
-        group: TypedBody<dpd_api::v4::MulticastGroupUpdateExternalEntry>,
+        group: TypedBody<dpd_api::v5::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<dpd_api::v4::MulticastGroupExternalResponse>,
+        HttpResponseCreated<dpd_api::v5::MulticastGroupExternalResponse>,
         HttpError,
     > {
         let switch: &Switch = rqctx.context();
         let ip = path.into_inner().group_ip;
         let entry = group.into_inner();
 
-        // Lookup current tag for backward compat (v3 clients may omit tag)
+        // Lookup current tag for backward compat (v5 clients may omit tag)
         let tag = match entry.tag.as_ref() {
             Some(t) => t.clone(),
             None => mcast::get_group(switch, ip)
@@ -2117,19 +2147,19 @@ impl DpdApi for DpdApiImpl {
             .map_err(HttpError::from)
     }
 
-    async fn multicast_group_update_external_v2(
+    async fn multicast_group_update_external_v1(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
-        group: TypedBody<dpd_api::v3::MulticastGroupUpdateExternalEntry>,
+        group: TypedBody<dpd_api::v1::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<dpd_api::v3::MulticastGroupExternalResponse>,
+        HttpResponseCreated<dpd_api::v1::MulticastGroupExternalResponse>,
         HttpError,
     > {
         let switch: &Switch = rqctx.context();
         let ip = path.into_inner().group_ip;
         let entry = group.into_inner();
 
-        // Lookup current tag for backward compat (v1-v2 clients may omit tag)
+        // Lookup current tag for backward compat (v1-v4 clients may omit tag)
         let tag = match entry.tag.as_ref() {
             Some(t) => t.clone(),
             None => mcast::get_group(switch, ip)
@@ -2242,7 +2272,7 @@ impl DpdApi for DpdApiImpl {
         ))
     }
 
-    async fn multicast_reset_untagged_v3(
+    async fn multicast_reset_untagged_v1(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();

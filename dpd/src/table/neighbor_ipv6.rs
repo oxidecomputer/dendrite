@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::convert::TryInto;
 use std::net::Ipv6Addr;
@@ -16,7 +16,7 @@ use crate::Switch;
 use crate::table::*;
 use common::network::MacAddr;
 
-pub const TABLE_NAME: &str = "pipe.Ingress.l3_router.Router6.Ndp.tbl";
+pub const TABLE_NAME: &str = "pipe.Ingress.l3_router.Ndp.tbl";
 
 #[derive(MatchParse, Hash)]
 struct MatchKey {

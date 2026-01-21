@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::convert::TryInto;
 use std::net::Ipv4Addr;
@@ -14,7 +14,7 @@ use common::network::MacAddr;
 
 use aal::{ActionParse, MatchParse};
 
-pub const TABLE_NAME: &str = "pipe.Ingress.l3_router.Router4.Arp.tbl";
+pub const TABLE_NAME: &str = "pipe.Ingress.l3_router.Arp.tbl";
 
 #[derive(MatchParse, Hash)]
 struct MatchKey {

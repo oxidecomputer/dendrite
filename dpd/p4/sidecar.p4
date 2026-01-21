@@ -997,12 +997,35 @@ control RouterLookupIndex4(
 		hdr.ethernet.ether_type = ETHERTYPE_VLAN;
 		res.port = port;
 		res.nexthop = nexthop;
+		res.is_v6 = false;
+		forward_ctr.count();
+	}
+
+	action forward_vlan_v6(PortId_t port, ipv6_addr_t nexthop, bit<12> vlan_id) {
+		hdr.vlan.setValid();
+
+		hdr.vlan.pcp = 0;
+		hdr.vlan.dei = 0;
+		hdr.vlan.vlan_id = vlan_id;
+		hdr.vlan.ether_type = hdr.ethernet.ether_type;
+		hdr.ethernet.ether_type = ETHERTYPE_VLAN;
+		res.port = port;
+		res.nexthop6 = nexthop;
+		res.is_v6 = true;
 		forward_ctr.count();
 	}
 
 	action forward(PortId_t port, ipv4_addr_t nexthop) {
 		res.port = port;
 		res.nexthop = nexthop;
+		res.is_v6 = false;
+		forward_ctr.count();
+	}
+
+	action forward_v6(PortId_t port, ipv6_addr_t nexthop) {
+		res.port = port;
+		res.nexthop6 = nexthop;
+		res.is_v6 = true;
 		forward_ctr.count();
 	}
 
@@ -1014,7 +1037,7 @@ control RouterLookupIndex4(
 	 */
 	table route {
 		key             = { res.idx: exact; }
-		actions         = { forward; forward_vlan; }
+		actions         = { forward; forward_v6; forward_vlan; forward_vlan_v6; }
 		const size      = IPV4_LPM_SIZE - 1;
 		counters        = forward_ctr;
 	}
@@ -1194,6 +1217,8 @@ control Router4 (
 
 	apply {
 		route4_result_t fwd;
+		fwd.is_v6 = false;
+		fwd.nexthop6 = 0;
 		fwd.nexthop = 0;
 		fwd.port = 0;
 		fwd.is_hit = false;
@@ -1228,7 +1253,8 @@ control Router4 (
 			ig_tm_md.ucast_egress_port = fwd.port;
 
 			meta.nexthop_ipv4 = fwd.nexthop;
-			Arp.apply(hdr, meta, ig_intr_md, ig_tm_md);
+			meta.nexthop_ipv6 = fwd.nexthop6;
+			meta.resolve_nexthop = true;
 		}
 	}
 }
@@ -1366,8 +1392,8 @@ control Router6 (
 		} else {
 			ig_tm_md.ucast_egress_port = fwd.port;
 			hdr.ipv6.hop_limit = hdr.ipv6.hop_limit - 1;
+			meta.resolve_nexthop = true;
 			meta.nexthop_ipv6 = fwd.nexthop;
-			Ndp.apply(hdr, meta, ig_intr_md, ig_tm_md);
 		}
 	}
 }
@@ -1465,6 +1491,13 @@ control L3Router(
 				MulticastRouter6.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			} else {
 				Router6.apply(hdr, meta, ig_intr_md, ig_tm_md);
+			}
+		}
+		if (meta.resolve_nexthop) {
+			if (meta.nexthop_ipv4 != 0) {
+				Arp.apply(hdr, meta, ig_intr_md, ig_tm_md);
+			} else {
+				Ndp.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			}
 		}
 	}

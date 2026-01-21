@@ -51,6 +51,7 @@ parser IngressParser(
 		meta.pkt_type = 0;
 		meta.drop_reason = 0;
 		meta.nat_ingress_csum = 0;
+		meta.resolve_nexthop = false;
 
 		meta.bridge_hdr.setValid();
 		meta.bridge_hdr.ingress_port = ig_intr_md.ingress_port;
