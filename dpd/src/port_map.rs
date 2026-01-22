@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Types for mapping physical switch ports to Tofino-specific handles.
 //!
@@ -111,7 +111,7 @@ impl FromStr for SidecarRevision {
 /// A mapping between a physical switch port and a Tofino `Connector`.
 ///
 /// These objects cannot be constructed externally. A reference to the static
-/// maps can be returned via the [`port_map`] function.
+/// maps can be returned via the `port_map` function.
 #[derive(Clone, Debug)]
 pub struct PortMap {
     _revision: SidecarRevision,
