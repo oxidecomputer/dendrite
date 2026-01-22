@@ -44,7 +44,7 @@ const ADMIN_LOCAL_PREFIX: u16 = 0xFF04;
 // investigating. If it only changes by an entry or two, it's fine to just
 // adjust the constant below to match the observed result.
 //
-const IPV4_LPM_SIZE: usize = 8182; // ipv4 forwarding table
+const IPV4_LPM_SIZE: usize = 8188; // ipv4 forwarding table
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports

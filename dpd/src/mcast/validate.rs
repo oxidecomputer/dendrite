@@ -14,7 +14,6 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use super::IpSrc;
 use crate::types::{DpdError, DpdResult};
 use common::network::NatTarget;
-use dpd_api::MulticastTag;
 use omicron_common::address::{
     IPV4_LINK_LOCAL_MULTICAST_SUBNET, IPV4_SSM_SUBNET,
     IPV6_INTERFACE_LOCAL_MULTICAST_SUBNET, IPV6_LINK_LOCAL_MULTICAST_SUBNET,
@@ -52,16 +51,16 @@ pub(crate) fn validate_multicast_address(
 pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
     if !nat_target.inner_mac.is_multicast() {
         return Err(DpdError::Invalid(format!(
-            "NAT target inner MAC address {} is not a multicast MAC address",
-            nat_target.inner_mac
+            "NAT target inner MAC address {inner_mac} is not a multicast MAC address",
+            inner_mac = nat_target.inner_mac
         )));
     }
 
     if !UNDERLAY_MULTICAST_SUBNET.contains(nat_target.internal_ip) {
         return Err(DpdError::Invalid(format!(
-            "NAT target internal IP address {} is not in the reserved \
+            "NAT target internal IP address {internal_ip} is not in the reserved \
              underlay multicast subnet (ff04::/64)",
-            nat_target.internal_ip
+            internal_ip = nat_target.internal_ip
         )));
     }
 
@@ -230,17 +229,42 @@ fn validate_ipv6_source_address(ipv6: Ipv6Addr) -> DpdResult<()> {
     Ok(())
 }
 
+/// Maximum length for multicast group tags.
+///
+/// Keep in sync with Omicron's database schema column type for multicast group
+/// tags. This is sized to accommodate the auto-generated format
+/// `{uuid}:{group_ip}` for both IPv4 and IPv6 group IPs.
+const MAX_TAG_LENGTH: usize = 80;
+
 /// Validates tag format for group creation.
 ///
-/// Delegates to [`MulticastTag::from_str`] which enforces:
-/// - Length: 1-80 ASCII bytes
-/// - Characters: alphanumeric, hyphens, underscores, colons, or periods
+/// Tags must be 1-80 ASCII bytes containing only alphanumeric characters,
+/// hyphens, underscores, colons, or periods.
+///
+/// This character set is compatible with URL path segments, though colons are
+/// RFC 3986 reserved characters and may require percent-encoding in some HTTP
+/// client contexts.
 ///
 /// Auto-generated tags use the format `{uuid}:{group_ip}`.
 pub(crate) fn validate_tag_format(tag: &str) -> DpdResult<()> {
-    tag.parse::<MulticastTag>()
-        .map(|_| ())
-        .map_err(|e| DpdError::Invalid(e.to_string()))
+    if tag.is_empty() {
+        return Err(DpdError::Invalid("tag cannot be empty".to_string()));
+    }
+    if tag.len() > MAX_TAG_LENGTH {
+        return Err(DpdError::Invalid(format!(
+            "tag cannot exceed {MAX_TAG_LENGTH} bytes"
+        )));
+    }
+    if !tag.bytes().all(|b| {
+        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'.')
+    }) {
+        return Err(DpdError::Invalid(
+            "tag must contain only ASCII alphanumeric characters, hyphens, \
+             underscores, colons, or periods"
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Validates that the request tag matches the existing group's tag.
@@ -264,7 +288,6 @@ pub(crate) fn validate_tag(
 mod tests {
     use super::*;
     use common::network::{MacAddr, Vni};
-    use dpd_api::MAX_TAG_LENGTH;
 
     /// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
     const ADMIN_LOCAL_PREFIX: u16 = 0xff04;

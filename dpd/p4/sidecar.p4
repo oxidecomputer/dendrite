@@ -612,8 +612,16 @@ control NatIngress (
 	}
 
 	// Separate table for IPv4 multicast packets that need to be encapsulated.
+	// Groups without VLAN match untagged only. Groups with VLAN match both
+	// untagged (for decapsulated Geneve from underlay) and correctly tagged.
+	// Packets with wrong VLAN miss and are not NAT encapsulated.
+	// When hdr.vlan.isValid()==false, vlan_id matches as 0.
 	table ingress_ipv4_mcast {
-		key = { hdr.ipv4.dst_addr : exact; }
+		key = {
+			hdr.ipv4.dst_addr : exact;
+			hdr.vlan.isValid() : exact;
+			hdr.vlan.vlan_id : exact;
+		}
 		actions = { mcast_forward_ipv4_to; }
 		const size = IPV4_MULTICAST_TABLE_SIZE;
 		counters = mcast_ipv4_ingress_ctr;
@@ -630,8 +638,16 @@ control NatIngress (
 	}
 
 	// Separate table for IPv6 multicast packets that need to be encapsulated.
+	// Groups without VLAN match untagged only. Groups with VLAN match both
+	// untagged (for decapsulated Geneve from underlay) and correctly tagged.
+	// Packets with wrong VLAN miss and are not NAT encapsulated.
+	// When hdr.vlan.isValid()==false, vlan_id matches as 0.
 	table ingress_ipv6_mcast {
-		key = { hdr.ipv6.dst_addr : exact; }
+		key = {
+			hdr.ipv6.dst_addr : exact;
+			hdr.vlan.isValid() : exact;
+			hdr.vlan.vlan_id : exact;
+		}
 		actions = { mcast_forward_ipv6_to; }
 		const size = IPV6_MULTICAST_TABLE_SIZE;
 		counters = mcast_ipv6_ingress_ctr;
@@ -1311,7 +1327,9 @@ control MulticastRouter4(
 	apply {
 		// If the packet came in with a VLAN tag, we need to invalidate
 		// the VLAN header before we do the lookup.  The VLAN header
-		// will be re-attached if set in the forward_vlan action.
+		// will be re-attached if set in the forward_vlan action (or
+		// untagged for groups without VLAN). This prevents unintended
+		// VLAN translation.
 		if (hdr.vlan.isValid()) {
 			hdr.ethernet.ether_type = hdr.vlan.ether_type;
 			hdr.vlan.setInvalid();
@@ -1449,7 +1467,9 @@ control MulticastRouter6 (
 	apply {
 		// If the packet came in with a VLAN tag, we need to invalidate
 		// the VLAN header before we do the lookup.  The VLAN header
-		// will be re-attached if set in the forward_vlan action.
+		// will be re-attached if set in the forward_vlan action (or
+		// untagged for groups without VLAN). This prevents unintended
+		// VLAN translation.
 		if (hdr.vlan.isValid()) {
 			hdr.ethernet.ether_type = hdr.vlan.ether_type;
 			hdr.vlan.setInvalid();
