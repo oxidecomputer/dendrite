@@ -341,5 +341,14 @@ proxy_arp:
 3. run `SDE=/opt/oxide/tofino_sde cargo test --features=<feature>` to execute
    the tests.
 
-If regenerating the openapi specifications, set `EXPECTORATE=overwrite` when
-runnning the tests with the `tofino_asic` feature.
+### OpenAPI Generation
+
+`dpd-api/src/lib.rs` contains endpoint [dropshot][dropshot-gh] definitions and
+controls API versioning for the `dpd` OpenAPI interface. If you add/remove or
+edit API points and/or documentation, you can update the API version and
+regenerate the latest OpenAPI specification bindings by running
+`cargo xtask openapi generate`. Use `cargo xtask openapi check` to verify
+specs are up-to-date.
+
+
+[dropshot-gh]: https://github.com/oxidecomputer/dropshot

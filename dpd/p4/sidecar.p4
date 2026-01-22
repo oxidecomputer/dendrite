@@ -612,8 +612,16 @@ control NatIngress (
 	}
 
 	// Separate table for IPv4 multicast packets that need to be encapsulated.
+	// Groups without VLAN match untagged only. Groups with VLAN match both
+	// untagged (for decapsulated Geneve from underlay) and correctly tagged.
+	// Packets with wrong VLAN miss and are not NAT encapsulated.
+	// When hdr.vlan.isValid()==false, vlan_id matches as 0.
 	table ingress_ipv4_mcast {
-		key = { hdr.ipv4.dst_addr : exact; }
+		key = {
+			hdr.ipv4.dst_addr : exact;
+			hdr.vlan.isValid() : exact;
+			hdr.vlan.vlan_id : exact;
+		}
 		actions = { mcast_forward_ipv4_to; }
 		const size = IPV4_MULTICAST_TABLE_SIZE;
 		counters = mcast_ipv4_ingress_ctr;
@@ -630,8 +638,16 @@ control NatIngress (
 	}
 
 	// Separate table for IPv6 multicast packets that need to be encapsulated.
+	// Groups without VLAN match untagged only. Groups with VLAN match both
+	// untagged (for decapsulated Geneve from underlay) and correctly tagged.
+	// Packets with wrong VLAN miss and are not NAT encapsulated.
+	// When hdr.vlan.isValid()==false, vlan_id matches as 0.
 	table ingress_ipv6_mcast {
-		key = { hdr.ipv6.dst_addr : exact; }
+		key = {
+			hdr.ipv6.dst_addr : exact;
+			hdr.vlan.isValid() : exact;
+			hdr.vlan.vlan_id : exact;
+		}
 		actions = { mcast_forward_ipv6_to; }
 		const size = IPV6_MULTICAST_TABLE_SIZE;
 		counters = mcast_ipv6_ingress_ctr;
@@ -1311,7 +1327,9 @@ control MulticastRouter4(
 	apply {
 		// If the packet came in with a VLAN tag, we need to invalidate
 		// the VLAN header before we do the lookup.  The VLAN header
-		// will be re-attached if set in the forward_vlan action.
+		// will be re-attached if set in the forward_vlan action (or
+		// untagged for groups without VLAN). This prevents unintended
+		// VLAN translation.
 		if (hdr.vlan.isValid()) {
 			hdr.ethernet.ether_type = hdr.vlan.ether_type;
 			hdr.vlan.setInvalid();
@@ -1449,7 +1467,9 @@ control MulticastRouter6 (
 	apply {
 		// If the packet came in with a VLAN tag, we need to invalidate
 		// the VLAN header before we do the lookup.  The VLAN header
-		// will be re-attached if set in the forward_vlan action.
+		// will be re-attached if set in the forward_vlan action (or
+		// untagged for groups without VLAN). This prevents unintended
+		// VLAN translation.
 		if (hdr.vlan.isValid()) {
 			hdr.ethernet.ether_type = hdr.vlan.ether_type;
 			hdr.vlan.setInvalid();
@@ -1467,7 +1487,7 @@ control MulticastRouter6 (
 			// to go out.
 		} else {
 			// Set the destination port to an invalid value
-        	ig_tm_md.ucast_egress_port = (PortId_t)0x1ff;
+			ig_tm_md.ucast_egress_port = (PortId_t)0x1ff;
 			hdr.ipv6.hop_limit = hdr.ipv6.hop_limit - 1;
 		}
 	}
@@ -1724,7 +1744,7 @@ control MulticastIngress (
 
 	table mcast_source_filter_ipv6 {
 		key = {
-			hdr.inner_ipv6.src_addr: exact;
+			hdr.inner_ipv6.src_addr: lpm;
 			hdr.inner_ipv6.dst_addr: exact;
 		}
 		actions = {
@@ -1785,19 +1805,20 @@ control MulticastIngress (
 	// Note: SSM tables currently take one extra stage in the pipeline (17->18).
 	apply {
 		if (hdr.geneve.isValid() && hdr.inner_ipv4.isValid()) {
-			// Check if the inner destination address is an IPv4 SSM multicast
-			// address.
-			if (hdr.inner_ipv4.dst_addr[31:24] == 8w0xe8) {
+			// Check if the inner destination address is an IPv4 multicast
+			// address (224.0.0.0/4). Apply source filtering for both SSM
+			// (232.0.0.0/8) and ASM ranges.
+			if (hdr.inner_ipv4.dst_addr[31:28] == 4w0xe) {
 				mcast_source_filter_ipv4.apply();
 			} else {
 				meta.allow_source_mcast = true;
 			}
 		} else if (hdr.geneve.isValid() && hdr.inner_ipv6.isValid()) {
-			// Check if the inner destination address is an IPv6 SSM multicast
-			// address.
-			if ((hdr.inner_ipv6.dst_addr[127:120] == 8w0xff)
-				&& ((hdr.inner_ipv6.dst_addr[119:116] == 4w0x3))) {
-					mcast_source_filter_ipv6.apply();
+			// Check if the inner destination address is an IPv6 multicast
+			// address (ff00::/8). Apply source filtering for both SSM
+			// (ff3x::/16) and ASM ranges.
+			if (hdr.inner_ipv6.dst_addr[127:120] == 8w0xff) {
+				mcast_source_filter_ipv6.apply();
 			} else {
 				meta.allow_source_mcast = true;
 			}
@@ -1815,10 +1836,25 @@ control MulticastIngress (
 }
 
 
-/* This control is used to configure the egress port for multicast packets.
- * It includes actions for setting the decap ports bitmap and VLAN ID
- * (if necessary), as well as stripping headers and decrementing TTL or hop
- * limit.
+/* Multicast Egress - Per-Port Decapsulation
+ *
+ * Determines which replicated multicast copies should be decapsulated.
+ * Traffic bound for sleds remains encapsulated (OPTE on the destination sled
+ * handles decap). Traffic exiting via front panel ports may be decapsulated
+ * based on the per-group bitmap configuration.
+ *
+ * Flow:
+ *   1. mcast_tag_check   : Match packets with reserved underlay multicast
+ *                          subnet (ff04::/64, within admin-local ff04::/16)
+ *                          and mcast_tag == UNDERLAY_EXTERNAL
+ *   2. tbl_decap_ports   : Lookup by egress_rid to get 256-port decap bitmap
+ *   3. asic_id_to_port   : Map ASIC port ID to logical port number (0-255)
+ *   4. port_bitmap_check : Test port's bit in bitmap (see port_bitmap_check.p4)
+ *   5. modify_hdr        : If bitmap_result != 0, decapsulate packet (strip
+ *                          outer headers, decrement TTL/hop limit, handle VLAN)
+ *
+ * The bitmap marks which egress ports require decapsulation (typically external
+ * customer-facing ports) vs which keep encapsulation (underlay/sled-bound).
  */
 control MulticastEgress (
 	inout sidecar_headers_t hdr,
@@ -1854,6 +1890,12 @@ control MulticastEgress (
 	}
 
 
+	// Check if packet is destined to the reserved underlay multicast subnet
+	// (ff04::/64, within admin-local scope ff04::/16) with UNDERLAY_EXTERNAL tag.
+	// This determines whether decap/bitmap processing should occur.
+	//
+	// Uses a table rather than inline control flow due to Tofino PHV input
+	// limits on complex conditions.
 	table mcast_tag_check {
 		key = {
 			hdr.ipv6.isValid(): exact;
@@ -1866,22 +1908,10 @@ control MulticastEgress (
 		actions = { NoAction; }
 
 		const entries = {
-			// Admin-local (scope value 4): Matches IPv6 multicast addresses
-			// with scope ff04::/16
-			( true, IPV6_ADMIN_LOCAL_PATTERN &&& IPV6_SCOPE_MASK, true, true, 2 ) : NoAction;
-			// Site-local (scope value 5): Matches IPv6 multicast addresses with
-			// scope ff05::/16
-			( true, IPV6_SITE_LOCAL_PATTERN &&& IPV6_SCOPE_MASK, true, true, 2 ) : NoAction;
-			// Organization-local (scope value 8): Matches IPv6 multicast
-			// addresses with scope ff08::/16
-			( true, IPV6_ORG_SCOPE_PATTERN &&& IPV6_SCOPE_MASK, true, true, 2 ) : NoAction;
-			// ULA (Unique Local Address): Matches IPv6 addresses that start
-			// with fc00::/7. This is not a multicast address, but it is used
-			// for other internal routing purposes.
- 			( true, IPV6_ULA_PATTERN &&& IPV6_ULA_MASK, true, true, 2 ) : NoAction;
+			( true, IPV6_UNDERLAY_MULTICAST_PATTERN &&& IPV6_UNDERLAY_MASK, true, true, MULTICAST_TAG_UNDERLAY_EXTERNAL ) : NoAction;
 		}
 
-		const size = 4;
+		const size = 1;
 	}
 
 	table tbl_decap_ports {
