@@ -2,9 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,14 @@ impl From<u8> for LinkId {
 impl fmt::Display for LinkId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for LinkId {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<u8>().map(LinkId)
     }
 }
 
