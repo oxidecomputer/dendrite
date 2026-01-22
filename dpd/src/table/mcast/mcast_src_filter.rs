@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Table operations for multicast source filter entries.
 
@@ -15,7 +15,7 @@ use crate::{Switch, table::*};
 
 use aal::{ActionParse, MatchParse};
 use aal_macros::*;
-use oxnet::Ipv4Net;
+use oxnet::{Ipv4Net, Ipv6Net};
 use slog::debug;
 
 /// IPv4 Table for multicast source filter entries.
@@ -46,12 +46,13 @@ impl fmt::Display for Ipv4MatchKey {
 
 #[derive(MatchParse, Hash)]
 struct Ipv6MatchKey {
-    src_addr: Ipv6Addr,
+    #[match_xlate(name = "src_addr", type = "lpm")]
+    src_addr: Ipv6Net,
     dst_addr: Ipv6Addr,
 }
 
 impl Ipv6MatchKey {
-    fn new(src_addr: Ipv6Addr, dst_addr: Ipv6Addr) -> Self {
+    fn new(src_addr: Ipv6Net, dst_addr: Ipv6Addr) -> Self {
         Self { src_addr, dst_addr }
     }
 }
@@ -125,7 +126,7 @@ pub(crate) fn reset_ipv4(s: &Switch) -> DpdResult<()> {
 /// `src_addr, dst_addr -> allow_source_mcastv6`.
 pub(crate) fn add_ipv6_entry(
     s: &Switch,
-    src_addr: Ipv6Addr,
+    src_addr: Ipv6Net,
     dst_addr: Ipv6Addr,
 ) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(src_addr, dst_addr);
@@ -140,7 +141,7 @@ pub(crate) fn add_ipv6_entry(
 /// `src_addr, dst_addr`.
 pub(crate) fn del_ipv6_entry(
     s: &Switch,
-    src_addr: Ipv6Addr,
+    src_addr: Ipv6Net,
     dst_addr: Ipv6Addr,
 ) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(src_addr, dst_addr);

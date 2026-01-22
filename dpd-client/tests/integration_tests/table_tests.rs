@@ -14,10 +14,14 @@ use oxnet::Ipv4Net;
 use oxnet::Ipv6Net;
 use reqwest::StatusCode;
 
-use crate::integration_tests::common::prelude::*;
 use dpd_client::ClientInfo;
 use dpd_client::ResponseValue;
 use dpd_client::types;
+
+use crate::integration_tests::common::prelude::*;
+
+/// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
+const ADMIN_LOCAL_PREFIX: u16 = 0xFF04;
 
 // The expected sizes of each table.  The values are copied from constants.p4.
 //
@@ -31,16 +35,16 @@ use dpd_client::types;
 // oximeter, which will let this test query dpd for the table size rather than
 // hardcoding it below.
 //
-// The LPM tables are packed using a cuckoo hash algorithm.  The conflict
+// The LPM tables are packed using a cuckoo hash algorithm. The conflict
 // resolution approach can result in some slots not being available for some
-// patterns of entries.  Exactly which tables and which entries are unavailable
-// can change depending on table layout on the ASIC.  All of this means that it
+// patterns of entries. Exactly which tables and which entries are unavailable
+// can change depending on table layout on the ASIC. All of this means that it
 // is normal for these table sizes to change slightly after updating the P4
-// code.  If the table size appears to change dramatically, that's worth
-// investigating.  If it only changes by an entry or two, it's fine to just
+// code. If the table size appears to change dramatically, that's worth
+// investigating. If it only changes by an entry or two, it's fine to just
 // adjust the constant below to match the observed result.
 //
-const IPV4_LPM_SIZE: usize = 8124; // ipv4 forwarding table
+const IPV4_LPM_SIZE: usize = 8182; // ipv4 forwarding table
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports
@@ -49,7 +53,7 @@ const IPV6_NAT_TABLE_SIZE: usize = 1024; // nat routing table
 const IPV4_ARP_SIZE: usize = 512; // arp cache
 const IPV6_NEIGHBOR_SIZE: usize = 512; // ipv6 neighbor cache
 /// The size of the multicast table related to replication on
-/// admin-scoped (internal) multicast groups.
+/// admin-local (internal) multicast groups.
 const MULTICAST_TABLE_SIZE: usize = 1024;
 const MCAST_TAG: &str = "mcast_table_test"; // multicast group tag
 
@@ -74,16 +78,11 @@ fn gen_ipv6_cidr(idx: usize) -> Ipv6Net {
     Ipv6Net::new(gen_ipv6_addr(idx), 128).unwrap()
 }
 
-// Generates valid IPv6 multicast addresses that are admin-scoped.
+// Generates valid IPv6 multicast addresses that are admin-local (scope 4).
 fn gen_ipv6_multicast_addr(idx: usize) -> Ipv6Addr {
-    // Use admin-scoped multicast addresses (ff04::/16, ff05::/16, ff08::/16)
+    // Use admin-local multicast addresses (ff04::/16)
     // This ensures they will be created as internal groups
-    let scope = match idx % 3 {
-        0 => 0xFF04, // admin-scoped
-        1 => 0xFF05, // admin-scoped
-        _ => 0xFF08, // admin-scoped
-    };
-    Ipv6Addr::new(scope, 0, 0, 0, 0, 0, 0, (1000 + idx) as u16)
+    Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, (1000 + idx) as u16)
 }
 
 // For each table we want to test, we define functions to insert, delete, and
@@ -296,7 +295,7 @@ impl TableTest for types::Ipv4Nat {
         let external_ip = Ipv4Addr::new(192, 168, 0, 1);
 
         let tgt = types::NatTarget {
-            internal_ip: Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 1),
+            internal_ip: Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 1),
             inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             vni: 0.into(),
         };
@@ -464,12 +463,12 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
         let (port_id1, link_id1) = switch.link_id(PhysPort(11)).unwrap();
         let (port_id2, link_id2) = switch.link_id(PhysPort(12)).unwrap();
 
-        // Only IPv6 admin-scoped multicast addresses for replication table testing
+        // Only IPv6 admin-local multicast addresses for replication table testing
         let group_ip = gen_ipv6_multicast_addr(idx);
 
-        // Admin-scoped IPv6 groups are internal with replication info and members
+        // Admin-local IPv6 groups are internal with replication info and members
         let internal_entry = types::MulticastGroupCreateUnderlayEntry {
-            group_ip: types::AdminScopedIpv6(group_ip),
+            group_ip: types::UnderlayMulticastIpv6(group_ip),
             tag: Some(MCAST_TAG.to_string()),
             members: vec![
                 types::MulticastGroupMember {
@@ -489,14 +488,19 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let ip = IpAddr::V6(gen_ipv6_multicast_addr(idx));
-        switch.client.multicast_group_delete(&ip).await
+        let del_tag: types::MulticastTag =
+            MCAST_TAG.parse().expect("tag should parse");
+        switch.client.multicast_group_delete(&ip, &del_tag).await
     }
 
     async fn count_entries(switch: &Switch) -> usize {
         // Count only underlay groups with our test tag (since this tests replication table capacity)
         switch
             .client
-            .multicast_groups_list_by_tag_stream(MCAST_TAG, None)
+            .multicast_groups_list_by_tag_stream(
+                &MCAST_TAG.parse::<types::MulticastTag>().unwrap(),
+                None,
+            )
             .try_collect::<Vec<_>>()
             .await
             .expect("Should be able to list groups by tag paginated")
