@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Multicast table operations.
 
@@ -53,5 +53,87 @@ impl Ipv6MatchKey {
 impl fmt::Display for Ipv6MatchKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.dst_addr)
+    }
+}
+
+/// VLAN-aware match key for NAT ingress tables.
+///
+/// Matches on destination address, VLAN header validity, and VLAN ID to prevent
+/// VLAN translation. For groups with a VLAN, two entries are installed (untagged
+/// and tagged), packets with a mismatched VLAN miss both and are dropped rather
+/// than being translated to another customer's VLAN.
+#[derive(MatchParse, Hash)]
+pub(super) struct Ipv4VlanMatchKey {
+    dst_addr: Ipv4Addr,
+    #[match_xlate(name = "$valid")]
+    vlan_valid: bool,
+    vlan_id: u16,
+}
+
+impl Ipv4VlanMatchKey {
+    pub(super) fn new(dst_addr: Ipv4Addr, vlan_id: Option<u16>) -> Self {
+        match vlan_id {
+            Some(id) => Self {
+                dst_addr,
+                vlan_valid: true,
+                vlan_id: id,
+            },
+            None => Self {
+                dst_addr,
+                vlan_valid: false,
+                vlan_id: 0,
+            },
+        }
+    }
+}
+
+impl fmt::Display for Ipv4VlanMatchKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.vlan_valid {
+            write!(f, "{} vlan={}", self.dst_addr, self.vlan_id)
+        } else {
+            write!(f, "{} untagged", self.dst_addr)
+        }
+    }
+}
+
+/// VLAN-aware match key for NAT ingress tables.
+///
+/// Matches on destination address, VLAN header validity, and VLAN ID to prevent
+/// VLAN translation. For groups with a VLAN, two entries are installed (untagged
+/// and tagged), packets with a mismatched VLAN miss both and are dropped rather
+/// than being translated to another customer's VLAN.
+#[derive(MatchParse, Hash)]
+pub(super) struct Ipv6VlanMatchKey {
+    dst_addr: Ipv6Addr,
+    #[match_xlate(name = "$valid")]
+    vlan_valid: bool,
+    vlan_id: u16,
+}
+
+impl Ipv6VlanMatchKey {
+    pub(super) fn new(dst_addr: Ipv6Addr, vlan_id: Option<u16>) -> Self {
+        match vlan_id {
+            Some(id) => Self {
+                dst_addr,
+                vlan_valid: true,
+                vlan_id: id,
+            },
+            None => Self {
+                dst_addr,
+                vlan_valid: false,
+                vlan_id: 0,
+            },
+        }
+    }
+}
+
+impl fmt::Display for Ipv6VlanMatchKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.vlan_valid {
+            write!(f, "{} vlan={}", self.dst_addr, self.vlan_id)
+        } else {
+            write!(f, "{} untagged", self.dst_addr)
+        }
     }
 }
