@@ -4,13 +4,22 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+//! Multicast address validation.
+//!
+//! Reserved multicast addresses are defined by IANA:
+//! <https://www.iana.org/assignments/multicast-addresses/multicast-addresses.xhtml>.
 
-use common::network::NatTarget;
-use oxnet::{Ipv4Net, Ipv6Net};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use super::IpSrc;
 use crate::types::{DpdError, DpdResult};
+use common::network::NatTarget;
+use omicron_common::address::{
+    IPV4_LINK_LOCAL_MULTICAST_SUBNET, IPV4_SSM_SUBNET,
+    IPV6_INTERFACE_LOCAL_MULTICAST_SUBNET, IPV6_LINK_LOCAL_MULTICAST_SUBNET,
+    IPV6_RESERVED_SCOPE_MULTICAST_SUBNET, IPV6_SSM_SUBNET,
+    UNDERLAY_MULTICAST_SUBNET,
+};
 
 /// Check if an IP address is unicast (emulating the unstable std::net API).
 /// For IP addresses, unicast means simply "not multicast".
@@ -35,22 +44,23 @@ pub(crate) fn validate_multicast_address(
     }
 }
 
-/// Validates the NAT target inner MAC address.
+/// Validates the NAT target inner MAC and internal IP address.
+///
+/// NAT targets must use addresses from the reserved underlay multicast subnet
+/// (ff04::/64) which is allocated by Omicron for internal multicast routing.
 pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
     if !nat_target.inner_mac.is_multicast() {
         return Err(DpdError::Invalid(format!(
-            "NAT target inner MAC address {} is not a multicast MAC address",
-            nat_target.inner_mac
+            "NAT target inner MAC address {inner_mac} is not a multicast MAC address",
+            inner_mac = nat_target.inner_mac
         )));
     }
 
-    let internal_nat_ip = Ipv6Net::new_unchecked(nat_target.internal_ip, 128);
-
-    if !internal_nat_ip.is_admin_scoped_multicast() {
+    if !UNDERLAY_MULTICAST_SUBNET.contains(nat_target.internal_ip) {
         return Err(DpdError::Invalid(format!(
-            "NAT target internal IP address {} is not a valid \
-             site/admin-local or org-scoped multicast address",
-            nat_target.internal_ip
+            "NAT target internal IP address {internal_ip} is not in the reserved \
+             underlay multicast subnet (ff04::/64)",
+            internal_ip = nat_target.internal_ip
         )));
     }
 
@@ -60,16 +70,8 @@ pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
 /// Check if an IP address is a Source-Specific Multicast (SSM) address.
 pub(crate) fn is_ssm(addr: IpAddr) -> bool {
     match addr {
-        IpAddr::V4(ipv4) => {
-            let subnet = Ipv4Net::new_unchecked(Ipv4Addr::new(232, 0, 0, 0), 8);
-            subnet.contains(ipv4)
-        }
-        // Check for Source-Specific Multicast (ff3x::/32)
-        // In IPv6 multicast, the second nibble (flag field) indicates SSM when set to 3
-        IpAddr::V6(ipv6) => {
-            let flag_field = (ipv6.octets()[1] & 0xF0) >> 4;
-            flag_field == 3
-        }
+        IpAddr::V4(ipv4) => IPV4_SSM_SUBNET.contains(ipv4),
+        IpAddr::V6(ipv6) => IPV6_SSM_SUBNET.contains(ipv6),
     }
 }
 
@@ -93,44 +95,13 @@ fn validate_ipv4_multicast(
                  requires at least one source to be defined",
             )));
         }
-        // If sources are defined for an SSM address, it's valid
         return Ok(());
-    } else if sources.is_some() && !sources.unwrap().is_empty() {
-        // If this is not SSM but sources are defined, it's invalid
-        return Err(DpdError::Invalid(format!(
-            "{addr} is not a Source-Specific Multicast address but sources were provided",
-        )));
     }
-
-    // Define reserved IPv4 multicast subnets
-    let reserved_subnets = [
-        // Local network control block (link-local)
-        Ipv4Net::new_unchecked(Ipv4Addr::new(224, 0, 0, 0), 24), // 224.0.0.0/24
-        // GLOP addressing
-        Ipv4Net::new_unchecked(Ipv4Addr::new(233, 0, 0, 0), 8), // 233.0.0.0/8
-        // Administrative scoped addresses
-        Ipv4Net::new_unchecked(Ipv4Addr::new(239, 0, 0, 0), 8), // 239.0.0.0/8 (administratively scoped)
-    ];
 
     // Check reserved subnets
-    for subnet in &reserved_subnets {
-        if subnet.contains(addr) {
-            return Err(DpdError::Invalid(format!(
-                "{addr} is in the reserved multicast subnet {subnet}",
-            )));
-        }
-    }
-
-    // Check specific reserved addresses that may not fall within entire subnets
-    let specific_reserved = [
-        Ipv4Addr::new(224, 0, 1, 1), // NTP (Network Time Protocol)
-        Ipv4Addr::new(224, 0, 1, 129), // Cisco Auto-RP-Announce
-        Ipv4Addr::new(224, 0, 1, 130), // Cisco Auto-RP-Discovery
-    ];
-
-    if specific_reserved.contains(&addr) {
+    if IPV4_LINK_LOCAL_MULTICAST_SUBNET.contains(addr) {
         return Err(DpdError::Invalid(format!(
-            "{addr} is a specifically reserved multicast address",
+            "{addr} is in the reserved link-local multicast subnet",
         )));
     }
 
@@ -156,26 +127,16 @@ fn validate_ipv6_multicast(
                  and requires at least one source to be defined",
             )));
         }
-        // If sources are defined for an IPv6 SSM address, it's valid
         return Ok(());
-    } else if sources.is_some() && !sources.unwrap().is_empty() {
-        // If this is not SSM but sources are defined, it's invalid
-        return Err(DpdError::Invalid(format!(
-            "{addr} is not a Source-Specific Multicast address but sources were provided",
-        )));
     }
 
-    // Define reserved IPv6 multicast subnets
+    // Check reserved subnets
     let reserved_subnets = [
-        // Link-local scope
-        Ipv6Net::new_unchecked(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0), 16), // ff02::/16
-        // Interface-local scope
-        Ipv6Net::new_unchecked(Ipv6Addr::new(0xff01, 0, 0, 0, 0, 0, 0, 0), 16), // ff01::/16
-        // Node-local scope (deprecated)
-        Ipv6Net::new_unchecked(Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 0), 16), // ff00::/16
+        IPV6_LINK_LOCAL_MULTICAST_SUBNET,
+        IPV6_INTERFACE_LOCAL_MULTICAST_SUBNET,
+        IPV6_RESERVED_SCOPE_MULTICAST_SUBNET,
     ];
 
-    // Check reserved subnets
     for subnet in &reserved_subnets {
         if subnet.contains(addr) {
             return Err(DpdError::Invalid(format!(
@@ -187,14 +148,19 @@ fn validate_ipv6_multicast(
     Ok(())
 }
 
-/// Validates that IPv6 addresses are not admin-scoped for external group creation.
-pub(crate) fn validate_not_admin_scoped_ipv6(addr: IpAddr) -> DpdResult<()> {
+/// Validates that IPv6 addresses are not in the reserved underlay subnet.
+///
+/// External groups may use admin-local addresses (ff04::/16) but not the
+/// reserved underlay subnet (ff04::/64), which is used for internal underlay
+/// multicast group allocation.
+pub(crate) fn validate_not_underlay_subnet(addr: IpAddr) -> DpdResult<()> {
     if let IpAddr::V6(ipv6) = addr
-        && oxnet::Ipv6Net::new_unchecked(ipv6, 128).is_admin_scoped_multicast()
+        && UNDERLAY_MULTICAST_SUBNET.contains(ipv6)
     {
         return Err(DpdError::Invalid(format!(
-            "{addr} is an admin-scoped multicast address and \
-                 must be created via the internal multicast API",
+            "{addr} is in the reserved underlay multicast subnet (ff04::/64, \
+             within admin-local scope ff04::/16) and must be created via the \
+             internal multicast API",
         )));
     }
     Ok(())
@@ -212,7 +178,7 @@ pub(crate) fn validate_source_addresses(
     for source in sources {
         match source {
             IpSrc::Exact(ip) => validate_exact_source_address(*ip)?,
-            IpSrc::Subnet(subnet) => validate_ipv4_source_subnet(*subnet)?,
+            IpSrc::Any => {} // Any-source is always valid
         }
     }
     Ok(())
@@ -263,25 +229,58 @@ fn validate_ipv6_source_address(ipv6: Ipv6Addr) -> DpdResult<()> {
     Ok(())
 }
 
-/// Validates IPv4 source subnets for problematic address ranges.
-fn validate_ipv4_source_subnet(subnet: Ipv4Net) -> DpdResult<()> {
-    let addr = subnet.addr();
+/// Maximum length for multicast group tags.
+///
+/// Keep in sync with Omicron's database schema column type for multicast group
+/// tags. This is sized to accommodate the auto-generated format
+/// `{uuid}:{group_ip}` for both IPv4 and IPv6 group IPs.
+const MAX_TAG_LENGTH: usize = 80;
 
-    // Reject subnets that contain multicast addresses
-    if addr.is_multicast() {
+/// Validates tag format for group creation.
+///
+/// Tags must be 1-80 ASCII bytes containing only alphanumeric characters,
+/// hyphens, underscores, colons, or periods.
+///
+/// This character set is compatible with URL path segments, though colons are
+/// RFC 3986 reserved characters and may require percent-encoding in some HTTP
+/// client contexts.
+///
+/// Auto-generated tags use the format `{uuid}:{group_ip}`.
+pub(crate) fn validate_tag_format(tag: &str) -> DpdResult<()> {
+    if tag.is_empty() {
+        return Err(DpdError::Invalid("tag cannot be empty".to_string()));
+    }
+    if tag.len() > MAX_TAG_LENGTH {
         return Err(DpdError::Invalid(format!(
-            "Source subnet {subnet} contains multicast addresses and cannot be used as a source filter",
+            "tag cannot exceed {MAX_TAG_LENGTH} bytes"
         )));
     }
-
-    // Reject subnets with loopback or broadcast addresses
-    if addr.is_loopback() || addr.is_broadcast() {
-        return Err(DpdError::Invalid(format!(
-            "Source subnet {subnet} contains invalid address types \
-             (loopback/broadcast) for source filtering",
-        )));
+    if !tag.bytes().all(|b| {
+        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'.')
+    }) {
+        return Err(DpdError::Invalid(
+            "tag must contain only ASCII alphanumeric characters, hyphens, \
+             underscores, colons, or periods"
+                .to_string(),
+        ));
     }
+    Ok(())
+}
 
+/// Validates that the request tag matches the existing group's tag.
+///
+/// Tags are immutable after group creation. This validation ensures the caller
+/// created the group before allowing mutations.
+pub(crate) fn validate_tag(
+    existing_tag: &str,
+    request_tag: &str,
+) -> DpdResult<()> {
+    if request_tag != existing_tag {
+        return Err(DpdError::Invalid(
+            "tag mismatch: provided tag does not match the group's tag"
+                .to_string(),
+        ));
+    }
     Ok(())
 }
 
@@ -289,9 +288,9 @@ fn validate_ipv4_source_subnet(subnet: Ipv4Net) -> DpdResult<()> {
 mod tests {
     use super::*;
     use common::network::{MacAddr, Vni};
-    use oxnet::Ipv4Net;
 
-    use std::str::FromStr;
+    /// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
+    const ADMIN_LOCAL_PREFIX: u16 = 0xff04;
 
     #[test]
     fn test_ipv4_validation() {
@@ -370,89 +369,67 @@ mod tests {
 
     #[test]
     fn test_ipv4_ssm_with_sources() {
-        // Create test data for source specifications
         let ssm_addr = Ipv4Addr::new(232, 1, 2, 3);
-        let non_ssm_addr = Ipv4Addr::new(224, 1, 2, 3);
+        let asm_addr = Ipv4Addr::new(224, 1, 2, 3);
 
-        // Test with exact source IP
         let exact_sources =
             vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))];
+        let any_source = vec![IpSrc::Any];
 
-        // Test with subnet source specification
-        let subnet_sources =
-            vec![IpSrc::Subnet(Ipv4Net::from_str("192.168.1.0/24").unwrap())];
-
-        // Test with mixed source specifications
-        let mixed_sources = vec![
-            IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
-            IpSrc::Subnet(Ipv4Net::from_str("10.0.0.0/8").unwrap()),
-        ];
-
-        // Empty sources - should fail for SSM
+        // SSM requires sources
         assert!(validate_ipv4_multicast(ssm_addr, Some(&[])).is_err());
+        assert!(validate_ipv4_multicast(ssm_addr, None).is_err());
 
-        // SSM address with exact source - should pass
+        // SSM with exact source
         assert!(
             validate_ipv4_multicast(ssm_addr, Some(&exact_sources)).is_ok()
         );
 
-        // SSM address with subnet source - should pass
-        assert!(
-            validate_ipv4_multicast(ssm_addr, Some(&subnet_sources)).is_ok()
-        );
+        // SSM with any-source
+        assert!(validate_ipv4_multicast(ssm_addr, Some(&any_source)).is_ok());
 
-        // SSM address with mixed sources - should pass
-        assert!(
-            validate_ipv4_multicast(ssm_addr, Some(&mixed_sources)).is_ok()
-        );
+        // ASM without sources
+        assert!(validate_ipv4_multicast(asm_addr, None).is_ok());
+        assert!(validate_ipv4_multicast(asm_addr, Some(&[])).is_ok());
 
-        // Non-SSM address with sources - should fail as source specs only allowed for SSM
+        // ASM with sources
         assert!(
-            validate_ipv4_multicast(non_ssm_addr, Some(&exact_sources))
-                .is_err()
+            validate_ipv4_multicast(asm_addr, Some(&exact_sources)).is_ok()
         );
-        assert!(
-            validate_ipv4_multicast(non_ssm_addr, Some(&subnet_sources))
-                .is_err()
-        );
-        assert!(
-            validate_ipv4_multicast(non_ssm_addr, Some(&mixed_sources))
-                .is_err()
-        );
-
-        // Non-SSM address without sources - should pass
-        assert!(validate_ipv4_multicast(non_ssm_addr, None).is_ok());
-        assert!(validate_ipv4_multicast(non_ssm_addr, Some(&[])).is_ok());
+        assert!(validate_ipv4_multicast(asm_addr, Some(&any_source)).is_ok());
     }
 
     #[test]
     fn test_ipv6_ssm_with_sources() {
-        // IPv6 SSM addresses (ff3x::/32)
-        let ssm_global = Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0, 0x1234); // Global scope (e)
-        let non_ssm_global = Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 0x1234); // Non-SSM global
+        let ssm_addr = Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0, 0x1234);
+        let asm_addr = Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 0x1234);
 
-        // Create test sources for IPv6
-        let ip6_sources = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
+        let exact_sources = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
             0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x1,
         )))];
+        let any_source = vec![IpSrc::Any];
 
-        // Empty sources - should fail for SSM
-        assert!(validate_ipv6_multicast(ssm_global, Some(&[])).is_err());
+        // SSM requires sources
+        assert!(validate_ipv6_multicast(ssm_addr, Some(&[])).is_err());
+        assert!(validate_ipv6_multicast(ssm_addr, None).is_err());
 
-        // SSM address with IPv6 source - should pass
+        // SSM with exact source
         assert!(
-            validate_ipv6_multicast(ssm_global, Some(&ip6_sources)).is_ok()
+            validate_ipv6_multicast(ssm_addr, Some(&exact_sources)).is_ok()
         );
 
-        // Non-SSM address with IPv6 source - should fail
-        assert!(
-            validate_ipv6_multicast(non_ssm_global, Some(&ip6_sources))
-                .is_err()
-        );
+        // SSM with any-source
+        assert!(validate_ipv6_multicast(ssm_addr, Some(&any_source)).is_ok());
 
-        // Non-SSM address without sources - should pass
-        assert!(validate_ipv6_multicast(non_ssm_global, None).is_ok());
-        assert!(validate_ipv6_multicast(non_ssm_global, Some(&[])).is_ok());
+        // ASM without sources
+        assert!(validate_ipv6_multicast(asm_addr, None).is_ok());
+        assert!(validate_ipv6_multicast(asm_addr, Some(&[])).is_ok());
+
+        // ASM with sources
+        assert!(
+            validate_ipv6_multicast(asm_addr, Some(&exact_sources)).is_ok()
+        );
+        assert!(validate_ipv6_multicast(asm_addr, Some(&any_source)).is_ok());
     }
 
     #[test]
@@ -499,7 +476,7 @@ mod tests {
         // Valid IPv4 SSM address with sources
         let sources = vec![
             IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
-            IpSrc::Subnet(Ipv4Net::from_str("10.0.0.0/8").unwrap()),
+            IpSrc::Any,
         ];
         assert!(
             validate_multicast_address(
@@ -550,13 +527,13 @@ mod tests {
             .is_err()
         );
 
-        // IPv4 non-SSM with sources
+        // IPv4 ASM with sources
         assert!(
             validate_multicast_address(
                 IpAddr::V4(Ipv4Addr::new(224, 1, 2, 3)),
                 Some(&sources)
             )
-            .is_err()
+            .is_ok()
         );
 
         // IPv6 SSM without sources
@@ -568,36 +545,60 @@ mod tests {
             .is_err()
         );
 
-        // IPv6 non-SSM with sources
+        // IPv6 ASM with sources
         assert!(
             validate_multicast_address(
                 IpAddr::V6(Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 0x1234)),
                 Some(&ip6_sources)
             )
-            .is_err()
+            .is_ok()
         );
     }
 
     #[test]
     fn test_validate_nat_target() {
+        // Unicast internal IP should be rejected
         let ucast_nat_target = NatTarget {
             internal_ip: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
-            // Not a multicast MAC
             inner_mac: MacAddr::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x01),
             vni: Vni::new(100).unwrap(),
         };
-
         assert!(validate_nat_target(ucast_nat_target).is_err());
 
-        let mcast_nat_target = NatTarget {
-            // org-scoped multicast
-            internal_ip: Ipv6Addr::new(0xff08, 0, 0, 0, 0, 0, 0, 0x1234),
-            // Multicast MAC
+        // Valid NAT target in reserved underlay subnet (ff04::/64)
+        let valid_nat_target = NatTarget {
+            internal_ip: Ipv6Addr::new(
+                ADMIN_LOCAL_PREFIX,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0x1234,
+            ),
             inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x00, 0x00, 0x01),
             vni: Vni::new(100).unwrap(),
         };
+        assert!(validate_nat_target(valid_nat_target).is_ok());
 
-        assert!(validate_nat_target(mcast_nat_target).is_ok());
+        // Admin-local address outside ff04::/64 should be rejected
+        // ff04:0:0:1::1234 is in ff04::/16 but not in ff04::/64
+        let outside_underlay_nat_target = NatTarget {
+            internal_ip: Ipv6Addr::new(
+                ADMIN_LOCAL_PREFIX,
+                0,
+                0,
+                1, // This puts it outside ff04::/64
+                0,
+                0,
+                0,
+                0x1234,
+            ),
+            inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x00, 0x00, 0x01),
+            vni: Vni::new(100).unwrap(),
+        };
+        assert!(validate_nat_target(outside_underlay_nat_target).is_err());
     }
 
     #[test]
@@ -615,12 +616,9 @@ mod tests {
         )))];
         assert!(validate_source_addresses(Some(&valid_ipv6_sources)).is_ok());
 
-        // Valid subnet sources
-        let valid_subnet_sources = vec![
-            IpSrc::Subnet(Ipv4Net::from_str("192.168.1.0/24").unwrap()),
-            IpSrc::Subnet(Ipv4Net::from_str("10.0.0.0/8").unwrap()),
-        ];
-        assert!(validate_source_addresses(Some(&valid_subnet_sources)).is_ok());
+        // Any-source is valid
+        let any_source = vec![IpSrc::Any];
+        assert!(validate_source_addresses(Some(&any_source)).is_ok());
 
         // Invalid multicast IPv4 source
         let invalid_mcast_ipv4 =
@@ -653,20 +651,6 @@ mod tests {
             validate_source_addresses(Some(&invalid_loopback_ipv6)).is_err()
         );
 
-        // Invalid multicast subnet
-        let invalid_mcast_subnet =
-            vec![IpSrc::Subnet(Ipv4Net::from_str("224.0.0.0/24").unwrap())];
-        assert!(
-            validate_source_addresses(Some(&invalid_mcast_subnet)).is_err()
-        );
-
-        // Invalid loopback subnet
-        let invalid_loopback_subnet =
-            vec![IpSrc::Subnet(Ipv4Net::from_str("127.0.0.0/8").unwrap())];
-        assert!(
-            validate_source_addresses(Some(&invalid_loopback_subnet)).is_err()
-        );
-
         // No sources should be valid
         assert!(validate_source_addresses(None).is_ok());
 
@@ -676,8 +660,6 @@ mod tests {
 
     #[test]
     fn test_address_validation_with_source_validation() {
-        // Test that multicast address validation now includes source validation
-
         // Valid case: SSM address with valid unicast sources
         let valid_sources =
             vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))];
@@ -718,5 +700,89 @@ mod tests {
                 .to_string()
                 .contains("is not a valid source address")
         );
+    }
+
+    #[test]
+    fn test_validate_not_underlay_subnet() {
+        // Reserved underlay subnet (ff04::/64) should be rejected
+        let underlay_addr =
+            IpAddr::V6(Ipv6Addr::new(0xff04, 0, 0, 0, 0, 0, 0, 1));
+        assert!(validate_not_underlay_subnet(underlay_addr).is_err());
+
+        // Another address in ff04::/64
+        let underlay_addr2 =
+            IpAddr::V6(Ipv6Addr::new(0xff04, 0, 0, 0, 0xdead, 0xbeef, 0, 1));
+        assert!(validate_not_underlay_subnet(underlay_addr2).is_err());
+
+        // Other admin-local /64s should be allowed (e.g., ff04:0:0:1::/64)
+        let other_admin_local =
+            IpAddr::V6(Ipv6Addr::new(0xff04, 0, 0, 1, 0, 0, 0, 1));
+        assert!(validate_not_underlay_subnet(other_admin_local).is_ok());
+
+        // ff04:0:0:2::/64 should also be allowed
+        let other_admin_local2 =
+            IpAddr::V6(Ipv6Addr::new(0xff04, 0, 0, 2, 0, 0, 0, 1));
+        assert!(validate_not_underlay_subnet(other_admin_local2).is_ok());
+
+        // IPv4 multicast should always be allowed (not in underlay subnet)
+        let ipv4_mcast = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 3));
+        assert!(validate_not_underlay_subnet(ipv4_mcast).is_ok());
+
+        // Non-admin-local IPv6 multicast should be allowed
+        let global_mcast =
+            IpAddr::V6(Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 1));
+        assert!(validate_not_underlay_subnet(global_mcast).is_ok());
+
+        // Site-local multicast should be allowed
+        let site_local = IpAddr::V6(Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 1));
+        assert!(validate_not_underlay_subnet(site_local).is_ok());
+    }
+
+    #[test]
+    fn test_validate_tag() {
+        // Existing tag matches request tag
+        assert!(validate_tag("my-tag", "my-tag").is_ok());
+
+        // Existing tag but request has different tag
+        assert!(validate_tag("owner-a", "owner-b").is_err());
+        assert!(validate_tag("owner-a", "").is_err());
+        assert!(validate_tag("owner-a", "tag/with/slashes").is_err());
+    }
+
+    #[test]
+    fn test_validate_tag_format() {
+        use super::validate_tag_format;
+
+        // Valid tags
+        assert!(validate_tag_format("my-tag").is_ok());
+        assert!(validate_tag_format("nexus").is_ok());
+        assert!(validate_tag_format("a1b2c3").is_ok());
+        assert!(validate_tag_format("tag_with_underscore").is_ok());
+        assert!(validate_tag_format("tag.with.periods").is_ok());
+        assert!(validate_tag_format("tag:with:colons").is_ok());
+        assert!(validate_tag_format("mixed-tag_v1.0:test").is_ok());
+
+        // Auto-generated tag format (uuid:ip)
+        assert!(
+            validate_tag_format(
+                "550e8400-e29b-41d4-a716-446655440000:224.1.2.3"
+            )
+            .is_ok()
+        );
+
+        // Tag at exactly MAX_TAG_LENGTH characters is valid
+        assert!(validate_tag_format(&"a".repeat(MAX_TAG_LENGTH)).is_ok());
+
+        // Empty tag rejected
+        assert!(validate_tag_format("").is_err());
+
+        // Tag exceeding MAX_TAG_LENGTH characters rejected
+        assert!(validate_tag_format(&"a".repeat(MAX_TAG_LENGTH + 1)).is_err());
+
+        // Invalid characters rejected
+        assert!(validate_tag_format("tag with spaces").is_err());
+        assert!(validate_tag_format("tag/with/slashes").is_err());
+        assert!(validate_tag_format("tag@with@at").is_err());
+        assert!(validate_tag_format("tag#with#hash").is_err());
     }
 }
