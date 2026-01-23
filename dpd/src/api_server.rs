@@ -2061,10 +2061,10 @@ impl DpdApi for DpdApiImpl {
 
     async fn multicast_group_update_underlay_v1(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<dpd_api::v5::MulticastUnderlayGroupIpParam>,
-        group: TypedBody<dpd_api::v5::MulticastGroupUpdateUnderlayEntry>,
+        path: Path<dpd_api::v1::MulticastUnderlayGroupIpParam>,
+        group: TypedBody<dpd_api::v1::MulticastGroupUpdateUnderlayEntry>,
     ) -> Result<
-        HttpResponseOk<dpd_api::v5::MulticastGroupUnderlayResponse>,
+        HttpResponseOk<dpd_api::v1::MulticastGroupUnderlayResponse>,
         HttpError,
     > {
         let switch: &Switch = rqctx.context();
@@ -2076,11 +2076,11 @@ impl DpdApi for DpdApiImpl {
                     format!("invalid group_ip: {e}"),
                 )
             })?;
-        let entry = group.into_inner();
+        let mut entry = group.into_inner();
 
         // Lookup current tag for backward compat (v1-v5 clients may omit tag)
-        let tag = match entry.tag.as_ref() {
-            Some(t) => t.clone(),
+        let tag = match entry.tag.take() {
+            Some(t) => t,
             None => {
                 mcast::get_group_internal(switch, underlay)
                     .map_err(HttpError::from)?
@@ -2131,11 +2131,11 @@ impl DpdApi for DpdApiImpl {
     > {
         let switch: &Switch = rqctx.context();
         let ip = path.into_inner().group_ip;
-        let entry = group.into_inner();
+        let mut entry = group.into_inner();
 
         // Lookup current tag for backward compat (v5 clients may omit tag)
-        let tag = match entry.tag.as_ref() {
-            Some(t) => t.clone(),
+        let tag = match entry.tag.take() {
+            Some(t) => t,
             None => mcast::get_group(switch, ip)
                 .map_err(HttpError::from)?
                 .tag()
@@ -2157,11 +2157,11 @@ impl DpdApi for DpdApiImpl {
     > {
         let switch: &Switch = rqctx.context();
         let ip = path.into_inner().group_ip;
-        let entry = group.into_inner();
+        let mut entry = group.into_inner();
 
         // Lookup current tag for backward compat (v1-v4 clients may omit tag)
-        let tag = match entry.tag.as_ref() {
-            Some(t) => t.clone(),
+        let tag = match entry.tag.take() {
+            Some(t) => t,
             None => mcast::get_group(switch, ip)
                 .map_err(HttpError::from)?
                 .tag()

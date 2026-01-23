@@ -20,9 +20,6 @@ use dpd_client::types;
 
 use crate::integration_tests::common::prelude::*;
 
-/// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
-const ADMIN_LOCAL_PREFIX: u16 = 0xFF04;
-
 // The expected sizes of each table.  The values are copied from constants.p4.
 //
 // Note: Some tables appear to be 1 entry smaller than the p4 code would
@@ -82,7 +79,16 @@ fn gen_ipv6_cidr(idx: usize) -> Ipv6Net {
 fn gen_ipv6_multicast_addr(idx: usize) -> Ipv6Addr {
     // Use admin-local multicast addresses (ff04::/16)
     // This ensures they will be created as internal groups
-    Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, (1000 + idx) as u16)
+    Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        (1000 + idx) as u16,
+    )
 }
 
 // For each table we want to test, we define functions to insert, delete, and
@@ -295,7 +301,16 @@ impl TableTest for types::Ipv4Nat {
         let external_ip = Ipv4Addr::new(192, 168, 0, 1);
 
         let tgt = types::NatTarget {
-            internal_ip: Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 1),
+            internal_ip: Ipv6Addr::new(
+                ADMIN_LOCAL_MULTICAST_PREFIX,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+            ),
             inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             vni: 0.into(),
         };

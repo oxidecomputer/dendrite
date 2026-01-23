@@ -1736,9 +1736,9 @@ pub trait DpdApi {
     }]
     async fn multicast_group_create_underlay_v1(
         rqctx: RequestContext<Self::Context>,
-        group: TypedBody<v5::MulticastGroupCreateUnderlayEntry>,
+        group: TypedBody<v1::MulticastGroupCreateUnderlayEntry>,
     ) -> Result<
-        HttpResponseCreated<v5::MulticastGroupUnderlayResponse>,
+        HttpResponseCreated<v1::MulticastGroupUnderlayResponse>,
         HttpError,
     > {
         let v4_body = group
@@ -1871,8 +1871,8 @@ pub trait DpdApi {
     }]
     async fn multicast_group_get_underlay_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<v5::MulticastUnderlayGroupIpParam>,
-    ) -> Result<HttpResponseOk<v5::MulticastGroupUnderlayResponse>, HttpError>
+        path: Path<v1::MulticastUnderlayGroupIpParam>,
+    ) -> Result<HttpResponseOk<v1::MulticastGroupUnderlayResponse>, HttpError>
     {
         let v4_path = path.try_map(|p| {
             mcast::UnderlayMulticastIpv6::try_from(p.group_ip)
@@ -1920,9 +1920,9 @@ pub trait DpdApi {
     }]
     async fn multicast_group_update_underlay_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<v5::MulticastUnderlayGroupIpParam>,
-        group: TypedBody<v5::MulticastGroupUpdateUnderlayEntry>,
-    ) -> Result<HttpResponseOk<v5::MulticastGroupUnderlayResponse>, HttpError>;
+        path: Path<v1::MulticastUnderlayGroupIpParam>,
+        group: TypedBody<v1::MulticastGroupUpdateUnderlayEntry>,
+    ) -> Result<HttpResponseOk<v1::MulticastGroupUnderlayResponse>, HttpError>;
 
     /**
      * Update an external-only multicast group configuration for a given group IP address.

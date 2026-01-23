@@ -19,9 +19,6 @@ use futures::TryStreamExt;
 use oxnet::MulticastMac;
 use packet::{Endpoint, eth, geneve, ipv4, ipv6, udp};
 
-/// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
-const ADMIN_LOCAL_PREFIX: u16 = 0xFF04;
-
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
 const MULTICAST_TEST_IPV6: Ipv6Addr =
     Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 1, 0x1010);
@@ -29,7 +26,7 @@ const MULTICAST_TEST_IPV4_SSM: Ipv4Addr = Ipv4Addr::new(232, 123, 45, 67);
 const MULTICAST_TEST_IPV6_SSM: Ipv6Addr =
     Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0, 0x1111);
 const MULTICAST_NAT_IP: Ipv6Addr =
-    Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 1);
+    Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 1);
 const GIMLET_MAC: &str = "11:22:33:44:55:66";
 const GIMLET_IP: Ipv6Addr =
     Ipv6Addr::new(0xfd00, 0x1122, 0x7788, 0x0101, 0, 0, 0, 4);
@@ -3419,7 +3416,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     .await;
 
     // 2b. Admin-local IPv6 group to test internal API with custom replication parameters
-    let ipv6 = Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 2);
+    let ipv6 = Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 2);
 
     let group_entry2b = types::MulticastGroupCreateUnderlayEntry {
         group_ip: types::UnderlayMulticastIpv6(ipv6),
@@ -4242,12 +4239,36 @@ async fn test_multicast_group_id_recycling() -> TestResult {
     let switch = &*get_switch().await;
 
     // Use admin-scoped IPv6 addresses that get group IDs assigned
-    let group1_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 10));
-    let group2_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 11));
-    let group3_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 12));
+    let group1_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        10,
+    ));
+    let group2_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        11,
+    ));
+    let group3_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        12,
+    ));
 
     // Create first group and capture its group IDs
     let group1 = create_test_multicast_group(
@@ -4335,8 +4356,16 @@ async fn test_multicast_group_id_recycling() -> TestResult {
         "Group2 should be deleted"
     );
 
-    let group4_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 13));
+    let group4_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        13,
+    ));
     let group4 = create_test_multicast_group(
         switch,
         group4_ip,
@@ -4364,8 +4393,16 @@ async fn test_multicast_group_id_recycling() -> TestResult {
 async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 100));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        100,
+    ));
     let external_group_ip =
         IpAddr::V6(Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 100));
 
@@ -4713,8 +4750,16 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
 async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 101));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        101,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 100));
 
     // Create internal admin-scoped group (empty, no members)
@@ -5060,8 +5105,16 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
 {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 102));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        102,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 102));
 
     // Create internal group with members first
@@ -5226,8 +5279,16 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
 async fn test_multicast_rollback_member_update_failure() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 103));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        103,
+    ));
 
     // Create internal group with initial members
     create_test_multicast_group(
@@ -5305,8 +5366,16 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
 async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 104));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        104,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 104));
 
     // Create internal group
@@ -5442,8 +5511,16 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
 async fn test_multicast_rollback_vlan_propagation_consistency() {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 105));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        105,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 105));
 
     // Create internal group with members (so bitmap entry get created)
@@ -5680,8 +5757,16 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
 async fn test_multicast_rollback_partial_member_addition() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 106));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        106,
+    ));
 
     // Create internal group with initial members
     create_test_multicast_group(
@@ -5778,8 +5863,16 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
 async fn test_multicast_rollback_table_operation_failure() {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 107));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        107,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 107));
 
     // Create internal group first
@@ -5911,8 +6004,16 @@ async fn test_multicast_rollback_table_operation_failure() {
 async fn test_multicast_group_get_underlay() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 200));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        200,
+    ));
 
     // Create an internal/underlay group
     let _created_group = create_test_multicast_group(
@@ -5996,8 +6097,16 @@ const SOURCE_FILTER_IPV6_TABLE: &str =
 async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0x300));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x300,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(239, 1, 1, 100));
 
     // Create internal group first
@@ -6107,8 +6216,16 @@ async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
 async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0x310));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x310,
+    ));
     // Non-admin-local IPv6 multicast address for external group
     let external_group_ip =
         IpAddr::V6(Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 0x100));
@@ -6219,8 +6336,16 @@ async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
 async fn test_source_filter_update_to_any() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0x301));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x301,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(239, 1, 1, 101));
 
     // Create internal group
@@ -6338,8 +6463,16 @@ async fn test_source_filter_update_to_any() -> TestResult {
 async fn test_source_filter_cleanup_on_delete() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0x302));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x302,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(239, 1, 1, 102));
 
     // Create internal group
@@ -6430,8 +6563,16 @@ async fn test_source_filter_cleanup_on_delete() -> TestResult {
 async fn test_source_filter_empty_vec_normalizes_to_any() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0x303));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x303,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(239, 1, 1, 103));
 
     // Create internal group
@@ -6527,7 +6668,7 @@ async fn test_update_nonexistent_group_returns_404() -> TestResult {
 
     // Case: Update non-existent underlay group
     let nonexistent_underlay: types::UnderlayMulticastIpv6 =
-        Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0xdead)
+        Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 0xdead)
             .try_into()
             .unwrap();
 
@@ -6626,7 +6767,7 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
     let switch = &*get_switch().await;
 
     let group_ip: types::UnderlayMulticastIpv6 =
-        Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0x501)
+        Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 0x501)
             .try_into()
             .unwrap();
     let tag = "recovery_flow_test";

@@ -20,13 +20,6 @@ use dpd_types::mcast::{
     ExternalForwarding, InternalForwarding, IpSrc, MulticastGroupId,
 };
 
-// Re-export underlay types from v1 (unchanged in v5)
-pub use crate::v1::AdminScopedIpv6;
-pub use crate::v1::MulticastGroupCreateUnderlayEntry;
-pub use crate::v1::MulticastGroupUnderlayResponse;
-pub use crate::v1::MulticastGroupUpdateUnderlayEntry;
-pub use crate::v1::MulticastUnderlayGroupIpParam;
-
 // External multicast types changed in v5 (use new IpSrc with Any variant)
 
 /// Response structure for external multicast group operations.
