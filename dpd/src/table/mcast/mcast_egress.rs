@@ -270,10 +270,9 @@ pub(crate) fn port_mapping_counter_fetch(
     )
 }
 
-/// Structure to hold and manipulate the 256-bit port bitmap.
+/// 256-port bitmap (8 × 32-bit) for multicast egress decapsulation filtering.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PortBitmap {
-    // 8 x 32-bit values representing all 256 ports
     ports: [u32; 8],
 }
 
@@ -291,27 +290,21 @@ impl PortBitmap {
         self.ports[array_idx] |= mask; // Set the bit
     }
 
-    /// Remove a port from the bitmap
+    /// Remove a port from the bitmap.
     #[allow(dead_code)]
-    pub(crate) fn remove_port(&mut self, port: u16) {
+    pub(crate) fn remove_port(&mut self, port: u8) {
         let array_idx = (port >> 5) as usize;
         let bit_pos = port & 0x1F;
         let mask = 1u32 << bit_pos;
-
-        self.ports[array_idx] &= !mask; // Clear the bit
+        self.ports[array_idx] &= !mask;
     }
 
-    /// Check if a port is in the bitmap
+    /// Check if a port is in the bitmap.
     #[allow(dead_code)]
-    fn contains_port(&self, port: u16) -> bool {
-        if port >= 256 {
-            return false;
-        }
-
+    pub(crate) fn contains_port(&self, port: u8) -> bool {
         let array_idx = (port >> 5) as usize;
         let bit_pos = port & 0x1F;
         let mask = 1u32 << bit_pos;
-
         (self.ports[array_idx] & mask) != 0
     }
 
@@ -365,9 +358,20 @@ mod tests {
         assert!(bitmap.contains_port(5));
         assert!(bitmap.contains_port(10));
         assert!(bitmap.contains_port(255));
-        assert!(!bitmap.contains_port(256));
 
         bitmap.remove_port(10);
         assert!(!bitmap.contains_port(10));
+
+        // Test boundary conditions
+        bitmap.add_port(0);
+        assert!(bitmap.contains_port(0));
+        bitmap.remove_port(0);
+        assert!(!bitmap.contains_port(0));
+
+        // Test port at 32-bit boundary
+        bitmap.add_port(32);
+        assert!(bitmap.contains_port(32));
+        bitmap.add_port(64);
+        assert!(bitmap.contains_port(64));
     }
 }

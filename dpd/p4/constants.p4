@@ -56,15 +56,12 @@ const bit<2> MULTICAST_TAG_EXTERNAL = 0;
 const bit<2> MULTICAST_TAG_UNDERLAY = 1;
 const bit<2> MULTICAST_TAG_UNDERLAY_EXTERNAL = 2;
 
-/* IPv6 Address Mask Constants */
-const bit<128> IPV6_SCOPE_MASK = 0xffff0000000000000000000000000000;  // Match ff00::/16
-const bit<128> IPV6_ULA_MASK = 0xff000000000000000000000000000000;     // Match fd00::/8
-
-/* IPv6 Address Pattern Constants */
-const bit<128> IPV6_ADMIN_LOCAL_PATTERN = 0xff040000000000000000000000000000;  // ff04::/16
-const bit<128> IPV6_SITE_LOCAL_PATTERN = 0xff050000000000000000000000000000;   // ff05::/16
-const bit<128> IPV6_ORG_SCOPE_PATTERN = 0xff080000000000000000000000000000;    // ff08::/16
-const bit<128> IPV6_ULA_PATTERN = 0xfd000000000000000000000000000000;          // fd00::/8
+/* IPv6 Address Mask and Pattern Constants */
+// Reserved underlay multicast subnet (ff04::/64). This /64 within admin-local
+// scope is reserved for internal underlay multicast allocation. Customer
+// external groups may use other admin-local /64s (e.g., ff04:0:0:1::/64).
+const bit<128> IPV6_UNDERLAY_MASK = 0xffffffffffffffff0000000000000000;  // /64 prefix mask
+const bit<128> IPV6_UNDERLAY_MULTICAST_PATTERN = 0xff040000000000000000000000000000;  // ff04::/64
 
 /* Reasons a packet may be dropped by the p4 pipeline */
 const bit<8> DROP_IPV4_SWITCH_ADDR_MISS         = 0x01;

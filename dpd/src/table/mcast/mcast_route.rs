@@ -14,7 +14,7 @@ use super::{Ipv4MatchKey, Ipv6MatchKey};
 
 use aal::ActionParse;
 use aal_macros::*;
-use oxnet::Ipv6Net;
+use omicron_common::address::UNDERLAY_MULTICAST_SUBNET;
 use slog::debug;
 
 /// IPv4 Table for multicast routing entries.
@@ -121,13 +121,12 @@ pub(crate) fn add_ipv6_entry(
     vlan_id: Option<u16>,
 ) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(route);
-    let internal_ip = Ipv6Net::new_unchecked(route, 128);
 
-    // Admin-scoped multicast and unique local addresses are internal to the rack
-    // and don't require VLAN tagging, so always use Forward action
-    let action_data: Ipv6Action = if internal_ip.is_admin_scoped_multicast()
-        || internal_ip.is_unique_local()
-    {
+    // Reserved underlay multicast subnet (ff04::/64) is internal to the rack
+    // and doesn't require VLAN tagging. Other admin-local addresses
+    // (e.g., ff04:0:0:1::/64) may be used by customer external groups and
+    // can receive VLAN tagging.
+    let action_data: Ipv6Action = if UNDERLAY_MULTICAST_SUBNET.contains(route) {
         Ipv6Action::Forward
     } else {
         match vlan_id {
@@ -151,13 +150,12 @@ pub(crate) fn update_ipv6_entry(
     vlan_id: Option<u16>,
 ) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(route);
-    let internal_ip = Ipv6Net::new_unchecked(route, 128);
 
-    // Admin-scoped multicast and unique local addresses are internal to the rack
-    // and don't require VLAN tagging, so always use Forward action
-    let action_data: Ipv6Action = if internal_ip.is_admin_scoped_multicast()
-        || internal_ip.is_unique_local()
-    {
+    // Reserved underlay multicast subnet (ff04::/64) is internal to the rack
+    // and doesn't require VLAN tagging. Other admin-local addresses
+    // (e.g., ff04:0:0:1::/64) may be used by customer external groups and
+    // can receive VLAN tagging.
+    let action_data: Ipv6Action = if UNDERLAY_MULTICAST_SUBNET.contains(route) {
         Ipv6Action::Forward
     } else {
         match vlan_id {

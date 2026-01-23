@@ -9,10 +9,11 @@
 use std::{
     fmt,
     net::{IpAddr, Ipv6Addr},
+    str::FromStr,
 };
 
 use common::{network::NatTarget, ports::PortId};
-use oxnet::{Ipv4Net, Ipv6Net};
+use omicron_common::address::UNDERLAY_MULTICAST_SUBNET;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -21,10 +22,11 @@ use crate::link::LinkId;
 /// Type alias for multicast group IDs.
 pub type MulticastGroupId = u16;
 
-/// A validated admin-scoped IPv6 multicast address.
+/// A validated underlay multicast IPv6 address.
 ///
-/// Admin-scoped addresses are ff04::/16, ff05::/16, or ff08::/16.
-/// These are used for internal/underlay multicast groups.
+/// Underlay multicast addresses must be within the subnet allocated by Omicron
+/// for rack-internal multicast traffic (ff04::/64). This is a subset of the
+/// admin-local scope (ff04::/16) defined in RFC 4291.
 #[derive(
     Clone,
     Copy,
@@ -39,19 +41,20 @@ pub type MulticastGroupId = u16;
     JsonSchema,
 )]
 #[serde(try_from = "Ipv6Addr", into = "Ipv6Addr")]
-pub struct AdminScopedIpv6(Ipv6Addr);
+pub struct UnderlayMulticastIpv6(Ipv6Addr);
 
-impl AdminScopedIpv6 {
-    /// Create a new AdminScopedIpv6 if the address is admin-scoped.
+impl UnderlayMulticastIpv6 {
+    /// Create a new UnderlayMulticastIpv6 if the address is within the
+    /// underlay multicast subnet (ff04::/64).
     pub fn new(addr: Ipv6Addr) -> Result<Self, Error> {
-        if !Ipv6Net::new_unchecked(addr, 128).is_admin_scoped_multicast() {
-            return Err(Error::InvalidIp(addr));
+        if !UNDERLAY_MULTICAST_SUBNET.contains(addr) {
+            return Err(Error::InvalidUnderlayMulticastIp(addr));
         }
         Ok(Self(addr))
     }
 }
 
-impl TryFrom<Ipv6Addr> for AdminScopedIpv6 {
+impl TryFrom<Ipv6Addr> for UnderlayMulticastIpv6 {
     type Error = Error;
 
     fn try_from(addr: Ipv6Addr) -> Result<Self, Self::Error> {
@@ -59,40 +62,54 @@ impl TryFrom<Ipv6Addr> for AdminScopedIpv6 {
     }
 }
 
-impl From<AdminScopedIpv6> for Ipv6Addr {
-    fn from(admin: AdminScopedIpv6) -> Self {
-        admin.0
+impl From<UnderlayMulticastIpv6> for Ipv6Addr {
+    fn from(addr: UnderlayMulticastIpv6) -> Self {
+        addr.0
     }
 }
 
-impl From<AdminScopedIpv6> for IpAddr {
-    fn from(admin: AdminScopedIpv6) -> Self {
-        IpAddr::V6(admin.0)
+impl From<UnderlayMulticastIpv6> for IpAddr {
+    fn from(addr: UnderlayMulticastIpv6) -> Self {
+        IpAddr::V6(addr.0)
     }
 }
 
-impl fmt::Display for AdminScopedIpv6 {
+impl fmt::Display for UnderlayMulticastIpv6 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
 
+impl FromStr for UnderlayMulticastIpv6 {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let addr: Ipv6Addr = s
+            .parse()
+            .map_err(|e| Error::InvalidIpv6Address(s.to_string(), e))?;
+        Self::new(addr)
+    }
+}
+
 /// Source filter match key for multicast traffic.
+///
+/// For SSM groups, use `Exact` with specific source addresses.
+/// For ASM groups with any-source filtering, use `Any`.
 #[derive(
     Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
 )]
 pub enum IpSrc {
     /// Exact match for the source IP address.
     Exact(IpAddr),
-    /// Subnet match for the source IP address.
-    Subnet(Ipv4Net),
+    /// Match any source address (0.0.0.0/0 or ::/0 depending on group IP version).
+    Any,
 }
 
 impl fmt::Display for IpSrc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             IpSrc::Exact(ip) => write!(f, "{ip}"),
-            IpSrc::Subnet(subnet) => write!(f, "{subnet}"),
+            IpSrc::Any => write!(f, "any"),
         }
     }
 }
@@ -101,7 +118,9 @@ impl fmt::Display for IpSrc {
 /// groups.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupCreateUnderlayEntry {
-    pub group_ip: AdminScopedIpv6,
+    pub group_ip: UnderlayMulticastIpv6,
+    /// Tag for validating update/delete requests. If a tag is not provided,
+    /// one is auto-generated as `{uuid}:{group_ip}`.
     pub tag: Option<String>,
     pub members: Vec<MulticastGroupMember>,
 }
@@ -111,6 +130,8 @@ pub struct MulticastGroupCreateUnderlayEntry {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupCreateExternalEntry {
     pub group_ip: IpAddr,
+    /// Tag for validating update/delete requests. If a tag is not provided,
+    /// one is auto-generated as `{uuid}:{group_ip}`.
     pub tag: Option<String>,
     pub internal_forwarding: InternalForwarding,
     pub external_forwarding: ExternalForwarding,
@@ -119,40 +140,46 @@ pub struct MulticastGroupCreateExternalEntry {
 
 /// Represents a multicast replication entry for PUT requests for internal
 /// (to the rack) groups.
+///
+/// Tag validation is performed via the `tag` query parameter.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupUpdateUnderlayEntry {
-    pub tag: Option<String>,
     pub members: Vec<MulticastGroupMember>,
 }
 
 /// A multicast group update entry for PUT requests for external (to the rack)
 /// groups.
+///
+/// Tag validation is performed via the `tag` query parameter.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupUpdateExternalEntry {
-    pub tag: Option<String>,
     pub internal_forwarding: InternalForwarding,
     pub external_forwarding: ExternalForwarding,
     pub sources: Option<Vec<IpSrc>>,
 }
 
 /// Response structure for underlay/internal multicast group operations.
-/// These groups handle admin-scoped IPv6 multicast with full replication.
+/// These groups handle admin-local IPv6 multicast with full replication.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupUnderlayResponse {
-    pub group_ip: AdminScopedIpv6,
+    pub group_ip: UnderlayMulticastIpv6,
     pub external_group_id: MulticastGroupId,
     pub underlay_group_id: MulticastGroupId,
-    pub tag: Option<String>,
+    /// Tag for validating update/delete requests. Always present and generated
+    /// as `{uuid}:{group_ip}` if not provided at creation time.
+    pub tag: String,
     pub members: Vec<MulticastGroupMember>,
 }
 
 /// Response structure for external multicast group operations.
-/// These groups handle IPv4 and non-admin IPv6 multicast via NAT targets.
+/// These groups handle IPv4 and non-admin-local IPv6 multicast via NAT targets.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct MulticastGroupExternalResponse {
     pub group_ip: IpAddr,
     pub external_group_id: MulticastGroupId,
-    pub tag: Option<String>,
+    /// Tag for validating update/delete requests. Always present and generated
+    /// as `{uuid}:{group_ip}` if not provided at creation time.
+    pub tag: String,
     pub internal_forwarding: InternalForwarding,
     pub external_forwarding: ExternalForwarding,
     pub sources: Option<Vec<IpSrc>>,
@@ -172,6 +199,14 @@ impl MulticastGroupResponse {
         match self {
             Self::Underlay(resp) => resp.group_ip.into(),
             Self::External(resp) => resp.group_ip,
+        }
+    }
+
+    /// Get the tag.
+    pub fn tag(&self) -> &str {
+        match self {
+            Self::Underlay(resp) => &resp.tag,
+            Self::External(resp) => &resp.tag,
         }
     }
 }
@@ -214,7 +249,9 @@ pub enum Direction {
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum Error {
     #[error(
-        "Address {0} is not admin-scoped (must be ff04::/16, ff05::/16, or ff08::/16)"
+        "Address {0} is not in underlay multicast subnet (must be ff04::/64)"
     )]
-    InvalidIp(Ipv6Addr),
+    InvalidUnderlayMulticastIp(Ipv6Addr),
+    #[error("Invalid IPv6 address '{0}': {1}")]
+    InvalidIpv6Address(String, std::net::AddrParseError),
 }
