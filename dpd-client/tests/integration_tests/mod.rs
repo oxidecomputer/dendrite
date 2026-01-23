@@ -9,6 +9,7 @@ mod common;
 mod counters;
 mod geneve;
 mod icmp_ipv4;
+mod local;
 mod loopback;
 mod mcast;
 mod nat;
