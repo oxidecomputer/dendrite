@@ -10,16 +10,16 @@ const bit<16> L2_ISOLATED_FLAG = 0x8000;
 // is going to need to come either through ATCAM/ALPM or code restructuring.
 const int IPV4_NAT_TABLE_SIZE       = 1024; // nat routing table
 const int IPV6_NAT_TABLE_SIZE       = 1024; // nat routing table
-const int IPV4_LPM_SIZE             = 8192; // ipv4 forwarding table
+const int IPV4_LPM_SIZE             = 1024; // ipv4 forwarding table
 const int IPV6_LPM_SIZE             = 1024; // ipv6 forwarding table
 const int IPV4_ARP_SIZE             = 512;  // arp cache
 const int IPV6_NEIGHBOR_SIZE        = 512;  // ipv6 neighbor cache
-const int SWITCH_IPV4_ADDRS_SIZE    = 512;  // ipv4 addrs assigned to our ports
-const int SWITCH_IPV6_ADDRS_SIZE    = 512;  // ipv6 addrs assigned to our ports
-const int IPV4_MULTICAST_TABLE_SIZE = 1024; // multicast routing table(s) for IPv4
-const int IPV6_MULTICAST_TABLE_SIZE = 1024; // multicast routing table(s) for IPv6
-const int ATTACHED_SUBNETS_V4_SIZE  = 512;  // external subnets mapped to instances
-const int ATTACHED_SUBNETS_V6_SIZE  = 512;  // external subnets mapped to instances
+const int SWITCH_IPV4_ADDRS_SIZE    = 128;  // ipv4 addrs assigned to our ports
+const int SWITCH_IPV6_ADDRS_SIZE    = 128;  // ipv6 addrs assigned to our ports
+const int IPV4_MULTICAST_TABLE_SIZE = 512; // multicast routing table(s) for IPv4
+const int IPV6_MULTICAST_TABLE_SIZE = 512; // multicast routing table(s) for IPv6
+const int ATTACHED_SUBNETS_V4_SIZE  = 128;  // external subnets mapped to instances
+const int ATTACHED_SUBNETS_V6_SIZE  = 128;  // external subnets mapped to instances
 
 const bit<8> SC_FWD_FROM_USERSPACE  = 0x00;
 const bit<8> SC_FWD_TO_USERSPACE    = 0x01;
