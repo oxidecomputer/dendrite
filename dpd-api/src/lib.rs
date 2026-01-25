@@ -59,7 +59,6 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
-    (5, NO_MCAST),
     (4, V4_OVER_V6_ROUTES),
     (3, ATTACHED_SUBNETS),
     (2, DUAL_STACK_NAT_WORKFLOW),
@@ -1643,7 +1642,6 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/multicast/external-groups",
-	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_create_external(
         _rqctx: RequestContext<Self::Context>,
@@ -1665,7 +1663,6 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/multicast/underlay-groups",
-	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_create_underlay(
         _rqctx: RequestContext<Self::Context>,
@@ -1683,7 +1680,6 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/groups/{group_ip}",
-	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_delete(
         _rqctx: RequestContext<Self::Context>,
@@ -1698,7 +1694,6 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/groups",
-	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_reset(
         _rqctx: RequestContext<Self::Context>,
@@ -1712,7 +1707,6 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups/{group_ip}",
-	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_get(
         _rqctx: RequestContext<Self::Context>,
@@ -1731,7 +1725,6 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/underlay-groups/{group_ip}",
-	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_get_underlay(
         _rqctx: RequestContext<Self::Context>,
@@ -1751,7 +1744,6 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/multicast/underlay-groups/{group_ip}",
-	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_update_underlay(
         _rqctx: RequestContext<Self::Context>,
@@ -1771,7 +1763,6 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",
-	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_update_external(
         _rqctx: RequestContext<Self::Context>,
@@ -1790,7 +1781,6 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups",
-	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_groups_list(
         _rqctx: RequestContext<Self::Context>,
@@ -1810,7 +1800,6 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/tags/{tag}",
-	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_groups_list_by_tag(
         _rqctx: RequestContext<Self::Context>,
@@ -1831,7 +1820,6 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/tags/{tag}",
-	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_reset_by_tag(
         _rqctx: RequestContext<Self::Context>,
@@ -1846,7 +1834,6 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/untagged",
-	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_reset_untagged(
         _rqctx: RequestContext<Self::Context>,
