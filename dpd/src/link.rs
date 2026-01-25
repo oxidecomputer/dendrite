@@ -14,7 +14,6 @@ use crate::fault::LinkUpTracker;
 use crate::ports::AdminEvent;
 use crate::ports::Event;
 use crate::table::MacOps;
-use crate::table::mcast;
 use crate::table::port_ip;
 use crate::table::port_mac;
 use crate::table::port_nat;
@@ -1579,20 +1578,7 @@ fn unplumb_link(
         if let Err(e) = MacOps::<port_mac::PortMacTable>::mac_clear(
             switch,
             link.asic_port_id,
-        )
-        .and_then(|_| {
-            MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_clear(
-                switch,
-                link.asic_port_id,
-            )
-        })
-        .and_then(|_| {
-            // We tie this in here as ports and macs are 1:1
-            mcast::mcast_egress::del_port_mapping_entry(
-                switch,
-                link.asic_port_id,
-            )
-        }) {
+        ) {
             error!(log, "Failed to clear mac address and port mapping: {e:?}");
             return Err(e);
         } else {
@@ -1861,15 +1847,6 @@ async fn reconcile_link(
         );
         if let Err(e) =
             MacOps::<port_mac::PortMacTable>::mac_clear(switch, asic_id)
-                .and_then(|_| {
-                    MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_clear(
-                        switch, asic_id,
-                    )
-                })
-                .and_then(|_| {
-                    // We tie this in here as ports and macs are 1:1
-                    mcast::mcast_egress::del_port_mapping_entry(switch, asic_id)
-                })
         {
             record_plumb_failure(
                 switch,
@@ -1890,18 +1867,7 @@ async fn reconcile_link(
             switch,
             asic_id,
             link.config.mac,
-        )
-        .and_then(|_| {
-            MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_set(
-                switch,
-                asic_id,
-                link.config.mac,
-            )
-        })
-        .and_then(|_| {
-            // We tie this in here as ports and macs are 1:1
-            mcast::mcast_egress::add_port_mapping_entry(switch, asic_id)
-        }) {
+        ) {
             record_plumb_failure(
                 switch,
                 &mut link,

@@ -892,34 +892,6 @@ pub(crate) fn reset_untagged(s: &Switch) -> DpdResult<()> {
 
 /// Reset all multicast groups (and associated routes).
 pub(crate) fn reset(s: &Switch) -> DpdResult<()> {
-    let mut mcast = s.mcast.lock().unwrap();
-
-    // Destroy ASIC groups
-    let group_ids = s.asic_hdl.mc_domains();
-    for group_id in group_ids {
-        if let Err(e) = s.asic_hdl.mc_group_destroy(group_id) {
-            error!(
-                s.log,
-                "failed to delete multicast group with ID {group_id}: {e:?}"
-            );
-            return Err(e.into());
-        }
-    }
-
-    // Reset all table entries
-    table::mcast::mcast_replication::reset_ipv6(s)?;
-    table::mcast::mcast_src_filter::reset_ipv4(s)?;
-    table::mcast::mcast_src_filter::reset_ipv6(s)?;
-    table::mcast::mcast_nat::reset_ipv4(s)?;
-    table::mcast::mcast_nat::reset_ipv6(s)?;
-    table::mcast::mcast_route::reset_ipv4(s)?;
-    table::mcast::mcast_route::reset_ipv6(s)?;
-    table::mcast::mcast_egress::reset_bitmap_table(s)?;
-
-    // Clear data structures
-    mcast.groups.clear();
-    mcast.nat_target_refs.clear();
-
     Ok(())
 }
 

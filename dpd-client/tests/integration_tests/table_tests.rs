@@ -48,10 +48,6 @@ const IPV4_NAT_TABLE_SIZE: usize = 1024; // nat routing table
 const IPV6_NAT_TABLE_SIZE: usize = 1024; // nat routing table
 const IPV4_ARP_SIZE: usize = 512; // arp cache
 const IPV6_NEIGHBOR_SIZE: usize = 512; // ipv6 neighbor cache
-/// The size of the multicast table related to replication on
-/// admin-scoped (internal) multicast groups.
-const MULTICAST_TABLE_SIZE: usize = 1024;
-const MCAST_TAG: &str = "mcast_table_test"; // multicast group tag
 
 // The result of a table insert or delete API operation.
 type OpResult<T> =
@@ -72,18 +68,6 @@ fn gen_ipv4_cidr(idx: usize) -> Ipv4Net {
 
 fn gen_ipv6_cidr(idx: usize) -> Ipv6Net {
     Ipv6Net::new(gen_ipv6_addr(idx), 128).unwrap()
-}
-
-// Generates valid IPv6 multicast addresses that are admin-scoped.
-fn gen_ipv6_multicast_addr(idx: usize) -> Ipv6Addr {
-    // Use admin-scoped multicast addresses (ff04::/16, ff05::/16, ff08::/16)
-    // This ensures they will be created as internal groups
-    let scope = match idx % 3 {
-        0 => 0xFF04, // admin-scoped
-        1 => 0xFF05, // admin-scoped
-        _ => 0xFF08, // admin-scoped
-    };
-    Ipv6Addr::new(scope, 0, 0, 0, 0, 0, 0, (1000 + idx) as u16)
 }
 
 // For each table we want to test, we define functions to insert, delete, and
@@ -450,67 +434,4 @@ impl TableTest for RouteV6 {
 #[ignore]
 async fn test_routev6_full() -> TestResult {
     test_table_capacity::<RouteV6, (), ()>(IPV6_LPM_SIZE).await
-}
-
-struct MulticastReplicationTableTest {}
-
-impl TableTest<types::MulticastGroupUnderlayResponse, ()>
-    for MulticastReplicationTableTest
-{
-    async fn insert_entry(
-        switch: &Switch,
-        idx: usize,
-    ) -> OpResult<types::MulticastGroupUnderlayResponse> {
-        let (port_id1, link_id1) = switch.link_id(PhysPort(11)).unwrap();
-        let (port_id2, link_id2) = switch.link_id(PhysPort(12)).unwrap();
-
-        // Only IPv6 admin-scoped multicast addresses for replication table testing
-        let group_ip = gen_ipv6_multicast_addr(idx);
-
-        // Admin-scoped IPv6 groups are internal with replication info and members
-        let internal_entry = types::MulticastGroupCreateUnderlayEntry {
-            group_ip: types::AdminScopedIpv6(group_ip),
-            tag: Some(MCAST_TAG.to_string()),
-            members: vec![
-                types::MulticastGroupMember {
-                    port_id: port_id1.clone(),
-                    link_id: link_id1,
-                    direction: types::Direction::External,
-                },
-                types::MulticastGroupMember {
-                    port_id: port_id2.clone(),
-                    link_id: link_id2,
-                    direction: types::Direction::External,
-                },
-            ],
-        };
-        switch.client.multicast_group_create_underlay(&internal_entry).await
-    }
-
-    async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
-        let ip = IpAddr::V6(gen_ipv6_multicast_addr(idx));
-        switch.client.multicast_group_delete(&ip).await
-    }
-
-    async fn count_entries(switch: &Switch) -> usize {
-        // Count only underlay groups with our test tag (since this tests replication table capacity)
-        switch
-            .client
-            .multicast_groups_list_by_tag_stream(MCAST_TAG, None)
-            .try_collect::<Vec<_>>()
-            .await
-            .expect("Should be able to list groups by tag paginated")
-            .len()
-    }
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_multicast_replication_table_full() -> TestResult {
-    test_table_capacity::<
-        MulticastReplicationTableTest,
-        types::MulticastGroupUnderlayResponse,
-        (),
-    >(MULTICAST_TABLE_SIZE)
-    .await
 }

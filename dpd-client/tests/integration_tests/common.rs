@@ -920,28 +920,7 @@ pub fn gen_udp_routed_pair(
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub enum OxideGeneveOption {
     External,
-    Multicast(u8),
     Mss(u32),
-}
-
-/// Build a Geneve packet with a possible multicast tag.
-pub fn gen_geneve_packet_with_mcast_tag(
-    src: Endpoint,
-    dst: Endpoint,
-    inner_type: u16,
-    vni: u32,
-    mcast_tag: u8,
-    payload: &[u8],
-) -> Packet {
-    let opt = OxideGeneveOption::Multicast(mcast_tag);
-    gen_geneve_packet(
-        src,
-        dst,
-        inner_type,
-        vni,
-        core::slice::from_ref(&opt),
-        payload,
-    )
 }
 
 /// Build a Geneve packet with a possible multicast tag.
@@ -996,27 +975,6 @@ pub fn gen_geneve_packet(
                     // Third byte: Critical bit (0) + Option type (1)
                     0x00,
                     // reserved + body len
-                    0x00,
-                ]);
-            }
-            OxideGeneveOption::Multicast(tag) if *tag < 3 => {
-                #[rustfmt::skip]
-                geneve.options.extend_from_slice(&[
-                    // First 2 bytes: Geneve option class (0x0129)
-                    // The OXIDE vendor-specific class identifier
-                    0x01, 0x29,
-                    // Third byte: Critical bit (0) + Option type (1)
-                    // Type 1 represents multicast tagged packets
-                    0x01,
-                    // Fourth byte: Option(s) length
-                    0x01,
-                    // Fifth byte: Tag value (encoded in the data)
-                    (tag & 0x03) << 6,
-                    // Sixth byte: reserved
-                    0x00,
-                    // Seventh byte
-                    0x00,
-                    // Eighth byte
                     0x00,
                 ]);
             }

@@ -55,14 +55,6 @@ enum CounterId {
     Packet,
     DropPort,
     DropReason,
-    EgressDropPort,
-    EgressDropReason,
-    Unicast,
-    Multicast,
-    MulticastExt,
-    MulticastLL,
-    MulticastUL,
-    MulticastDrop,
 }
 
 impl From<CounterId> for u8 {
@@ -85,7 +77,7 @@ struct CounterDescription {
     p4_name: &'static str,
 }
 
-const COUNTERS: [CounterDescription; 14] = [
+const COUNTERS: [CounterDescription; 6] = [
     CounterDescription {
         id: CounterId::Service,
         client_name: "Service",
@@ -115,46 +107,6 @@ const COUNTERS: [CounterDescription; 14] = [
         id: CounterId::DropReason,
         client_name: "Ingress_Drop_Reason",
         p4_name: "pipe.Ingress.drop_reason_ctr",
-    },
-    CounterDescription {
-        id: CounterId::EgressDropPort,
-        client_name: "Egress_Drop_Port",
-        p4_name: "pipe.Egress.drop_port_ctr",
-    },
-    CounterDescription {
-        id: CounterId::EgressDropReason,
-        client_name: "Egress_Drop_Reason",
-        p4_name: "pipe.Egress.drop_reason_ctr",
-    },
-    CounterDescription {
-        id: CounterId::Unicast,
-        client_name: "Unicast",
-        p4_name: "pipe.Egress.unicast_ctr",
-    },
-    CounterDescription {
-        id: CounterId::Multicast,
-        client_name: "Multicast",
-        p4_name: "pipe.Egress.mcast_ctr",
-    },
-    CounterDescription {
-        id: CounterId::MulticastExt,
-        client_name: "Multicast_External",
-        p4_name: "pipe.Egress.external_mcast_ctr",
-    },
-    CounterDescription {
-        id: CounterId::MulticastLL,
-        client_name: "Multicast_Link_Local",
-        p4_name: "pipe.Egress.link_local_mcast_ctr",
-    },
-    CounterDescription {
-        id: CounterId::MulticastUL,
-        client_name: "Multicast_Underlay",
-        p4_name: "pipe.Egress.underlay_mcast_ctr",
-    },
-    CounterDescription {
-        id: CounterId::MulticastDrop,
-        client_name: "Multicast_Drop",
-        p4_name: "pipe.Ingress.filter.drop_mcast_ctr",
     },
 ];
 
@@ -414,19 +366,10 @@ pub async fn get_values(
         let key = match counter_id {
             CounterId::Packet => packet_label(idx.idx),
             CounterId::Service => service_label(idx.idx as u8),
-            CounterId::Ingress
-            | CounterId::Egress
-            | CounterId::EgressDropPort
-            | CounterId::DropPort
-            | CounterId::Unicast
-            | CounterId::Multicast
-            | CounterId::MulticastExt
-            | CounterId::MulticastLL
-            | CounterId::MulticastUL
-            | CounterId::MulticastDrop => port_label(switch, idx.idx).await,
-            CounterId::DropReason | CounterId::EgressDropReason => {
-                reason_label(idx.idx as u8)?
+            CounterId::Ingress | CounterId::Egress | CounterId::DropPort => {
+                port_label(switch, idx.idx).await
             }
+            CounterId::DropReason => reason_label(idx.idx as u8)?,
         };
 
         if let Some(key) = key {

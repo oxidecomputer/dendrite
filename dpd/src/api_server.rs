@@ -17,13 +17,6 @@ use dpd_types::fault::Fault;
 use dpd_types::link::LinkFsmCounters;
 use dpd_types::link::LinkId;
 use dpd_types::link::LinkUpCounter;
-use dpd_types::mcast::MulticastGroupCreateExternalEntry;
-use dpd_types::mcast::MulticastGroupCreateUnderlayEntry;
-use dpd_types::mcast::MulticastGroupExternalResponse;
-use dpd_types::mcast::MulticastGroupResponse;
-use dpd_types::mcast::MulticastGroupUnderlayResponse;
-use dpd_types::mcast::MulticastGroupUpdateExternalEntry;
-use dpd_types::mcast::MulticastGroupUpdateUnderlayEntry;
 use dpd_types::oxstats::OximeterMetadata;
 use dpd_types::port_map::BackplaneLink;
 use dpd_types::route::Ipv6Route;
@@ -67,7 +60,6 @@ use common::ports::TxEqSwHw;
 
 use crate::attached_subnet;
 use crate::counters;
-use crate::mcast;
 use crate::oxstats;
 use crate::rpw::Task;
 use crate::switch_port::FixedSideDevice;
@@ -1699,10 +1691,6 @@ impl DpdApi for DpdApiImpl {
             error!(switch.log, "failed to reset ipv6 nat table: {:?}", e);
             err = Some(e);
         }
-        if let Err(e) = mcast::reset(switch) {
-            error!(switch.log, "failed to reset multicast state: {:?}", e);
-            err = Some(e);
-        }
         if let Err(e) = attached_subnet::reset(switch) {
             error!(
                 switch.log,
@@ -1953,200 +1941,6 @@ impl DpdApi for DpdApiImpl {
         counters::get_values(switch, force_sync, counter)
             .await
             .map(HttpResponseOk)
-            .map_err(HttpError::from)
-    }
-
-    async fn multicast_group_create_external(
-        rqctx: RequestContext<Arc<Switch>>,
-        group: TypedBody<MulticastGroupCreateExternalEntry>,
-    ) -> Result<HttpResponseCreated<MulticastGroupExternalResponse>, HttpError>
-    {
-        let switch: &Switch = rqctx.context();
-        let entry = group.into_inner();
-
-        mcast::add_group_external(switch, entry)
-            .map(HttpResponseCreated)
-            .map_err(HttpError::from)
-    }
-
-    async fn multicast_group_create_underlay(
-        rqctx: RequestContext<Arc<Switch>>,
-        group: TypedBody<MulticastGroupCreateUnderlayEntry>,
-    ) -> Result<HttpResponseCreated<MulticastGroupUnderlayResponse>, HttpError>
-    {
-        let switch: &Switch = rqctx.context();
-        let entry = group.into_inner();
-
-        mcast::add_group_internal(switch, entry)
-            .map(HttpResponseCreated)
-            .map_err(HttpError::from)
-    }
-
-    async fn multicast_group_delete(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<MulticastGroupIpParam>,
-    ) -> Result<HttpResponseDeleted, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let ip = path.into_inner().group_ip;
-
-        mcast::del_group(switch, ip)
-            .map(|_| HttpResponseDeleted())
-            .map_err(HttpError::from)
-    }
-
-    async fn multicast_reset(
-        rqctx: RequestContext<Arc<Switch>>,
-    ) -> Result<HttpResponseDeleted, HttpError> {
-        let switch: &Switch = rqctx.context();
-
-        mcast::reset(switch)
-            .map(|_| HttpResponseDeleted())
-            .map_err(HttpError::from)
-    }
-
-    async fn multicast_group_get(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<MulticastGroupIpParam>,
-    ) -> Result<HttpResponseOk<MulticastGroupResponse>, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let ip = path.into_inner().group_ip;
-
-        // Get the multicast group
-        mcast::get_group(switch, ip)
-            .map(HttpResponseOk)
-            .map_err(HttpError::from)
-    }
-
-    async fn multicast_group_update_underlay(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<MulticastUnderlayGroupIpParam>,
-        group: TypedBody<MulticastGroupUpdateUnderlayEntry>,
-    ) -> Result<HttpResponseOk<MulticastGroupUnderlayResponse>, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let admin_scoped = path.into_inner().group_ip;
-
-        mcast::modify_group_internal(switch, admin_scoped, group.into_inner())
-            .map(HttpResponseOk)
-            .map_err(HttpError::from)
-    }
-
-    async fn multicast_group_get_underlay(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<MulticastUnderlayGroupIpParam>,
-    ) -> Result<HttpResponseOk<MulticastGroupUnderlayResponse>, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let admin_scoped = path.into_inner().group_ip;
-
-        mcast::get_group_internal(switch, admin_scoped)
-            .map(HttpResponseOk)
-            .map_err(HttpError::from)
-    }
-
-    async fn multicast_group_update_external(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<MulticastGroupIpParam>,
-        group: TypedBody<MulticastGroupUpdateExternalEntry>,
-    ) -> Result<HttpResponseCreated<MulticastGroupExternalResponse>, HttpError>
-    {
-        let switch: &Switch = rqctx.context();
-        let entry = group.into_inner();
-        let ip = path.into_inner().group_ip;
-
-        mcast::modify_group_external(switch, ip, entry)
-            .map(HttpResponseCreated)
-            .map_err(HttpError::from)
-    }
-
-    async fn multicast_groups_list(
-        rqctx: RequestContext<Arc<Switch>>,
-        query_params: Query<
-            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
-        >,
-    ) -> Result<HttpResponseOk<ResultsPage<MulticastGroupResponse>>, HttpError>
-    {
-        let switch: &Switch = rqctx.context();
-
-        let pag_params = query_params.into_inner();
-        let Ok(limit) = usize::try_from(rqctx.page_limit(&pag_params)?.get())
-        else {
-            return Err(
-                DpdError::Invalid("Invalid page limit".to_string()).into()
-            );
-        };
-
-        let last_addr = match &pag_params.page {
-            WhichPage::First(..) => None,
-            WhichPage::Next(MulticastGroupIpParam { group_ip }) => {
-                Some(*group_ip)
-            }
-        };
-
-        let entries = mcast::get_range(switch, last_addr, limit, None);
-
-        Ok(HttpResponseOk(ResultsPage::new(
-            entries,
-            &EmptyScanParams {},
-            |e: &MulticastGroupResponse, _| MulticastGroupIpParam {
-                group_ip: e.ip(),
-            },
-        )?))
-    }
-
-    async fn multicast_groups_list_by_tag(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<TagPath>,
-        query_params: Query<
-            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
-        >,
-    ) -> Result<HttpResponseOk<ResultsPage<MulticastGroupResponse>>, HttpError>
-    {
-        let switch: &Switch = rqctx.context();
-        let tag = path.into_inner().tag;
-
-        let pag_params = query_params.into_inner();
-        let Ok(limit) = usize::try_from(rqctx.page_limit(&pag_params)?.get())
-        else {
-            return Err(
-                DpdError::Invalid("Invalid page limit".to_string()).into()
-            );
-        };
-
-        let last_addr = match &pag_params.page {
-            WhichPage::First(..) => None,
-            WhichPage::Next(MulticastGroupIpParam { group_ip }) => {
-                Some(*group_ip)
-            }
-        };
-
-        let entries = mcast::get_range(switch, last_addr, limit, Some(&tag));
-        Ok(HttpResponseOk(ResultsPage::new(
-            entries,
-            &EmptyScanParams {},
-            |e: &MulticastGroupResponse, _| MulticastGroupIpParam {
-                group_ip: e.ip(),
-            },
-        )?))
-    }
-
-    async fn multicast_reset_by_tag(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<TagPath>,
-    ) -> Result<HttpResponseDeleted, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let tag = path.into_inner().tag;
-
-        mcast::reset_tag(switch, &tag)
-            .map(|_| HttpResponseDeleted())
-            .map_err(HttpError::from)
-    }
-
-    async fn multicast_reset_untagged(
-        rqctx: RequestContext<Arc<Switch>>,
-    ) -> Result<HttpResponseDeleted, HttpError> {
-        let switch: &Switch = rqctx.context();
-
-        mcast::reset_untagged(switch)
-            .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
     }
 

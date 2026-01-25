@@ -59,11 +59,21 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (5, NO_MCAST),
     (4, V4_OVER_V6_ROUTES),
     (3, ATTACHED_SUBNETS),
     (2, DUAL_STACK_NAT_WORKFLOW),
     (1, INITIAL),
 ]);
+
+// Generate a 400 client error with the provided message.
+fn client_error(message: impl ToString) -> HttpError {
+    HttpError::for_client_error(
+        None,
+        dropshot::ClientErrorStatusCode::BAD_REQUEST,
+        message.to_string(),
+    )
+}
 
 // WHEN CHANGING THE API (part 2 of 2):
 //
@@ -1633,14 +1643,17 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/multicast/external-groups",
+	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_create_external(
-        rqctx: RequestContext<Self::Context>,
-        group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
+        _rqctx: RequestContext<Self::Context>,
+        _group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
     ) -> Result<
         HttpResponseCreated<mcast::MulticastGroupExternalResponse>,
         HttpError,
-    >;
+    > {
+        Err(client_error("bad API"))
+    }
 
     /**
      * Create an underlay (internal) multicast group configuration.
@@ -1652,14 +1665,17 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/multicast/underlay-groups",
+	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_create_underlay(
-        rqctx: RequestContext<Self::Context>,
-        group: TypedBody<mcast::MulticastGroupCreateUnderlayEntry>,
+        _rqctx: RequestContext<Self::Context>,
+        _group: TypedBody<mcast::MulticastGroupCreateUnderlayEntry>,
     ) -> Result<
         HttpResponseCreated<mcast::MulticastGroupUnderlayResponse>,
         HttpError,
-    >;
+    > {
+        Err(client_error("bad API"))
+    }
 
     /**
      * Delete a multicast group configuration by IP address.
@@ -1667,11 +1683,14 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/groups/{group_ip}",
+	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_delete(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastGroupIpParam>,
-    ) -> Result<HttpResponseDeleted, HttpError>;
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<MulticastGroupIpParam>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Err(client_error("bad API"))
+    }
 
     /**
      * Reset all multicast group configurations.
@@ -1679,10 +1698,13 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/groups",
+	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_reset(
-        rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseDeleted, HttpError>;
+        _rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Err(client_error("bad API"))
+    }
 
     /**
      * Get the multicast group configuration for a given group IP address.
@@ -1690,11 +1712,14 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups/{group_ip}",
+	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_get(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastGroupIpParam>,
-    ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError>;
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<MulticastGroupIpParam>,
+    ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError> {
+        Err(client_error("bad API"))
+    }
 
     /**
      * Get an underlay (internal) multicast group configuration by admin-scoped
@@ -1706,11 +1731,15 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/underlay-groups/{group_ip}",
+	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_get_underlay(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastUnderlayGroupIpParam>,
-    ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<MulticastUnderlayGroupIpParam>,
+    ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>
+    {
+        Err(client_error("bad API"))
+    }
 
     /**
      * Update an underlay (internal) multicast group configuration for a given
@@ -1722,12 +1751,16 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/multicast/underlay-groups/{group_ip}",
+	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_update_underlay(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastUnderlayGroupIpParam>,
-        group: TypedBody<mcast::MulticastGroupUpdateUnderlayEntry>,
-    ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<MulticastUnderlayGroupIpParam>,
+        _group: TypedBody<mcast::MulticastGroupUpdateUnderlayEntry>,
+    ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>
+    {
+        Err(client_error("bad API"))
+    }
 
     /**
      * Update an external-only multicast group configuration for a given group IP address.
@@ -1738,15 +1771,18 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",
+	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_group_update_external(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastGroupIpParam>,
-        group: TypedBody<mcast::MulticastGroupUpdateExternalEntry>,
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<MulticastGroupIpParam>,
+        _group: TypedBody<mcast::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
         HttpResponseCreated<mcast::MulticastGroupExternalResponse>,
         HttpError,
-    >;
+    > {
+        Err(client_error("bad API"))
+    }
 
     /**
      * List all multicast groups.
@@ -1754,16 +1790,19 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups",
+	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_groups_list(
-        rqctx: RequestContext<Self::Context>,
-        query_params: Query<
+        _rqctx: RequestContext<Self::Context>,
+        _query_params: Query<
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
     ) -> Result<
         HttpResponseOk<ResultsPage<mcast::MulticastGroupResponse>>,
         HttpError,
-    >;
+    > {
+        Err(client_error("bad API"))
+    }
 
     /**
      * List all multicast groups with a given tag.
@@ -1771,17 +1810,20 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/tags/{tag}",
+	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_groups_list_by_tag(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<TagPath>,
-        query_params: Query<
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<TagPath>,
+        _query_params: Query<
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
     ) -> Result<
         HttpResponseOk<ResultsPage<mcast::MulticastGroupResponse>>,
         HttpError,
-    >;
+    > {
+        Err(client_error("bad API"))
+    }
 
     /**
      * Delete all multicast groups (and associated routes) with a given tag.
@@ -1789,11 +1831,14 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/tags/{tag}",
+	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_reset_by_tag(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<TagPath>,
-    ) -> Result<HttpResponseDeleted, HttpError>;
+        _rqctx: RequestContext<Self::Context>,
+        _path: Path<TagPath>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Err(client_error("bad API"))
+    }
 
     /**
      * Delete all multicast groups (and associated routes) without a tag.
@@ -1801,10 +1846,13 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/untagged",
+	versions = ..VERSION_NO_MCAST,
     }]
     async fn multicast_reset_untagged(
-        rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseDeleted, HttpError>;
+        _rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Err(client_error("bad API"))
+    }
 
     /**
      * Get the physical coding sublayer (PCS) counters for all links.
@@ -2496,14 +2544,6 @@ pub struct MulticastGroupIpParam {
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct MulticastUnderlayGroupIpParam {
     pub group_ip: mcast::AdminScopedIpv6,
-}
-
-/// Used to identify a multicast group by ID.
-///
-/// If not provided, it will return all multicast groups.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct MulticastGroupIdParam {
-    pub group_id: Option<mcast::MulticastGroupId>,
 }
 
 /// The Physical Coding Sublayer (PCS) counters for a specific link.
