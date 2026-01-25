@@ -876,7 +876,7 @@ control NatEgress (
 	}
 
 	apply {
-		if (meta.nat_egress_hit) {
+		if (meta.nat_egress_hit && !meta.nat_ingress_hit) {
 			nat_egress.apply();
 		}
 	}
