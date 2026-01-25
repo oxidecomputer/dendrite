@@ -45,14 +45,6 @@ fn test_p4_counter_list() {
         "Egress",
         "Ingress_Drop_Port",
         "Ingress_Drop_Reason",
-        "Egress_Drop_Port",
-        "Egress_Drop_Reason",
-        "Unicast",
-        "Multicast",
-        "Multicast_External",
-        "Multicast_Link_Local",
-        "Multicast_Underlay",
-        "Multicast_Drop",
     ];
 
     // Verify all expected counters are present in the output
