@@ -105,8 +105,10 @@ control Filter(
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv4_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv6_ctr;
+#ifdef MULTICAST
 	Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS) drop_mcast_ctr;
 	bit<16> mcast_scope;
+#endif /* MULITCAST */
 
 	action dropv4() {
 		meta.drop_reason = DROP_IPV4_SWITCH_ADDR_MISS;
@@ -164,6 +166,7 @@ control Filter(
 		if (hdr.arp.isValid()) {
 			switch_ipv4_addr.apply();
 		} else if (hdr.ipv4.isValid()) {
+#ifdef MULTICAST
 			if (meta.is_mcast) {
 				// IPv4 Multicast Address Validation (RFC 1112, RFC 7042)
 				//
@@ -194,7 +197,11 @@ control Filter(
 			} else {
 				switch_ipv4_addr.apply();
 			}
+#else /* MULTICAST */
+			switch_ipv4_addr.apply();
+#endif /* MULTICAST */
 		} else if (hdr.ipv6.isValid()) {
+#ifdef MULTICAST
 			if (meta.is_mcast) {
 				// Validate the IPv6 multicast MAC address format (RFC 2464,
 				// RFC 7042).
@@ -227,6 +234,7 @@ control Filter(
 						return;
 				}
 			}
+#endif /* MULTICAST */
 
 			if (!meta.is_mcast || meta.is_link_local_mcastv6 && !meta.encap_needed) {
 				switch_ipv6_addr.apply();
@@ -474,8 +482,10 @@ control NatIngress (
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv4_ingress_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv6_ingress_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) nat_only_ctr;
+#ifdef MULTICAST
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv4_ingress_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv6_ingress_ctr;
+#endif /* MULTICAST */
 
 	action add_encap_headers(bit<16> udp_len) {
 		// 8 bytes with a 4 byte option
@@ -602,6 +612,7 @@ control NatIngress (
 		counters = nat_only_ctr;
 	}
 
+#ifdef MULTICAST
 	action mcast_forward_ipv4_to(ipv6_addr_t target, mac_addr_t inner_mac, geneve_vni_t vni) {
 		meta.nat_ingress_hit = true;
 		meta.nat_ingress_tgt = target;
@@ -636,6 +647,7 @@ control NatIngress (
 		const size = IPV6_MULTICAST_TABLE_SIZE;
 		counters = mcast_ipv6_ingress_ctr;
 	}
+#endif /* MULTICAST */
 
 	action set_icmp_dst_port() {
 		meta.l4_dst_port = hdr.icmp.data[31:16];
@@ -707,6 +719,7 @@ control NatIngress (
 
 		// Note: This whole conditional could be simpler as a set of */
 		// `const entries`, but apply (on tables) cannot be called from actions
+#ifdef MULTICAST
 		if (hdr.ipv4.isValid()) {
 			if (meta.is_mcast) {
 				ingress_ipv4_mcast.apply();
@@ -722,6 +735,15 @@ control NatIngress (
 				ingress_ipv6.apply();
 			}
 		}
+#else /* MULTICAST */
+		if (hdr.ipv4.isValid())  {
+			if (!meta.encap_needed) {
+				ingress_ipv4.apply();
+			}
+		} else if (hdr.ipv6.isValid()) {
+			ingress_ipv6.apply();
+		}
+#endif /* MULTICAST */
 
 		if (ingress_hit.apply().hit) {
 			if (hdr.ipv4.isValid()) {
@@ -1259,6 +1281,7 @@ control Router4 (
 	}
 }
 
+#ifdef MULTICAST
 control MulticastRouter4(
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
@@ -1336,6 +1359,7 @@ control MulticastRouter4(
 		}
 	}
 }
+#endif /* MULTICAST */
 
 control Router6 (
 	inout sidecar_headers_t hdr,
@@ -1398,6 +1422,7 @@ control Router6 (
 	}
 }
 
+#ifdef MULTICAST
 control MulticastRouter6 (
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
@@ -1472,6 +1497,7 @@ control MulticastRouter6 (
 		}
 	}
 }
+#endif /* MULTICAST */
 
 control L3Router(
 	inout sidecar_headers_t hdr,
@@ -1480,6 +1506,7 @@ control L3Router(
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
 	apply {
+#ifdef MULTICAST
 		if (hdr.ipv4.isValid()) {
 			if (meta.is_mcast && !meta.is_link_local_mcastv6) {
 				MulticastRouter4.apply(hdr, meta, ig_intr_md, ig_tm_md);
@@ -1493,6 +1520,13 @@ control L3Router(
 				Router6.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			}
 		}
+#else /* MULTICAST */
+		if (hdr.ipv4.isValid()) {
+			Router4.apply(hdr, meta, ig_intr_md, ig_tm_md);
+		} else if (hdr.ipv6.isValid()) {
+			Router6.apply(hdr, meta, ig_intr_md, ig_tm_md);
+		}
+#endif /* MULTICAST */
 		if (meta.resolve_nexthop) {
 			if (meta.nexthop_ipv4 != 0) {
 				Arp.apply(hdr, meta, ig_intr_md, ig_tm_md);
@@ -1527,6 +1561,7 @@ control MacRewrite(
 	}
 }
 
+#ifdef MULTICAST
 /* This control is used to rewrite the source and destination MAC addresses
  * for multicast packets. The destination MAC address is derived from the
  * destination IP address, and the source MAC address is set based on the
@@ -2019,6 +2054,7 @@ control MulticastEgress (
 		}
 	}
 }
+#endif /* MULTICAST */
 
 control Ingress(
 	inout sidecar_headers_t hdr,
@@ -2034,7 +2070,9 @@ control Ingress(
 	NatIngress() nat_ingress;
 	NatEgress() nat_egress;
 	L3Router() l3_router;
+#ifdef MULTICAST
 	MulticastIngress() mcast_ingress;
+#endif /* MULTICAST */
 	MacRewrite() mac_rewrite;
 
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) ingress_ctr;
@@ -2071,8 +2109,10 @@ control Ingress(
 		if (!meta.dropped) {
 			if (!meta.is_mcast || meta.is_link_local_mcastv6) {
 				services.apply(hdr, meta, ig_intr_md, ig_tm_md);
+#ifdef MULTICAST
 			} else if (meta.is_mcast && !meta.is_link_local_mcastv6) {
 				mcast_ingress.apply(hdr, meta, ig_intr_md, ig_tm_md);
+#endif /* MULTICAST */
 			}
 		}
 
@@ -2226,6 +2266,7 @@ control Egress(
 	inout egress_intrinsic_metadata_for_deparser_t eg_dprsr_md,
 	inout egress_intrinsic_metadata_for_output_port_t eg_oport_md
 ) {
+#ifdef MULTICAST
 	MulticastMacRewrite() mac_rewrite;
 	MulticastEgress() mcast_egress;
 
@@ -2287,6 +2328,9 @@ control Egress(
 			unicast_ctr.count(eg_intr_md.egress_port);
 		}
 	}
+#else /* MULTICAST */
+	apply { }
+#endif /* MULTICAST */
 }
 
 control EgressDeparser(
@@ -2295,6 +2339,7 @@ control EgressDeparser(
 	in sidecar_egress_meta_t meta,
 	in egress_intrinsic_metadata_for_deparser_t eg_dprsr_md
 ) {
+#ifdef MULTICAST
 	Checksum() ipv4_checksum;
 
 	apply {
@@ -2314,9 +2359,11 @@ control EgressDeparser(
 				hdr.inner_ipv4.dst_addr
 			});
 		}
-
 		pkt.emit(hdr);
 	}
+#else
+	apply { pkt.emit(hdr); }
+#endif
 }
 
 Pipeline(

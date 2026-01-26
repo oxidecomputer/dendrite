@@ -39,8 +39,16 @@ use dpd_client::types;
 // investigating.  If it only changes by an entry or two, it's fine to just
 // adjust the constant below to match the observed result.
 //
+#[cfg(feature = "multicast")]
 const IPV4_LPM_SIZE: usize = 8124; // ipv4 forwarding table
+#[cfg(not(feature = "multicast"))]
+const IPV4_LPM_SIZE: usize = 8187; // ipv4 forwarding table
+
+#[cfg(feature = "multicast")]
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
+#[cfg(not(feature = "multicast"))]
+const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
+
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports
 const IPV4_NAT_TABLE_SIZE: usize = 1024; // nat routing table
