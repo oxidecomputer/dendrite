@@ -22,6 +22,7 @@ pub use crate::faux_fsm::FsmState;
 pub use crate::faux_fsm::FsmType;
 pub use crate::faux_fsm::PortFsmState;
 
+#[cfg(feature = "multicast")]
 pub mod mcast;
 pub mod ports;
 pub mod table;

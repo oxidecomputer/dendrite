@@ -22,6 +22,7 @@ use common::ports::PortId;
 cfg_if::cfg_if! {
     if #[cfg(feature = "tofino_asic")] {
         use std::convert::TryFrom;
+        #[cfg(feature = "multicast")]
         use crate::table::mcast;
         use crate::table::port_mac;
         use crate::table::MacOps;
@@ -428,8 +429,11 @@ impl Switch {
 
         // Reset ingress and egress MAC tables and Port ID table(s).
         MacOps::<port_mac::PortMacTable>::reset(self)?;
-        MacOps::<mcast::mcast_port_mac::PortMacTable>::reset(self)?;
-        mcast::mcast_egress::reset_bitmap_table(self)?;
+        #[cfg(feature = "multicast")]
+        {
+            MacOps::<mcast::mcast_port_mac::PortMacTable>::reset(self)?;
+            mcast::mcast_egress::reset_bitmap_table(self)?;
+        }
 
         // Create the link on the CPU port.
         let link_id = self.create_link(port_id, &params)?;

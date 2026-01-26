@@ -566,6 +566,7 @@ impl Switch {
 
     /// Return the port label for the given physical port, useful for
     /// counter information.
+    #[cfg(feature = "multicast")]
     pub fn port_label(&self, phys_port: PhysPort) -> Option<String> {
         let idx: usize = phys_port.into();
         if phys_port == NO_PORT {
@@ -920,11 +921,13 @@ pub fn gen_udp_routed_pair(
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub enum OxideGeneveOption {
     External,
+    #[allow(unused)]
     Multicast(u8),
     Mss(u32),
 }
 
 /// Build a Geneve packet with a possible multicast tag.
+#[cfg(feature = "multicast")]
 pub fn gen_geneve_packet_with_mcast_tag(
     src: Endpoint,
     dst: Endpoint,

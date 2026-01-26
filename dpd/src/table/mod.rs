@@ -20,6 +20,7 @@ use dpd_types::views;
 pub mod arp_ipv4;
 pub mod attached_subnet_v4;
 pub mod attached_subnet_v6;
+#[cfg(feature = "multicast")]
 pub mod mcast;
 pub mod nat;
 pub mod neighbor_ipv6;
@@ -29,6 +30,7 @@ pub mod port_nat;
 pub mod route_ipv4;
 pub mod route_ipv6;
 
+#[cfg(feature = "multicast")]
 const NAME_TO_TYPE: [(&str, TableType); 24] = [
     (route_ipv4::INDEX_TABLE_NAME, TableType::RouteIdxIpv4),
     (route_ipv4::FORWARD_TABLE_NAME, TableType::RouteFwdIpv4),
@@ -65,6 +67,29 @@ const NAME_TO_TYPE: [(&str, TableType); 24] = [
     (
         mcast::mcast_egress::PORT_ID_TABLE_NAME,
         TableType::McastEgressPortMapping,
+    ),
+];
+#[cfg(not(feature = "multicast"))]
+const NAME_TO_TYPE: [(&str, TableType); 14] = [
+    (route_ipv4::INDEX_TABLE_NAME, TableType::RouteIdxIpv4),
+    (route_ipv4::FORWARD_TABLE_NAME, TableType::RouteFwdIpv4),
+    (route_ipv6::INDEX_TABLE_NAME, TableType::RouteIdxIpv6),
+    (route_ipv6::FORWARD_TABLE_NAME, TableType::RouteFwdIpv6),
+    (arp_ipv4::TABLE_NAME, TableType::ArpIpv4),
+    (neighbor_ipv6::TABLE_NAME, TableType::NeighborIpv6),
+    (port_mac::TABLE_NAME, TableType::PortMac),
+    (port_ip::IPV4_TABLE_NAME, TableType::PortIpv4),
+    (port_ip::IPV6_TABLE_NAME, TableType::PortIpv6),
+    (nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4),
+    (nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6),
+    (port_nat::TABLE_NAME, TableType::NatOnly),
+    (
+        attached_subnet_v4::EXT_SUBNET_IPV4_TABLE_NAME,
+        TableType::AttachedSubnetIpv4,
+    ),
+    (
+        attached_subnet_v6::EXT_SUBNET_IPV6_TABLE_NAME,
+        TableType::AttachedSubnetIpv6,
     ),
 ];
 
@@ -266,33 +291,43 @@ pub fn get_entries(switch: &Switch, name: String) -> DpdResult<views::Table> {
             MacOps::<port_mac::PortMacTable>::table_dump(switch)
         }
         TableType::NatOnly => port_nat::table_dump(switch),
+        #[cfg(feature = "multicast")]
         TableType::McastIpv6 => {
             mcast::mcast_replication::ipv6_table_dump(switch)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastIpv4SrcFilter => {
             mcast::mcast_src_filter::ipv4_table_dump(switch)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastIpv6SrcFilter => {
             mcast::mcast_src_filter::ipv6_table_dump(switch)
         }
+        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv4Mcast => {
             mcast::mcast_nat::ipv4_table_dump(switch)
         }
+        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv6Mcast => {
             mcast::mcast_nat::ipv6_table_dump(switch)
         }
+        #[cfg(feature = "multicast")]
         TableType::RouteIpv4Mcast => {
             mcast::mcast_route::ipv4_table_dump(switch)
         }
+        #[cfg(feature = "multicast")]
         TableType::RouteIpv6Mcast => {
             mcast::mcast_route::ipv6_table_dump(switch)
         }
+        #[cfg(feature = "multicast")]
         TableType::PortMacMcast => {
             MacOps::<mcast::mcast_port_mac::PortMacTable>::table_dump(switch)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastEgressDecapPorts => {
             mcast::mcast_egress::bitmap_table_dump(switch)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastEgressPortMapping => {
             mcast::mcast_egress::port_mapping_table_dump(switch)
         }
@@ -341,33 +376,43 @@ pub fn get_counters(
         TableType::AttachedSubnetIpv6 => {
             attached_subnet_v6::counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastIpv6 => {
             mcast::mcast_replication::ipv6_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastIpv4SrcFilter => {
             mcast::mcast_src_filter::ipv4_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastIpv6SrcFilter => {
             mcast::mcast_src_filter::ipv6_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv4Mcast => {
             mcast::mcast_nat::ipv4_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv6Mcast => {
             mcast::mcast_nat::ipv6_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::RouteIpv4Mcast => {
             mcast::mcast_route::ipv4_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::RouteIpv6Mcast => {
             mcast::mcast_route::ipv6_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastEgressDecapPorts => {
             mcast::mcast_egress::bitmap_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastEgressPortMapping => {
             mcast::mcast_egress::port_mapping_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::PortMacMcast => {
             MacOps::<mcast::mcast_port_mac::PortMacTable>::counter_fetch(
                 switch, force_sync,
@@ -382,7 +427,9 @@ pub enum TableType {
     RouteFwdIpv4,
     RouteIdxIpv6,
     RouteFwdIpv6,
+    #[cfg(feature = "multicast")]
     RouteIpv4Mcast,
+    #[cfg(feature = "multicast")]
     RouteIpv6Mcast,
     ArpIpv4,
     NeighborIpv6,
@@ -394,13 +441,21 @@ pub enum TableType {
     NatOnly,
     AttachedSubnetIpv4,
     AttachedSubnetIpv6,
+    #[cfg(feature = "multicast")]
     McastIpv6,
+    #[cfg(feature = "multicast")]
     McastIpv4SrcFilter,
+    #[cfg(feature = "multicast")]
     McastIpv6SrcFilter,
+    #[cfg(feature = "multicast")]
     NatIngressIpv4Mcast,
+    #[cfg(feature = "multicast")]
     NatIngressIpv6Mcast,
+    #[cfg(feature = "multicast")]
     PortMacMcast,
+    #[cfg(feature = "multicast")]
     McastEgressDecapPorts,
+    #[cfg(feature = "multicast")]
     McastEgressPortMapping,
 }
 
