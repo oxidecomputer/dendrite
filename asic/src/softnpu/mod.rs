@@ -326,15 +326,18 @@ impl AsicOps for Handle {
         Ok(vec![0])
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_domains(&self) -> Vec<u16> {
         let len = self.ports.lock().unwrap().len() as u16;
         (0..len).collect()
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_port_count(&self, _group_id: u16) -> AsicResult<usize> {
         Ok(self.ports.lock().unwrap().len())
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_port_add(
         &self,
         _group_id: u16,
@@ -345,22 +348,27 @@ impl AsicOps for Handle {
         Err(AsicError::OperationUnsupported)
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_port_remove(&self, _group_id: u16, _port: u16) -> AsicResult<()> {
         Ok(())
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_group_create(&self, _group_id: u16) -> AsicResult<()> {
         Err(AsicError::OperationUnsupported)
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_group_destroy(&self, _group_id: u16) -> AsicResult<()> {
         Ok(())
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_groups_count(&self) -> AsicResult<usize> {
         Ok(self.ports.lock().unwrap().len())
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_set_max_nodes(
         &self,
         _max_nodes: u32,

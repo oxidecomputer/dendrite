@@ -197,13 +197,16 @@ pub trait AsicOps {
     ) -> AsicResult<Vec<u8>>;
 
     /// Return a vector containing all of the defined multicast groups.
+    #[cfg(feature = "multicast")]
     fn mc_domains(&self) -> Vec<u16>;
 
     /// For a given multicast group, return the number of ports assigned to it.
+    #[cfg(feature = "multicast")]
     fn mc_port_count(&self, group_id: u16) -> AsicResult<usize>;
 
     /// Add a port to a multicast group. The port is identified using its ASIC
     /// identifier.
+    #[cfg(feature = "multicast")]
     fn mc_port_add(
         &self,
         group_id: u16,
@@ -214,23 +217,29 @@ pub trait AsicOps {
 
     /// Remove a port from a multicast group.  The port is identified using its ASIC
     /// identifier.
+    #[cfg(feature = "multicast")]
     fn mc_port_remove(&self, group_id: u16, port: AsicId) -> AsicResult<()>;
 
     /// Create a new, unpopulated multicast group.
+    #[cfg(feature = "multicast")]
     fn mc_group_create(&self, group_id: u16) -> AsicResult<()>;
 
     /// Destroy a multicast group.
+    #[cfg(feature = "multicast")]
     fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()>;
 
     /// Check if a multicast group exists.
+    #[cfg(feature = "multicast")]
     fn mc_group_exists(&self, group_id: u16) -> bool {
         self.mc_domains().contains(&group_id)
     }
 
     /// Get the total number of multicast groups.
+    #[cfg(feature = "multicast")]
     fn mc_groups_count(&self) -> AsicResult<usize>;
 
     /// Set the maximum number of multicast nodes.
+    #[cfg(feature = "multicast")]
     fn mc_set_max_nodes(
         &self,
         max_nodes: u32,

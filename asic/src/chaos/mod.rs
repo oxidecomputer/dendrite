@@ -147,12 +147,19 @@ pub struct AsicConfig {
     pub port_delete: Chaos,
     pub register_port_update_handler: Chaos,
     pub connector_avail_channels: Chaos,
+    #[cfg(feature = "multicast")]
     pub mc_port_count: Chaos,
+    #[cfg(feature = "multicast")]
     pub mc_port_add: Chaos,
+    #[cfg(feature = "multicast")]
     pub mc_port_remove: Chaos,
+    #[cfg(feature = "multicast")]
     pub mc_group_create: Chaos,
+    #[cfg(feature = "multicast")]
     pub mc_group_destroy: Chaos,
+    #[cfg(feature = "multicast")]
     pub mc_groups_count: Chaos,
+    #[cfg(feature = "multicast")]
     pub mc_set_max_nodes: Chaos,
     pub get_sidecar_identifiers: Chaos,
     pub table_new: TableChaos,
@@ -185,12 +192,19 @@ impl AsicConfig {
             port_delete: Chaos::new(v),
             register_port_update_handler: Chaos::new(v),
             connector_avail_channels: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_port_count: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_port_add: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_port_remove: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_group_create: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_group_destroy: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_groups_count: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_set_max_nodes: Chaos::new(v),
             get_sidecar_identifiers: Chaos::new(v),
             table_new: TableChaos::uniform(v),
@@ -217,7 +231,9 @@ impl AsicConfig {
             port_autoneg_get: Chaos::new(v),
             port_enable_get: Chaos::new(v),
             connector_avail_channels: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_port_count: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_groups_count: Chaos::new(v),
             get_sidecar_identifiers: Chaos::new(v),
             ..Default::default()
@@ -236,10 +252,15 @@ impl AsicConfig {
             port_prbs_set: Chaos::new(v),
             port_add: Chaos::new(v),
             port_delete: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_port_add: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_port_remove: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_group_create: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_group_destroy: Chaos::new(v),
+            #[cfg(feature = "multicast")]
             mc_set_max_nodes: Chaos::new(v),
             // TODO this can cause dpd to fail to start
             //table_clear: TableChaos::uniform(v),
@@ -477,16 +498,19 @@ impl AsicOps for Handle {
         Ok(vec![0])
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_domains(&self) -> Vec<u16> {
         let len = self.ports.lock().unwrap().len() as u16;
         (0..len).collect()
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_port_count(&self, _group_id: u16) -> AsicResult<usize> {
         unfurl!(self, mc_port_count);
         Ok(self.ports.lock().unwrap().len())
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_port_add(
         &self,
         _group_id: u16,
@@ -498,26 +522,31 @@ impl AsicOps for Handle {
         Err(AsicError::OperationUnsupported)
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_port_remove(&self, _group_id: u16, _port: u16) -> AsicResult<()> {
         unfurl!(self, mc_port_remove);
         Ok(())
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_group_create(&self, _group_id: u16) -> AsicResult<()> {
         unfurl!(self, mc_group_create);
         Err(AsicError::OperationUnsupported)
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_group_destroy(&self, _group_id: u16) -> AsicResult<()> {
         unfurl!(self, mc_group_destroy);
         Ok(())
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_groups_count(&self) -> AsicResult<usize> {
         unfurl!(self, mc_groups_count);
         Ok(self.ports.lock().unwrap().len())
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_set_max_nodes(
         &self,
         _max_nodes: u32,

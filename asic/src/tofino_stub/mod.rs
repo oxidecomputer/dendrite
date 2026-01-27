@@ -161,14 +161,17 @@ impl AsicOps for StubHandle {
         }
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_domains(&self) -> Vec<u16> {
         let mc_data = self.mc_data.lock().unwrap();
         mc_data.domains()
     }
+    #[cfg(feature = "multicast")]
     fn mc_port_count(&self, group_id: u16) -> AsicResult<usize> {
         let mc_data = self.mc_data.lock().unwrap();
         mc_data.domain_port_count(group_id)
     }
+    #[cfg(feature = "multicast")]
     fn mc_port_add(
         &self,
         group_id: u16,
@@ -180,6 +183,7 @@ impl AsicOps for StubHandle {
         let mut mc_data = self.mc_data.lock().unwrap();
         mc_data.domain_port_add(group_id, port, rid, level1_excl_id)
     }
+    #[cfg(feature = "multicast")]
     fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
         info!(
             self.log,
@@ -188,24 +192,28 @@ impl AsicOps for StubHandle {
         let mut mc_data = self.mc_data.lock().unwrap();
         mc_data.domain_port_remove(group_id, port)
     }
+    #[cfg(feature = "multicast")]
     fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
         info!(self.log, "creating multicast group {}", group_id);
         let mut mc_data = self.mc_data.lock().unwrap();
         mc_data.domain_create(group_id)
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()> {
         info!(self.log, "destroying multicast group {}", group_id);
         let mut mc_data = self.mc_data.lock().unwrap();
         mc_data.domain_destroy(group_id)
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_groups_count(&self) -> AsicResult<usize> {
         info!(self.log, "number of multicast groups");
         let mc_data = self.mc_data.lock().unwrap();
         Ok(mc_data.domains().len())
     }
 
+    #[cfg(feature = "multicast")]
     fn mc_set_max_nodes(
         &self,
         max_nodes: u32,
@@ -247,6 +255,7 @@ pub struct StubHandle {
     log: slog::Logger,
     phys_ports: Mutex<ports::PortData>,
     port_state: Mutex<BTreeMap<PortHdl, ports::StubPort>>,
+    #[cfg(feature = "multicast")]
     mc_data: Mutex<mcast::McGroupData>,
     update_tx: Mutex<Option<mpsc::UnboundedSender<PortUpdate>>>,
 }
@@ -257,6 +266,7 @@ impl StubHandle {
         let rt = BfRt::init(&p4_dir)?;
         let phys_ports = Mutex::new(ports::init()?);
         let port_state = Mutex::new(BTreeMap::new());
+        #[cfg(feature = "multicast")]
         let mc_data = Mutex::new(mcast::init());
         let log = log.new(o!());
 
@@ -265,6 +275,7 @@ impl StubHandle {
             log,
             phys_ports,
             port_state,
+            #[cfg(feature = "multicast")]
             mc_data,
             update_tx: Mutex::new(None),
         })
