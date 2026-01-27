@@ -45,13 +45,21 @@ fn test_p4_counter_list() {
         "Egress",
         "Ingress_Drop_Port",
         "Ingress_Drop_Reason",
+        #[cfg(feature = "multicast")]
         "Egress_Drop_Port",
+        #[cfg(feature = "multicast")]
         "Egress_Drop_Reason",
+        #[cfg(feature = "multicast")]
         "Unicast",
+        #[cfg(feature = "multicast")]
         "Multicast",
+        #[cfg(feature = "multicast")]
         "Multicast_External",
+        #[cfg(feature = "multicast")]
         "Multicast_Link_Local",
+        #[cfg(feature = "multicast")]
         "Multicast_Underlay",
+        #[cfg(feature = "multicast")]
         "Multicast_Drop",
     ];
 
