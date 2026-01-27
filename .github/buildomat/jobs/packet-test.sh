@@ -96,7 +96,7 @@ sleep $STARTUP_TIMEOUT
 
 banner "Links"
 
-./target/debug/swadm -h '[::1]' link ls || echo "failed to list links"
+./target/debug/swadm '[::1]' link ls || echo "failed to list links"
 
 banner "swadm Checks"
 

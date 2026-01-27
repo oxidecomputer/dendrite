@@ -80,7 +80,7 @@ export SDE=/opt/oxide/tofino_sde
 banner "Build"
 if [[ $NOBUILD -ne 1 ]]; then
     cargo build --features=tofino_asic,multicast --bin dpd --bin swadm
-    cargo xtask codegen --stages $TOFINO_STAGES
+    cargo xtask codegen --stages $TOFINO_STAGES --multicast
 fi
 
 banner "Test"
@@ -96,7 +96,7 @@ sleep $STARTUP_TIMEOUT
 
 banner "Links"
 
-./target/debug/swadm -h '[::1]' link ls || echo "failed to list links"
+./target/debug/swadm '[::1]' link ls || echo "failed to list links"
 
 banner "swadm Checks"
 
