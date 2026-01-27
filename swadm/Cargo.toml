@@ -18,3 +18,4 @@ oxnet.workspace = true
 slog.workspace = true
 tabwriter.workspace = true
 tokio.workspace = true
+tofino.workspace = true

@@ -19,6 +19,8 @@ pub struct SwitchIdentifiers {
     pub fab: Option<char>,
     /// Lot identifier.
     pub lot: Option<char>,
+    /// Lot number
+    pub lotnum: Option<[char; 4]>,
     /// Wafer number within the lot.
     pub wafer: Option<u8>,
     /// The wafer location as (x, y) coordinates on the wafer, represented as

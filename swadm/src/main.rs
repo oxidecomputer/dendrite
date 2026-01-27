@@ -91,6 +91,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: compliance::Compliance,
     },
+    Identifiers,
 }
 
 // A LinkPath or "loopback", used when either is appropriate.
@@ -231,5 +232,20 @@ async fn main_impl() -> anyhow::Result<()> {
         Commands::Compliance { cmd: compliance } => {
             compliance::compliance_cmd(&client, compliance).await
         }
+        Commands::Identifiers => identifiers(),
     }
+}
+
+fn identifiers() -> anyhow::Result<()> {
+    /*
+    let t = tofino::get_tofino().unwrap().unwrap();
+    let pci = t.open_pci().unwrap();
+    */
+    let pci =
+        tofino::pci::Pci::new("/dev/tofino/1", tofino::REGISTER_SIZE).unwrap();
+    let fuse = tofino::fuse::Fuse::read(&pci).unwrap();
+    let chip_id: tofino::fuse::ChipId = fuse.chip_id.into();
+    println!("chip id: {:016x}", fuse.chip_id);
+    println!("{}", chip_id);
+    Ok(())
 }

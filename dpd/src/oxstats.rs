@@ -593,6 +593,7 @@ async fn wait_for_switch_identifiers(
                     asic_backend: switch_identifiers.asic_backend.clone(),
                     fab: switch_identifiers.fab,
                     lot: switch_identifiers.lot,
+                    lotnum: switch_identifiers.lotnum,
                     wafer: switch_identifiers.wafer,
                     wafer_loc: switch_identifiers.wafer_loc,
                     model: switch_identifiers.model.clone(),

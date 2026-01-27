@@ -6458,6 +6458,7 @@ dependencies = [
  "oxnet",
  "slog",
  "tabwriter",
+ "tofino",
  "tokio",
 ]
 
