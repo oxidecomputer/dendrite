@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
 
+#[cfg(feature = "multicast")]
+use aal::AsicMulticastOps;
 use aal::{
     AsicError, AsicId, AsicOps, AsicResult, Connector, PortHdl, PortUpdate,
     SidecarIdentifiers,
@@ -127,6 +129,18 @@ impl TableChaos {
     }
 }
 
+#[cfg(feature = "multicast")]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+pub struct AsicMulticastConfig {
+    pub mc_port_count: Chaos,
+    pub mc_port_add: Chaos,
+    pub mc_port_remove: Chaos,
+    pub mc_group_create: Chaos,
+    pub mc_group_destroy: Chaos,
+    pub mc_groups_count: Chaos,
+    pub mc_set_max_nodes: Chaos,
+}
+
 /// The chaos ASIC config contains chaos values for each ASIC operation.
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct AsicConfig {
@@ -147,13 +161,6 @@ pub struct AsicConfig {
     pub port_delete: Chaos,
     pub register_port_update_handler: Chaos,
     pub connector_avail_channels: Chaos,
-    pub mc_port_count: Chaos,
-    pub mc_port_add: Chaos,
-    pub mc_port_remove: Chaos,
-    pub mc_group_create: Chaos,
-    pub mc_group_destroy: Chaos,
-    pub mc_groups_count: Chaos,
-    pub mc_set_max_nodes: Chaos,
     pub get_sidecar_identifiers: Chaos,
     pub table_new: TableChaos,
     pub table_clear: TableChaos,
@@ -161,6 +168,8 @@ pub struct AsicConfig {
     pub table_entry_add: TableChaos,
     pub table_entry_update: TableChaos,
     pub table_entry_del: TableChaos,
+    #[cfg(feature = "multicast")]
+    pub mc_config: AsicMulticastConfig,
 }
 
 impl AsicConfig {
@@ -185,13 +194,6 @@ impl AsicConfig {
             port_delete: Chaos::new(v),
             register_port_update_handler: Chaos::new(v),
             connector_avail_channels: Chaos::new(v),
-            mc_port_count: Chaos::new(v),
-            mc_port_add: Chaos::new(v),
-            mc_port_remove: Chaos::new(v),
-            mc_group_create: Chaos::new(v),
-            mc_group_destroy: Chaos::new(v),
-            mc_groups_count: Chaos::new(v),
-            mc_set_max_nodes: Chaos::new(v),
             get_sidecar_identifiers: Chaos::new(v),
             table_new: TableChaos::uniform(v),
             table_clear: TableChaos::uniform(v),
@@ -199,6 +201,16 @@ impl AsicConfig {
             table_entry_add: TableChaos::uniform(v),
             table_entry_update: TableChaos::uniform(v),
             table_entry_del: TableChaos::uniform(v),
+            #[cfg(feature = "multicast")]
+            mc_config: AsicMulticastConfig {
+                mc_port_count: Chaos::new(v),
+                mc_port_add: Chaos::new(v),
+                mc_port_remove: Chaos::new(v),
+                mc_group_create: Chaos::new(v),
+                mc_group_destroy: Chaos::new(v),
+                mc_groups_count: Chaos::new(v),
+                mc_set_max_nodes: Chaos::new(v),
+            },
         }
     }
 
@@ -217,9 +229,13 @@ impl AsicConfig {
             port_autoneg_get: Chaos::new(v),
             port_enable_get: Chaos::new(v),
             connector_avail_channels: Chaos::new(v),
-            mc_port_count: Chaos::new(v),
-            mc_groups_count: Chaos::new(v),
             get_sidecar_identifiers: Chaos::new(v),
+            #[cfg(feature = "multicast")]
+            mc_config: AsicMulticastConfig {
+                mc_port_count: Chaos::new(v),
+                mc_groups_count: Chaos::new(v),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -236,17 +252,21 @@ impl AsicConfig {
             port_prbs_set: Chaos::new(v),
             port_add: Chaos::new(v),
             port_delete: Chaos::new(v),
-            mc_port_add: Chaos::new(v),
-            mc_port_remove: Chaos::new(v),
-            mc_group_create: Chaos::new(v),
-            mc_group_destroy: Chaos::new(v),
-            mc_set_max_nodes: Chaos::new(v),
             // TODO this can cause dpd to fail to start
             //table_clear: TableChaos::uniform(v),
             table_default_set: TableChaos::uniform(v),
             table_entry_add: TableChaos::uniform(v),
             table_entry_update: TableChaos::uniform(v),
             table_entry_del: TableChaos::uniform(v),
+            #[cfg(feature = "multicast")]
+            mc_config: AsicMulticastConfig {
+                mc_port_add: Chaos::new(v),
+                mc_port_remove: Chaos::new(v),
+                mc_group_create: Chaos::new(v),
+                mc_group_destroy: Chaos::new(v),
+                mc_set_max_nodes: Chaos::new(v),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -325,6 +345,20 @@ macro_rules! unfurl {
 }
 pub(crate) use unfurl;
 
+/// A convenience macro for unfurling multicast chaos. The $name should be a
+/// regular `Chaos` member of [`AsicMulticastConfigConfig`]. The `handle` is
+/// a [`Handle`] object.
+#[cfg(feature = "multicast")]
+macro_rules! unfurl_mc {
+    ($handle:ident, $name:ident) => {
+        $handle
+            .config
+            .mc_config
+            .$name
+            .unfurled(&$handle.log, stringify!($name))?
+    };
+}
+
 /// A convenience macro for unfurling tabular chaos. The $name should be a
 /// `TableChaos` member of [`AsicConfig`]. The `handle` is a [`Handle`] object.
 macro_rules! table_unfurl {
@@ -333,6 +367,59 @@ macro_rules! table_unfurl {
     };
 }
 pub(crate) use table_unfurl;
+
+#[cfg(feature = "multicast")]
+impl AsicMulticastOps for Handle {
+    fn mc_domains(&self) -> Vec<u16> {
+        let len = self.ports.lock().unwrap().len() as u16;
+        (0..len).collect()
+    }
+
+    fn mc_port_count(&self, _group_id: u16) -> AsicResult<usize> {
+        unfurl_mc!(self, mc_port_count);
+        Ok(self.ports.lock().unwrap().len())
+    }
+
+    fn mc_port_add(
+        &self,
+        _group_id: u16,
+        _port: u16,
+        _rid: u16,
+        _level1_excl_id: u16,
+    ) -> AsicResult<()> {
+        unfurl_mc!(self, mc_port_add);
+        Err(AsicError::OperationUnsupported)
+    }
+
+    fn mc_port_remove(&self, _group_id: u16, _port: u16) -> AsicResult<()> {
+        unfurl_mc!(self, mc_port_remove);
+        Ok(())
+    }
+
+    fn mc_group_create(&self, _group_id: u16) -> AsicResult<()> {
+        unfurl_mc!(self, mc_group_create);
+        Err(AsicError::OperationUnsupported)
+    }
+
+    fn mc_group_destroy(&self, _group_id: u16) -> AsicResult<()> {
+        unfurl_mc!(self, mc_group_destroy);
+        Ok(())
+    }
+
+    fn mc_groups_count(&self) -> AsicResult<usize> {
+        unfurl_mc!(self, mc_groups_count);
+        Ok(self.ports.lock().unwrap().len())
+    }
+
+    fn mc_set_max_nodes(
+        &self,
+        _max_nodes: u32,
+        _max_link_aggregated_nodes: u32,
+    ) -> AsicResult<()> {
+        unfurl_mc!(self, mc_set_max_nodes);
+        Ok(())
+    }
+}
 
 impl AsicOps for Handle {
     fn port_get_media(&self, port_hdl: PortHdl) -> AsicResult<PortMedia> {
@@ -475,56 +562,6 @@ impl AsicOps for Handle {
     ) -> AsicResult<Vec<u8>> {
         unfurl!(self, connector_avail_channels);
         Ok(vec![0])
-    }
-
-    fn mc_domains(&self) -> Vec<u16> {
-        let len = self.ports.lock().unwrap().len() as u16;
-        (0..len).collect()
-    }
-
-    fn mc_port_count(&self, _group_id: u16) -> AsicResult<usize> {
-        unfurl!(self, mc_port_count);
-        Ok(self.ports.lock().unwrap().len())
-    }
-
-    fn mc_port_add(
-        &self,
-        _group_id: u16,
-        _port: u16,
-        _rid: u16,
-        _level1_excl_id: u16,
-    ) -> AsicResult<()> {
-        unfurl!(self, mc_port_add);
-        Err(AsicError::OperationUnsupported)
-    }
-
-    fn mc_port_remove(&self, _group_id: u16, _port: u16) -> AsicResult<()> {
-        unfurl!(self, mc_port_remove);
-        Ok(())
-    }
-
-    fn mc_group_create(&self, _group_id: u16) -> AsicResult<()> {
-        unfurl!(self, mc_group_create);
-        Err(AsicError::OperationUnsupported)
-    }
-
-    fn mc_group_destroy(&self, _group_id: u16) -> AsicResult<()> {
-        unfurl!(self, mc_group_destroy);
-        Ok(())
-    }
-
-    fn mc_groups_count(&self) -> AsicResult<usize> {
-        unfurl!(self, mc_groups_count);
-        Ok(self.ports.lock().unwrap().len())
-    }
-
-    fn mc_set_max_nodes(
-        &self,
-        _max_nodes: u32,
-        _max_link_aggregated_nodes: u32,
-    ) -> AsicResult<()> {
-        unfurl!(self, mc_set_max_nodes);
-        Ok(())
     }
 
     fn get_sidecar_identifiers(&self) -> AsicResult<impl SidecarIdentifiers> {

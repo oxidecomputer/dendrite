@@ -10,6 +10,7 @@ mod counters;
 mod geneve;
 mod icmp_ipv4;
 mod loopback;
+#[cfg(feature = "multicast")]
 mod mcast;
 mod nat;
 mod port_api;

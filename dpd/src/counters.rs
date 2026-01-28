@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 /// This module contains the support for reading the indirect counters defined
 /// by the p4 program.  While direct counters are attached to an existing table,
@@ -55,13 +55,21 @@ enum CounterId {
     Packet,
     DropPort,
     DropReason,
+    #[cfg(feature = "multicast")]
     EgressDropPort,
+    #[cfg(feature = "multicast")]
     EgressDropReason,
+    #[cfg(feature = "multicast")]
     Unicast,
+    #[cfg(feature = "multicast")]
     Multicast,
+    #[cfg(feature = "multicast")]
     MulticastExt,
+    #[cfg(feature = "multicast")]
     MulticastLL,
+    #[cfg(feature = "multicast")]
     MulticastUL,
+    #[cfg(feature = "multicast")]
     MulticastDrop,
 }
 
@@ -85,7 +93,7 @@ struct CounterDescription {
     p4_name: &'static str,
 }
 
-const COUNTERS: [CounterDescription; 14] = [
+const BASE_COUNTERS: [CounterDescription; 6] = [
     CounterDescription {
         id: CounterId::Service,
         client_name: "Service",
@@ -116,6 +124,12 @@ const COUNTERS: [CounterDescription; 14] = [
         client_name: "Ingress_Drop_Reason",
         p4_name: "pipe.Ingress.drop_reason_ctr",
     },
+];
+
+#[cfg(not(feature = "multicast"))]
+const MULTICAST_COUNTERS: [CounterDescription; 0] = [];
+#[cfg(feature = "multicast")]
+const MULTICAST_COUNTERS: [CounterDescription; 8] = [
     CounterDescription {
         id: CounterId::EgressDropPort,
         client_name: "Egress_Drop_Port",
@@ -160,7 +174,11 @@ const COUNTERS: [CounterDescription; 14] = [
 
 /// Get the list of names by which end users can refer to a counter.
 pub fn get_counter_names() -> DpdResult<Vec<String>> {
-    Ok(COUNTERS.iter().map(|c| c.client_name.to_string()).collect())
+    Ok(BASE_COUNTERS
+        .iter()
+        .chain(MULTICAST_COUNTERS.iter())
+        .map(|c| c.client_name.to_string())
+        .collect())
 }
 
 /// Fetch a counter by name from the switch's list of counters.  This call
@@ -414,19 +432,20 @@ pub async fn get_values(
         let key = match counter_id {
             CounterId::Packet => packet_label(idx.idx),
             CounterId::Service => service_label(idx.idx as u8),
-            CounterId::Ingress
-            | CounterId::Egress
-            | CounterId::EgressDropPort
-            | CounterId::DropPort
+            CounterId::Ingress | CounterId::Egress | CounterId::DropPort => {
+                port_label(switch, idx.idx).await
+            }
+            CounterId::DropReason => reason_label(idx.idx as u8)?,
+            #[cfg(feature = "multicast")]
+            CounterId::EgressDropPort
             | CounterId::Unicast
             | CounterId::Multicast
             | CounterId::MulticastExt
             | CounterId::MulticastLL
             | CounterId::MulticastUL
             | CounterId::MulticastDrop => port_label(switch, idx.idx).await,
-            CounterId::DropReason | CounterId::EgressDropReason => {
-                reason_label(idx.idx as u8)?
-            }
+            #[cfg(feature = "multicast")]
+            CounterId::EgressDropReason => reason_label(idx.idx as u8)?,
         };
 
         if let Some(key) = key {
@@ -458,7 +477,8 @@ pub fn reset(switch: &Switch, counter_name: String) -> DpdResult<()> {
 /// Create internal structures for managing the counters built into sidecar.p4
 pub fn init(hdl: &Handle) -> anyhow::Result<BTreeMap<String, Mutex<Counter>>> {
     let mut counters = BTreeMap::new();
-    for c in COUNTERS {
+
+    for c in BASE_COUNTERS.iter().chain(MULTICAST_COUNTERS.iter()) {
         counters.insert(
             c.client_name.to_string().to_lowercase(),
             Mutex::new(Counter {

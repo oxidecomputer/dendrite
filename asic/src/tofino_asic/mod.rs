@@ -4,7 +4,6 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
 
 use slog::{error, info, o};
@@ -19,6 +18,7 @@ mod bf_wrapper;
 mod genpd;
 
 mod link_fsm;
+#[cfg(feature = "multicast")]
 pub mod mcast;
 pub mod ports;
 pub mod qsfp;
@@ -27,6 +27,8 @@ pub mod serdes;
 pub mod stats;
 pub mod table;
 
+#[cfg(feature = "multicast")]
+use aal::AsicMulticastOps;
 use aal::{
     AsicError, AsicOps, AsicResult, Connector, PortHdl, SidecarIdentifiers,
 };
@@ -64,6 +66,55 @@ pub struct AsicConfig {
 impl Default for AsicConfig {
     fn default() -> Self {
         Self { devpath: None, xcvr_iface: None, board_rev: String::from("B") }
+    }
+}
+
+#[cfg(feature = "multicast")]
+impl AsicMulticastOps for Handle {
+    fn mc_domains(&self) -> Vec<u16> {
+        mcast::domains(self)
+    }
+
+    fn mc_port_count(&self, group_id: u16) -> AsicResult<usize> {
+        mcast::domain_port_count(self, group_id)
+    }
+
+    fn mc_port_add(
+        &self,
+        group_id: u16,
+        port: u16,
+        rid: u16,
+        level_1_excl_id: u16,
+    ) -> AsicResult<()> {
+        mcast::domain_add_port(self, group_id, port, rid, level_1_excl_id)
+    }
+
+    fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
+        mcast::domain_remove_port(self, group_id, port)
+    }
+
+    fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
+        mcast::domain_create(self, group_id)
+    }
+
+    fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()> {
+        mcast::domain_destroy(self, group_id)
+    }
+
+    fn mc_group_exists(&self, group_id: u16) -> bool {
+        mcast::domain_exists(self, group_id)
+    }
+
+    fn mc_groups_count(&self) -> AsicResult<usize> {
+        mcast::domains_count(self)
+    }
+
+    fn mc_set_max_nodes(
+        &self,
+        max_nodes: u32,
+        max_link_aggregated_nodes: u32,
+    ) -> AsicResult<()> {
+        mcast::set_max_nodes(self, max_nodes, max_link_aggregated_nodes)
     }
 }
 
@@ -149,52 +200,6 @@ impl AsicOps for Handle {
         ports::get_avail_channels(self, connector)
     }
 
-    fn mc_domains(&self) -> Vec<u16> {
-        mcast::domains(self)
-    }
-
-    fn mc_port_count(&self, group_id: u16) -> AsicResult<usize> {
-        mcast::domain_port_count(self, group_id)
-    }
-
-    fn mc_port_add(
-        &self,
-        group_id: u16,
-        port: u16,
-        rid: u16,
-        level_1_excl_id: u16,
-    ) -> AsicResult<()> {
-        mcast::domain_add_port(self, group_id, port, rid, level_1_excl_id)
-    }
-
-    fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
-        mcast::domain_remove_port(self, group_id, port)
-    }
-
-    fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
-        mcast::domain_create(self, group_id)
-    }
-
-    fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()> {
-        mcast::domain_destroy(self, group_id)
-    }
-
-    fn mc_group_exists(&self, group_id: u16) -> bool {
-        mcast::domain_exists(self, group_id)
-    }
-
-    fn mc_groups_count(&self) -> AsicResult<usize> {
-        mcast::domains_count(self)
-    }
-
-    fn mc_set_max_nodes(
-        &self,
-        max_nodes: u32,
-        max_link_aggregated_nodes: u32,
-    ) -> AsicResult<()> {
-        mcast::set_max_nodes(self, max_nodes, max_link_aggregated_nodes)
-    }
-
     // Ideally we would get some sort of sidecar-level ID from the FRUID.
     // Until/unless that is possible, we will use the chip_id from the tofino
     // fuse on the sidecar.  Embedded within this ID is the fab, lot, wafer id,
@@ -260,7 +265,8 @@ pub struct Handle {
     rt: tofino_common::BfRt,
     log: slog::Logger,
     phys_ports: Mutex<ports::PortData>,
-    domains: Mutex<HashMap<u16, mcast::DomainState>>,
+    #[cfg(feature = "multicast")]
+    domains: Mutex<std::collections::HashMap<u16, mcast::DomainState>>,
     eth_connector_id: Option<u32>,
 }
 
@@ -323,20 +329,32 @@ impl Handle {
         let dev_id = 0;
 
         let p4_dir = tofino_common::get_p4_dir()?;
+
+        #[cfg(feature = "multicast")]
         let mut bf = bf_wrapper::bf_init(
             &log,
             &config.devpath,
             &p4_dir,
             &config.board_rev,
         )?;
+        #[cfg(not(feature = "multicast"))]
+        let bf = bf_wrapper::bf_init(
+            &log,
+            &config.devpath,
+            &p4_dir,
+            &config.board_rev,
+        )?;
+
         let rt = tofino_common::BfRt::init(&p4_dir)?;
-        let domains = Mutex::new(HashMap::new());
         let phys_ports = ports::init(dev_id)?;
         let eth_connector_id = phys_ports.eth_connector_id;
 
         // Note: we assume that bf_mc_init() has been called as part of the
         // bf_switch_init() operation.
-        bf.mcast_hdl = mcast::create_session()?;
+        #[cfg(feature = "multicast")]
+        {
+            bf.mcast_hdl = mcast::create_session()?;
+        }
 
         Ok(Handle {
             dev_id,
@@ -346,7 +364,8 @@ impl Handle {
             rt,
             log: log.new(o!("unit" => "tofino_asic")),
             phys_ports: Mutex::new(phys_ports),
-            domains,
+            #[cfg(feature = "multicast")]
+            domains: Mutex::new(std::collections::HashMap::new()),
             eth_connector_id,
         })
     }

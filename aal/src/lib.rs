@@ -112,8 +112,52 @@ pub enum AsicError {
     Missing(String),
 }
 
-/// The `AsicOps` trait contains all of the non-Table related ASIC operations
+/// The `AsicMulticastOps` trait contains the multicast-related ASIC operations
 /// that the dataplane daemon requires.
+#[cfg(feature = "multicast")]
+pub trait AsicMulticastOps {
+    /// Return a vector containing all of the defined multicast groups.
+    fn mc_domains(&self) -> Vec<u16>;
+
+    /// For a given multicast group, return the number of ports assigned to it.
+    fn mc_port_count(&self, group_id: u16) -> AsicResult<usize>;
+
+    /// Add a port to a multicast group. The port is identified using its ASIC
+    /// identifier.
+    fn mc_port_add(
+        &self,
+        group_id: u16,
+        port: AsicId,
+        rid: u16,
+        level_1_excl_id: u16,
+    ) -> AsicResult<()>;
+
+    /// Remove a port from a multicast group.  The port is identified using its ASIC
+    /// identifier.
+    fn mc_port_remove(&self, group_id: u16, port: AsicId) -> AsicResult<()>;
+
+    /// Create a new, unpopulated multicast group.
+    fn mc_group_create(&self, group_id: u16) -> AsicResult<()>;
+
+    /// Destroy a multicast group.
+    fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()>;
+
+    /// Check if a multicast group exists.
+    fn mc_group_exists(&self, group_id: u16) -> bool {
+        self.mc_domains().contains(&group_id)
+    }
+
+    /// Get the total number of multicast groups.
+    fn mc_groups_count(&self) -> AsicResult<usize>;
+
+    /// Set the maximum number of multicast nodes.
+    fn mc_set_max_nodes(
+        &self,
+        max_nodes: u32,
+        max_link_aggregated_nodes: u32,
+    ) -> AsicResult<()>;
+}
+
 pub trait AsicOps {
     /// Reports the kind of media plugged into the port
     // TODO-correctness: This should probably take a `PortId` or `Connector`.
@@ -195,47 +239,6 @@ pub trait AsicOps {
         &self,
         connector: Connector,
     ) -> AsicResult<Vec<u8>>;
-
-    /// Return a vector containing all of the defined multicast groups.
-    fn mc_domains(&self) -> Vec<u16>;
-
-    /// For a given multicast group, return the number of ports assigned to it.
-    fn mc_port_count(&self, group_id: u16) -> AsicResult<usize>;
-
-    /// Add a port to a multicast group. The port is identified using its ASIC
-    /// identifier.
-    fn mc_port_add(
-        &self,
-        group_id: u16,
-        port: AsicId,
-        rid: u16,
-        level_1_excl_id: u16,
-    ) -> AsicResult<()>;
-
-    /// Remove a port from a multicast group.  The port is identified using its ASIC
-    /// identifier.
-    fn mc_port_remove(&self, group_id: u16, port: AsicId) -> AsicResult<()>;
-
-    /// Create a new, unpopulated multicast group.
-    fn mc_group_create(&self, group_id: u16) -> AsicResult<()>;
-
-    /// Destroy a multicast group.
-    fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()>;
-
-    /// Check if a multicast group exists.
-    fn mc_group_exists(&self, group_id: u16) -> bool {
-        self.mc_domains().contains(&group_id)
-    }
-
-    /// Get the total number of multicast groups.
-    fn mc_groups_count(&self) -> AsicResult<usize>;
-
-    /// Set the maximum number of multicast nodes.
-    fn mc_set_max_nodes(
-        &self,
-        max_nodes: u32,
-        max_link_aggregated_nodes: u32,
-    ) -> AsicResult<()>;
 
     /// Get sidecar identifiers of the device being managed.
     fn get_sidecar_identifiers(&self) -> AsicResult<impl SidecarIdentifiers>;
