@@ -224,6 +224,12 @@ impl AsicOps for Handle {
             asic_backend: "tofino_asic".to_string(),
             fab: Some(chip_id.fab),
             lot: Some(chip_id.lot),
+            lotnum: Some([
+                chip_id.lotnum0,
+                chip_id.lotnum1,
+                chip_id.lotnum2,
+                chip_id.lotnum3,
+            ]),
             wafer: Some(chip_id.wafer),
             wafer_loc: Some(wafer_loc_from_coords(
                 chip_id.xsign,

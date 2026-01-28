@@ -36,6 +36,12 @@ pub struct Identifiers {
     fab: Option<char>,
     /// Lot identifier.
     lot: Option<char>,
+    /// Lot number (4-character identifier within the lot).
+    ///
+    /// The 4-character size comes from the Tofino ASIC fuse layout, which
+    /// stores lotnum as four separate character fields (lotnum0-3) in
+    /// `tofino::fuse::ChipId`.
+    lotnum: Option<[char; 4]>,
     /// Wafer number within the lot.
     wafer: Option<u8>,
     /// The wafer location as (x, y) coordinates on the wafer, represented as
@@ -50,6 +56,7 @@ impl Default for Identifiers {
             asic_backend: "chaos".to_string(),
             fab: None,
             lot: None,
+            lotnum: None,
             wafer: None,
             wafer_loc: None,
         }
@@ -71,6 +78,10 @@ impl aal::SidecarIdentifiers for Identifiers {
 
     fn lot(&self) -> Option<char> {
         self.lot
+    }
+
+    fn lotnum(&self) -> Option<[char; 4]> {
+        self.lotnum
     }
 
     fn wafer(&self) -> Option<u8> {

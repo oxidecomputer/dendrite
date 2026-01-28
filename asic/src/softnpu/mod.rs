@@ -375,6 +375,7 @@ impl AsicOps for Handle {
             asic_backend: "softnpu".to_string(),
             fab: None,
             lot: None,
+            lotnum: None,
             wafer: None,
             wafer_loc: None,
         })
