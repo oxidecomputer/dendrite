@@ -12,6 +12,8 @@ use tokio::sync::mpsc;
 
 use crate::Identifiers;
 use crate::tofino_common::*;
+#[cfg(feature = "multicast")]
+use aal::AsicMulticastOps;
 use aal::{
     AsicError, AsicOps, AsicResult, Connector, PortHdl, PortUpdate,
     SidecarIdentifiers,
@@ -63,6 +65,77 @@ impl AsicLinkStats {
 
     pub fn stats_per_link() -> usize {
         0
+    }
+}
+
+#[cfg(feature = "multicast")]
+impl AsicMulticastOps for StubHandle {
+    #[cfg(feature = "multicast")]
+    fn mc_domains(&self) -> Vec<u16> {
+        let mc_data = self.mc_data.lock().unwrap();
+        mc_data.domains()
+    }
+    #[cfg(feature = "multicast")]
+    fn mc_port_count(&self, group_id: u16) -> AsicResult<usize> {
+        let mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_count(group_id)
+    }
+    #[cfg(feature = "multicast")]
+    fn mc_port_add(
+        &self,
+        group_id: u16,
+        port: u16,
+        rid: u16,
+        level1_excl_id: u16,
+    ) -> AsicResult<()> {
+        info!(self.log, "adding port {} to multicast group {}", port, group_id);
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_add(group_id, port, rid, level1_excl_id)
+    }
+    #[cfg(feature = "multicast")]
+    fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
+        info!(
+            self.log,
+            "remvoing port {} from multicast group {}", port, group_id
+        );
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_remove(group_id, port)
+    }
+    #[cfg(feature = "multicast")]
+    fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
+        info!(self.log, "creating multicast group {}", group_id);
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_create(group_id)
+    }
+
+    #[cfg(feature = "multicast")]
+    fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()> {
+        info!(self.log, "destroying multicast group {}", group_id);
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_destroy(group_id)
+    }
+
+    #[cfg(feature = "multicast")]
+    fn mc_groups_count(&self) -> AsicResult<usize> {
+        info!(self.log, "number of multicast groups");
+        let mc_data = self.mc_data.lock().unwrap();
+        Ok(mc_data.domains().len())
+    }
+
+    #[cfg(feature = "multicast")]
+    fn mc_set_max_nodes(
+        &self,
+        max_nodes: u32,
+        max_link_aggregated_nodes: u32,
+    ) -> AsicResult<()> {
+        info!(
+            self.log,
+            "setting max nodes to {} and max link aggregated nodes to {}",
+            max_nodes,
+            max_link_aggregated_nodes
+        );
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.set_max_nodes(max_nodes, max_link_aggregated_nodes)
     }
 }
 
@@ -159,74 +232,6 @@ impl AsicOps for StubHandle {
             Some(connector) => Ok(connector.get_available_channels()),
             None => Err(AsicError::InvalidArg("no such connector".to_string())),
         }
-    }
-
-    #[cfg(feature = "multicast")]
-    fn mc_domains(&self) -> Vec<u16> {
-        let mc_data = self.mc_data.lock().unwrap();
-        mc_data.domains()
-    }
-    #[cfg(feature = "multicast")]
-    fn mc_port_count(&self, group_id: u16) -> AsicResult<usize> {
-        let mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_port_count(group_id)
-    }
-    #[cfg(feature = "multicast")]
-    fn mc_port_add(
-        &self,
-        group_id: u16,
-        port: u16,
-        rid: u16,
-        level1_excl_id: u16,
-    ) -> AsicResult<()> {
-        info!(self.log, "adding port {} to multicast group {}", port, group_id);
-        let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_port_add(group_id, port, rid, level1_excl_id)
-    }
-    #[cfg(feature = "multicast")]
-    fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
-        info!(
-            self.log,
-            "remvoing port {} from multicast group {}", port, group_id
-        );
-        let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_port_remove(group_id, port)
-    }
-    #[cfg(feature = "multicast")]
-    fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
-        info!(self.log, "creating multicast group {}", group_id);
-        let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_create(group_id)
-    }
-
-    #[cfg(feature = "multicast")]
-    fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()> {
-        info!(self.log, "destroying multicast group {}", group_id);
-        let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_destroy(group_id)
-    }
-
-    #[cfg(feature = "multicast")]
-    fn mc_groups_count(&self) -> AsicResult<usize> {
-        info!(self.log, "number of multicast groups");
-        let mc_data = self.mc_data.lock().unwrap();
-        Ok(mc_data.domains().len())
-    }
-
-    #[cfg(feature = "multicast")]
-    fn mc_set_max_nodes(
-        &self,
-        max_nodes: u32,
-        max_link_aggregated_nodes: u32,
-    ) -> AsicResult<()> {
-        info!(
-            self.log,
-            "setting max nodes to {} and max link aggregated nodes to {}",
-            max_nodes,
-            max_link_aggregated_nodes
-        );
-        let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.set_max_nodes(max_nodes, max_link_aggregated_nodes)
     }
 
     fn get_sidecar_identifiers(&self) -> AsicResult<impl SidecarIdentifiers> {

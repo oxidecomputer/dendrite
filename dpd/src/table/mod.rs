@@ -30,8 +30,7 @@ pub mod port_nat;
 pub mod route_ipv4;
 pub mod route_ipv6;
 
-#[cfg(feature = "multicast")]
-const NAME_TO_TYPE: [(&str, TableType); 24] = [
+const BASE_TABLES: [(&str, TableType); 14] = [
     (route_ipv4::INDEX_TABLE_NAME, TableType::RouteIdxIpv4),
     (route_ipv4::FORWARD_TABLE_NAME, TableType::RouteFwdIpv4),
     (route_ipv6::INDEX_TABLE_NAME, TableType::RouteIdxIpv6),
@@ -52,6 +51,10 @@ const NAME_TO_TYPE: [(&str, TableType); 24] = [
         attached_subnet_v6::EXT_SUBNET_IPV6_TABLE_NAME,
         TableType::AttachedSubnetIpv6,
     ),
+];
+
+#[cfg(feature = "multicast")]
+const MCAST_TABLES: [(&str, TableType); 10] = [
     (mcast::mcast_replication::IPV6_TABLE_NAME, TableType::McastIpv6),
     (mcast::mcast_src_filter::IPV4_TABLE_NAME, TableType::McastIpv4SrcFilter),
     (mcast::mcast_src_filter::IPV6_TABLE_NAME, TableType::McastIpv6SrcFilter),
@@ -69,29 +72,9 @@ const NAME_TO_TYPE: [(&str, TableType); 24] = [
         TableType::McastEgressPortMapping,
     ),
 ];
+
 #[cfg(not(feature = "multicast"))]
-const NAME_TO_TYPE: [(&str, TableType); 14] = [
-    (route_ipv4::INDEX_TABLE_NAME, TableType::RouteIdxIpv4),
-    (route_ipv4::FORWARD_TABLE_NAME, TableType::RouteFwdIpv4),
-    (route_ipv6::INDEX_TABLE_NAME, TableType::RouteIdxIpv6),
-    (route_ipv6::FORWARD_TABLE_NAME, TableType::RouteFwdIpv6),
-    (arp_ipv4::TABLE_NAME, TableType::ArpIpv4),
-    (neighbor_ipv6::TABLE_NAME, TableType::NeighborIpv6),
-    (port_mac::TABLE_NAME, TableType::PortMac),
-    (port_ip::IPV4_TABLE_NAME, TableType::PortIpv4),
-    (port_ip::IPV6_TABLE_NAME, TableType::PortIpv6),
-    (nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4),
-    (nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6),
-    (port_nat::TABLE_NAME, TableType::NatOnly),
-    (
-        attached_subnet_v4::EXT_SUBNET_IPV4_TABLE_NAME,
-        TableType::AttachedSubnetIpv4,
-    ),
-    (
-        attached_subnet_v6::EXT_SUBNET_IPV6_TABLE_NAME,
-        TableType::AttachedSubnetIpv6,
-    ),
-];
+const MCAST_TABLES: [(&str, TableType); 0] = [];
 
 /// Basic statistics about p4 table usage
 #[derive(Clone, Debug, Default)]
@@ -459,26 +442,29 @@ pub enum TableType {
     McastEgressPortMapping,
 }
 
+fn name_to_type() -> impl Iterator<Item = &'static (&'static str, TableType)> {
+    BASE_TABLES.iter().chain(MCAST_TABLES.iter())
+}
+
 impl TryFrom<&str> for TableType {
     type Error = DpdError;
 
     fn try_from(name: &str) -> Result<Self, Self::Error> {
         let name = name.to_lowercase();
-        for (table_name, table_type) in NAME_TO_TYPE {
+        for (table_name, table_type) in name_to_type() {
             if table_name.to_lowercase() == name {
-                return Ok(table_type);
+                return Ok(*table_type);
             }
         }
-
-        Err(DpdError::NoSuchTable(name.to_string()))
+        Err(DpdError::NoSuchTable(name))
     }
 }
 
 pub fn init(switch: &mut Switch) -> anyhow::Result<()> {
     debug!(switch.log, "initializing tables");
 
-    for (name, table_type) in NAME_TO_TYPE {
-        switch.table_add(name, table_type)?;
+    for (name, table_type) in name_to_type() {
+        switch.table_add(name, *table_type)?;
     }
 
     Ok(())

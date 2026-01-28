@@ -93,12 +93,7 @@ struct CounterDescription {
     p4_name: &'static str,
 }
 
-#[cfg(feature = "multicast")]
-const COUNTERS_COUNT: usize = 14;
-#[cfg(not(feature = "multicast"))]
-const COUNTERS_COUNT: usize = 6;
-
-const COUNTERS: [CounterDescription; COUNTERS_COUNT] = [
+const BASE_COUNTERS: [CounterDescription; 6] = [
     CounterDescription {
         id: CounterId::Service,
         client_name: "Service",
@@ -129,49 +124,47 @@ const COUNTERS: [CounterDescription; COUNTERS_COUNT] = [
         client_name: "Ingress_Drop_Reason",
         p4_name: "pipe.Ingress.drop_reason_ctr",
     },
-    #[cfg(feature = "multicast")]
+];
+
+#[cfg(not(feature = "multicast"))]
+const MULTICAST_COUNTERS: [CounterDescription; 0] = [];
+#[cfg(feature = "multicast")]
+const MULTICAST_COUNTERS: [CounterDescription; 8] = [
     CounterDescription {
         id: CounterId::EgressDropPort,
         client_name: "Egress_Drop_Port",
         p4_name: "pipe.Egress.drop_port_ctr",
     },
-    #[cfg(feature = "multicast")]
     CounterDescription {
         id: CounterId::EgressDropReason,
         client_name: "Egress_Drop_Reason",
         p4_name: "pipe.Egress.drop_reason_ctr",
     },
-    #[cfg(feature = "multicast")]
     CounterDescription {
         id: CounterId::Unicast,
         client_name: "Unicast",
         p4_name: "pipe.Egress.unicast_ctr",
     },
-    #[cfg(feature = "multicast")]
     CounterDescription {
         id: CounterId::Multicast,
         client_name: "Multicast",
         p4_name: "pipe.Egress.mcast_ctr",
     },
-    #[cfg(feature = "multicast")]
     CounterDescription {
         id: CounterId::MulticastExt,
         client_name: "Multicast_External",
         p4_name: "pipe.Egress.external_mcast_ctr",
     },
-    #[cfg(feature = "multicast")]
     CounterDescription {
         id: CounterId::MulticastLL,
         client_name: "Multicast_Link_Local",
         p4_name: "pipe.Egress.link_local_mcast_ctr",
     },
-    #[cfg(feature = "multicast")]
     CounterDescription {
         id: CounterId::MulticastUL,
         client_name: "Multicast_Underlay",
         p4_name: "pipe.Egress.underlay_mcast_ctr",
     },
-    #[cfg(feature = "multicast")]
     CounterDescription {
         id: CounterId::MulticastDrop,
         client_name: "Multicast_Drop",
@@ -181,7 +174,11 @@ const COUNTERS: [CounterDescription; COUNTERS_COUNT] = [
 
 /// Get the list of names by which end users can refer to a counter.
 pub fn get_counter_names() -> DpdResult<Vec<String>> {
-    Ok(COUNTERS.iter().map(|c| c.client_name.to_string()).collect())
+    Ok(BASE_COUNTERS
+        .iter()
+        .chain(MULTICAST_COUNTERS.iter())
+        .map(|c| c.client_name.to_string())
+        .collect())
 }
 
 /// Fetch a counter by name from the switch's list of counters.  This call
@@ -480,7 +477,8 @@ pub fn reset(switch: &Switch, counter_name: String) -> DpdResult<()> {
 /// Create internal structures for managing the counters built into sidecar.p4
 pub fn init(hdl: &Handle) -> anyhow::Result<BTreeMap<String, Mutex<Counter>>> {
     let mut counters = BTreeMap::new();
-    for c in COUNTERS {
+
+    for c in BASE_COUNTERS.iter().chain(MULTICAST_COUNTERS.iter()) {
         counters.insert(
             c.client_name.to_string().to_lowercase(),
             Mutex::new(Counter {

@@ -1559,6 +1559,36 @@ pub async fn init_update_handler(switch: &Arc<Switch>) -> AsicResult<()> {
     Ok(())
 }
 
+fn set_mac_config(
+    switch: &Switch,
+    asic_id: AsicId,
+    mac: MacAddr,
+) -> DpdResult<()> {
+    MacOps::<port_mac::PortMacTable>::mac_set(switch, asic_id, mac)?;
+
+    #[cfg(feature = "multicast")]
+    {
+        MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_set(
+            switch, asic_id, mac,
+        )?;
+        mcast::mcast_egress::add_port_mapping_entry(switch, asic_id)?;
+    }
+    Ok(())
+}
+
+fn clear_mac_config(switch: &Switch, asic_id: AsicId) -> DpdResult<()> {
+    MacOps::<port_mac::PortMacTable>::mac_clear(switch, asic_id)?;
+
+    #[cfg(feature = "multicast")]
+    {
+        MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_clear(
+            switch, asic_id,
+        )?;
+        mcast::mcast_egress::del_port_mapping_entry(switch, asic_id)?;
+    }
+    Ok(())
+}
+
 fn unplumb_link(
     switch: &Switch,
     log: &slog::Logger,
@@ -1577,34 +1607,7 @@ fn unplumb_link(
     }
 
     if link.plumbed.mac.is_some() {
-        let mut err = None;
-        if let Err(e) = MacOps::<port_mac::PortMacTable>::mac_clear(
-            switch,
-            link.asic_port_id,
-        ) {
-            err = Some(e);
-        }
-        #[cfg(feature = "multicast")]
-        {
-            if let Err(e) =
-                MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_clear(
-                    switch,
-                    link.asic_port_id,
-                )
-            {
-                err = Some(e);
-            } else {
-                // We tie this in here as ports and macs are 1:1
-                if let Err(e) = mcast::mcast_egress::del_port_mapping_entry(
-                    switch,
-                    link.asic_port_id,
-                ) {
-                    err = Some(e);
-                }
-            }
-        }
-
-        if let Some(e) = err {
+        if let Err(e) = clear_mac_config(switch, link.asic_port_id) {
             error!(log, "Failed to clear mac address and port mapping: {e:?}");
             return Err(e);
         }
@@ -1870,31 +1873,7 @@ async fn reconcile_link(
             link.config.mac,
             link.plumbed.mac.unwrap()
         );
-        let mut err = None;
-        if let Err(e) =
-            MacOps::<port_mac::PortMacTable>::mac_clear(switch, asic_id)
-        {
-            err = Some(e);
-        }
-        #[cfg(feature = "multicast")]
-        {
-            if let Err(e) =
-                MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_clear(
-                    switch, asic_id,
-                )
-            {
-                err = Some(e);
-            } else {
-                // We tie this in here as ports and macs are 1:1
-                if let Err(e) =
-                    mcast::mcast_egress::del_port_mapping_entry(switch, asic_id)
-                {
-                    err = Some(e);
-                }
-            }
-        }
-
-        if let Some(e) = err {
+        if let Err(e) = clear_mac_config(switch, asic_id) {
             record_plumb_failure(
                 switch,
                 &mut link,
@@ -1910,35 +1889,7 @@ async fn reconcile_link(
 
     if link.plumbed.mac.is_none() {
         debug!(log, "Programming mac {}", link.config.mac);
-        let mut err = None;
-        if let Err(e) = MacOps::<port_mac::PortMacTable>::mac_set(
-            switch,
-            asic_id,
-            link.config.mac,
-        ) {
-            err = Some(e);
-        }
-
-        #[cfg(feature = "multicast")]
-        {
-            if let Err(e) =
-                MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_set(
-                    switch,
-                    asic_id,
-                    link.config.mac,
-                )
-            {
-                err = Some(e);
-            } else {
-                // We tie this in here as ports and macs are 1:1
-                if let Err(e) =
-                    mcast::mcast_egress::add_port_mapping_entry(switch, asic_id)
-                {
-                    err = Some(e);
-                }
-            }
-        }
-        if let Some(e) = err {
+        if let Err(e) = set_mac_config(switch, asic_id, link.config.mac) {
             record_plumb_failure(
                 switch,
                 &mut link,

@@ -90,6 +90,33 @@ fn client_error(message: impl ToString) -> HttpError {
     )
 }
 
+// Generate a 501 client error with the provided message.
+#[cfg(not(feature = "multicast"))]
+fn not_implemented(message: impl ToString) -> HttpError {
+    HttpError {
+        status_code: dropshot::ErrorStatusCode::NOT_IMPLEMENTED.into(),
+        error_code: None,
+        external_message: message.to_string(),
+        internal_message: message.to_string(),
+        headers: None,
+    }
+}
+
+// When the multicast feature is enabled, run the provided code.  If
+// multicast is no enabled, return 501 Not Implemented to the caller.
+macro_rules! require_multicast {
+    ($body:expr) => {{
+        #[cfg(feature = "multicast")]
+        {
+            $body
+        }
+        #[cfg(not(feature = "multicast"))]
+        {
+            Err(not_implemented("multicast feature disabled"))
+        }
+    }};
+}
+
 pub enum DpdApiImpl {}
 
 impl DpdApi for DpdApiImpl {
@@ -1958,17 +1985,14 @@ impl DpdApi for DpdApiImpl {
         group: TypedBody<MulticastGroupCreateExternalEntry>,
     ) -> Result<HttpResponseCreated<MulticastGroupExternalResponse>, HttpError>
     {
-        #[cfg(feature = "multicast")]
-        {
+        require_multicast!({
             let switch: &Switch = rqctx.context();
             let entry = group.into_inner();
 
             mcast::add_group_external(switch, entry)
                 .map(HttpResponseCreated)
                 .map_err(HttpError::from)
-        }
-        #[cfg(not(feature = "multicast"))]
-        Err(client_error("multicast feature disabled"))
+        })
     }
 
     #[allow(unused_variables)]
@@ -1977,17 +2001,14 @@ impl DpdApi for DpdApiImpl {
         group: TypedBody<MulticastGroupCreateUnderlayEntry>,
     ) -> Result<HttpResponseCreated<MulticastGroupUnderlayResponse>, HttpError>
     {
-        #[cfg(feature = "multicast")]
-        {
+        require_multicast!({
             let switch: &Switch = rqctx.context();
             let entry = group.into_inner();
 
             mcast::add_group_internal(switch, entry)
                 .map(HttpResponseCreated)
                 .map_err(HttpError::from)
-        }
-        #[cfg(not(feature = "multicast"))]
-        Err(client_error("multicast feature disabled"))
+        })
     }
 
     #[allow(unused_variables)]
@@ -1995,33 +2016,27 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseDeleted, HttpError> {
-        #[cfg(feature = "multicast")]
-        {
+        require_multicast!({
             let switch: &Switch = rqctx.context();
             let ip = path.into_inner().group_ip;
 
             mcast::del_group(switch, ip)
                 .map(|_| HttpResponseDeleted())
                 .map_err(HttpError::from)
-        }
-        #[cfg(not(feature = "multicast"))]
-        Err(client_error("multicast feature disabled"))
+        })
     }
 
     #[allow(unused_variables)]
     async fn multicast_reset(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
-        #[cfg(feature = "multicast")]
-        {
+        require_multicast!({
             let switch: &Switch = rqctx.context();
 
             mcast::reset(switch)
                 .map(|_| HttpResponseDeleted())
                 .map_err(HttpError::from)
-        }
-        #[cfg(not(feature = "multicast"))]
-        Err(client_error("multicast feature disabled"))
+        })
     }
 
     #[allow(unused_variables)]
@@ -2029,8 +2044,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseOk<MulticastGroupResponse>, HttpError> {
-        #[cfg(feature = "multicast")]
-        {
+        require_multicast!({
             let switch: &Switch = rqctx.context();
             let ip = path.into_inner().group_ip;
 
@@ -2038,9 +2052,7 @@ impl DpdApi for DpdApiImpl {
             mcast::get_group(switch, ip)
                 .map(HttpResponseOk)
                 .map_err(HttpError::from)
-        }
-        #[cfg(not(feature = "multicast"))]
-        Err(client_error("multicast feature disabled"))
+        })
     }
 
     #[allow(unused_variables)]
@@ -2049,8 +2061,7 @@ impl DpdApi for DpdApiImpl {
         path: Path<MulticastUnderlayGroupIpParam>,
         group: TypedBody<MulticastGroupUpdateUnderlayEntry>,
     ) -> Result<HttpResponseOk<MulticastGroupUnderlayResponse>, HttpError> {
-        #[cfg(feature = "multicast")]
-        {
+        require_multicast!({
             let switch: &Switch = rqctx.context();
             let admin_scoped = path.into_inner().group_ip;
 
@@ -2061,9 +2072,7 @@ impl DpdApi for DpdApiImpl {
             )
             .map(HttpResponseOk)
             .map_err(HttpError::from)
-        }
-        #[cfg(not(feature = "multicast"))]
-        Err(client_error("multicast feature disabled"))
+        })
     }
 
     #[allow(unused_variables)]
@@ -2071,17 +2080,14 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastUnderlayGroupIpParam>,
     ) -> Result<HttpResponseOk<MulticastGroupUnderlayResponse>, HttpError> {
-        #[cfg(feature = "multicast")]
-        {
+        require_multicast!({
             let switch: &Switch = rqctx.context();
             let admin_scoped = path.into_inner().group_ip;
 
             mcast::get_group_internal(switch, admin_scoped)
                 .map(HttpResponseOk)
                 .map_err(HttpError::from)
-        }
-        #[cfg(not(feature = "multicast"))]
-        Err(client_error("multicast feature disabled"))
+        })
     }
 
     #[allow(unused_variables)]
@@ -2091,8 +2097,7 @@ impl DpdApi for DpdApiImpl {
         group: TypedBody<MulticastGroupUpdateExternalEntry>,
     ) -> Result<HttpResponseCreated<MulticastGroupExternalResponse>, HttpError>
     {
-        #[cfg(feature = "multicast")]
-        {
+        require_multicast!({
             let switch: &Switch = rqctx.context();
             let entry = group.into_inner();
             let ip = path.into_inner().group_ip;
@@ -2100,9 +2105,7 @@ impl DpdApi for DpdApiImpl {
             mcast::modify_group_external(switch, ip, entry)
                 .map(HttpResponseCreated)
                 .map_err(HttpError::from)
-        }
-        #[cfg(not(feature = "multicast"))]
-        Err(client_error("multicast feature disabled"))
+        })
     }
 
     #[allow(unused_variables)]
@@ -2113,8 +2116,7 @@ impl DpdApi for DpdApiImpl {
         >,
     ) -> Result<HttpResponseOk<ResultsPage<MulticastGroupResponse>>, HttpError>
     {
-        #[cfg(feature = "multicast")]
-        {
+        require_multicast!({
             let switch: &Switch = rqctx.context();
 
             let pag_params = query_params.into_inner();
@@ -2143,9 +2145,7 @@ impl DpdApi for DpdApiImpl {
                     group_ip: e.ip(),
                 },
             )?))
-        }
-        #[cfg(not(feature = "multicast"))]
-        Err(client_error("multicast feature disabled"))
+        })
     }
 
     #[allow(unused_variables)]
@@ -2157,8 +2157,7 @@ impl DpdApi for DpdApiImpl {
         >,
     ) -> Result<HttpResponseOk<ResultsPage<MulticastGroupResponse>>, HttpError>
     {
-        #[cfg(feature = "multicast")]
-        {
+        require_multicast!({
             let switch: &Switch = rqctx.context();
             let tag = path.into_inner().tag;
 
@@ -2188,9 +2187,7 @@ impl DpdApi for DpdApiImpl {
                     group_ip: e.ip(),
                 },
             )?))
-        }
-        #[cfg(not(feature = "multicast"))]
-        Err(client_error("multicast feature disabled"))
+        })
     }
 
     #[allow(unused_variables)]
@@ -2198,33 +2195,27 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<TagPath>,
     ) -> Result<HttpResponseDeleted, HttpError> {
-        #[cfg(feature = "multicast")]
-        {
+        require_multicast!({
             let switch: &Switch = rqctx.context();
             let tag = path.into_inner().tag;
 
             mcast::reset_tag(switch, &tag)
                 .map(|_| HttpResponseDeleted())
                 .map_err(HttpError::from)
-        }
-        #[cfg(not(feature = "multicast"))]
-        Err(client_error("multicast feature disabled"))
+        })
     }
 
     #[allow(unused_variables)]
     async fn multicast_reset_untagged(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
-        #[cfg(feature = "multicast")]
-        {
+        require_multicast!({
             let switch: &Switch = rqctx.context();
 
             mcast::reset_untagged(switch)
                 .map(|_| HttpResponseDeleted())
                 .map_err(HttpError::from)
-        }
-        #[cfg(not(feature = "multicast"))]
-        Err(client_error("multicast feature disabled"))
+        })
     }
 
     #[cfg(feature = "tofino_asic")]

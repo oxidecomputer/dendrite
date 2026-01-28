@@ -5,7 +5,7 @@ edition = "2024"
 description = "Client library for the Dendrite data plane daemon"
 
 [features]
-multicast = []
+multicast = ["asic/multicast"]
 chaos = ["asic/chaos"]
 tofino_asic = ["asic/tofino_asic"]
 

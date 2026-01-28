@@ -108,7 +108,7 @@ control Filter(
 #ifdef MULTICAST
 	Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS) drop_mcast_ctr;
 	bit<16> mcast_scope;
-#endif /* MULITCAST */
+#endif /* MULTICAST */
 
 	action dropv4() {
 		meta.drop_reason = DROP_IPV4_SWITCH_ADDR_MISS;

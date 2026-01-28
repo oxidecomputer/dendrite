@@ -921,7 +921,7 @@ pub fn gen_udp_routed_pair(
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub enum OxideGeneveOption {
     External,
-    #[allow(unused)]
+    #[cfg(feature = "multicast")]
     Multicast(u8),
     Mss(u32),
 }
@@ -1002,6 +1002,7 @@ pub fn gen_geneve_packet(
                     0x00,
                 ]);
             }
+            #[cfg(feature = "multicast")]
             OxideGeneveOption::Multicast(tag) if *tag < 3 => {
                 #[rustfmt::skip]
                 geneve.options.extend_from_slice(&[
@@ -1036,6 +1037,7 @@ pub fn gen_geneve_packet(
                 ]);
                 geneve.options.extend_from_slice(&mss.to_be_bytes()[..]);
             }
+            #[cfg(feature = "multicast")]
             _ => {
                 panic!("illegal specification for option: {opt:?}")
             }
