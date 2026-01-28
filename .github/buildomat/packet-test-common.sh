@@ -79,7 +79,7 @@ set +o errexit
 SLEEP_TIME=5
 iters=$(( $STARTUP_TIMEOUT / $SLEEP_TIME ))
 while [ 1 ] ; do
-	./target/debug/swadm build-info 2> /dev/null
+	./target/debug/swadm --host '[::1]' build-info 2> /dev/null
 	if [ $? == 0 ]; then
 		break
 	fi
