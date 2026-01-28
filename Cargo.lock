@@ -1489,6 +1489,7 @@ dependencies = [
  "schemars",
  "serde",
  "transceiver-controller",
+ "uuid",
 ]
 
 [[package]]

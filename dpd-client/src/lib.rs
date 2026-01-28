@@ -359,6 +359,25 @@ impl fmt::Display for types::TfportData {
     }
 }
 
+impl types::SwitchIdentifiers {
+    /// Returns the full lot identifier by combining `fab`, `lot`, and `lotnum`.
+    pub fn full_lot_id(&self) -> Option<String> {
+        let mut lot = String::new();
+        let has_lot_data = self.lot.is_some() || self.lotnum.is_some();
+        if has_lot_data && let Some(fab) = &self.fab {
+            lot.push_str(fab.as_str());
+        }
+        if let Some(lot_char) = &self.lot {
+            lot.push_str(lot_char.as_str());
+        }
+        if let Some(lotnum) = &self.lotnum {
+            lot.extend(lotnum.iter().map(|c| c.as_str()));
+        }
+
+        if lot.is_empty() { None } else { Some(lot) }
+    }
+}
+
 impl fmt::Display for types::SffComplianceCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -388,7 +407,92 @@ impl fmt::Display for types::MediaInterfaceId {
 
 #[cfg(test)]
 mod tests {
+    use super::types::SwitchIdentifiers;
     use common::ports::PortId;
+
+    #[test]
+    fn test_full_lot_id_both_present() {
+        let idents: SwitchIdentifiers = serde_json::from_str(
+            r#"{
+                "sidecar_id": "00000000-0000-0000-0000-000000000000",
+                "asic_backend": "test",
+                "fab": "F",
+                "lot": "T",
+                "lotnum": ["C", "A", "K", "7"],
+                "wafer": 1,
+                "wafer_loc": [10, 20],
+                "model": "test-model",
+                "revision": 1,
+                "serial": "test-serial",
+                "slot": 0
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(idents.full_lot_id(), Some("FTCAK7".to_string()));
+    }
+
+    #[test]
+    fn test_full_lot_id_lot_only() {
+        let idents: SwitchIdentifiers = serde_json::from_str(
+            r#"{
+                "sidecar_id": "00000000-0000-0000-0000-000000000000",
+                "asic_backend": "test",
+                "fab": "F",
+                "lot": "T",
+                "lotnum": null,
+                "wafer": 1,
+                "wafer_loc": [10, 20],
+                "model": "test-model",
+                "revision": 1,
+                "serial": "test-serial",
+                "slot": 0
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(idents.full_lot_id(), Some("FT".to_string()));
+    }
+
+    #[test]
+    fn test_full_lot_id_lotnum_only() {
+        let idents: SwitchIdentifiers = serde_json::from_str(
+            r#"{
+                "sidecar_id": "00000000-0000-0000-0000-000000000000",
+                "asic_backend": "test",
+                "fab": null,
+                "lot": null,
+                "lotnum": ["C", "A", "K", "7"],
+                "wafer": 1,
+                "wafer_loc": [10, 20],
+                "model": "test-model",
+                "revision": 1,
+                "serial": "test-serial",
+                "slot": 0
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(idents.full_lot_id(), Some("CAK7".to_string()));
+    }
+
+    #[test]
+    fn test_full_lot_id_neither_present() {
+        let idents: SwitchIdentifiers = serde_json::from_str(
+            r#"{
+                "sidecar_id": "00000000-0000-0000-0000-000000000000",
+                "asic_backend": "test",
+                "fab": null,
+                "lot": null,
+                "lotnum": null,
+                "wafer": 1,
+                "wafer_loc": [10, 20],
+                "model": "test-model",
+                "revision": 1,
+                "serial": "test-serial",
+                "slot": 0
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(idents.full_lot_id(), None);
+    }
 
     #[test]
     fn test_parse_client_port_id() {

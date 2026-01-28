@@ -49,6 +49,28 @@ use switch_table::{
 /// The maximum Dropshot request size for the metrics server.
 const METRIC_REQUEST_MAX_SIZE: usize = 1024 * 1024;
 
+/// Construct the full lot identifier from the fab, lot character, and lotnum
+/// array.
+///
+/// The identifier is a concatenation of the fab, the lot character, and the
+/// four-character lot number. If none of these are available, fall back to the
+/// ASIC backend name.
+fn full_lot_id(idents: &SwitchIdentifiers) -> String {
+    let mut lot = String::new();
+    let has_lot_data = idents.lot.is_some() || idents.lotnum.is_some();
+    if has_lot_data && let Some(fab) = idents.fab {
+        lot.push(fab);
+    }
+    if let Some(lot_char) = idents.lot {
+        lot.push(lot_char);
+    }
+    if let Some(lotnum) = idents.lotnum {
+        lot.extend(lotnum);
+    }
+
+    if lot.is_empty() { idents.asic_backend.clone() } else { lot }
+}
+
 /// Kind category for the the data link.
 const LINK_KIND: &str = "switch-port";
 /// Network type for the data link.
@@ -234,11 +256,7 @@ impl OximeterTargets {
                     .map(|c| c.to_string())
                     .unwrap_or(switch_identifiers.asic_backend.clone())
                     .into(),
-                asic_lot: switch_identifiers
-                    .lot
-                    .map(|c| c.to_string())
-                    .unwrap_or(switch_identifiers.asic_backend.clone())
-                    .into(),
+                asic_lot: full_lot_id(switch_identifiers).into(),
                 asic_wafer: switch_identifiers.wafer.unwrap_or(0),
                 asic_wafer_loc_x: switch_identifiers
                     .wafer_loc
@@ -306,11 +324,7 @@ impl Oxstats {
                     .map(|c| c.to_string())
                     .unwrap_or(switch_identifiers.asic_backend.clone())
                     .into(),
-                asic_lot: switch_identifiers
-                    .lot
-                    .map(|c| c.to_string())
-                    .unwrap_or(switch_identifiers.asic_backend.clone())
-                    .into(),
+                asic_lot: full_lot_id(switch_identifiers).into(),
                 asic_wafer: switch_identifiers.wafer.unwrap_or(0),
                 asic_wafer_loc_x: switch_identifiers
                     .wafer_loc
@@ -593,6 +607,7 @@ async fn wait_for_switch_identifiers(
                     asic_backend: switch_identifiers.asic_backend.clone(),
                     fab: switch_identifiers.fab,
                     lot: switch_identifiers.lot,
+                    lotnum: switch_identifiers.lotnum,
                     wafer: switch_identifiers.wafer,
                     wafer_loc: switch_identifiers.wafer_loc,
                     model: switch_identifiers.model.clone(),

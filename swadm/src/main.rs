@@ -91,6 +91,8 @@ enum Commands {
         #[command(subcommand)]
         cmd: compliance::Compliance,
     },
+    /// Display switch and ASIC identifiers.
+    Identifiers,
 }
 
 // A LinkPath or "loopback", used when either is appropriate.
@@ -231,5 +233,33 @@ async fn main_impl() -> anyhow::Result<()> {
         Commands::Compliance { cmd: compliance } => {
             compliance::compliance_cmd(&client, compliance).await
         }
+        Commands::Identifiers => identifiers(&client).await,
     }
+}
+
+async fn identifiers(client: &Client) -> anyhow::Result<()> {
+    let idents = client
+        .switch_identifiers()
+        .await
+        .context("failed to fetch switch identifiers")?
+        .into_inner();
+    println!("Sidecar ID:   {}", idents.sidecar_id);
+    println!("ASIC backend: {}", idents.asic_backend);
+    if let Some(ref fab) = idents.fab {
+        println!("Fab:          {}", fab.as_str());
+    }
+    if let Some(lot_id) = idents.full_lot_id() {
+        println!("Lot:          {lot_id}");
+    }
+    if let Some(wafer) = idents.wafer {
+        println!("Wafer:        {wafer}");
+    }
+    if let Some(ref wafer_loc) = idents.wafer_loc {
+        println!("Wafer loc:    ({}, {})", wafer_loc[0], wafer_loc[1]);
+    }
+    println!("Model:        {}", idents.model);
+    println!("Revision:     {}", idents.revision);
+    println!("Serial:       {}", idents.serial);
+    println!("Slot:         {}", idents.slot);
+    Ok(())
 }
