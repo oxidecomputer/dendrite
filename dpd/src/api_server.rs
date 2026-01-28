@@ -94,7 +94,7 @@ fn client_error(message: impl ToString) -> HttpError {
 #[cfg(not(feature = "multicast"))]
 fn not_implemented(message: impl ToString) -> HttpError {
     HttpError {
-        status_code: dropshot::ErrorStatusCode::NOT_IMPLEMENTED.into(),
+        status_code: dropshot::ErrorStatusCode::NOT_IMPLEMENTED,
         error_code: None,
         external_message: message.to_string(),
         internal_message: message.to_string(),
