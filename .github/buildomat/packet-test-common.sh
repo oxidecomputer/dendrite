@@ -15,7 +15,7 @@ if [ x$MULTICAST == x ]; then
     else
         BUILD_FEATURES=tofino_asic,multicast
 	CODEGEN_FEATURES=--multicast
-        SWADM_FEATURES=multicast
+        SWADM_FEATURES=--features=multicast
 fi
     
 function cleanup {
@@ -104,7 +104,7 @@ DENDRITE_TEST_HOST='[::1]' \
     DENDRITE_TEST_VERBOSITY=3 \
     cargo test \
     --no-fail-fast \
-    --features=$SWADM_FEATURES \
+    $SWADM_FEATURES \
     --test \
     counters \
     -- \
