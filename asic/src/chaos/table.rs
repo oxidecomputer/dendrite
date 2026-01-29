@@ -20,7 +20,7 @@ pub const ROUTE_IPV4: &str = "pipe.Ingress.l3_router.routes_ipv4";
 pub const ROUTE_IPV6: &str = "pipe.Ingress.l3_router.routes_ipv6";
 pub const ARP_IPV4: &str = "pipe.Ingress.l3_router.arp_ipv4";
 pub const NEIGHBOR_IPV6: &str = "pipe.Ingress.l3_router.neighbor_ipv6";
-pub const MAC_REWRITE: &str = "pipe.Ingress.mac_rewrite.mac_rewrite";
+pub const MAC_REWRITE: &str = "pipe.Egress.unicast_mac_rewrite.mac_rewrite";
 pub const SWITCH_IPV4_ADDR: &str = "pipe.Ingress.filter.switch_ipv4_addr";
 pub const SWITCH_IPV6_ADDR: &str = "pipe.Ingress.filter.switch_ipv6_addr";
 pub const NAT_INGRESS_IPV4: &str = "pipe.Ingress.nat_ingress.ingress_ipv4";
@@ -42,7 +42,7 @@ pub(crate) const MCAST_ROUTE_IPV4: &str =
 pub(crate) const MCAST_ROUTE_IPV6: &str =
     "pipe.Ingress.l3_router.MulticastRouter6.tbl";
 pub(crate) const MCAST_MAC_REWRITE: &str =
-    "pipe.Egress.mac_rewrite.mac_rewrite";
+    "pipe.Egress.mcast_mac_rewrite.mac_rewrite";
 pub(crate) const MCAST_DECAP_PORTS: &str =
     "pipe.Egress.mcast_egress.tbl_decap_ports";
 pub(crate) const MCAST_PORT_ID_MAPPING: &str =

@@ -23,6 +23,12 @@ pub struct Table {
 }
 
 // soft-npu table names
+// Route tables are idx-only in sidecar-lite; route_ttl_is_1 is ignored here.
+// TODO: remove compat once sidecar-lite updates route keys/actions:
+// - p4/sidecar-lite.p4: add route_ttl_is_1 to route table keys and add
+//   ttl_exceeded actions; set ingress.route_ttl_is_1 in router.
+// - p4/softnpu.p4: add route_ttl_is_1 to ingress metadata.
+// - scadm + softnpu tests: encode/decode idx + ttl in route keys.
 const ROUTER_V4_RT: &str = "ingress.router.v4_route.rtr";
 const ROUTER_V4_IDX: &str = "ingress.router.v4_idx.rtr";
 const ROUTER_V6_RT: &str = "ingress.router.v6_route.rtr";
@@ -44,16 +50,19 @@ const _PROXY_ARP: &str = "ingress.pxarp.proxy_arp";
 const SWITCH_ADDR4: &str = "pipe.Ingress.filter.switch_ipv4_addr";
 const SWITCH_ADDR6: &str = "pipe.Ingress.filter.switch_ipv6_addr";
 const ROUTER4_LOOKUP_RT: &str =
-    "pipe.Ingress.l3_router.Router4.lookup_idx.route";
+    "pipe.Ingress.l3_router.router4.lookup_idx.route";
 const ROUTER4_LOOKUP_IDX: &str =
-    "pipe.Ingress.l3_router.Router4.lookup_idx.lookup";
+    "pipe.Ingress.l3_router.router4.lookup_idx.lookup";
 const ROUTER6_LOOKUP_RT: &str =
-    "pipe.Ingress.l3_router.Router6.lookup_idx.route";
+    "pipe.Ingress.l3_router.router6.lookup_idx.route";
 const ROUTER6_LOOKUP_IDX: &str =
-    "pipe.Ingress.l3_router.Router6.lookup_idx.lookup";
+    "pipe.Ingress.l3_router.router6.lookup_idx.lookup";
 const NDP: &str = "pipe.Ingress.l3_router.Ndp.tbl";
 const ARP: &str = "pipe.Ingress.l3_router.Arp.tbl";
-const DPD_MAC_REWRITE: &str = "pipe.Ingress.mac_rewrite.mac_rewrite";
+const DPD_UNICAST_MAC_REWRITE: &str =
+    "pipe.Egress.unicast_mac_rewrite.mac_rewrite";
+#[cfg(feature = "multicast")]
+const DPD_MCAST_MAC_REWRITE: &str = "pipe.Egress.mcast_mac_rewrite.mac_rewrite";
 const NAT_INGRESS4: &str = "pipe.Ingress.nat_ingress.ingress_ipv4";
 const NAT_INGRESS6: &str = "pipe.Ingress.nat_ingress.ingress_ipv6";
 const ATTACHED_SUBNET_INGRESS4: &str =
@@ -85,8 +94,12 @@ impl TableOps<Handle> for Table {
             SWITCH_ADDR6 => (Some(LOCAL_V6.into()), Some(SWITCH_ADDR6.into())),
             NDP => (Some(RESOLVER_V6.into()), Some(NDP.into())),
             ARP => (Some(RESOLVER_V4.into()), Some(ARP.into())),
-            DPD_MAC_REWRITE => {
-                (Some(MAC_REWRITE.into()), Some(DPD_MAC_REWRITE.into()))
+            DPD_UNICAST_MAC_REWRITE => {
+                (Some(MAC_REWRITE.into()), Some(DPD_UNICAST_MAC_REWRITE.into()))
+            }
+            #[cfg(feature = "multicast")]
+            DPD_MCAST_MAC_REWRITE => {
+                (Some(MAC_REWRITE.into()), Some(DPD_MCAST_MAC_REWRITE.into()))
             }
             NAT_INGRESS4 => (Some(NAT_V4.into()), Some(NAT_INGRESS4.into())),
             NAT_INGRESS6 => (Some(NAT_V6.into()), Some(NAT_INGRESS6.into())),
@@ -135,9 +148,22 @@ impl TableOps<Handle> for Table {
         let action_data = data.action_to_ir().unwrap();
 
         trace!(hdl.log, "entry_add called");
-        trace!(hdl.log, "table: {}", table);
-        trace!(hdl.log, "match_data:\n{:#?}", match_data);
-        trace!(hdl.log, "action_data:\n{:#?}", action_data);
+        trace!(hdl.log, "table: {table}");
+        trace!(hdl.log, "match_data:\n{match_data:#?}");
+        trace!(hdl.log, "action_data:\n{action_data:#?}");
+
+        let is_route_table =
+            matches!(dpd_table.as_str(), ROUTER4_LOOKUP_RT | ROUTER6_LOOKUP_RT);
+        if is_route_table {
+            if route_ttl_is_1(&match_data.fields) {
+                trace!(hdl.log, "skipping ttl==1 route entry for {dpd_table}");
+                return Ok(());
+            }
+            if action_data.action == "ttl_exceeded" {
+                trace!(hdl.log, "skipping ttl_exceeded action for {dpd_table}");
+                return Ok(());
+            }
+        }
 
         let keyset_data = keyset_data(match_data.fields, &table);
 
@@ -440,7 +466,23 @@ impl TableOps<Handle> for Table {
                 }
                 ("rewrite_dst", params)
             }
-            (DPD_MAC_REWRITE, "rewrite") => {
+            (DPD_UNICAST_MAC_REWRITE, "rewrite") => {
+                let mut params = Vec::new();
+                for arg in action_data.args {
+                    match arg.value {
+                        ValueTypes::U64(v) => {
+                            let mac = v.to_le_bytes();
+                            params.extend_from_slice(&mac[0..6]);
+                        }
+                        ValueTypes::Ptr(v) => {
+                            params.extend_from_slice(v.as_slice());
+                        }
+                    }
+                }
+                ("rewrite", params)
+            }
+            #[cfg(feature = "multicast")]
+            (DPD_MCAST_MAC_REWRITE, "rewrite") => {
                 let mut params = Vec::new();
                 for arg in action_data.args {
                     match arg.value {
@@ -545,10 +587,10 @@ impl TableOps<Handle> for Table {
         };
         let action = action.to_string();
         trace!(hdl.log, "sending request to softnpu");
-        trace!(hdl.log, "table: {}", table);
-        trace!(hdl.log, "action: {:#?}", action);
-        trace!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
-        trace!(hdl.log, "parameter_data:\n{:#?}", parameter_data);
+        trace!(hdl.log, "table: {table}");
+        trace!(hdl.log, "action: {action:#?}");
+        trace!(hdl.log, "keyset_data:\n{keyset_data:#?}");
+        trace!(hdl.log, "parameter_data:\n{parameter_data:#?}");
 
         let msg = ManagementRequest::TableAdd(TableAdd {
             table,
@@ -576,9 +618,9 @@ impl TableOps<Handle> for Table {
         let action_data = data.action_to_ir().unwrap();
 
         trace!(hdl.log, "entry_update called");
-        trace!(hdl.log, "table: {}", table);
-        trace!(hdl.log, "match_data:\n{:#?}", match_data);
-        trace!(hdl.log, "action_data:\n{:#?}", action_data);
+        trace!(hdl.log, "table: {table}");
+        trace!(hdl.log, "match_data:\n{match_data:#?}");
+        trace!(hdl.log, "action_data:\n{action_data:#?}");
 
         //TODO implement in softnpu
         Ok(())
@@ -593,17 +635,31 @@ impl TableOps<Handle> for Table {
             None => return Ok(()),
             Some(id) => id.clone(),
         };
+        let dpd_table = match &self.dpd_id {
+            None => return Ok(()),
+            Some(id) => id.clone(),
+        };
         let match_data = key.key_to_ir().unwrap();
 
         trace!(hdl.log, "entry_del called");
-        trace!(hdl.log, "table: {}", table);
-        trace!(hdl.log, "match_data:\n{:#?}", match_data);
+        trace!(hdl.log, "table: {table}");
+        trace!(hdl.log, "match_data:\n{match_data:#?}");
+
+        let is_route_table =
+            matches!(dpd_table.as_str(), ROUTER4_LOOKUP_RT | ROUTER6_LOOKUP_RT);
+        if is_route_table && route_ttl_is_1(&match_data.fields) {
+            trace!(
+                hdl.log,
+                "skipping ttl==1 route entry delete for {dpd_table}"
+            );
+            return Ok(());
+        }
 
         let keyset_data = keyset_data(match_data.fields, &table);
 
         trace!(hdl.log, "sending request to softnpu");
-        trace!(hdl.log, "table: {}", table);
-        trace!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
+        trace!(hdl.log, "table: {table}");
+        trace!(hdl.log, "keyset_data:\n{keyset_data:#?}");
 
         let msg =
             ManagementRequest::TableRemove(TableRemove { keyset_data, table });
@@ -639,12 +695,12 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: &str) -> Vec<u8> {
                 let mut data: Vec<u8> = Vec::new();
                 match table {
                     RESOLVER_V4 => {
-                        // "nexthop_ipv4" => bit<32>
+                        // "nexthop" => bit<32>
                         serialize_value_type(&x, &mut data);
                         keyset_data.extend_from_slice(&data[..4]);
                     }
                     RESOLVER_V6 => {
-                        // "nexthop_ipv4" => bit<128>
+                        // "nexthop" => bit<128>
                         let mut buf = Vec::new();
                         serialize_value_type(&x, &mut buf);
                         buf.reverse();
@@ -654,10 +710,12 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: &str) -> Vec<u8> {
                         serialize_value_type(&x, &mut data);
                         keyset_data.extend_from_slice(&data[..2]);
                     }
-                    ROUTER_V4_RT => {
-                        // "idx" => exact => bit<16>
-                        serialize_value_type(&x, &mut data);
-                        keyset_data.extend_from_slice(&data[..2]);
+                    ROUTER_V4_RT | ROUTER_V6_RT => {
+                        // sidecar-lite route keys are idx-only.
+                        if m.name == "idx" {
+                            serialize_value_type(&x, &mut data);
+                            keyset_data.extend_from_slice(&data[..2]);
+                        }
                     }
                     NAT_V4 => {
                         // "dst_addr" => hdr.ipv4.dst: exact => bit<32>
@@ -746,4 +804,19 @@ fn serialize_value_type_be(x: &ValueTypes, data: &mut Vec<u8>) {
             data.extend_from_slice(v.as_slice());
         }
     }
+}
+
+fn route_ttl_is_1(fields: &[MatchEntryField]) -> bool {
+    fields.iter().any(|field| {
+        if field.name != "route_ttl_is_1" {
+            return false;
+        }
+        match &field.value {
+            MatchEntryValue::Value(ValueTypes::U64(v)) => *v != 0,
+            MatchEntryValue::Value(ValueTypes::Ptr(v)) => {
+                v.first().is_some_and(|b| *b != 0)
+            }
+            _ => false,
+        }
+    })
 }

@@ -427,7 +427,7 @@ impl Switch {
             assert_eq!(mgr.set_base_mac(temp_mac)?, None);
         }
 
-        // Reset ingress and egress MAC tables and Port ID table(s).
+        // Reset egress MAC table and Port ID table(s).
         MacOps::<port_mac::PortMacTable>::reset(self)?;
         #[cfg(feature = "multicast")]
         {

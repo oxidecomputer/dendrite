@@ -5,6 +5,10 @@
 // Copyright 2026 Oxide Computer Company
 
 //! Table operations for multicast replication information.
+//!
+//! Only IPv6 replication groups are managed here. IPv4 multicast uses
+//! direct forwarding via the `MulticastRouter4` P4 control without
+//! replication group tracking.
 
 use std::net::Ipv6Addr;
 

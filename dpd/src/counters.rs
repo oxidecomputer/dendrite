@@ -51,26 +51,22 @@ pub struct Counter {
 enum CounterId {
     Service,
     Ingress,
-    Egress,
     Packet,
     DropPort,
     DropReason,
-    #[cfg(feature = "multicast")]
-    EgressDropPort,
-    #[cfg(feature = "multicast")]
-    EgressDropReason,
-    #[cfg(feature = "multicast")]
+    Forwarded,
     Unicast,
+    /// Link-local IPv6 multicast (ff02::/16). Not feature-gated because
+    /// link-local forwarding uses standard routing, not replication groups.
+    MulticastLL,
+    EgressDropPort,
+    EgressDropReason,
     #[cfg(feature = "multicast")]
     Multicast,
     #[cfg(feature = "multicast")]
     MulticastExt,
     #[cfg(feature = "multicast")]
-    MulticastLL,
-    #[cfg(feature = "multicast")]
     MulticastUL,
-    #[cfg(feature = "multicast")]
-    MulticastDrop,
 }
 
 impl From<CounterId> for u8 {
@@ -93,7 +89,7 @@ struct CounterDescription {
     p4_name: &'static str,
 }
 
-const BASE_COUNTERS: [CounterDescription; 6] = [
+const BASE_COUNTERS: [CounterDescription; 10] = [
     CounterDescription {
         id: CounterId::Service,
         client_name: "Service",
@@ -110,11 +106,6 @@ const BASE_COUNTERS: [CounterDescription; 6] = [
         p4_name: "pipe.Ingress.packet_ctr",
     },
     CounterDescription {
-        id: CounterId::Egress,
-        client_name: "Egress",
-        p4_name: "pipe.Ingress.egress_ctr",
-    },
-    CounterDescription {
         id: CounterId::DropPort,
         client_name: "Ingress_Drop_Port",
         p4_name: "pipe.Ingress.drop_port_ctr",
@@ -124,12 +115,21 @@ const BASE_COUNTERS: [CounterDescription; 6] = [
         client_name: "Ingress_Drop_Reason",
         p4_name: "pipe.Ingress.drop_reason_ctr",
     },
-];
-
-#[cfg(not(feature = "multicast"))]
-const MULTICAST_COUNTERS: [CounterDescription; 0] = [];
-#[cfg(feature = "multicast")]
-const MULTICAST_COUNTERS: [CounterDescription; 8] = [
+    CounterDescription {
+        id: CounterId::Forwarded,
+        client_name: "Forwarded",
+        p4_name: "pipe.Egress.forwarded_ctr",
+    },
+    CounterDescription {
+        id: CounterId::Unicast,
+        client_name: "Unicast",
+        p4_name: "pipe.Egress.unicast_ctr",
+    },
+    CounterDescription {
+        id: CounterId::MulticastLL,
+        client_name: "Multicast_Link_Local",
+        p4_name: "pipe.Egress.link_local_mcast_ctr",
+    },
     CounterDescription {
         id: CounterId::EgressDropPort,
         client_name: "Egress_Drop_Port",
@@ -140,11 +140,12 @@ const MULTICAST_COUNTERS: [CounterDescription; 8] = [
         client_name: "Egress_Drop_Reason",
         p4_name: "pipe.Egress.drop_reason_ctr",
     },
-    CounterDescription {
-        id: CounterId::Unicast,
-        client_name: "Unicast",
-        p4_name: "pipe.Egress.unicast_ctr",
-    },
+];
+
+#[cfg(not(feature = "multicast"))]
+const MULTICAST_COUNTERS: [CounterDescription; 0] = [];
+#[cfg(feature = "multicast")]
+const MULTICAST_COUNTERS: [CounterDescription; 3] = [
     CounterDescription {
         id: CounterId::Multicast,
         client_name: "Multicast",
@@ -156,19 +157,9 @@ const MULTICAST_COUNTERS: [CounterDescription; 8] = [
         p4_name: "pipe.Egress.external_mcast_ctr",
     },
     CounterDescription {
-        id: CounterId::MulticastLL,
-        client_name: "Multicast_Link_Local",
-        p4_name: "pipe.Egress.link_local_mcast_ctr",
-    },
-    CounterDescription {
         id: CounterId::MulticastUL,
         client_name: "Multicast_Underlay",
         p4_name: "pipe.Egress.underlay_mcast_ctr",
-    },
-    CounterDescription {
-        id: CounterId::MulticastDrop,
-        client_name: "Multicast_Drop",
-        p4_name: "pipe.Ingress.filter.drop_mcast_ctr",
     },
 ];
 
@@ -432,20 +423,19 @@ pub async fn get_values(
         let key = match counter_id {
             CounterId::Packet => packet_label(idx.idx),
             CounterId::Service => service_label(idx.idx as u8),
-            CounterId::Ingress | CounterId::Egress | CounterId::DropPort => {
-                port_label(switch, idx.idx).await
-            }
-            CounterId::DropReason => reason_label(idx.idx as u8)?,
-            #[cfg(feature = "multicast")]
-            CounterId::EgressDropPort
+            CounterId::Ingress
+            | CounterId::DropPort
+            | CounterId::Forwarded
             | CounterId::Unicast
-            | CounterId::Multicast
-            | CounterId::MulticastExt
             | CounterId::MulticastLL
-            | CounterId::MulticastUL
-            | CounterId::MulticastDrop => port_label(switch, idx.idx).await,
+            | CounterId::EgressDropPort => port_label(switch, idx.idx).await,
+            CounterId::DropReason | CounterId::EgressDropReason => {
+                reason_label(idx.idx as u8)?
+            }
             #[cfg(feature = "multicast")]
-            CounterId::EgressDropReason => reason_label(idx.idx as u8)?,
+            CounterId::Multicast
+            | CounterId::MulticastExt
+            | CounterId::MulticastUL => port_label(switch, idx.idx).await,
         };
 
         if let Some(key) = key {
