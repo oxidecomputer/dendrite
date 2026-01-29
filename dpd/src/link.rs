@@ -14,6 +14,7 @@ use crate::fault::LinkUpTracker;
 use crate::ports::AdminEvent;
 use crate::ports::Event;
 use crate::table::MacOps;
+#[cfg(feature = "multicast")]
 use crate::table::mcast;
 use crate::table::port_ip;
 use crate::table::port_mac;
@@ -1558,6 +1559,36 @@ pub async fn init_update_handler(switch: &Arc<Switch>) -> AsicResult<()> {
     Ok(())
 }
 
+fn set_mac_config(
+    switch: &Switch,
+    asic_id: AsicId,
+    mac: MacAddr,
+) -> DpdResult<()> {
+    MacOps::<port_mac::PortMacTable>::mac_set(switch, asic_id, mac)?;
+
+    #[cfg(feature = "multicast")]
+    {
+        MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_set(
+            switch, asic_id, mac,
+        )?;
+        mcast::mcast_egress::add_port_mapping_entry(switch, asic_id)?;
+    }
+    Ok(())
+}
+
+fn clear_mac_config(switch: &Switch, asic_id: AsicId) -> DpdResult<()> {
+    MacOps::<port_mac::PortMacTable>::mac_clear(switch, asic_id)?;
+
+    #[cfg(feature = "multicast")]
+    {
+        MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_clear(
+            switch, asic_id,
+        )?;
+        mcast::mcast_egress::del_port_mapping_entry(switch, asic_id)?;
+    }
+    Ok(())
+}
+
 fn unplumb_link(
     switch: &Switch,
     log: &slog::Logger,
@@ -1576,28 +1607,11 @@ fn unplumb_link(
     }
 
     if link.plumbed.mac.is_some() {
-        if let Err(e) = MacOps::<port_mac::PortMacTable>::mac_clear(
-            switch,
-            link.asic_port_id,
-        )
-        .and_then(|_| {
-            MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_clear(
-                switch,
-                link.asic_port_id,
-            )
-        })
-        .and_then(|_| {
-            // We tie this in here as ports and macs are 1:1
-            mcast::mcast_egress::del_port_mapping_entry(
-                switch,
-                link.asic_port_id,
-            )
-        }) {
+        if let Err(e) = clear_mac_config(switch, link.asic_port_id) {
             error!(log, "Failed to clear mac address and port mapping: {e:?}");
             return Err(e);
-        } else {
-            link.plumbed.mac = None;
         }
+        link.plumbed.mac = None;
     }
 
     if link.plumbed.link_created {
@@ -1859,18 +1873,7 @@ async fn reconcile_link(
             link.config.mac,
             link.plumbed.mac.unwrap()
         );
-        if let Err(e) =
-            MacOps::<port_mac::PortMacTable>::mac_clear(switch, asic_id)
-                .and_then(|_| {
-                    MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_clear(
-                        switch, asic_id,
-                    )
-                })
-                .and_then(|_| {
-                    // We tie this in here as ports and macs are 1:1
-                    mcast::mcast_egress::del_port_mapping_entry(switch, asic_id)
-                })
-        {
+        if let Err(e) = clear_mac_config(switch, asic_id) {
             record_plumb_failure(
                 switch,
                 &mut link,
@@ -1886,22 +1889,7 @@ async fn reconcile_link(
 
     if link.plumbed.mac.is_none() {
         debug!(log, "Programming mac {}", link.config.mac);
-        if let Err(e) = MacOps::<port_mac::PortMacTable>::mac_set(
-            switch,
-            asic_id,
-            link.config.mac,
-        )
-        .and_then(|_| {
-            MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_set(
-                switch,
-                asic_id,
-                link.config.mac,
-            )
-        })
-        .and_then(|_| {
-            // We tie this in here as ports and macs are 1:1
-            mcast::mcast_egress::add_port_mapping_entry(switch, asic_id)
-        }) {
+        if let Err(e) = set_mac_config(switch, asic_id, link.config.mac) {
             record_plumb_failure(
                 switch,
                 &mut link,

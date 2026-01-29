@@ -59,7 +59,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use aal::{AsicError, AsicOps};
+use aal::{AsicError, AsicMulticastOps};
 use common::{network::NatTarget, ports::PortId};
 use dpd_types::{
     link::LinkId,

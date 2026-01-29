@@ -4,7 +4,6 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 
@@ -40,8 +39,16 @@ use dpd_client::types;
 // investigating.  If it only changes by an entry or two, it's fine to just
 // adjust the constant below to match the observed result.
 //
+#[cfg(feature = "multicast")]
 const IPV4_LPM_SIZE: usize = 8124; // ipv4 forwarding table
+#[cfg(not(feature = "multicast"))]
+const IPV4_LPM_SIZE: usize = 8187; // ipv4 forwarding table
+
+#[cfg(feature = "multicast")]
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
+#[cfg(not(feature = "multicast"))]
+const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
+
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports
 const IPV4_NAT_TABLE_SIZE: usize = 1024; // nat routing table
@@ -50,7 +57,9 @@ const IPV4_ARP_SIZE: usize = 512; // arp cache
 const IPV6_NEIGHBOR_SIZE: usize = 512; // ipv6 neighbor cache
 /// The size of the multicast table related to replication on
 /// admin-scoped (internal) multicast groups.
+#[cfg(feature = "multicast")]
 const MULTICAST_TABLE_SIZE: usize = 1024;
+#[cfg(feature = "multicast")]
 const MCAST_TAG: &str = "mcast_table_test"; // multicast group tag
 
 // The result of a table insert or delete API operation.
@@ -75,6 +84,7 @@ fn gen_ipv6_cidr(idx: usize) -> Ipv6Net {
 }
 
 // Generates valid IPv6 multicast addresses that are admin-scoped.
+#[cfg(feature = "multicast")]
 fn gen_ipv6_multicast_addr(idx: usize) -> Ipv6Addr {
     // Use admin-scoped multicast addresses (ff04::/16, ff05::/16, ff08::/16)
     // This ensures they will be created as internal groups
@@ -451,9 +461,9 @@ impl TableTest for RouteV6 {
 async fn test_routev6_full() -> TestResult {
     test_table_capacity::<RouteV6, (), ()>(IPV6_LPM_SIZE).await
 }
-
+#[cfg(feature = "multicast")]
 struct MulticastReplicationTableTest {}
-
+#[cfg(feature = "multicast")]
 impl TableTest<types::MulticastGroupUnderlayResponse, ()>
     for MulticastReplicationTableTest
 {
@@ -488,7 +498,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
     }
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
-        let ip = IpAddr::V6(gen_ipv6_multicast_addr(idx));
+        let ip = std::net::IpAddr::V6(gen_ipv6_multicast_addr(idx));
         switch.client.multicast_group_delete(&ip).await
     }
 
@@ -504,6 +514,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
     }
 }
 
+#[cfg(feature = "multicast")]
 #[tokio::test]
 #[ignore]
 async fn test_multicast_replication_table_full() -> TestResult {
