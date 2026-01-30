@@ -97,11 +97,11 @@ async fn test_service_ipv4_unicast_with_nat() -> TestResult {
     let expected =
         TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
-    // Mark the port as NAT-only
-    switch.client.link_nat_only_set(&port_id, &link_id, true).await.unwrap();
+    // Mark the port as uplink
+    switch.client.link_uplink_set(&port_id, &link_id, true).await.unwrap();
     let result = switch.packet_test(vec![send], vec![expected]);
-    // Clear the port's NAT-only property
-    switch.client.link_nat_only_set(&port_id, &link_id, false).await.unwrap();
+    // Clear the port's uplink property
+    switch.client.link_uplink_set(&port_id, &link_id, false).await.unwrap();
     result
 }
 
@@ -157,8 +157,8 @@ async fn test_service_ipv4_unknown_address() -> TestResult {
     };
     switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
 
-    // Mark the port as NAT-only
-    switch.client.link_nat_only_set(&port_id, &link_id, true).await.unwrap();
+    // Mark the port as uplink
+    switch.client.link_uplink_set(&port_id, &link_id, true).await.unwrap();
 
     let send_pkt = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
@@ -169,8 +169,8 @@ async fn test_service_ipv4_unknown_address() -> TestResult {
         TestPacket { packet: Arc::new(send_pkt), port: PhysPort(ingress) };
 
     let result = switch.packet_test(vec![send], Vec::new());
-    // Clear the port's NAT-only property
-    switch.client.link_nat_only_set(&port_id, &link_id, false).await.unwrap();
+    // Clear the port's uplink property
+    switch.client.link_uplink_set(&port_id, &link_id, false).await.unwrap();
 
     result
 }
@@ -271,9 +271,9 @@ async fn test_ttl_exceeded() -> TestResult {
 
 // Arp packets sent to an IP address assigned to a switch port should be
 // forwarded to the service port with an added sidecar header, even if the port
-// is configured in NAT-only mode.
+// is configured in uplink mode.
 #[cfg(test)]
-async fn execute_test_service_arp(nat_only: bool) -> TestResult {
+async fn execute_test_service_arp(uplink: bool) -> TestResult {
     let switch = &*get_switch().await;
 
     let ingress = PhysPort(12);
@@ -308,24 +308,16 @@ async fn execute_test_service_arp(nat_only: bool) -> TestResult {
     let expected =
         TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
-    if nat_only {
-        // Mark the port as NAT-only
-        switch
-            .client
-            .link_nat_only_set(&port_id, &link_id, true)
-            .await
-            .unwrap();
+    if uplink {
+        // Mark the port as uplink
+        switch.client.link_uplink_set(&port_id, &link_id, true).await.unwrap();
     }
 
     let result = switch.packet_test(vec![send], vec![expected]);
 
-    if nat_only {
-        // Clear the port's NAT-only property
-        switch
-            .client
-            .link_nat_only_set(&port_id, &link_id, false)
-            .await
-            .unwrap();
+    if uplink {
+        // Clear the port's uplink property
+        switch.client.link_uplink_set(&port_id, &link_id, false).await.unwrap();
     }
 
     result
@@ -345,9 +337,9 @@ async fn test_service_arp_with_nat() -> TestResult {
 
 // LLDP packets sent to an IP address assigned to a switch port should be
 // forwarded to the service port with an added sidecar header, even if the port
-// is configured in NAT-only mode.
+// is configured in uplink mode.
 #[cfg(test)]
-async fn execute_test_service_lldp(nat_only: bool) -> TestResult {
+async fn execute_test_service_lldp(uplink: bool) -> TestResult {
     let switch = &*get_switch().await;
 
     let ingress = PhysPort(12);
@@ -379,24 +371,16 @@ async fn execute_test_service_lldp(nat_only: bool) -> TestResult {
     let expected =
         TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
-    if nat_only {
-        // Mark the port as NAT-only
-        switch
-            .client
-            .link_nat_only_set(&port_id, &link_id, true)
-            .await
-            .unwrap();
+    if uplink {
+        // Mark the port as uplink
+        switch.client.link_uplink_set(&port_id, &link_id, true).await.unwrap();
     }
 
     let result = switch.packet_test(vec![send], vec![expected]);
 
-    if nat_only {
-        // Clear the port's NAT-only property
-        switch
-            .client
-            .link_nat_only_set(&port_id, &link_id, false)
-            .await
-            .unwrap();
+    if uplink {
+        // Clear the port's uplink property
+        switch.client.link_uplink_set(&port_id, &link_id, false).await.unwrap();
     }
 
     result

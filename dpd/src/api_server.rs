@@ -1262,7 +1262,7 @@ impl DpdApi for DpdApiImpl {
             .map_err(|e| e.into())
     }
 
-    async fn link_nat_only_get(
+    async fn link_uplink_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError> {
@@ -1271,12 +1271,12 @@ impl DpdApi for DpdApiImpl {
         let port_id = path.port_id;
         let link_id = path.link_id;
         switch
-            .link_nat_only(port_id, link_id)
+            .link_uplink(port_id, link_id)
             .map(HttpResponseOk)
             .map_err(|e| e.into())
     }
 
-    async fn link_nat_only_set(
+    async fn link_uplink_set(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         body: TypedBody<bool>,
@@ -1285,9 +1285,10 @@ impl DpdApi for DpdApiImpl {
         let path = path.into_inner();
         let port_id = path.port_id;
         let link_id = path.link_id;
-        let nat_only = body.into_inner();
+        let uplink = body.into_inner();
+        debug!(switch.log, "api setting uplink to {uplink}");
         switch
-            .set_link_nat_only(port_id, link_id, nat_only)
+            .set_link_uplink(port_id, link_id, uplink)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }

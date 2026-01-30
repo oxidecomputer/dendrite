@@ -38,7 +38,7 @@ fn test_p4_counter_list() {
     assert!(!stdout.is_empty(), "Counter list output should not be empty");
 
     // Expected P4 counters from dpd/src/counters.rs COUNTERS array
-    let base_counters = vec![
+    let base_counters = [
         "Service",
         "Ingress",
         "Packet",

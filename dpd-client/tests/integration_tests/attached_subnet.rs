@@ -116,6 +116,7 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
         tag: switch.client.inner().tag.clone(),
     };
     switch.client.link_ipv6_create(&port_id, &link_id, &entry).await.unwrap();
+    switch.set_uplink(test.uplink_port, true).await;
 
     // populate the ndp/arp table with the upstream router's mac and IP.
     if test.upstream_router_ip.parse::<Ipv4Addr>().is_ok() {
