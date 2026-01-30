@@ -7,6 +7,7 @@
 use std::convert::TryFrom;
 use std::io;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::Context;
 
@@ -16,6 +17,7 @@ use dpd_client::Client;
 use dpd_client::ClientState;
 use dpd_client::default_port;
 use dpd_client::types;
+use dpd_client::types::TofinoMemoryTestPattern;
 
 mod addr;
 mod arp;
@@ -91,6 +93,34 @@ enum Commands {
         #[command(subcommand)]
         cmd: compliance::Compliance,
     },
+    Identifiers,
+    Memtest {
+        #[clap(value_enum)]
+        pattern: TestPattern,
+    },
+}
+
+#[derive(Debug, clap::ValueEnum, Clone, Copy)]
+pub enum TestPattern {
+    Random,
+    Zeroes,
+    Ones,
+    Checkerboard,
+    InverseCheckerboard,
+    Prbs,
+}
+
+impl From<TestPattern> for TofinoMemoryTestPattern {
+    fn from(value: TestPattern) -> Self {
+        match value {
+            TestPattern::Random => Self::Random,
+            TestPattern::Zeroes => Self::Zeroes,
+            TestPattern::Ones => Self::Ones,
+            TestPattern::Checkerboard => Self::Checkerboard,
+            TestPattern::InverseCheckerboard => Self::InverseCheckerboard,
+            TestPattern::Prbs => Self::Prbs,
+        }
+    }
 }
 
 // A LinkPath or "loopback", used when either is appropriate.
@@ -209,7 +239,15 @@ async fn main_impl() -> anyhow::Result<()> {
     let host = opts.host.unwrap_or_else(|| "localhost".to_string());
     let log = slog::Logger::root(slog::Discard, slog::o!());
     let client_state = ClientState { tag: String::from("cli"), log };
-    let client = Client::new(&format!("http://{host}:{port}"), client_state);
+    //let client = Client::new(&format!("http://{host}:{port}"), client_state);
+    let c = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60 * 60 * 24))
+        .build()?;
+    let client = Client::new_with_client(
+        &format!("http://{host}:{port}"),
+        c,
+        client_state,
+    );
 
     match opts.cmd {
         Commands::DpdBuildInfo => build_info(&client).await,
@@ -231,5 +269,38 @@ async fn main_impl() -> anyhow::Result<()> {
         Commands::Compliance { cmd: compliance } => {
             compliance::compliance_cmd(&client, compliance).await
         }
+        Commands::Identifiers => identifiers(),
+        Commands::Memtest { pattern } => memtest(&client, pattern).await,
     }
+}
+
+fn identifiers() -> anyhow::Result<()> {
+    let pci =
+        tofino::pci::Pci::new("/dev/tofino/1", tofino::REGISTER_SIZE).unwrap();
+    let fuse = tofino::fuse::Fuse::read(&pci).unwrap();
+    let chip_id: tofino::fuse::ChipId = fuse.chip_id.into();
+    println!(
+        "device id: {}",
+        match fuse.device_id {
+            0x0100 => "A0".to_owned(),
+            0x0110 => match fuse.rev_num {
+                0 => "B0".to_owned(),
+                2 => "B1".to_owned(),
+                _ => format!("{:016x}", fuse.device_id),
+            },
+            _ => format!("{:016x}", fuse.device_id),
+        }
+    );
+    println!("device rev: {}", fuse.rev_num);
+    println!("chip id: {:016x}", fuse.chip_id);
+    println!("{}", chip_id);
+    Ok(())
+}
+
+async fn memtest(client: &Client, pattern: TestPattern) -> anyhow::Result<()> {
+    let result = client
+        .memtest(&types::TofinoMemoryTestArgs { pattern: pattern.into() })
+        .await?;
+    println!("{result:#?}");
+    Ok(())
 }

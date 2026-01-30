@@ -12,6 +12,9 @@ header bridge_h {
 	PortId_t ingress_port;
 }
 
+@pa_no_overlay("ingress", "meta.nat_egress_hit")
+@pa_no_overlay("ingress", "meta.nat_ingress_hit")
+
 struct sidecar_ingress_meta_t {
 	bool dropped;			// has packet been dropped
 	bool ipv4_checksum_err;		// failed ipv4 checksum

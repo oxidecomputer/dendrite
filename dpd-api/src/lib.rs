@@ -59,6 +59,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (5, MEMTEST),
     (4, V4_OVER_V6_ROUTES),
     (3, ATTACHED_SUBNETS),
     (2, DUAL_STACK_NAT_WORKFLOW),
@@ -1984,6 +1985,19 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<Ber>, HttpError>;
+
+    /**
+     * Run a memory test on the ASIC
+     */
+    #[endpoint {
+        method = GET,
+        path = "/memtest",
+        versions = VERSION_MEMTEST..
+    }]
+    async fn memtest(
+        rqctx: RequestContext<Self::Context>,
+        args: TypedBody<TofinoMemoryTestArgs>,
+    ) -> Result<HttpResponseOk<TofinoMemtestResult>, HttpError>;
 }
 
 /// Parameter used to create a port.
@@ -2719,4 +2733,46 @@ pub struct Ber {
     pub ber: Vec<f32>,
     /// Aggregate BER on the link.
     pub total_ber: f32,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
+pub struct TofinoMemtestResult {
+    pub overall_success: bool,
+    pub ind_write_error: bool,
+    pub ind_read_error: bool,
+    pub write_list_error: bool,
+    pub write_block_error: bool,
+    pub ind_write_error_addr: u64,
+    pub ind_read_error_addr: u64,
+    pub num_data_errors: u32,
+    pub data_error: Vec<TofinoMemoryErrorDiagnostic>,
+    pub num_dma_msgs_sent: u32,
+    pub num_dma_cmplts_rcvd: u32,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
+pub struct TofinoMemoryErrorDiagnostic {
+    pub addr: u64,
+    pub exp_0: u64,
+    pub exp_1: u64,
+    pub data_0: u64,
+    pub data_1: u64,
+    pub mask_0: u64,
+    pub mask_1: u64,
+}
+
+#[derive(Copy, Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[repr(u32)]
+pub enum TofinoMemoryTestPattern {
+    Random,
+    Zeroes,
+    Ones,
+    Checkerboard,
+    InverseCheckerboard,
+    Prbs,
+}
+
+#[derive(Copy, Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
+pub struct TofinoMemoryTestArgs {
+    pub pattern: TofinoMemoryTestPattern,
 }

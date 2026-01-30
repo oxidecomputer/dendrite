@@ -57,6 +57,7 @@
     <propval name='xcvr_defaults' type='astring' value='/opt/oxide/dendrite/misc/xcvr_defaults.csv' />
     <propval name='transceiver_interface' type='astring' value='sidecar0' />
     <propval name='enable_rpw' type='astring' value='true' />
+    <propval name='skip_p4' type='astring' value='false' />
     <propval name='nexus_address' type='astring' value='unknown' />
   </property_group>
 

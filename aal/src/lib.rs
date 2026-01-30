@@ -43,6 +43,7 @@ pub trait SidecarIdentifiers {
     fn asic_backend(&self) -> &str;
     fn fab(&self) -> Option<char>;
     fn lot(&self) -> Option<char>;
+    fn lotnum(&self) -> Option<[char; 4]>;
     fn wafer(&self) -> Option<u8>;
     fn wafer_loc(&self) -> Option<(i16, i16)>;
 }

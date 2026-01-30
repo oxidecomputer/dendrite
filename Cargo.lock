@@ -6888,8 +6888,10 @@ dependencies = [
  "futures",
  "oxide-tokio-rt",
  "oxnet",
+ "reqwest",
  "slog",
  "tabwriter",
+ "tofino",
  "tokio",
 ]
 

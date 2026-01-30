@@ -221,6 +221,15 @@ pub(crate) fn update_from_smf(config: &mut Config) -> SmfResult<()> {
         if let Some(rev) = smf::get_property(&snapshot, "board_rev")? {
             config.asic_config.board_rev = rev;
         }
+        if let Some(skip_p4) = smf::get_property(&snapshot, "skip_p4")? {
+            let Ok(value) = skip_p4.parse() else {
+                return Err(SmfError::InvalidProperty(
+                    skip_p4.clone(),
+                    "expected 'true' or 'false'".to_owned(),
+                ));
+            };
+            config.asic_config.skip_p4 = value;
+        }
     }
 
     #[cfg(feature = "softnpu")]

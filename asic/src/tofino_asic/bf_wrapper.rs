@@ -356,6 +356,7 @@ pub fn bf_init(
     devpath: &Option<String>,
     p4_dir: &str,
     sidecar_revision: &str,
+    skip_p4: bool,
 ) -> AsicResult<BfCommon> {
     // Initialize the global callback state
     {
@@ -388,7 +389,10 @@ pub fn bf_init(
             rev.as_ptr(),
             &mut ctx,
         ) {
-            0 => Box::new(ctx),
+            0 => {
+                ctx.skip_p4 = skip_p4;
+                Box::new(ctx)
+            }
             rval => {
                 return Err(crate::tofino_asic::sde_error(
                     "initializing bf context",

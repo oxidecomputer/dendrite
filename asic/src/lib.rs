@@ -36,6 +36,8 @@ pub struct Identifiers {
     fab: Option<char>,
     /// Lot identifier.
     lot: Option<char>,
+    /// Lot number
+    lotnum: Option<[char; 4]>,
     /// Wafer number within the lot.
     wafer: Option<u8>,
     /// The wafer location as (x, y) coordinates on the wafer, represented as
@@ -49,6 +51,7 @@ impl Default for Identifiers {
             id: Uuid::new_v4(),
             asic_backend: "chaos".to_string(),
             fab: None,
+            lotnum: None,
             lot: None,
             wafer: None,
             wafer_loc: None,
@@ -71,6 +74,10 @@ impl aal::SidecarIdentifiers for Identifiers {
 
     fn lot(&self) -> Option<char> {
         self.lot
+    }
+
+    fn lotnum(&self) -> Option<[char; 4]> {
+        self.lotnum
     }
 
     fn wafer(&self) -> Option<u8> {

@@ -160,3 +160,15 @@ bf_pm_fsm_transition_callback
 bf_sys_log_callback
 
 lld_sku_map_dev_port_id_to_mac_ch
+
+# memory testing
+bf_diag_mem_test_result_get
+bf_diag_mem_test_mau
+pipe_mgr_tcam_scrub_timer_set
+pipe_mgr_tcam_scrub_timer_get
+lld_enable_all_ints
+lld_dump_new_ints
+lld_int_poll
+bf_err_interrupt_handling_mode_set
+lld_write_register
+pipe_mgr_is_device_locked
