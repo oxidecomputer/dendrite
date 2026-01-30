@@ -28,9 +28,11 @@ use signal_hook::consts::SIGQUIT;
 use signal_hook::consts::SIGTERM;
 use signal_hook::consts::SIGUSR1;
 use signal_hook_tokio::Signals;
+use slog::Logger;
 use slog::debug;
 use slog::error;
 use slog::info;
+use slog::warn;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::time::Duration;
 use tokio::time::sleep;
@@ -63,6 +65,8 @@ mod link;
 mod loopback;
 mod macaddrs;
 mod mcast;
+#[cfg(feature = "tofino_asic")]
+mod memtest;
 mod nat;
 mod oxstats;
 mod port_map;
@@ -271,8 +275,12 @@ impl Switch {
             &config.xcvr_defaults,
         )?;
 
-        let counters = counters::init(&asic_hdl)
-            .context("failed to initialize counters")?;
+        let counters = if !config.asic_config.skip_p4 {
+            counters::init(&asic_hdl)
+                .context("failed to initialize counters")?
+        } else {
+            BTreeMap::new()
+        };
 
         #[cfg(feature = "tofino_asic")]
         let transceivers = TransceiverState::new(
@@ -281,6 +289,8 @@ impl Switch {
         );
         let route_data = route::init(&log);
         let mac_mgmt = Mutex::new(macaddrs::MacManagement::new(&log));
+
+        run_interrupt_monitor(log.clone());
 
         let ws_log = log.new(slog::o!("unit" => "workflow_server"));
         let workflow_server = rpw::WorkflowServer::new(ws_log);
@@ -566,6 +576,30 @@ async fn stub_main(switch: Switch) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn diag_main(switch: Switch) -> anyhow::Result<()> {
+    let switch = Arc::new(switch);
+    let (smf_tx, smf_rx) = tokio::sync::watch::channel(());
+
+    let api_server_manager = tokio::task::spawn(
+        api_server::api_server_manager(switch.clone(), smf_rx.clone()),
+    );
+
+    const SIGNALS: &[c_int] = &[SIGTERM, SIGQUIT, SIGINT, SIGHUP, SIGUSR1];
+    let signals = Signals::new(SIGNALS).unwrap();
+    handle_signals(&switch, signals, smf_tx).await;
+
+    api_server_manager
+        .await
+        .expect("while shutting down the api_server_manager");
+
+    info!(switch.log, "shutting down switch driver");
+    switch.asic_hdl.fini();
+
+    info!(switch.log, "done");
+
+    Ok(())
+}
+
 // Initialize the QSFP platform subsystem, for the BF SDE to manage the
 // front IO ports.
 //
@@ -792,18 +826,36 @@ fn main() -> anyhow::Result<()> {
 
 async fn run_dpd(opt: Opt) -> anyhow::Result<()> {
     let config = config::build_config(&opt)?;
+    let skip_p4 = config.asic_config.skip_p4;
 
     let log =
         common::logging::init("dpd", &config.log_file, config.log_format)?;
     info!(log, "dpd config: {config:#?}");
 
+    if config.asic_config.skip_p4 {
+        warn!(log, "running in diagnostic mode, no P4 program will be loaded");
+    }
+
     let p4_name =
         std::env::var("P4_NAME").unwrap_or_else(|_| String::from("sidecar"));
+    info!(log, "p4 program: {p4_name}");
+
     let switch = Switch::new(log, &p4_name, config)?;
+
     if p4_name == "sidecar" {
-        sidecar_main(switch).await
+        if skip_p4 {
+            diag_main(switch).await
+        } else {
+            sidecar_main(switch).await
+        }
     } else {
-        info!(switch.log, "running as stub to support p4 program: {p4_name}");
+        info!(switch.log, "running as stub");
         stub_main(switch).await
     }
+}
+
+fn run_interrupt_monitor(log: Logger) {
+    std::thread::spawn(move || {
+        asic::tofino_asic::interrupt_monitor::monitor_interrupts(log);
+    });
 }

@@ -2620,6 +2620,29 @@ impl DpdApi for DpdApiImpl {
             "not implemented for this asic".to_string(),
         ))
     }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn memtest(
+        rqctx: RequestContext<Self::Context>,
+        args: TypedBody<TofinoMemoryTestArgs>,
+    ) -> Result<HttpResponseOk<TofinoMemtestResult>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let result = crate::memtest::memtest(switch, args.into_inner().pattern)
+            .map_err(|e| {
+                HttpError::for_internal_error(format!("memtest error: {e}"))
+            })?;
+        Ok(HttpResponseOk(result))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn memtest(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<TofinoMemtestResult>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
 }
 
 // Convert a port ID path into a `QsfpPort` if possible. This is generally used

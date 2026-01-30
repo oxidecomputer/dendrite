@@ -409,8 +409,10 @@ control Services(
 			meta.drop_reason = DROP_NAT_INGRESS_MISS;
 			meta.dropped = true;
 		}
-		else if (meta.is_switch_address && hdr.geneve.isValid() && hdr.geneve.vni != 0) {
-			meta.nat_egress_hit = true;
+		else if (meta.is_switch_address && hdr.geneve.isValid()) {
+			if (hdr.geneve.vni != 0) {
+				meta.nat_egress_hit = true;
+			}
 		}
 		else {
 			service.apply();
@@ -1481,13 +1483,13 @@ control L3Router(
 ) {
 	apply {
 		if (hdr.ipv4.isValid()) {
-			if (meta.is_mcast && !meta.is_link_local_mcastv6) {
+			if (meta.is_mcast && !meta.is_link_local_mcastv6) { // sus
 				MulticastRouter4.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			} else {
 				Router4.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			}
 		} else if (hdr.ipv6.isValid()) {
-			if (meta.is_mcast && !meta.is_link_local_mcastv6) {
+			if (meta.is_mcast && !meta.is_link_local_mcastv6) { // sus
 				MulticastRouter6.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			} else {
 				Router6.apply(hdr, meta, ig_intr_md, ig_tm_md);

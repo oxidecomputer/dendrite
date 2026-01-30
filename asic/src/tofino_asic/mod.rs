@@ -18,8 +18,10 @@ use common::ports::*;
 mod bf_wrapper;
 mod genpd;
 
+pub mod interrupt_monitor;
 mod link_fsm;
 pub mod mcast;
+pub mod memtest;
 pub mod ports;
 pub mod qsfp;
 mod sde_log;
@@ -59,11 +61,21 @@ pub struct AsicConfig {
     ///
     /// The default value is "B".
     pub board_rev: String,
+
+    /// Skip loading P4 program.
+    ///
+    /// Used for memory testing.
+    pub skip_p4: bool,
 }
 
 impl Default for AsicConfig {
     fn default() -> Self {
-        Self { devpath: None, xcvr_iface: None, board_rev: String::from("B") }
+        Self {
+            devpath: None,
+            xcvr_iface: None,
+            board_rev: String::from("B"),
+            skip_p4: false,
+        }
     }
 }
 
@@ -334,6 +346,7 @@ impl Handle {
             &config.devpath,
             &p4_dir,
             &config.board_rev,
+            config.skip_p4,
         )?;
         let rt = tofino_common::BfRt::init(&p4_dir)?;
         let domains = Mutex::new(HashMap::new());

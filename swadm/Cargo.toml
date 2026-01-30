@@ -15,6 +15,7 @@ dpd-client.workspace = true
 futures.workspace = true
 oxide-tokio-rt.workspace = true
 oxnet.workspace = true
+reqwest.workspace = true
 slog.workspace = true
 tabwriter.workspace = true
 tokio.workspace = true
