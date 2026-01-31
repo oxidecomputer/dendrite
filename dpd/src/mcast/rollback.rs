@@ -13,7 +13,7 @@
 
 use std::{fmt, net::IpAddr};
 
-use aal::AsicOps;
+use aal::AsicMulticastOps;
 use oxnet::Ipv4Net;
 use slog::{debug, error};
 
