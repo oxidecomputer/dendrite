@@ -5960,6 +5960,33 @@
           "version"
         ]
       },
+      "ChipRevision": {
+        "description": "Chip revision derived from device_id and rev_num fuse fields.",
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "description": "Raw device ID from fuse.",
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "rev": {
+            "description": "Computed revision string (e.g., \"A0\", \"B0\", \"B1\").",
+            "type": "string"
+          },
+          "rev_num": {
+            "description": "Raw revision number from fuse.",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "device_id",
+          "rev",
+          "rev_num"
+        ]
+      },
       "CmisDatapath": {
         "description": "A datapath in a CMIS module.\n\nIn contrast to SFF-8636, CMIS makes first-class the concept of a datapath: a set of lanes and all the associated machinery involved in the transfer of data. This includes:\n\n- The \"application descriptor\" which is the host and media interfaces, and the lanes on each side used to transfer data; - The state of the datapath in a well-defined finite state machine (see CMIS 5.0 section 6.3.3); - The flags indicating how the datapath components are operating, such as receiving an input Rx signal or whether the transmitter is disabled.",
         "type": "object",
@@ -6224,6 +6251,69 @@
         "enum": [
           "Underlay",
           "External"
+        ]
+      },
+      "DisabledFeatures": {
+        "description": "Features disabled via fuse programming.",
+        "type": "object",
+        "properties": {
+          "bsync": {
+            "description": "Buffer sync disabled.",
+            "type": "boolean"
+          },
+          "mau": {
+            "description": "Disabled MAUs per pipe (21 bits each).",
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "minItems": 4,
+            "maxItems": 4
+          },
+          "pgen": {
+            "description": "Packet generator disabled.",
+            "type": "boolean"
+          },
+          "pipes": {
+            "description": "Disabled pipes (4-bit bitmap).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "ports": {
+            "description": "Disabled ports (40-bit bitmap).",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "resub": {
+            "description": "Resubmit disabled.",
+            "type": "boolean"
+          },
+          "speeds": {
+            "description": "Disabled speeds (64-bit bitmap).",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "tm_mem": {
+            "description": "Disabled traffic manager memory (32-bit bitmap).",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "bsync",
+          "mau",
+          "pgen",
+          "pipes",
+          "ports",
+          "resub",
+          "speeds",
+          "tm_mem"
         ]
       },
       "ElectricalMode": {
@@ -6498,6 +6588,114 @@
           "channels",
           "connector",
           "port_id"
+        ]
+      },
+      "FrequencySettings": {
+        "description": "Frequency settings from fuse data.",
+        "type": "object",
+        "properties": {
+          "bps": {
+            "description": "Backplane port speed frequency (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "bps_ext": {
+            "description": "Extended backplane frequency (4 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "cpu_speed_dis": {
+            "description": "CPU speed disabled (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "disabled": {
+            "description": "Frequency disabled.",
+            "type": "boolean"
+          },
+          "pcie_dis": {
+            "description": "PCIe disabled (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "pps": {
+            "description": "Packet processing speed frequency (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "pps_ext": {
+            "description": "Extended packet speed frequency (4 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "bps",
+          "bps_ext",
+          "cpu_speed_dis",
+          "disabled",
+          "pcie_dis",
+          "pps",
+          "pps_ext"
+        ]
+      },
+      "FuseData": {
+        "description": "Organized fuse data from the Tofino ASIC.",
+        "type": "object",
+        "properties": {
+          "chip_rev": {
+            "description": "Chip revision information.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ChipRevision"
+              }
+            ]
+          },
+          "disabled": {
+            "description": "Disabled features.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DisabledFeatures"
+              }
+            ]
+          },
+          "frequency": {
+            "description": "Frequency settings.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FrequencySettings"
+              }
+            ]
+          },
+          "manufacturing": {
+            "description": "Manufacturing and repair data.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ManufacturingData"
+              }
+            ]
+          },
+          "part": {
+            "description": "Part identification.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PartInfo"
+              }
+            ]
+          }
+        },
+        "required": [
+          "chip_rev",
+          "disabled",
+          "frequency",
+          "manufacturing",
+          "part"
         ]
       },
       "InstanceTarget": {
@@ -7885,6 +8083,62 @@
           }
         ]
       },
+      "ManufacturingData": {
+        "description": "Manufacturing and repair data from fuse.",
+        "type": "object",
+        "properties": {
+          "core_repair": {
+            "description": "Core repair applied.",
+            "type": "boolean"
+          },
+          "die_rotation": {
+            "description": "Die rotation.",
+            "type": "boolean"
+          },
+          "pmro_and_skew": {
+            "description": "PMRO and skew value (12 bits).",
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "silent_spin": {
+            "description": "Silent spin (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "soft_pipe_dis": {
+            "description": "Soft pipe disable (4 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "tile_repair": {
+            "description": "Tile repair applied.",
+            "type": "boolean"
+          },
+          "voltage_scaling": {
+            "description": "Voltage scaling value (12 bits).",
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "wf_core_repair": {
+            "description": "Wafer core repair applied.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "core_repair",
+          "die_rotation",
+          "pmro_and_skew",
+          "silent_spin",
+          "soft_pipe_dis",
+          "tile_repair",
+          "voltage_scaling",
+          "wf_core_repair"
+        ]
+      },
       "MediaInterfaceId": {
         "oneOf": [
           {
@@ -8381,6 +8635,35 @@
         "enum": [
           "valid",
           "invalid"
+        ]
+      },
+      "PartInfo": {
+        "description": "Part identification from fuse data.",
+        "type": "object",
+        "properties": {
+          "part_num": {
+            "description": "Part number (13 bits).",
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "pkg_id": {
+            "description": "Package ID (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "version": {
+            "description": "Fuse version (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "part_num",
+          "pkg_id",
+          "version"
         ]
       },
       "PcsCounters": {
@@ -9502,6 +9785,15 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 1
+          },
+          "fuse": {
+            "nullable": true,
+            "description": "Fuse data from the ASIC, if available.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FuseData"
+              }
+            ]
           },
           "lot": {
             "nullable": true,

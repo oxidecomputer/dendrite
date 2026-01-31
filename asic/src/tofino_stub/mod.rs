@@ -243,6 +243,7 @@ impl AsicOps for StubHandle {
             lotnum: None,
             wafer: None,
             wafer_loc: None,
+            fuse: Some(crate::faux_fuse_data()),
         })
     }
 

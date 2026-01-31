@@ -24,8 +24,8 @@ pub struct Ipv4Routes {
 
 /// Identifiers for a switch.
 ///
-/// Does not include the `lotnum` field, which was added in
-/// SWITCH_IDENTIFIERS_LOTNUM.
+/// Does not include the `lotnum` or `fuse` fields, which were added in
+/// ASIC_DETAILS.
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 pub struct SwitchIdentifiers {
     /// Unique identifier for the chip.

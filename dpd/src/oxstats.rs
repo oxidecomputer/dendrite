@@ -614,6 +614,7 @@ async fn wait_for_switch_identifiers(
                     revision: switch_identifiers.revision,
                     serial: switch_identifiers.serial.clone(),
                     slot: switch_identifiers.slot,
+                    fuse: switch_identifiers.fuse.clone(),
                 };
                 info!(
                     log,

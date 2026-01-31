@@ -8,6 +8,12 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use uuid::Uuid;
 
+// Re-export fuse types from aal.
+pub use aal::{
+    ChipRevision, DisabledFeatures, FrequencySettings, FuseData,
+    ManufacturingData, PartInfo,
+};
+
 /// Identifiers for a switch.
 #[derive(Clone, Debug, JsonSchema, Serialize)]
 pub struct SwitchIdentifiers {
@@ -36,4 +42,6 @@ pub struct SwitchIdentifiers {
     ///
     /// MGS uses u16 for this internally.
     pub slot: u16,
+    /// Fuse data from the ASIC, if available.
+    pub fuse: Option<FuseData>,
 }

@@ -224,6 +224,52 @@ impl AsicOps for Handle {
         let sidecar_id = uuid::Uuid::from_u128(fuse.chip_id as u128);
         let chip_id: ChipId = fuse.chip_id.into();
 
+        let fuse_info = aal::FuseData {
+            chip_rev: aal::ChipRevision::from_fuse(
+                fuse.device_id as u16,
+                fuse.rev_num as u8,
+            ),
+            part: aal::PartInfo {
+                part_num: fuse.part_num as u16,
+                pkg_id: fuse.pkg_id as u8,
+                version: fuse.version as u8,
+            },
+            disabled: aal::DisabledFeatures {
+                pipes: fuse.pipe_dis as u8,
+                ports: fuse.port_dis,
+                speeds: fuse.speed_dis,
+                mau: [
+                    fuse.pipe0_mau_dis as u32,
+                    fuse.pipe1_mau_dis as u32,
+                    fuse.pipe2_mau_dis as u32,
+                    fuse.pipe3_mau_dis as u32,
+                ],
+                tm_mem: fuse.tm_mem_dis as u32,
+                bsync: fuse.bsync_dis != 0,
+                pgen: fuse.pgen_dis != 0,
+                resub: fuse.resub_dis != 0,
+            },
+            frequency: aal::FrequencySettings {
+                disabled: fuse.freq_dis != 0,
+                bps: fuse.freq_bps as u8,
+                pps: fuse.freq_pps as u8,
+                bps_ext: fuse.freq_bps_2 as u8,
+                pps_ext: fuse.freq_pps_2 as u8,
+                pcie_dis: fuse.pcie_dis as u8,
+                cpu_speed_dis: fuse.cpu_speed_dis as u8,
+            },
+            manufacturing: aal::ManufacturingData {
+                voltage_scaling: fuse.voltage_scaling as u16,
+                pmro_and_skew: fuse.pmro_and_skew as u16,
+                die_rotation: fuse.die_rotation != 0,
+                silent_spin: fuse.silent_spin as u8,
+                wf_core_repair: fuse.wf_core_repair != 0,
+                core_repair: fuse.core_repair != 0,
+                tile_repair: fuse.tile_repair != 0,
+                soft_pipe_dis: fuse.soft_pipe_dis as u8,
+            },
+        };
+
         Ok(Identifiers {
             id: sidecar_id,
             asic_backend: "tofino_asic".to_string(),
@@ -242,6 +288,7 @@ impl AsicOps for Handle {
                 chip_id.ysign,
                 chip_id.y,
             )),
+            fuse: Some(fuse_info),
         })
     }
 

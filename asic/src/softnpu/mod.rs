@@ -382,6 +382,7 @@ impl AsicOps for Handle {
             lotnum: None,
             wafer: None,
             wafer_loc: None,
+            fuse: Some(crate::faux_fuse_data()),
         })
     }
 

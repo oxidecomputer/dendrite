@@ -91,6 +91,7 @@ pub(crate) async fn fetch_switch_identifiers_loop(
             revision: sp.revision,
             serial: sp.serial_number,
             slot,
+            fuse: sidecar_idents.fuse_info(),
         })
     };
     let notify = |err, delay| {

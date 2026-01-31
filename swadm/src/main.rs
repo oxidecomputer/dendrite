@@ -92,6 +92,7 @@ enum Commands {
         cmd: compliance::Compliance,
     },
     /// Display switch and ASIC identifiers.
+    #[clap(visible_alias = "id")]
     Identifiers,
 }
 
@@ -245,6 +246,12 @@ async fn identifiers(client: &Client) -> anyhow::Result<()> {
         .into_inner();
     println!("Sidecar ID:   {}", idents.sidecar_id);
     println!("ASIC backend: {}", idents.asic_backend);
+
+    // Display fuse-derived chip revision prominently
+    if let Some(ref fuse) = idents.fuse {
+        println!("Chip Rev:     {}", fuse.chip_rev.rev);
+    }
+
     if let Some(ref fab) = idents.fab {
         println!("Fab:          {}", fab.as_str());
     }
@@ -261,5 +268,59 @@ async fn identifiers(client: &Client) -> anyhow::Result<()> {
     println!("Revision:     {}", idents.revision);
     println!("Serial:       {}", idents.serial);
     println!("Slot:         {}", idents.slot);
+
+    // Display full fuse data
+    if let Some(ref fuse) = idents.fuse {
+        println!();
+        println!("Fuse Data:");
+        println!(
+            "  Chip Rev:     {} (device_id=0x{:04x}, rev_num={})",
+            fuse.chip_rev.rev, fuse.chip_rev.device_id, fuse.chip_rev.rev_num
+        );
+        println!(
+            "  Part:         num=0x{:04x}, pkg={}, ver={}",
+            fuse.part.part_num, fuse.part.pkg_id, fuse.part.version
+        );
+        println!();
+        println!("  Disabled Features:");
+        println!("    Pipes:      0x{:x}", fuse.disabled.pipes);
+        println!("    Ports:      0x{:010x}", fuse.disabled.ports);
+        println!("    Speeds:     0x{:016x}", fuse.disabled.speeds);
+        println!(
+            "    MAU:        [{:#x}, {:#x}, {:#x}, {:#x}]",
+            fuse.disabled.mau[0],
+            fuse.disabled.mau[1],
+            fuse.disabled.mau[2],
+            fuse.disabled.mau[3]
+        );
+        println!("    TM Mem:     0x{:08x}", fuse.disabled.tm_mem);
+        println!("    Bsync:      {}", fuse.disabled.bsync);
+        println!("    Pgen:       {}", fuse.disabled.pgen);
+        println!("    Resub:      {}", fuse.disabled.resub);
+        println!();
+        println!("  Frequency:");
+        println!("    Disabled:   {}", fuse.frequency.disabled);
+        println!(
+            "    BPS:        {} (ext: {})",
+            fuse.frequency.bps, fuse.frequency.bps_ext
+        );
+        println!(
+            "    PPS:        {} (ext: {})",
+            fuse.frequency.pps, fuse.frequency.pps_ext
+        );
+        println!("    PCIe Dis:   {}", fuse.frequency.pcie_dis);
+        println!("    CPU Spd Dis:{}", fuse.frequency.cpu_speed_dis);
+        println!();
+        println!("  Manufacturing:");
+        println!("    Voltage:    {}", fuse.manufacturing.voltage_scaling);
+        println!("    PMRO/Skew:  {}", fuse.manufacturing.pmro_and_skew);
+        println!("    Die Rot:    {}", fuse.manufacturing.die_rotation);
+        println!("    Silent Spin:{}", fuse.manufacturing.silent_spin);
+        println!("    WF Repair:  {}", fuse.manufacturing.wf_core_repair);
+        println!("    Core Repair:{}", fuse.manufacturing.core_repair);
+        println!("    Tile Repair:{}", fuse.manufacturing.tile_repair);
+        println!("    Soft Pipe:  0x{:x}", fuse.manufacturing.soft_pipe_dis);
+    }
+
     Ok(())
 }

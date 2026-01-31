@@ -59,7 +59,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
-    (5, SWITCH_IDENTIFIERS_LOTNUM),
+    (5, ASIC_DETAILS),
     (4, V4_OVER_V6_ROUTES),
     (3, ATTACHED_SUBNETS),
     (2, DUAL_STACK_NAT_WORKFLOW),
@@ -1479,7 +1479,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/switch/identifiers",
-        versions = VERSION_SWITCH_IDENTIFIERS_LOTNUM..,
+        versions = VERSION_ASIC_DETAILS..,
     }]
     async fn switch_identifiers(
         rqctx: RequestContext<Self::Context>,
@@ -1489,12 +1489,12 @@ pub trait DpdApi {
     ///
     /// Returns identifying information for the switch and its ASIC, including
     /// the sidecar ID, fabrication details, and SP metadata. Does not include
-    /// the `lotnum` field.
+    /// the `lotnum` or `fuse` fields.
     #[endpoint {
         method = GET,
         path = "/switch/identifiers",
         operation_id = "switch_identifiers",
-        versions = ..VERSION_SWITCH_IDENTIFIERS_LOTNUM,
+        versions = ..VERSION_ASIC_DETAILS,
     }]
     async fn switch_identifiers_v1(
         rqctx: RequestContext<Self::Context>,

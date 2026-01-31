@@ -23,7 +23,7 @@ use crate::misc_err;
 /// address management
 pub enum Addr {
     /// List addresses assigned to a link.
-    #[clap(alias = "ls")]
+    #[clap(visible_alias = "ls")]
     List {
         /// limit output to IPv4
         #[clap(short = '4')]
