@@ -12,3 +12,4 @@ oxnet.workspace = true
 schemars.workspace = true
 serde.workspace = true
 transceiver-controller.workspace = true
+uuid.workspace = true

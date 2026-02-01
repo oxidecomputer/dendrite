@@ -240,9 +240,7 @@ impl LinkData for SwitchPortControlDataLink {
                 .into(),
             asic_lot: config
                 .switch_identifiers
-                .lot
-                .clone()
-                .map(|c| c.to_string())
+                .full_lot_id()
                 .unwrap_or_else(|| {
                     config.switch_identifiers.asic_backend.to_string()
                 })

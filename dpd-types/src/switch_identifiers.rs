@@ -8,6 +8,12 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use uuid::Uuid;
 
+// Re-export fuse types from aal.
+pub use aal::{
+    ChipRevision, DisabledFeatures, FrequencySettings, FuseData,
+    ManufacturingData, PartInfo,
+};
+
 /// Identifiers for a switch.
 #[derive(Clone, Debug, JsonSchema, Serialize)]
 pub struct SwitchIdentifiers {
@@ -19,6 +25,8 @@ pub struct SwitchIdentifiers {
     pub fab: Option<char>,
     /// Lot identifier.
     pub lot: Option<char>,
+    /// Lot number (4-character identifier within the lot).
+    pub lotnum: Option<[char; 4]>,
     /// Wafer number within the lot.
     pub wafer: Option<u8>,
     /// The wafer location as (x, y) coordinates on the wafer, represented as
@@ -34,4 +42,6 @@ pub struct SwitchIdentifiers {
     ///
     /// MGS uses u16 for this internally.
     pub slot: u16,
+    /// Fuse data from the ASIC, if available.
+    pub fuse: Option<FuseData>,
 }

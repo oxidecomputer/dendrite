@@ -84,12 +84,14 @@ pub(crate) async fn fetch_switch_identifiers_loop(
             asic_backend: sidecar_idents.asic_backend().to_string(),
             fab: sidecar_idents.fab(),
             lot: sidecar_idents.lot(),
+            lotnum: sidecar_idents.lotnum(),
             wafer: sidecar_idents.wafer(),
             wafer_loc: sidecar_idents.wafer_loc().map(|(x, y)| [x, y]),
             model: sp.model,
             revision: sp.revision,
             serial: sp.serial_number,
             slot,
+            fuse: sidecar_idents.fuse_info(),
         })
     };
     let notify = |err, delay| {
