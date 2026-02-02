@@ -13,6 +13,9 @@ use thiserror::Error;
 
 use common::ports::{PortFec, PortMedia, PortPrbsMode, PortSpeed, TxEq};
 
+mod fuse;
+pub use fuse::*;
+
 mod match_action;
 pub use match_action::*;
 
@@ -43,8 +46,10 @@ pub trait SidecarIdentifiers {
     fn asic_backend(&self) -> &str;
     fn fab(&self) -> Option<char>;
     fn lot(&self) -> Option<char>;
+    fn lotnum(&self) -> Option<[char; 4]>;
     fn wafer(&self) -> Option<u8>;
     fn wafer_loc(&self) -> Option<(i16, i16)>;
+    fn fuse_info(&self) -> Option<FuseData>;
 }
 
 /// Error type conveying additional information about ASIC errors
