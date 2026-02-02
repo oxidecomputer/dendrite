@@ -6,8 +6,13 @@
 
 //! Fuse data types for Tofino ASICs.
 //!
-//! TODO: Add `asic_chip_rev` to oximeter timeseries (switch-data-link.toml in
-//! omicron) to expose chip revision (A0/B0/B1) in metrics.
+//! Chip revision info is exposed in oximeter metrics via the `asic_lot` field
+//! (e.g., "FL1234-B1").
+//!
+//! TODO: Add a dedicated `asic_chip_rev` field to oximeter timeseries when
+//! reconfigurator supports oximeter schema migration. Currently there is no
+//! window during online updates where all switches stop producing data, so the
+//! old schema cannot be safely updated.
 
 use schemars::JsonSchema;
 use serde::Serialize;

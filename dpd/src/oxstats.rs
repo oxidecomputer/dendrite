@@ -49,12 +49,13 @@ use switch_table::{
 /// The maximum Dropshot request size for the metrics server.
 const METRIC_REQUEST_MAX_SIZE: usize = 1024 * 1024;
 
-/// Construct the full lot identifier from the fab, lot character, and lotnum
-/// array.
+/// Construct the full lot identifier from the fab, lot character, lotnum
+/// array, and chip revision.
 ///
-/// The identifier is a concatenation of the fab, the lot character, and the
-/// four-character lot number. If none of these are available, fall back to the
-/// ASIC backend name.
+/// The identifier concatenates: fab, lot character, four-character lot number,
+/// and fuse-derived chip revision (e.g., "B1"). For example: `"FL1234-B1"`.
+///
+/// If no lot data is available, falls back to the ASIC backend name.
 fn full_lot_id(idents: &SwitchIdentifiers) -> String {
     let mut lot = String::new();
     let has_lot_data = idents.lot.is_some() || idents.lotnum.is_some();
@@ -66,6 +67,14 @@ fn full_lot_id(idents: &SwitchIdentifiers) -> String {
     }
     if let Some(lotnum) = idents.lotnum {
         lot.extend(lotnum);
+    }
+
+    // Append computed chip revision string from fuse data.
+    if let Some(ref fuse) = idents.fuse {
+        if !lot.is_empty() {
+            lot.push('-');
+        }
+        lot.push_str(&fuse.chip_rev.rev);
     }
 
     if lot.is_empty() { idents.asic_backend.clone() } else { lot }
