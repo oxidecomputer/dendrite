@@ -18,7 +18,7 @@ pub const TABLE_NAME: &str = "pipe.Ingress.l3_router.Arp.tbl";
 
 #[derive(MatchParse, Hash)]
 struct MatchKey {
-    #[match_xlate(name = "nexthop_ipv4")]
+    #[match_xlate(name = "nexthop")]
     ip: Ipv4Addr,
 }
 

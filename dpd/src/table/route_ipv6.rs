@@ -8,6 +8,7 @@ use std::convert::TryInto;
 use std::net::Ipv6Addr;
 
 use crate::Switch;
+use crate::table::SERVICE_PORT;
 use crate::table::*;
 use aal::ActionParse;
 use aal::MatchParse;
@@ -17,24 +18,28 @@ use slog::error;
 use slog::info;
 
 pub const INDEX_TABLE_NAME: &str =
-    "pipe.Ingress.l3_router.Router6.lookup_idx.lookup";
+    "pipe.Ingress.l3_router.router6.lookup_idx.lookup";
 pub const FORWARD_TABLE_NAME: &str =
-    "pipe.Ingress.l3_router.Router6.lookup_idx.route";
+    "pipe.Ingress.l3_router.router6.lookup_idx.route";
 
-// Used for indentifying entries in the index->route_data table
+// Used for identifying entries in the index->route_data table
 #[derive(MatchParse, Hash, Debug)]
 struct IndexKey {
     #[match_xlate(type = "value")]
     idx: u16,
+    #[match_xlate(name = "route_ttl_is_1", type = "value")]
+    route_ttl_is_1: bool,
 }
 
 // Route entries stored in the index->route_data table
-#[derive(ActionParse, Debug)]
+#[derive(ActionParse, Debug, Clone, Copy)]
 enum RouteAction {
     #[action_xlate(name = "forward")]
     Forward { port: u16, nexthop: Ipv6Addr },
     #[action_xlate(name = "forward_vlan")]
     ForwardVlan { port: u16, nexthop: Ipv6Addr, vlan_id: u16 },
+    #[action_xlate(name = "ttl_exceeded")]
+    TtlExceeded,
 }
 
 // Used to identify entries in the route->index table
@@ -103,7 +108,7 @@ pub fn add_route_target(
     nexthop: Ipv6Addr,
     vlan_id: Option<u16>,
 ) -> DpdResult<()> {
-    let match_key = IndexKey { idx };
+    let match_key = IndexKey { idx, route_ttl_is_1: false };
     let action_data = match vlan_id {
         None => RouteAction::Forward { port, nexthop },
         Some(vlan_id) => {
@@ -119,7 +124,7 @@ pub fn add_route_target(
                 "port" => port,
                 "nexthop" => %nexthop,
                 "vlan_id" => ?vlan_id);
-            Ok(())
+            add_ttl_entry(s, idx, &match_key, &action_data, port)
         }
         Err(e) => {
             error!(s.log, "failed to add ipv6 route entry";
@@ -132,18 +137,70 @@ pub fn add_route_target(
     }
 }
 
-// Remove the route data at the given index
-pub fn delete_route_target(s: &Switch, idx: u16) -> DpdResult<()> {
-    let match_key = IndexKey { idx };
+// Add the TTL==1 entry for a route target.
+//
+// For service port routes, we forward even when TTL==1 (bypassing ICMP TTL exceeded).
+// For all other routes, we trigger TTL exceeded handling.
+// This matches the P4 behavior: `ttl == 1 && !IS_SERVICE(fwd.port)`.
+fn add_ttl_entry(
+    s: &Switch,
+    idx: u16,
+    forward_key: &IndexKey,
+    forward_action: &RouteAction,
+    port: u16,
+) -> DpdResult<()> {
+    let ttl_match_key = IndexKey { idx, route_ttl_is_1: true };
 
-    s.table_entry_del(TableType::RouteFwdIpv6, &match_key)
-        .map(|_| info!(s.log, "deleted ipv6 route entry"; "index" => %idx))
-        .map_err(|e| {
-            error!(s.log, "failed to delete ipv6 route entry";
-                "index" => %idx,
-                "error" => %e);
-            e
-        })
+    let ttl_action = if port == SERVICE_PORT {
+        *forward_action
+    } else {
+        RouteAction::TtlExceeded
+    };
+
+    if let Err(e) =
+        s.table_entry_add(TableType::RouteFwdIpv6, &ttl_match_key, &ttl_action)
+    {
+        error!(s.log, "failed to add ipv6 ttl entry";
+            "index" => idx,
+            "error" => %e);
+        if let Err(cleanup_err) =
+            s.table_entry_del(TableType::RouteFwdIpv6, forward_key)
+        {
+            error!(s.log, "failed to clean up ipv6 route entry";
+                "index" => idx,
+                "error" => %cleanup_err);
+        }
+        return Err(e);
+    }
+    Ok(())
+}
+
+// Remove the route data at the given index (both forward and ttl_exceeded entries).
+// The main entry (route_ttl_is_1=false) must succeed. The TTL==1 companion entry
+// may not exist for routes created before the compound key change, so we only
+// log a warning for TTL==1 entry failures instead of returning an error.
+pub fn delete_route_target(s: &Switch, idx: u16) -> DpdResult<()> {
+    // Delete the main entry first (route_ttl_is_1=false).
+    let main_key = IndexKey { idx, route_ttl_is_1: false };
+    if let Err(e) = s.table_entry_del(TableType::RouteFwdIpv6, &main_key) {
+        error!(s.log, "failed to delete ipv6 route entry";
+            "index" => %idx,
+            "error" => %e);
+        return Err(e);
+    }
+    info!(s.log, "deleted ipv6 route entry"; "index" => %idx);
+
+    // Delete the TTL==1 companion entry.
+    let ttl_key = IndexKey { idx, route_ttl_is_1: true };
+    if let Err(e) = s.table_entry_del(TableType::RouteFwdIpv6, &ttl_key) {
+        error!(s.log, "failed to delete ipv6 route ttl==1 entry";
+            "index" => %idx,
+            "error" => %e);
+        return Err(e);
+    }
+    info!(s.log, "deleted ipv6 route ttl==1 entry"; "index" => %idx);
+
+    Ok(())
 }
 
 pub fn forward_dump(s: &Switch) -> DpdResult<views::Table> {

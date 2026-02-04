@@ -4,12 +4,27 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+// Guard against compiler bug: RemoveMetadataInits strips explicit `= false`
+// initializations, assuming parser will zero-init the PHV container.
+// ComputeInitZeroContainers only marks containers for zero-init if the field
+// is actually used in the parser, not just initialized. These assumptions are
+// incompatible: fields initialized but only used in MAU get stale data.
+// See: https://github.com/oxidecomputer/tofino-p4c/blob/ry/upstream-merge/rydocs/tofino-metadata-corruption.md
+@pa_no_init("ingress", "meta.service_routed")
+@pa_no_init("ingress", "meta.nat_egress_hit")
+@pa_no_init("ingress", "meta.nat_ingress_hit")
+@pa_no_init("ingress", "meta.nat_ingress_port")
+@pa_no_init("ingress", "meta.encap_needed")
+@pa_no_init("ingress", "meta.icmp_recalc")
+
 /* Flexible bridge header for passing metadata between ingress and egress
  * pipelines.
  */
 @flexible
 header bridge_h {
-	PortId_t ingress_port;
+	PortId_t ingress_port;		// 9 bits
+	bool is_mcast_routed;		// 1 bit: packet was routed to multicast (PRE)
+	bit<6> reserved;		// 6 bits: padding to 16-bit boundary
 }
 
 struct sidecar_ingress_meta_t {
@@ -25,8 +40,9 @@ struct sidecar_ingress_meta_t {
 	bool nat_ingress_port;		// This port accepts only NAT traffic
 	bool encap_needed;
 	bool resolve_nexthop;		// signals nexthop needs to be resolved
-	ipv4_addr_t nexthop_ipv4;	// ip address of next router
-	ipv6_addr_t nexthop_ipv6;	// ip address of next router
+	bool route_ttl_is_1;		// TTL/hop_limit equals 1 (for route lookup)
+	bool nexthop_is_v6;		// true when nexthop is IPv6
+	ipv6_addr_t nexthop;		// next hop address; IPv4 uses low bits
 	bit<10> pkt_type;
 	bit<8> drop_reason;		// reason a packet was dropped
 	bit<16> l4_src_port;		// tcp or udp destination port
@@ -74,41 +90,11 @@ struct sidecar_egress_meta_t {
 	bit<8> port_number; 		// Port number for the outgoing port (0-255)
 }
 
-struct route4_result_t {
-	/*
-	 * The result of the multistage route selection process is an egress
-	 * port and a nexthop address
-	 */
-	ipv4_addr_t nexthop;
-	ipv6_addr_t nexthop6;
-	PortId_t port;
-
-	/* Did we successfully look up the route in the table? */
-	bool is_hit;
-	bool is_v6;
-
-	/*
-	 * A hash of the (address,port) fields, which is used to choose between
-	 * multiple potential routes.
-	 */
-	bit<8> ecmp_hash;
-
-	/* Index into the target table of the first potential route */
-	bit<16> idx;
-	/* Number of consecutive slots containing potential routes */
-	bit<8> slots;
-	/* Which of those routes we should select, based the flow hash */
-	bit<16> slot;
-}
-
-struct route6_result_t {
-	/*
-	 * The result of the multistage route selection process is an egress
-	 * port and a nexthop address
-	 */
-	ipv6_addr_t nexthop;
-	PortId_t port;
-
+// Unified route result struct for both Router4 and Router6.
+// A single instance is allocated in L3Router and passed to both
+// controls, forcing the compiler to use the same PHV allocation
+// and preventing liverange divergence under high PHV pressure.
+struct route_result_t {
 	/* Did we successfully look up the route in the table? */
 	bool is_hit;
 

@@ -37,30 +37,28 @@ fn test_p4_counter_list() {
     // Verify output is not empty and contains expected counter information
     assert!(!stdout.is_empty(), "Counter list output should not be empty");
 
-    // Expected P4 counters from dpd/src/counters.rs COUNTERS array
+    // Expected P4 counters from dpd/src/counters.rs
+    // BASE_COUNTERS
     let base_counters = vec![
         "Service",
         "Ingress",
         "Packet",
-        "Egress",
         "Ingress_Drop_Port",
         "Ingress_Drop_Reason",
-    ];
-
-    #[cfg(not(feature = "multicast"))]
-    let multicast_counters = Vec::new();
-
-    #[cfg(feature = "multicast")]
-    let multicast_counters = vec![
+        "Forwarded",
+        "Unicast",
+        "Multicast_Link_Local",
         "Egress_Drop_Port",
         "Egress_Drop_Reason",
-        "Unicast",
-        "Multicast",
-        "Multicast_External",
-        "Multicast_Link_Local",
-        "Multicast_Underlay",
-        "Multicast_Drop",
     ];
+
+    // MULTICAST_COUNTERS
+    #[cfg(not(feature = "multicast"))]
+    let multicast_counters: Vec<&str> = Vec::new();
+
+    #[cfg(feature = "multicast")]
+    let multicast_counters =
+        vec!["Multicast", "Multicast_External", "Multicast_Underlay"];
 
     // Verify all expected counters are present in the output
     for counter in base_counters.iter().chain(multicast_counters.iter()) {
