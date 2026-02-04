@@ -40,7 +40,7 @@ use dpd_client::types;
 // adjust the constant below to match the observed result.
 //
 #[cfg(feature = "multicast")]
-const IPV4_LPM_SIZE: usize = 8124; // ipv4 forwarding table
+const IPV4_LPM_SIZE: usize = 8125; // ipv4 forwarding table
 #[cfg(not(feature = "multicast"))]
 const IPV4_LPM_SIZE: usize = 8187; // ipv4 forwarding table
 
