@@ -239,7 +239,7 @@ impl TableOps<Handle> for Table {
                         }
                     }
                 }
-                ("forward", params)
+                ("forward_v6", params)
             }
             (ROUTER4_LOOKUP_RT, "forward_vlan") => {
                 let mut params = Vec::new();
@@ -313,7 +313,7 @@ impl TableOps<Handle> for Table {
                         }
                     }
                 }
-                ("forward_vlan", params)
+                ("forward_vlan_v6", params)
             }
             (ROUTER6_LOOKUP_IDX, "index") => {
                 let mut params = Vec::new();
