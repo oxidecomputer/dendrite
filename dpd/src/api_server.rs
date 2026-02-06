@@ -428,24 +428,17 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let route = update.into_inner();
-
-        route::add_route_ipv4(switch, route.cidr, route.target)
-            .await
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(HttpError::from)
-    }
-
-    async fn route_ipv4_over_ipv6_add(
-        rqctx: RequestContext<Self::Context>,
-        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let route = update.into_inner();
-
-        route::add_route_ipv4_over_ipv6(switch, route.cidr, route.target)
-            .await
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(HttpError::from)
+        match route.target {
+            RouteTarget::V4(target) => {
+                route::add_route_ipv4(switch, route.cidr, target).await
+            }
+            RouteTarget::V6(target) => {
+                route::add_route_ipv4_over_ipv6(switch, route.cidr, target)
+                    .await
+            }
+        }
+        .map(|_| HttpResponseUpdatedNoContent())
+        .map_err(HttpError::from)
     }
 
     async fn route_ipv4_set(
@@ -454,25 +447,21 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let route = update.into_inner();
-        route::set_route_ipv4(switch, route.cidr, route.target, route.replace)
-            .await
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(HttpError::from)
-    }
-
-    async fn route_ipv4_over_ipv6_set(
-        rqctx: RequestContext<Arc<Switch>>,
-        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let route = update.into_inner();
-        route::set_route_ipv4_over_ipv6(
-            switch,
-            route.cidr,
-            route.target,
-            route.replace,
-        )
-        .await
+        match route.target {
+            RouteTarget::V4(target) => {
+                route::set_route_ipv4(switch, route.cidr, target, route.replace)
+                    .await
+            }
+            RouteTarget::V6(target) => {
+                route::set_route_ipv4_over_ipv6(
+                    switch,
+                    route.cidr,
+                    target,
+                    route.replace,
+                )
+                .await
+            }
+        }
         .map(|_| HttpResponseUpdatedNoContent())
         .map_err(HttpError::from)
     }
@@ -495,12 +484,12 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
-        let subnet = path.cidr;
-        let port_id = path.port_id;
-        let link_id = path.link_id;
-        let tgt_ip = path.tgt_ip;
         route::delete_route_target_ipv4(
-            switch, subnet, port_id, link_id, tgt_ip,
+            switch,
+            path.cidr,
+            path.port_id,
+            path.link_id,
+            path.tgt_ip,
         )
         .await
         .map(|_| HttpResponseDeleted())

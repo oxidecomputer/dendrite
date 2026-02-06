@@ -1187,13 +1187,13 @@ async fn set_route_ipv4_common(
     let (port_id, link_id) = switch.link_id(phys_port).unwrap();
     let route = types::Ipv4RouteUpdate {
         cidr,
-        target: types::Ipv4Route {
+        target: types::RouteTarget::V4(types::Ipv4Route {
             port_id: port_id.clone(),
             link_id: link_id.clone(),
             tgt_ip,
             tag: switch.client.inner().tag.clone(),
             vlan_id,
-        },
+        }),
         replace: false,
     };
     switch
@@ -1240,20 +1240,20 @@ async fn set_route_ipv4_over_ipv6_common(
     let cidr = subnet.parse::<Ipv4Net>()?;
     let tgt_ip: Ipv6Addr = gw.parse()?;
     let (port_id, link_id) = switch.link_id(phys_port).unwrap();
-    let route = types::Ipv4OverIpv6RouteUpdate {
+    let route = types::Ipv4RouteUpdate {
         cidr,
-        target: types::Ipv6Route {
+        target: types::RouteTarget::V6(types::Ipv6Route {
             port_id: port_id.clone(),
             link_id: link_id.clone(),
             tgt_ip,
             tag: switch.client.inner().tag.clone(),
             vlan_id,
-        },
+        }),
         replace: false,
     };
     switch
         .client
-        .route_ipv4_over_ipv6_set(&route)
+        .route_ipv4_set(&route)
         .await
         .expect("Failed to add IPv4 route entry");
 
