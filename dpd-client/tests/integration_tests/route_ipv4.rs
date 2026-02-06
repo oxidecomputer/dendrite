@@ -64,10 +64,10 @@ fn build_route_update(
     subnet: Ipv4Net,
     target: &types::Ipv4Route,
     replace: bool,
-) -> types::Ipv4RouteUpdate {
-    types::Ipv4RouteUpdate {
+) -> types::Ipv4RouteUpdateV2 {
+    types::Ipv4RouteUpdateV2 {
         cidr: subnet.into(),
-        target: target.into(),
+        target: types::RouteTarget::V4(target.clone()),
         replace,
     }
 }
@@ -452,12 +452,13 @@ async fn delete_ipv4_route_target(
     cidr: &Ipv4Net,
     target: &types::Ipv4Route,
 ) -> TestResult {
+    let tgt_ip: std::net::IpAddr = target.tgt_ip.into();
     client
         .route_ipv4_delete_target(
             cidr,
             &target.port_id,
             &target.link_id,
-            &target.tgt_ip,
+            &tgt_ip,
         )
         .await
         .map(|r| r.into_inner())
