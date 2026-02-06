@@ -54,6 +54,7 @@ const bit<9> USER_SPACE_SERVICE_PORT = 192;
 // Callers should set meta.drop_reason and call counters as needed.
 #define ICMP_ERROR_SETUP(type, code)                                    \
     hdr.sidecar.sc_code = SC_ICMP_NEEDED;                               \
+    hdr.sidecar.sc_pad = 0;                                             \
     hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;          \
     hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;        \
     hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;                \
@@ -311,8 +312,11 @@ control Services(
 	// sidecar tag, which indicates which port the request arrived on.
 	action forward_to_userspace() {
 		hdr.sidecar.sc_code = SC_FWD_TO_USERSPACE;
+		hdr.sidecar.sc_pad = 0;
 		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
+		hdr.sidecar.sc_egress = 0;
 		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
+		hdr.sidecar.sc_payload = 0;
 		hdr.sidecar.setValid();
 		hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;
 		meta.service_routed = true;
@@ -345,6 +349,7 @@ control Services(
 	// packets always go to the port indicated by the sidecar header.
 	action mcast_inbound_link_local() {
 		hdr.sidecar.sc_code = SC_FWD_TO_USERSPACE;
+		hdr.sidecar.sc_pad = 0;
 		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
 		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
 		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
@@ -1166,6 +1171,7 @@ control Arp (
 
 	action request() {
 		hdr.sidecar.sc_code = SC_ARP_NEEDED;
+		hdr.sidecar.sc_pad = 0;
 		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
 		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
 		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
@@ -1218,6 +1224,7 @@ control Ndp (
 
 	action request() {
 		hdr.sidecar.sc_code = SC_NEIGHBOR_NEEDED;
+		hdr.sidecar.sc_pad = 0;
 		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
 		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
 		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
@@ -1723,16 +1730,18 @@ control MulticastIngress (
 			NoAction;
 		}
 
+		// Priority order: first match wins. The geneve tag entries are
+		// most specific (both headers valid + exact tag), followed by
+		// group-ID fallbacks for non-geneve multicast.
 		const entries = {
 			(  _, _, true, true, MULTICAST_TAG_EXTERNAL ) : invalidate_underlay_grp_and_set_decap;
 			(  _, _, true, true, MULTICAST_TAG_UNDERLAY ) : invalidate_external_grp;
 			(  _, _, true, true, MULTICAST_TAG_UNDERLAY_EXTERNAL ) : NoAction;
 			( 0, _, _, _, _ ) : invalidate_external_grp;
 			( _, 0, _, _, _ ) : invalidate_underlay_grp;
-			( 0, 0, _, _, _ ) : invalidate_grps;
 		}
 
-		const size = 6;
+		const size = 5;
 	}
 
 	// Note: SSM tables currently take one extra stage in the pipeline (17->18).
@@ -2259,24 +2268,23 @@ control Egress(
 			forwarded_ctr.count(eg_intr_md.egress_port);
 
 #ifdef MULTICAST
-			// Multicast-specific counting
+			// Multicast-specific counting. Use the mcast_tag
+			// local (captured before egress decap may strip
+			// geneve headers) rather than re-checking header
+			// validity.
 			if (is_mcast_routed) {
 				mcast_ctr.count(eg_intr_md.egress_port);
-				if (hdr.geneve.isValid()) {
-					if (hdr.geneve_opts.oxg_mcast.isValid()) {
-						if (mcast_tag == MULTICAST_TAG_UNDERLAY) {
-							underlay_mcast_ctr.count(
-							    eg_intr_md.egress_port);
-						} else if (mcast_tag == MULTICAST_TAG_EXTERNAL) {
-							external_mcast_ctr.count(
-							    eg_intr_md.egress_port);
-						} else if (mcast_tag == MULTICAST_TAG_UNDERLAY_EXTERNAL) {
-							underlay_mcast_ctr.count(
-							    eg_intr_md.egress_port);
-							external_mcast_ctr.count(
-							    eg_intr_md.egress_port);
-						}
-					}
+				if (mcast_tag == MULTICAST_TAG_UNDERLAY) {
+					underlay_mcast_ctr.count(
+					    eg_intr_md.egress_port);
+				} else if (mcast_tag == MULTICAST_TAG_EXTERNAL) {
+					external_mcast_ctr.count(
+					    eg_intr_md.egress_port);
+				} else if (mcast_tag == MULTICAST_TAG_UNDERLAY_EXTERNAL) {
+					underlay_mcast_ctr.count(
+					    eg_intr_md.egress_port);
+					external_mcast_ctr.count(
+					    eg_intr_md.egress_port);
 				}
 			} else if (is_link_local_ipv6_mcast) {
 				mcast_ctr.count(eg_intr_md.egress_port);
