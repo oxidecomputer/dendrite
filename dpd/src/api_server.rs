@@ -424,7 +424,7 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv4_add(
         rqctx: RequestContext<Arc<Switch>>,
-        update: TypedBody<Ipv4RouteUpdateV2>,
+        update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let route = update.into_inner();
@@ -443,7 +443,7 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv4_set(
         rqctx: RequestContext<Arc<Switch>>,
-        update: TypedBody<Ipv4RouteUpdateV2>,
+        update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let route = update.into_inner();
@@ -480,7 +480,7 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv4_delete_target(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<RouteTargetIpv4PathV2>,
+        path: Path<RouteTargetIpv4Path>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();

@@ -231,7 +231,7 @@ async fn route_add(
                 }
             };
             client
-                .route_ipv4_add(&types::Ipv4RouteUpdateV2 {
+                .route_ipv4_add(&types::Ipv4RouteUpdate {
                     cidr,
                     target,
                     replace: false,

@@ -382,7 +382,7 @@ struct RouteV4 {}
 impl TableTest for RouteV4 {
     async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
-        let route = types::Ipv4RouteUpdateV2 {
+        let route = types::Ipv4RouteUpdate {
             cidr: gen_ipv4_cidr(idx),
             target: types::RouteTarget::V4(types::Ipv4Route {
                 tag: switch.client.inner().tag.clone(),

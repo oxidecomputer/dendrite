@@ -65,8 +65,8 @@ fn build_route_update(
     subnet: Ipv4Net,
     target: &types::Ipv4Route,
     replace: bool,
-) -> types::Ipv4RouteUpdateV2 {
-    types::Ipv4RouteUpdateV2 {
+) -> types::Ipv4RouteUpdate {
+    types::Ipv4RouteUpdate {
         cidr: subnet.into(),
         target: types::RouteTarget::V4(target.clone()),
         replace,
@@ -756,7 +756,7 @@ async fn test_multipath_mixed_delete() -> TestResult {
         types::RouteTarget::V6(v6_d.clone()),
     ] {
         client
-            .route_ipv4_add(&types::Ipv4RouteUpdateV2 {
+            .route_ipv4_add(&types::Ipv4RouteUpdate {
                 cidr,
                 target,
                 replace: false,

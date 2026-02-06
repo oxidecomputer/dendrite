@@ -46,6 +46,7 @@ use transceiver_controller::{
 };
 
 mod v1;
+mod v2;
 
 api_versions!([
     // WHEN CHANGING THE API (part 1 of 2):
@@ -383,12 +384,12 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_add_v1(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<Ipv4RouteUpdate>,
+        update: TypedBody<v2::Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let route = update.into_inner();
         Self::route_ipv4_add(
             rqctx,
-            TypedBody::from(Ipv4RouteUpdateV2 {
+            TypedBody::from(Ipv4RouteUpdate {
                 cidr: route.cidr,
                 target: RouteTarget::V4(route.target),
                 replace: route.replace,
@@ -410,7 +411,7 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_add(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<Ipv4RouteUpdateV2>,
+        update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -431,7 +432,7 @@ pub trait DpdApi {
         let route = update.into_inner();
         Self::route_ipv4_add(
             rqctx,
-            TypedBody::from(Ipv4RouteUpdateV2 {
+            TypedBody::from(Ipv4RouteUpdate {
                 cidr: route.cidr,
                 target: RouteTarget::V6(route.target),
                 replace: route.replace,
@@ -453,12 +454,12 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_set_v1(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<Ipv4RouteUpdate>,
+        update: TypedBody<v2::Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let route = update.into_inner();
         Self::route_ipv4_set(
             rqctx,
-            TypedBody::from(Ipv4RouteUpdateV2 {
+            TypedBody::from(Ipv4RouteUpdate {
                 cidr: route.cidr,
                 target: RouteTarget::V4(route.target),
                 replace: route.replace,
@@ -480,7 +481,7 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_set(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<Ipv4RouteUpdateV2>,
+        update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -501,7 +502,7 @@ pub trait DpdApi {
         let route = update.into_inner();
         Self::route_ipv4_set(
             rqctx,
-            TypedBody::from(Ipv4RouteUpdateV2 {
+            TypedBody::from(Ipv4RouteUpdate {
                 cidr: route.cidr,
                 target: RouteTarget::V6(route.target),
                 replace: route.replace,
@@ -532,12 +533,12 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_delete_target_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<RouteTargetIpv4Path>,
+        path: Path<v2::RouteTargetIpv4Path>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let p = path.into_inner();
         Self::route_ipv4_delete_target(
             rqctx,
-            Path::from(RouteTargetIpv4PathV2 {
+            Path::from(RouteTargetIpv4Path {
                 cidr: p.cidr,
                 port_id: p.port_id,
                 link_id: p.link_id,
@@ -557,7 +558,7 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_delete_target(
         rqctx: RequestContext<Self::Context>,
-        path: Path<RouteTargetIpv4PathV2>,
+        path: Path<RouteTargetIpv4Path>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /// List all switch ports on the system.
@@ -2218,15 +2219,15 @@ impl TryFrom<RouteTarget> for Ipv6Route {
     }
 }
 
-/// Represents a new or replacement mapping of a subnet to a single IPv4
-/// RouteTarget nexthop target.
+/// Represents a new or replacement mapping of an IPv4 subnet to a single
+/// RouteTarget nexthop target, which may be either IPv4 or IPv6.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct Ipv4RouteUpdate {
     /// Traffic destined for any address within the CIDR block is routed using
     /// this information.
     pub cidr: Ipv4Net,
     /// A single Route associated with this CIDR
-    pub target: Ipv4Route,
+    pub target: RouteTarget,
     /// Should this route replace any existing route?  If a route exists and
     /// this parameter is false, then the call will fail.
     pub replace: bool,
@@ -2239,20 +2240,6 @@ pub struct Ipv4OverIpv6RouteUpdate {
     pub cidr: Ipv4Net,
     /// A single Route associated with this CIDR
     pub target: Ipv6Route,
-    /// Should this route replace any existing route?  If a route exists and
-    /// this parameter is false, then the call will fail.
-    pub replace: bool,
-}
-
-/// Represents a new or replacement mapping of an IPv4 subnet to a single
-/// RouteTarget nexthop target, which may be either IPv4 or IPv6.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct Ipv4RouteUpdateV2 {
-    /// Traffic destined for any address within the CIDR block is routed using
-    /// this information.
-    pub cidr: Ipv4Net,
-    /// A single Route associated with this CIDR
-    pub target: RouteTarget,
     /// Should this route replace any existing route?  If a route exists and
     /// this parameter is false, then the call will fail.
     pub replace: bool,
@@ -2347,23 +2334,10 @@ pub struct SubnetPath {
     pub subnet: IpNet,
 }
 
-/// Represents a single subnet->target route entry
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct RouteTargetIpv4Path {
-    /// The subnet being routed
-    pub cidr: Ipv4Net,
-    /// The switch port to which packets should be sent
-    pub port_id: PortId,
-    /// The link to which packets should be sent
-    pub link_id: LinkId,
-    /// The next hop in the IPv4 route
-    pub tgt_ip: Ipv4Addr,
-}
-
 /// Represents a single subnet->target route entry with an IPv4 or IPv6
 /// next hop.
 #[derive(Deserialize, Serialize, JsonSchema)]
-pub struct RouteTargetIpv4PathV2 {
+pub struct RouteTargetIpv4Path {
     /// The subnet being routed
     pub cidr: Ipv4Net,
     /// The switch port to which packets should be sent

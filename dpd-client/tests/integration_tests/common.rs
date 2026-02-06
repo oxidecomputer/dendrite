@@ -1185,7 +1185,7 @@ async fn set_route_ipv4_common(
     let cidr = subnet.parse::<Ipv4Net>()?;
     let tgt_ip: Ipv4Addr = gw.parse()?;
     let (port_id, link_id) = switch.link_id(phys_port).unwrap();
-    let route = types::Ipv4RouteUpdateV2 {
+    let route = types::Ipv4RouteUpdate {
         cidr,
         target: types::RouteTarget::V4(types::Ipv4Route {
             port_id: port_id.clone(),
@@ -1240,7 +1240,7 @@ async fn set_route_ipv4_over_ipv6_common(
     let cidr = subnet.parse::<Ipv4Net>()?;
     let tgt_ip: Ipv6Addr = gw.parse()?;
     let (port_id, link_id) = switch.link_id(phys_port).unwrap();
-    let route = types::Ipv4RouteUpdateV2 {
+    let route = types::Ipv4RouteUpdate {
         cidr,
         target: types::RouteTarget::V6(types::Ipv6Route {
             port_id: port_id.clone(),
