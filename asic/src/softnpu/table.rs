@@ -644,7 +644,7 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: &str) -> Vec<u8> {
                         keyset_data.extend_from_slice(&data[..4]);
                     }
                     RESOLVER_V6 => {
-                        // "nexthop_ipv4" => bit<128>
+                        // "nexthop_ipv6" => bit<128>
                         let mut buf = Vec::new();
                         serialize_value_type(&x, &mut buf);
                         buf.reverse();
@@ -655,6 +655,11 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: &str) -> Vec<u8> {
                         keyset_data.extend_from_slice(&data[..2]);
                     }
                     ROUTER_V4_RT => {
+                        // "idx" => exact => bit<16>
+                        serialize_value_type(&x, &mut data);
+                        keyset_data.extend_from_slice(&data[..2]);
+                    }
+                    ROUTER_V6_RT => {
                         // "idx" => exact => bit<16>
                         serialize_value_type(&x, &mut data);
                         keyset_data.extend_from_slice(&data[..2]);
