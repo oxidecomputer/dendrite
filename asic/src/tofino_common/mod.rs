@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::fs;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -234,6 +235,10 @@ fn expect_name(mut inpath: PathBuf, expected: &str) -> AsicResult<PathBuf> {
 fn infer_p4_dir() -> AsicResult<String> {
     let mut exe_path = std::env::current_exe().map_err(|e| {
         AsicError::P4Missing(format!("looking up dpd path: {e:?}"))
+    })?;
+    // Canonicalize the path in case we're using a symlinked exe.
+    exe_path = fs::canonicalize(exe_path).map_err(|e| {
+        AsicError::P4Missing(format!("canonicalizing dpd path: {e:?}"))
     })?;
 
     // Pop off the trailing "dpd":
