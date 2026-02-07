@@ -85,11 +85,11 @@ oxide-tokio-rt = "0.1.2"
 parking_lot = "0.12"
 pretty_assertions = "1.4"
 proc-macro2 = "1.0"
-progenitor = "0.11"
+progenitor = "0.12"
 rand = "0.9"
 regex = "1.12"
 regress = "0.10"
-reqwest = { version = "0.12", default-features = false }
+reqwest = { version = "0.13", default-features = false }
 schemars = "0.8"
 semver = "1.0"
 serde = { version = "1.0", features = ["derive"] }
