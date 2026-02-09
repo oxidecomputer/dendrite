@@ -202,16 +202,16 @@ async fn test_nat_filtering() -> TestResult {
     );
 
     let (port_id, link_id) = switch.link_id(ingress).unwrap();
-    // Mark the port as NAT-only
-    switch.client.link_nat_only_set(&port_id, &link_id, true).await.unwrap();
+    // Mark the port as uplink
+    switch.client.link_uplink_set(&port_id, &link_id, true).await.unwrap();
 
     // We run the test now, but defer the evaluation of the result.  This lets
-    // us clean up the NAT-only change even on a test failure.
+    // us clean up the uplink change even on a test failure.
     let result =
         one_drop_test(switch, ingress, packet, "nat_ingress_miss").await;
 
-    // Remove the NAT-only property
-    switch.client.link_nat_only_set(&port_id, &link_id, false).await.unwrap();
+    // Remove the uplink property
+    switch.client.link_uplink_set(&port_id, &link_id, false).await.unwrap();
 
     assert!(result?);
     Ok(())

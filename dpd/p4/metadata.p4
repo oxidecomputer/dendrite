@@ -13,13 +13,17 @@
 @pa_no_init("ingress", "meta.service_routed")
 @pa_no_init("ingress", "meta.nat_egress_hit")
 @pa_no_init("ingress", "meta.nat_ingress_hit")
-@pa_no_init("ingress", "meta.nat_ingress_port")
+@pa_no_init("ingress", "meta.uplink_ingress")
 @pa_no_init("ingress", "meta.encap_needed")
 @pa_no_init("ingress", "meta.icmp_recalc")
 @pa_no_init("ingress", "meta.allow_source_mcast")
 @pa_no_init("ingress", "meta.resolve_nexthop")
 @pa_no_init("ingress", "meta.nexthop_is_v6")
 @pa_no_init("ingress", "meta.route_ttl_is_1")
+// These fields are set in the parser on some paths but not all. On paths
+// that skip the set, the field is init-only and vulnerable.
+@pa_no_init("ingress", "meta.is_switch_address")
+@pa_no_init("ingress", "meta.is_link_local_mcastv6")
 
 // Force fields out of mocha containers into normal containers. Mocha containers
 // only support whole-container-set operations, so isolated fields can have
@@ -34,43 +38,53 @@
 // it shared a container with pkt_type, risking false checksum-error drops.
 @pa_container_type("ingress", "meta.ipv4_checksum_err", "normal")
 
-#ifdef MULTICAST
-// Ingress fields needed for NAT encapsulation and checksum computation.
+// 1-bit ingress booleans: high risk of mocha packing. The compiler can
+// pack up to 8 booleans into a single 8-bit mocha container, and a
+// whole-container write to any one clobbers the rest.
+@pa_container_type("ingress", "meta.dropped", "normal")
+@pa_container_type("ingress", "meta.is_switch_address", "normal")
+@pa_container_type("ingress", "meta.is_mcast", "normal")
+@pa_container_type("ingress", "meta.allow_source_mcast", "normal")
+@pa_container_type("ingress", "meta.is_link_local_mcastv6", "normal")
+@pa_container_type("ingress", "meta.service_routed", "normal")
+@pa_container_type("ingress", "meta.nat_egress_hit", "normal")
+@pa_container_type("ingress", "meta.nat_ingress_hit", "normal")
+@pa_container_type("ingress", "meta.uplink_ingress", "normal")
+@pa_container_type("ingress", "meta.encap_needed", "normal")
+@pa_container_type("ingress", "meta.resolve_nexthop", "normal")
+@pa_container_type("ingress", "meta.route_ttl_is_1", "normal")
+@pa_container_type("ingress", "meta.nexthop_is_v6", "normal")
+@pa_container_type("ingress", "meta.icmp_recalc", "normal")
+
+// Wider ingress fields used by NAT encapsulation, checksum computation,
+// and routing. Protected in both builds to avoid relying on incidental
+// co-location with deparsed fields, which is fragile across compiler
+// versions and PHV pressure changes.
+@pa_container_type("ingress", "meta.drop_reason", "normal")
+@pa_container_type("ingress", "meta.l4_src_port", "normal")
+@pa_container_type("ingress", "meta.l4_dst_port", "normal")
 @pa_container_type("ingress", "meta.nat_ingress_tgt", "normal")
 @pa_container_type("ingress", "meta.nat_geneve_vni", "normal")
+@pa_container_type("ingress", "meta.nat_inner_mac", "normal")
 @pa_container_type("ingress", "meta.icmp_csum", "normal")
 @pa_container_type("ingress", "meta.body_checksum", "normal")
 @pa_container_type("ingress", "meta.orig_src_mac", "normal")
 @pa_container_type("ingress", "meta.orig_src_ipv4", "normal")
-@pa_container_type("ingress", "meta.drop_reason", "normal")
-@pa_container_type("ingress", "meta.l4_dst_port", "normal")
-@pa_container_type("ingress", "meta.nat_inner_mac", "normal")
-// Carried over from non-MULTICAST build. Without explicit pragmas these
-// fields were only protected by incidental co-location with deparsed bridge
-// header fields in the same container, which is fragile across compiler
-// versions and PHV pressure changes.
-@pa_container_type("ingress", "meta.service_routed", "normal")
-@pa_container_type("ingress", "meta.l4_src_port", "normal")
-@pa_container_type("ingress", "meta.icmp_recalc", "normal")
 @pa_container_type("ingress", "meta.nat_ingress_csum", "normal")
+@pa_container_type("ingress", "meta.nexthop", "normal")
+
 // Egress bridge header fields crossing the ingress/egress boundary.
 @pa_container_type("egress", "meta.bridge_hdr.ingress_port", "normal")
 @pa_container_type("egress", "meta.bridge_hdr.is_mcast_routed", "normal")
-// Egress fields set by multicast table actions and consumed later in the
-// pipeline. drop_reason was confirmed allocated to mocha MH9 where it
-// shared a container with drop_ctl. ipv4_checksum_recalc is a 1-bit field
-// at high risk of mocha packing.
+@pa_container_type("egress", "meta.bridge_hdr.nat_egress_hit", "normal")
+// Egress drop_reason is used in the final drop/forward decision in both
+// builds. In the MULTICAST build, additional egress fields are set by
+// multicast table actions and consumed later in the pipeline.
+@pa_container_type("egress", "meta.drop_reason", "normal")
+#ifdef MULTICAST
 @pa_container_type("egress", "meta.vlan_id", "normal")
 @pa_container_type("egress", "meta.port_number", "normal")
 @pa_container_type("egress", "meta.ipv4_checksum_recalc", "normal")
-@pa_container_type("egress", "meta.drop_reason", "normal")
-#else
-@pa_container_type("ingress", "meta.service_routed", "normal")
-@pa_container_type("ingress", "meta.nexthop", "normal")
-@pa_container_type("ingress", "meta.l4_src_port", "normal")
-@pa_container_type("ingress", "meta.icmp_recalc", "normal")
-@pa_container_type("ingress", "meta.nat_ingress_csum", "normal")
-@pa_container_type("ingress", "meta.drop_reason", "normal")
 #endif
 
 /* Flexible bridge header for passing metadata between ingress and egress
@@ -80,7 +94,8 @@
 header bridge_h {
 	PortId_t ingress_port;		// 9 bits
 	bool is_mcast_routed;		// 1 bit: packet was routed to multicast (PRE)
-	bit<6> reserved;		// 6 bits: padding to 16-bit boundary
+	bool nat_egress_hit;		// 1 bit: NAT egress matched, check egress filter
+	bit<5> reserved;		// 5 bits: padding to 16-bit boundary
 }
 
 struct sidecar_ingress_meta_t {
@@ -93,7 +108,7 @@ struct sidecar_ingress_meta_t {
 	bool service_routed;		// routed to or from a service routine
 	bool nat_egress_hit;		// NATed packet from guest -> uplink
 	bool nat_ingress_hit;		// NATed packet from uplink -> guest
-	bool nat_ingress_port;		// This port accepts only NAT traffic
+	bool uplink_ingress;		// Packet arrived on an uplink port
 	bool encap_needed;
 	bool resolve_nexthop;		// signals nexthop needs to be resolved
 	bool route_ttl_is_1;		// TTL/hop_limit equals 1 (for route lookup)

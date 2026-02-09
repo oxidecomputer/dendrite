@@ -171,7 +171,20 @@ control Filter(
 		counters = ipv6_ctr;
 	}
 
+	action uplink_port() {
+		meta.uplink_ingress = true;
+	}
+
+	table uplink_ports {
+		key = { ig_intr_md.ingress_port : exact; }
+		actions = { uplink_port; }
+
+		const size = 256;
+	}
+
 	apply {
+		uplink_ports.apply();
+
 		if (hdr.arp.isValid()) {
 			switch_ipv4_addr.apply();
 		} else if (hdr.ipv4.isValid()) {
@@ -418,14 +431,7 @@ control Services(
 		// TODO: This can be simplified by checking "is this a switch address"
 		// at the start, then dropping non-NAT packets in NatIngress directly.
 		// Deferred due to knock-on effects in dpd and sidecar-lite.
-		if (!meta.is_switch_address && meta.nat_ingress_port && !meta.encap_needed) {
-			// For packets that were not marked for NAT ingress, but which
-			// arrived on an uplink port that only allows in traffic that
-			// is meant to be NAT encapsulated.
-			meta.drop_reason = DROP_NAT_INGRESS_MISS;
-			meta.dropped = true;
-		}
-		else if (meta.is_switch_address && hdr.geneve.isValid() && hdr.geneve.vni != 0) {
+		if (meta.is_switch_address && hdr.geneve.isValid() && hdr.geneve.vni != 0) {
 			meta.nat_egress_hit = true;
 		}
 		else {
@@ -494,7 +500,6 @@ control NatIngress (
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv4_ingress_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv6_ingress_ctr;
-	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) nat_only_ctr;
 #ifdef MULTICAST
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv4_ingress_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv6_ingress_ctr;
@@ -612,18 +617,6 @@ control NatIngress (
 		counters = ipv6_ingress_ctr;
 	}
 
-	action nat_only_port() {
-		meta.nat_ingress_port = true;
-		nat_only_ctr.count();
-	}
-
-	table nat_only {
-		key = { ig_intr_md.ingress_port : exact; }
-		actions = { nat_only_port; }
-
-		const size = 256;
-		counters = nat_only_ctr;
-	}
 
 #ifdef MULTICAST
 	action mcast_forward_ipv4_to(ipv6_addr_t target, mac_addr_t inner_mac, geneve_vni_t vni) {
@@ -707,9 +700,9 @@ control NatIngress (
 	table ingress_hit {
 		key = {
 			meta.encap_needed : exact;
-			hdr.tcp.isValid() : ternary;
-			hdr.udp.isValid() : ternary;
-			hdr.icmp.isValid() : ternary;
+			hdr.tcp.isValid() : exact;
+			hdr.udp.isValid() : exact;
+			hdr.icmp.isValid() : exact;
 		}
 		actions = {
 			set_inner_tcp;
@@ -769,8 +762,15 @@ control NatIngress (
 				hdr.inner_eth.ether_type = hdr.vlan.ether_type;
 				hdr.vlan.setInvalid();
 			}
-		} else if (!meta.is_switch_address) {
-			nat_only.apply();
+		} else if (meta.uplink_ingress && !meta.is_switch_address) {
+			// If this packet arrived on an Uplink port and it
+			// wasn't addressed to the switch or to an established
+			// NAT range, then drop it. This lets us forward traffic
+			// from guests and gimlets that arrives on a backplane
+			// port, but prevents us from accepting or forwarding
+			// arbitrary traffic received on an uplink port.
+			meta.drop_reason = DROP_NAT_INGRESS_MISS;
+			meta.dropped = true;
 		}
 	}
 }
@@ -1502,6 +1502,33 @@ control L3Router(
 	}
 }
 
+// Filter NAT egress traffic by port. Ports not explicitly marked as uplinks
+// drop guest traffic to prevent NAT'd packets from egressing on non-uplink
+// ports. Placed in the egress pipeline to avoid adding a stage to ingress.
+control NatEgressFilter(
+	inout sidecar_egress_meta_t meta,
+	in egress_intrinsic_metadata_t eg_intr_md
+) {
+	action guest_traffic_not_allowed() {
+		meta.drop_reason = DROP_NAT_EGRESS_BLOCKED;
+	}
+
+	action guest_traffic_allowed() {
+	}
+
+	table egress_filter {
+		key = { eg_intr_md.egress_port : exact; }
+		actions = { guest_traffic_allowed; guest_traffic_not_allowed; }
+
+		const size = 256;
+		default_action = guest_traffic_not_allowed;
+	}
+
+	apply {
+		egress_filter.apply();
+	}
+}
+
 /* Rewrite the source MAC address based on the egress port. For multicast
  * packets, also derive the destination MAC from the destination IP address.
  */
@@ -2055,12 +2082,13 @@ control Ingress(
 			// Counted by unicast_ctr in Egress for consistency.
 		}
 
-		// Pass multicast replication state to egress via bridge header.
+		// Pass state to egress via bridge header.
 		if (meta.is_mcast && !meta.is_link_local_mcastv6) {
 			meta.bridge_hdr.is_mcast_routed = true;
 		} else {
 			meta.bridge_hdr.is_mcast_routed = false;
 		}
+		meta.bridge_hdr.nat_egress_hit = meta.nat_egress_hit;
 
 		if (meta.encap_needed) {
 			// This works around a few things which cropped up in
@@ -2194,6 +2222,7 @@ control Egress(
 	// next-table chain. Using one instance from multiple control flow
 	// paths causes "incompatible next-table chains" errors. Separate
 	// instances also provide distinct DirectCounters for traffic accounting.
+	NatEgressFilter() egress_filter;
 	MacRewrite() unicast_mac_rewrite;
 #ifdef MULTICAST
 	MacRewrite() mcast_mac_rewrite;
@@ -2236,7 +2265,6 @@ control Egress(
 			if (ingress_port == eg_intr_md.egress_port) {
 				// Drop if ingress port equals egress port (path filter).
 				meta.drop_reason = DROP_MULTICAST_PATH_FILTERED;
-				eg_dprsr_md.drop_ctl = 1;
 			} else {
 				mcast_egress.apply(hdr, meta, eg_intr_md, eg_dprsr_md);
 				mcast_mac_rewrite.apply(hdr, eg_intr_md.egress_port, true);
@@ -2246,15 +2274,24 @@ control Egress(
 			eg_dprsr_md.drop_ctl = 1;
 			meta.drop_reason = DROP_MULTICAST_CPU_COPY;
 		} else {
-			// Unicast: rewrite src_mac only.
-			if (eg_intr_md.egress_port != USER_SPACE_SERVICE_PORT &&
+			// Unicast: check egress filter, then rewrite src_mac.
+			if (meta.bridge_hdr.nat_egress_hit) {
+				egress_filter.apply(meta, eg_intr_md);
+			}
+			if (meta.drop_reason == 0 &&
+			    eg_intr_md.egress_port != USER_SPACE_SERVICE_PORT &&
 			    !is_link_local_ipv6_mcast) {
 				unicast_mac_rewrite.apply(hdr, eg_intr_md.egress_port, false);
 			}
 		}
 #else /* MULTICAST */
-		// Non-multicast: unicast and link-local multicast only.
-		if (eg_intr_md.egress_port != USER_SPACE_SERVICE_PORT &&
+		// Non-multicast: check egress filter for NAT traffic,
+		// then rewrite src_mac.
+		if (meta.bridge_hdr.nat_egress_hit) {
+			egress_filter.apply(meta, eg_intr_md);
+		}
+		if (meta.drop_reason == 0 &&
+		    eg_intr_md.egress_port != USER_SPACE_SERVICE_PORT &&
 		    !is_link_local_ipv6_mcast) {
 			unicast_mac_rewrite.apply(hdr, eg_intr_md.egress_port, false);
 		}
@@ -2264,6 +2301,7 @@ control Egress(
 		if (meta.drop_reason != 0) {
 			drop_port_ctr.count(eg_intr_md.egress_port);
 			drop_reason_ctr.count(meta.drop_reason);
+			eg_dprsr_md.drop_ctl = 1;
 		} else {
 			forwarded_ctr.count(eg_intr_md.egress_port);
 

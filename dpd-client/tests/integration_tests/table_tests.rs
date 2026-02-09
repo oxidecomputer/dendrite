@@ -376,13 +376,13 @@ impl TableTest for RouteV4 {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
         let route = types::Ipv4RouteUpdate {
             cidr: gen_ipv4_cidr(idx),
-            target: types::Ipv4Route {
+            target: types::RouteTarget::V4(types::Ipv4Route {
                 tag: switch.client.inner().tag.clone(),
                 port_id,
                 link_id,
                 tgt_ip: "10.10.10.1".parse::<Ipv4Addr>().unwrap().into(),
                 vlan_id: None,
-            },
+            }),
             replace: false,
         };
         switch.client.route_ipv4_set(&route).await

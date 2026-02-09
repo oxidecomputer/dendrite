@@ -39,7 +39,7 @@ fn test_p4_counter_list() {
 
     // Expected P4 counters from dpd/src/counters.rs
     // BASE_COUNTERS
-    let base_counters = vec![
+    let base_counters = [
         "Service",
         "Ingress",
         "Packet",
