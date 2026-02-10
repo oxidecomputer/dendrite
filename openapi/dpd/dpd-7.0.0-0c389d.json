@@ -7,7 +7,7 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "5.0.0"
+    "version": "7.0.0"
   },
   "paths": {
     "/all-settings": {
@@ -3906,97 +3906,6 @@
         }
       }
     },
-    "/ports/{port_id}/links/{link_id}/nat_only": {
-      "get": {
-        "summary": "Return whether the link is configured to drop non-nat traffic",
-        "operationId": "link_nat_only_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "link_id",
-            "description": "The link in the switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/LinkId"
-            }
-          },
-          {
-            "in": "path",
-            "name": "port_id",
-            "description": "The switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/PortId"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "successful operation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Boolean",
-                  "type": "boolean"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      },
-      "put": {
-        "summary": "Set whether a port is configured to use drop non-nat traffic",
-        "operationId": "link_nat_only_set",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "link_id",
-            "description": "The link in the switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/LinkId"
-            }
-          },
-          {
-            "in": "path",
-            "name": "port_id",
-            "description": "The switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/PortId"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "title": "Boolean",
-                "type": "boolean"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "resource updated"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/ports/{port_id}/links/{link_id}/prbs": {
       "get": {
         "summary": "Return the link's PRBS speed and mode.",
@@ -4460,6 +4369,97 @@
         }
       }
     },
+    "/ports/{port_id}/links/{link_id}/uplink": {
+      "get": {
+        "summary": "Return whether a port is intended to carry uplink traffic",
+        "operationId": "link_uplink_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "description": "The link in the switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LinkId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Boolean",
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "summary": "Set whether a port is intended to carry uplink traffic",
+        "operationId": "link_uplink_set",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "description": "The link in the switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LinkId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Boolean",
+                "type": "boolean"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/ports/{port_id}/management-mode": {
       "get": {
         "summary": "Return the current management mode of a QSFP switch port.",
@@ -4787,7 +4787,7 @@
         }
       },
       "put": {
-        "summary": "Route an IPv4 subnet to a link and a nexthop gateway.",
+        "summary": "Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).",
         "description": "This call can be used to create a new single-path route or to replace any existing routes with a new single-path route.",
         "operationId": "route_ipv4_set",
         "requestBody": {
@@ -4813,7 +4813,7 @@
         }
       },
       "post": {
-        "summary": "Route an IPv4 subnet to a link and a nexthop gateway.",
+        "summary": "Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).",
         "description": "This call can be used to create a new single-path route or to add new targets to a multipath route.",
         "operationId": "route_ipv4_add",
         "requestBody": {
@@ -4906,7 +4906,7 @@
     },
     "/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}": {
       "delete": {
-        "summary": "Remove a single target for the given IPv4 subnet",
+        "summary": "Remove a single target for the given IPv4 subnet (IPv4 or IPv6 next hop)",
         "operationId": "route_ipv4_delete_target",
         "parameters": [
           {
@@ -4939,71 +4939,17 @@
           {
             "in": "path",
             "name": "tgt_ip",
-            "description": "The next hop in the IPv4 route",
+            "description": "The next hop in the route (IPv4 or IPv6)",
             "required": true,
             "schema": {
               "type": "string",
-              "format": "ipv4"
+              "format": "ip"
             }
           }
         ],
         "responses": {
           "204": {
             "description": "successful deletion"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/route/ipv4-over-ipv6": {
-      "put": {
-        "summary": "Route an IPv4 subnet to a link and an IPv6 nexthop gateway.",
-        "description": "This call can be used to create a new single-path route or to replace any existing routes with a new single-path route.",
-        "operationId": "route_ipv4_over_ipv6_set",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Ipv4OverIpv6RouteUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "resource updated"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      },
-      "post": {
-        "summary": "Route an IPv4 subnet to a link and an IPv6 nexthop gateway.",
-        "description": "This call can be used to create a new single-path route or to add new targets to a multipath route.",
-        "operationId": "route_ipv4_over_ipv6_add",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Ipv4OverIpv6RouteUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "resource updated"
           },
           "4XX": {
             "$ref": "#/components/responses/Error"
@@ -6892,36 +6838,6 @@
         "type": "string",
         "pattern": "^(([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])/([0-9]|1[0-9]|2[0-9]|3[0-2])$"
       },
-      "Ipv4OverIpv6RouteUpdate": {
-        "type": "object",
-        "properties": {
-          "cidr": {
-            "description": "Traffic destined for any address within the CIDR block is routed using this information.",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Ipv4Net"
-              }
-            ]
-          },
-          "replace": {
-            "description": "Should this route replace any existing route?  If a route exists and this parameter is false, then the call will fail.",
-            "type": "boolean"
-          },
-          "target": {
-            "description": "A single Route associated with this CIDR",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Ipv6Route"
-              }
-            ]
-          }
-        },
-        "required": [
-          "cidr",
-          "replace",
-          "target"
-        ]
-      },
       "Ipv4Route": {
         "description": "A route for an IPv4 subnet.",
         "type": "object",
@@ -6954,7 +6870,7 @@
         ]
       },
       "Ipv4RouteUpdate": {
-        "description": "Represents a new or replacement mapping of a subnet to a single IPv4 RouteTarget nexthop target.",
+        "description": "Represents a new or replacement mapping of an IPv4 subnet to a single RouteTarget nexthop target, which may be either IPv4 or IPv6.",
         "type": "object",
         "properties": {
           "cidr": {
@@ -6973,7 +6889,7 @@
             "description": "A single Route associated with this CIDR",
             "allOf": [
               {
-                "$ref": "#/components/schemas/Ipv4Route"
+                "$ref": "#/components/schemas/RouteTarget"
               }
             ]
           }
@@ -9561,6 +9477,35 @@
         ]
       },
       "Route": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "V4": {
+                "$ref": "#/components/schemas/Ipv4Route"
+              }
+            },
+            "required": [
+              "V4"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "V6": {
+                "$ref": "#/components/schemas/Ipv6Route"
+              }
+            },
+            "required": [
+              "V6"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "RouteTarget": {
+        "description": "Represents a specific egress port and nexthop target.",
         "oneOf": [
           {
             "type": "object",

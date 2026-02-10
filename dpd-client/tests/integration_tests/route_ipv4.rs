@@ -4,6 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 
@@ -67,7 +68,7 @@ fn build_route_update(
 ) -> types::Ipv4RouteUpdate {
     types::Ipv4RouteUpdate {
         cidr: subnet.into(),
-        target: target.into(),
+        target: types::RouteTarget::V4(target.clone()),
         replace,
     }
 }
@@ -452,12 +453,13 @@ async fn delete_ipv4_route_target(
     cidr: &Ipv4Net,
     target: &types::Ipv4Route,
 ) -> TestResult {
+    let tgt_ip: std::net::IpAddr = target.tgt_ip.into();
     client
         .route_ipv4_delete_target(
             cidr,
             &target.port_id,
             &target.link_id,
-            &target.tgt_ip,
+            &tgt_ip,
         )
         .await
         .map(|r| r.into_inner())
@@ -614,6 +616,9 @@ async fn test_v4_over_v6() -> TestResult {
     let ingress = PhysPort(10);
     let egress = PhysPort(9);
     let dmac = "02:78:39:45:b9:02".parse()?;
+    let cidr: Ipv4Net = "10.10.10.0/24".parse().unwrap();
+    let gw: std::net::Ipv6Addr = "fe80::1".parse().unwrap();
+    let (port_id, link_id) = switch.link_id(egress).unwrap();
 
     common::set_route_ipv4_over_ipv6(
         switch,
@@ -624,16 +629,188 @@ async fn test_v4_over_v6() -> TestResult {
     .await?;
     common::add_neighbor_ipv6(switch, "fe80::1", dmac).await?;
 
-    let (to_send, to_recv) = common::gen_udp_routed_pair(
-        switch,
-        egress,
-        dmac,
-        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
-        Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444).unwrap(),
-    );
+    let src =
+        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap();
+    let dst =
+        Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444).unwrap();
+
+    // Verify that packets are forwarded with the route in place.
+    let (to_send, to_recv) =
+        common::gen_udp_routed_pair(switch, egress, dmac, src, dst);
 
     let send = TestPacket { packet: Arc::new(to_send), port: ingress };
     let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
+    switch.packet_test(vec![send], vec![expected])?;
 
+    // Delete the route target using the IPv6 next-hop and verify the API
+    // reports it as gone.
+    let tgt_ip: std::net::IpAddr = gw.into();
+    switch
+        .client
+        .route_ipv4_delete_target(&cidr, &port_id, &link_id, &tgt_ip)
+        .await?;
+    switch
+        .client
+        .route_ipv4_get(&cidr)
+        .await
+        .expect_err("route should be gone after deleting its only target");
+
+    // Verify that packets to the deleted route produce ICMP unreachable.
+    let to_send = common::gen_udp_packet(
+        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
+        Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444).unwrap(),
+    );
+    let mut to_recv = to_send.clone();
+    common::set_icmp_unreachable(switch, &mut to_recv, ingress);
+
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: SERVICE_PORT };
+    switch.packet_test(vec![send], vec![expected])?;
+
+    // Re-add the route and verify forwarding works again.
+    common::set_route_ipv4_over_ipv6(
+        switch,
+        "10.10.10.0/24",
+        egress,
+        "fe80::1",
+    )
+    .await?;
+
+    let (to_send, to_recv) =
+        common::gen_udp_routed_pair(switch, egress, dmac, src, dst);
+
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
+    switch.packet_test(vec![send], vec![expected])?;
+
+    // Delete the entire prefix and verify it is gone.
+    switch.client.route_ipv4_delete(&cidr).await?;
+    switch
+        .client
+        .route_ipv4_get(&cidr)
+        .await
+        .expect_err("route should be gone after deleting the prefix");
+
+    // Verify packets are dropped after prefix deletion.
+    let to_send = common::gen_udp_packet(
+        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
+        Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444).unwrap(),
+    );
+    let mut to_recv = to_send.clone();
+    common::set_icmp_unreachable(switch, &mut to_recv, ingress);
+
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: SERVICE_PORT };
     switch.packet_test(vec![send], vec![expected])
+}
+
+/// Test that individual v4 and v6 targets can be deleted from a mixed
+/// multipath route without affecting the remaining targets.
+#[tokio::test]
+#[ignore]
+async fn test_multipath_mixed_delete() -> TestResult {
+    let switch = &*get_switch().await;
+    let client = &switch.client;
+    let cidr: Ipv4Net = "203.0.113.0/24".parse().unwrap();
+
+    // Build two v4 and two v6 targets on different ports.
+    let (port_10, link_10) = switch.link_id(PhysPort(10)).unwrap();
+    let (port_11, link_11) = switch.link_id(PhysPort(11)).unwrap();
+    let (port_12, link_12) = switch.link_id(PhysPort(12)).unwrap();
+    let (port_13, link_13) = switch.link_id(PhysPort(13)).unwrap();
+
+    let v4_a = types::Ipv4Route {
+        tag: "testing".into(),
+        port_id: port_10,
+        link_id: link_10,
+        tgt_ip: "203.0.47.1".parse().unwrap(),
+        vlan_id: None,
+    };
+    let v6_b = types::Ipv6Route {
+        tag: "testing".into(),
+        port_id: port_11,
+        link_id: link_11,
+        tgt_ip: "fe80::1".parse().unwrap(),
+        vlan_id: None,
+    };
+    let v4_c = types::Ipv4Route {
+        tag: "testing".into(),
+        port_id: port_12,
+        link_id: link_12,
+        tgt_ip: "203.0.22.1".parse().unwrap(),
+        vlan_id: None,
+    };
+    let v6_d = types::Ipv6Route {
+        tag: "testing".into(),
+        port_id: port_13,
+        link_id: link_13,
+        tgt_ip: "fe80::2".parse().unwrap(),
+        vlan_id: None,
+    };
+
+    // Add all four targets to the same prefix.
+    for target in [
+        types::RouteTarget::V4(v4_a.clone()),
+        types::RouteTarget::V6(v6_b.clone()),
+        types::RouteTarget::V4(v4_c.clone()),
+        types::RouteTarget::V6(v6_d.clone()),
+    ] {
+        client
+            .route_ipv4_add(&types::Ipv4RouteUpdate {
+                cidr,
+                target,
+                replace: false,
+            })
+            .await?;
+    }
+
+    // Verify all four targets are present.
+    let found = client.route_ipv4_get(&cidr).await?;
+    assert_eq!(found.len(), 4);
+    assert!(found.contains(&types::Route::V4(v4_a.clone())));
+    assert!(found.contains(&types::Route::V6(v6_b.clone())));
+    assert!(found.contains(&types::Route::V4(v4_c.clone())));
+    assert!(found.contains(&types::Route::V6(v6_d.clone())));
+
+    // Delete v6 target B — the two v4 targets and v6 target D should remain.
+    let tgt_ip: IpAddr = v6_b.tgt_ip.into();
+    client
+        .route_ipv4_delete_target(&cidr, &v6_b.port_id, &v6_b.link_id, &tgt_ip)
+        .await?;
+    let found = client.route_ipv4_get(&cidr).await?;
+    assert_eq!(found.len(), 3);
+    assert!(found.contains(&types::Route::V4(v4_a.clone())));
+    assert!(found.contains(&types::Route::V4(v4_c.clone())));
+    assert!(found.contains(&types::Route::V6(v6_d.clone())));
+
+    // Delete v4 target A — v4 target C and v6 target D should remain.
+    let tgt_ip: IpAddr = v4_a.tgt_ip.into();
+    client
+        .route_ipv4_delete_target(&cidr, &v4_a.port_id, &v4_a.link_id, &tgt_ip)
+        .await?;
+    let found = client.route_ipv4_get(&cidr).await?;
+    assert_eq!(found.len(), 2);
+    assert!(found.contains(&types::Route::V4(v4_c.clone())));
+    assert!(found.contains(&types::Route::V6(v6_d.clone())));
+
+    // Delete v6 target D — only v4 target C should remain.
+    let tgt_ip: IpAddr = v6_d.tgt_ip.into();
+    client
+        .route_ipv4_delete_target(&cidr, &v6_d.port_id, &v6_d.link_id, &tgt_ip)
+        .await?;
+    let found = client.route_ipv4_get(&cidr).await?;
+    assert_eq!(found.len(), 1);
+    assert!(found.contains(&types::Route::V4(v4_c.clone())));
+
+    // Delete the last v4 target C — the route should be completely gone.
+    let tgt_ip: IpAddr = v4_c.tgt_ip.into();
+    client
+        .route_ipv4_delete_target(&cidr, &v4_c.port_id, &v4_c.link_id, &tgt_ip)
+        .await?;
+    client
+        .route_ipv4_get(&cidr)
+        .await
+        .expect_err("route should be gone after deleting all targets");
+
+    Ok(())
 }

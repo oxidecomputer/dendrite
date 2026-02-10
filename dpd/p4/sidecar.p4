@@ -162,7 +162,20 @@ control Filter(
 		counters = ipv6_ctr;
 	}
 
+	action uplink_port() {
+		meta.uplink_ingress = true;
+	}
+
+	table uplink_ports {
+		key = { ig_intr_md.ingress_port : exact; }
+		actions = { uplink_port; }
+
+		const size = 256;
+	}
+
 	apply {
+		uplink_ports.apply();
+
 		if (hdr.arp.isValid()) {
 			switch_ipv4_addr.apply();
 		} else if (hdr.ipv4.isValid()) {
@@ -402,22 +415,7 @@ control Services(
 	}
 
 	apply {
-		/*
-		 * XXX: This can all be made simpler by doing the "is this a
-		 * switch address" at the very beginning.  We can then drop non-
-		 * NAT packets in the NatIngress control rather than deferring
-		 * to here.  I've going with this approach as a short-term fix,
-		 * as the restructuring is likely to have knock-on effects in
-		 * dpd and sidecar-lite.
-		 */
-		if (!meta.is_switch_address && meta.nat_ingress_port && !meta.encap_needed) {
-			// For packets that were not marked for NAT ingress, but which
-			// arrived on an uplink port that only allows in traffic that
-			// is meant to be NAT encapsulated.
-			meta.drop_reason = DROP_NAT_INGRESS_MISS;
-			meta.dropped = true;
-		}
-		else if (meta.is_switch_address && hdr.geneve.isValid() && hdr.geneve.vni != 0) {
+		if (meta.is_switch_address && hdr.geneve.isValid() && hdr.geneve.vni != 0) {
 			meta.nat_egress_hit = true;
 		}
 		else {
@@ -481,7 +479,6 @@ control NatIngress (
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv4_ingress_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv6_ingress_ctr;
-	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) nat_only_ctr;
 #ifdef MULTICAST
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv4_ingress_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv6_ingress_ctr;
@@ -599,18 +596,6 @@ control NatIngress (
 		counters = ipv6_ingress_ctr;
 	}
 
-	action nat_only_port() {
-		meta.nat_ingress_port = true;
-		nat_only_ctr.count();
-	}
-
-	table nat_only {
-		key = { ig_intr_md.ingress_port : exact; }
-		actions = { nat_only_port; }
-
-		const size = 256;
-		counters = nat_only_ctr;
-	}
 
 #ifdef MULTICAST
 	action mcast_forward_ipv4_to(ipv6_addr_t target, mac_addr_t inner_mac, geneve_vni_t vni) {
@@ -694,9 +679,9 @@ control NatIngress (
 	table ingress_hit {
 		key = {
 			meta.encap_needed : exact;
-			hdr.tcp.isValid() : ternary;
-			hdr.udp.isValid() : ternary;
-			hdr.icmp.isValid() : ternary;
+			hdr.tcp.isValid() : exact;
+			hdr.udp.isValid() : exact;
+			hdr.icmp.isValid() : exact;
 		}
 		actions = {
 			set_inner_tcp;
@@ -761,8 +746,15 @@ control NatIngress (
 				hdr.inner_eth.ether_type = hdr.vlan.ether_type;
 				hdr.vlan.setInvalid();
 			}
-		} else if (!meta.is_switch_address) {
-			nat_only.apply();
+		} else if (meta.uplink_ingress && !meta.is_switch_address) {
+			// If this packet arrived on an Uplink port and it
+			// wasn't addressed to the switch or to an established
+			// NAT range, then drop it. This lets us forward traffic
+			// from guests and gimlets that arrives on a backplane
+			// port, but prevents us from accepting or forwarding
+			// arbitrary traffic received on an uplink port.
+			meta.drop_reason = DROP_NAT_INGRESS_MISS;
+			meta.dropped = true;
 		}
 	}
 }
@@ -1537,6 +1529,38 @@ control L3Router(
 	}
 }
 
+/*
+ * XXX: this control could be moved to the Egress pipeline if we need more space
+ * in the Ingress pipeline.  Currently unicast packets are able to bypass that
+ * pipeline, which is why we've tacked it on here.  We could probably also merge
+ * it with the MacRewrite control, as they are both per-port settings, but that
+ * would present some weird semantics to the control plane daemon.
+ */
+control EgressFilter(
+	inout sidecar_ingress_meta_t meta,
+	in ingress_intrinsic_metadata_for_tm_t ig_tm_md
+) {
+	action guest_traffic_not_allowed() {
+		meta.drop_reason = DROP_NAT_EGRESS_BLOCKED;
+		meta.dropped = true;
+	}
+
+	action guest_traffic_allowed() {
+	}
+
+	table egress_filter {
+		key = { ig_tm_md.ucast_egress_port : exact; }
+		actions = { guest_traffic_allowed; guest_traffic_not_allowed; }
+
+		const size = 256;
+		default_action = guest_traffic_not_allowed;
+	}
+
+	apply {
+		egress_filter.apply();
+	}
+}
+
 control MacRewrite(
 	inout sidecar_headers_t hdr,
 	in PortId_t port
@@ -2070,6 +2094,7 @@ control Ingress(
 	NatIngress() nat_ingress;
 	NatEgress() nat_egress;
 	L3Router() l3_router;
+	EgressFilter() egress_filter;
 #ifdef MULTICAST
 	MulticastIngress() mcast_ingress;
 #endif /* MULTICAST */
@@ -2122,6 +2147,9 @@ control Ingress(
 			}
 			if (!meta.dropped) {
 				l3_router.apply(hdr, meta, ig_intr_md, ig_tm_md);
+			}
+			if (!meta.dropped && meta.nat_egress_hit && !meta.is_mcast) {
+				egress_filter.apply(meta, ig_tm_md);
 			}
 		}
 
@@ -2294,7 +2322,6 @@ control Egress(
 				// If the ingress port is the same as the egress port, drop
 				// the packet
 				meta.drop_reason = DROP_MULTICAST_PATH_FILTERED;
-				eg_dprsr_md.drop_ctl = 1;
 			} else {
 				mcast_egress.apply(hdr, meta, eg_intr_md, eg_dprsr_md);
 				mac_rewrite.apply(hdr, eg_intr_md.egress_port);
@@ -2302,7 +2329,6 @@ control Egress(
 		} else if (eg_intr_md.egress_rid == 0 &&
 		    eg_intr_md.egress_rid_first == 1) {
 			// Drop CPU copies (RID=0) to prevent unwanted packets on port 0
-			eg_dprsr_md.drop_ctl = 1;
 			meta.drop_reason = DROP_MULTICAST_CPU_COPY;
 		}
 
@@ -2310,6 +2336,7 @@ control Egress(
 			// Handle dropped packets
 			drop_port_ctr.count(eg_intr_md.egress_port);
 			drop_reason_ctr.count(meta.drop_reason);
+			eg_dprsr_md.drop_ctl = 1;
 		} else if (is_mcast == true) {
 			mcast_ctr.count(eg_intr_md.egress_port);
 
