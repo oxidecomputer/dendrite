@@ -17,7 +17,6 @@ use aal_macros::*;
 
 pub(crate) mod mcast_egress;
 pub(crate) mod mcast_nat;
-pub(crate) mod mcast_port_mac;
 pub(crate) mod mcast_replication;
 pub(crate) mod mcast_route;
 pub(crate) mod mcast_src_filter;

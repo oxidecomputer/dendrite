@@ -12,99 +12,77 @@ use aal::{
     ActionParse, AsicError, AsicResult, CounterData, MatchEntryField,
     MatchEntryValue, MatchParse, TableOps, ValueTypes,
 };
+use common::table::TableType;
 
 /// Represents a handle to a SoftNPU ASIC table. The `id` member corresponds to
 /// the table path in the P4 program. Well known sidecar-lite.p4 paths follow
 /// below.
 pub struct Table {
-    id: Option<String>,
-    dpd_id: Option<String>,
+    type_: TableType,
+    implemented: bool,
     size: usize,
 }
 
-// soft-npu table names
-const ROUTER_V4_RT: &str = "ingress.router.v4_route.rtr";
-const ROUTER_V4_IDX: &str = "ingress.router.v4_idx.rtr";
-const ROUTER_V6_RT: &str = "ingress.router.v6_route.rtr";
-const ROUTER_V6_IDX: &str = "ingress.router.v6_idx.rtr";
-const LOCAL_V6: &str = "ingress.local.local_v6";
-const LOCAL_V4: &str = "ingress.local.local_v4";
-const NAT_V4: &str = "ingress.nat.nat_v4";
-const NAT_V6: &str = "ingress.nat.nat_v6";
-const ATTACHED_SUBNET_V4: &str = "ingress.attached.attached_subnet_v4";
-const ATTACHED_SUBNET_V6: &str = "ingress.attached.attached_subnet_v6";
-const _NAT_ICMP_V6: &str = "ingress.nat.nat_icmp_v6";
-const _NAT_ICMP_V4: &str = "ingress.nat.nat_icmp_v4";
-const RESOLVER_V4: &str = "ingress.resolver.resolver_v4";
-const RESOLVER_V6: &str = "ingress.resolver.resolver_v6";
-const MAC_REWRITE: &str = "ingress.mac.mac_rewrite";
-const _PROXY_ARP: &str = "ingress.pxarp.proxy_arp";
-
-// sidecar.p4 table names
-const SWITCH_ADDR4: &str = "pipe.Ingress.filter.switch_ipv4_addr";
-const SWITCH_ADDR6: &str = "pipe.Ingress.filter.switch_ipv6_addr";
-const ROUTER4_LOOKUP_RT: &str =
-    "pipe.Ingress.l3_router.Router4.lookup_idx.route";
-const ROUTER4_LOOKUP_IDX: &str =
-    "pipe.Ingress.l3_router.Router4.lookup_idx.lookup";
-const ROUTER6_LOOKUP_RT: &str =
-    "pipe.Ingress.l3_router.Router6.lookup_idx.route";
-const ROUTER6_LOOKUP_IDX: &str =
-    "pipe.Ingress.l3_router.Router6.lookup_idx.lookup";
-const NDP: &str = "pipe.Ingress.l3_router.Ndp.tbl";
-const ARP: &str = "pipe.Ingress.l3_router.Arp.tbl";
-const DPD_MAC_REWRITE: &str = "pipe.Ingress.mac_rewrite.mac_rewrite";
-const NAT_INGRESS4: &str = "pipe.Ingress.nat_ingress.ingress_ipv4";
-const NAT_INGRESS6: &str = "pipe.Ingress.nat_ingress.ingress_ipv6";
-const ATTACHED_SUBNET_INGRESS4: &str =
-    "pipe.Ingress.attached_subnet_ingress.attached_subnets_v4";
-const ATTACHED_SUBNET_INGRESS6: &str =
-    "pipe.Ingress.attached_subnet_ingress.attached_subnets_v6";
+impl Table {
+    pub fn softnpu_table_name(&self) -> Option<&'static str> {
+        if self.implemented {
+            match self.type_ {
+                TableType::RouteFwdIpv4 => Some("ingress.router.v4_route.rtr"),
+                TableType::RouteIdxIpv4 => Some("ingress.router.v4_idx.rtr"),
+                TableType::RouteFwdIpv6 => Some("ingress.router.v6_route.rtr"),
+                TableType::RouteIdxIpv6 => Some("ingress.router.v6_idx.rtr"),
+                TableType::PortAddrIpv6 => Some("ingress.local.local_v6"),
+                TableType::PortAddrIpv4 => Some("ingress.local.local_v4"),
+                TableType::NatIngressIpv4 => Some("ingress.nat.nat_v4"),
+                TableType::NatIngressIpv6 => Some("ingress.nat.nat_v6"),
+                TableType::AttachedSubnetIpv4 => {
+                    Some("ingress.attached.attached_subnet_v4")
+                }
+                TableType::AttachedSubnetIpv6 => {
+                    Some("ingress.attached.attached_subnet_v6")
+                }
+                TableType::ArpIpv4 => Some("ingress.resolver.resolver_v4"),
+                TableType::NeighborIpv6 => Some("ingress.resolver.resolver_v6"),
+                TableType::PortMacAddress => Some("ingress.mac.mac_rewrite"),
+                _ => panic!(
+                    "implemented table {} has no softnpu table",
+                    self.type_
+                ),
+            }
+        } else {
+            None
+        }
+    }
+}
 
 // All tables are defined to be 1024 entries deep
 const TABLE_SIZE: usize = 4096;
 
 impl TableOps<Handle> for Table {
-    fn new(hdl: &Handle, name: &str) -> AsicResult<Table> {
+    fn new(hdl: &Handle, type_: TableType) -> AsicResult<Table> {
         // TODO just mapping sidecar.p4 things onto simplified sidecar-lite.p4
         // things to get started.
-        let (id, dpd_id) = match name {
-            ROUTER4_LOOKUP_RT => {
-                (Some(ROUTER_V4_RT.into()), Some(ROUTER4_LOOKUP_RT.into()))
-            }
-            ROUTER4_LOOKUP_IDX => {
-                (Some(ROUTER_V4_IDX.into()), Some(ROUTER4_LOOKUP_IDX.into()))
-            }
-            ROUTER6_LOOKUP_RT => {
-                (Some(ROUTER_V6_RT.into()), Some(ROUTER6_LOOKUP_RT.into()))
-            }
-            ROUTER6_LOOKUP_IDX => {
-                (Some(ROUTER_V6_IDX.into()), Some(ROUTER6_LOOKUP_IDX.into()))
-            }
-            SWITCH_ADDR4 => (Some(LOCAL_V4.into()), Some(SWITCH_ADDR4.into())),
-            SWITCH_ADDR6 => (Some(LOCAL_V6.into()), Some(SWITCH_ADDR6.into())),
-            NDP => (Some(RESOLVER_V6.into()), Some(NDP.into())),
-            ARP => (Some(RESOLVER_V4.into()), Some(ARP.into())),
-            DPD_MAC_REWRITE => {
-                (Some(MAC_REWRITE.into()), Some(DPD_MAC_REWRITE.into()))
-            }
-            NAT_INGRESS4 => (Some(NAT_V4.into()), Some(NAT_INGRESS4.into())),
-            NAT_INGRESS6 => (Some(NAT_V6.into()), Some(NAT_INGRESS6.into())),
-            ATTACHED_SUBNET_INGRESS4 => (
-                Some(ATTACHED_SUBNET_V4.into()),
-                Some(ATTACHED_SUBNET_INGRESS4.into()),
-            ),
-            ATTACHED_SUBNET_INGRESS6 => (
-                Some(ATTACHED_SUBNET_V6.into()),
-                Some(ATTACHED_SUBNET_INGRESS6.into()),
-            ),
+        let implemented = match type_ {
+            TableType::RouteIdxIpv4
+            | TableType::RouteFwdIpv4
+            | TableType::RouteIdxIpv6
+            | TableType::RouteFwdIpv6
+            | TableType::PortAddrIpv4
+            | TableType::PortAddrIpv6
+            | TableType::ArpIpv4
+            | TableType::NeighborIpv6
+            | TableType::PortMacAddress
+            | TableType::NatIngressIpv4
+            | TableType::NatIngressIpv6
+            | TableType::AttachedSubnetIpv4
+            | TableType::AttachedSubnetIpv6 => true,
             x => {
                 error!(hdl.log, "TABLE NOT HANDLED {x}");
-                (None, None)
+                false
             }
         };
 
-        Ok(Table { id, dpd_id, size: TABLE_SIZE })
+        Ok(Table { type_, implemented, size: TABLE_SIZE })
     }
 
     fn size(&self) -> usize {
@@ -122,33 +100,28 @@ impl TableOps<Handle> for Table {
         key: &M,
         data: &A,
     ) -> AsicResult<()> {
-        let table = match &self.id {
-            None => return Ok(()),
-            Some(id) => id.clone(),
+        let Some(table) = self.softnpu_table_name() else {
+            return Ok(());
         };
-        let dpd_table = match &self.dpd_id {
-            None => return Ok(()),
-            Some(id) => id.clone(),
-        };
-
+        let name = self.type_.to_string();
         let match_data = key.key_to_ir().unwrap();
         let action_data = data.action_to_ir().unwrap();
 
         trace!(hdl.log, "entry_add called");
-        trace!(hdl.log, "table: {}", table);
+        trace!(hdl.log, "table: {name}");
         trace!(hdl.log, "match_data:\n{:#?}", match_data);
         trace!(hdl.log, "action_data:\n{:#?}", action_data);
 
-        let keyset_data = keyset_data(match_data.fields, &table);
+        let keyset_data = keyset_data(match_data.fields, self.type_);
 
         let (action, parameter_data) = match (
-            dpd_table.as_str(),
+            self.type_,
             action_data.action.as_str(),
         ) {
             // TODO: implement mappings for natv6 actions
-            (SWITCH_ADDR4, "claimv4") => ("local", Vec::new()),
-            (SWITCH_ADDR6, "claimv6") => ("local", Vec::new()),
-            (ROUTER4_LOOKUP_IDX, "index") => {
+            (TableType::PortAddrIpv4, "claimv4") => ("local", Vec::new()),
+            (TableType::PortAddrIpv6, "claimv6") => ("local", Vec::new()),
+            (TableType::RouteIdxIpv4, "index") => {
                 let mut params = Vec::new();
                 for arg in action_data.args.iter() {
                     match &arg.value {
@@ -167,7 +140,7 @@ impl TableOps<Handle> for Table {
                                 x => {
                                     error!(
                                         hdl.log,
-                                        "unexpected parameter: {dpd_table}::index {x}"
+                                        "unexpected parameter: {name}::index {x}"
                                     )
                                 }
                             }
@@ -179,7 +152,7 @@ impl TableOps<Handle> for Table {
                 }
                 ("index", params)
             }
-            (ROUTER4_LOOKUP_RT, "forward") => {
+            (TableType::RouteFwdIpv4, "forward") => {
                 let mut params = Vec::new();
                 for arg in action_data.args.iter() {
                     match &arg.value {
@@ -200,7 +173,7 @@ impl TableOps<Handle> for Table {
                                 x => {
                                     error!(
                                         hdl.log,
-                                        "unexpected parameter: {dpd_table}::forward {x}"
+                                        "unexpected parameter: {name}::forward {x}"
                                     )
                                 }
                             }
@@ -212,7 +185,7 @@ impl TableOps<Handle> for Table {
                 }
                 ("forward", params)
             }
-            (ROUTER4_LOOKUP_RT, "forward_v6") => {
+            (TableType::RouteFwdIpv4, "forward_v6") => {
                 let mut params = Vec::new();
                 for arg in action_data.args.iter() {
                     match &arg.value {
@@ -227,7 +200,7 @@ impl TableOps<Handle> for Table {
                                 x => {
                                     error!(
                                         hdl.log,
-                                        "unexpected parameter: {dpd_table}::forward {x}"
+                                        "unexpected parameter: {name}::forward {x}"
                                     )
                                 }
                             }
@@ -241,7 +214,7 @@ impl TableOps<Handle> for Table {
                 }
                 ("forward_v6", params)
             }
-            (ROUTER4_LOOKUP_RT, "forward_vlan") => {
+            (TableType::RouteFwdIpv4, "forward_vlan") => {
                 let mut params = Vec::new();
                 for arg in action_data.args.iter() {
                     match &arg.value {
@@ -268,7 +241,7 @@ impl TableOps<Handle> for Table {
                                 x => {
                                     error!(
                                         hdl.log,
-                                        "unexpected parameter: {dpd_table}::forward_vlan {x}"
+                                        "unexpected parameter: {name}::forward_vlan {x}"
                                     )
                                 }
                             }
@@ -280,7 +253,7 @@ impl TableOps<Handle> for Table {
                 }
                 ("forward_vlan", params)
             }
-            (ROUTER4_LOOKUP_RT, "forward_vlan_v6") => {
+            (TableType::RouteFwdIpv4, "forward_vlan_v6") => {
                 let mut params = Vec::new();
                 for arg in action_data.args.iter() {
                     match &arg.value {
@@ -301,7 +274,7 @@ impl TableOps<Handle> for Table {
                                 x => {
                                     error!(
                                         hdl.log,
-                                        "unexpected parameter: {dpd_table}::forward_vlan {x}"
+                                        "unexpected parameter: {name}::forward_vlan {x}"
                                     )
                                 }
                             }
@@ -315,7 +288,7 @@ impl TableOps<Handle> for Table {
                 }
                 ("forward_vlan_v6", params)
             }
-            (ROUTER6_LOOKUP_IDX, "index") => {
+            (TableType::RouteIdxIpv6, "index") => {
                 let mut params = Vec::new();
                 for arg in action_data.args.iter() {
                     match &arg.value {
@@ -334,7 +307,7 @@ impl TableOps<Handle> for Table {
                                 x => {
                                     error!(
                                         hdl.log,
-                                        "unexpected parameter: {dpd_table}::index {x}"
+                                        "unexpected parameter: {name}::index {x}"
                                     )
                                 }
                             }
@@ -346,7 +319,7 @@ impl TableOps<Handle> for Table {
                 }
                 ("index", params)
             }
-            (ROUTER6_LOOKUP_RT, "forward") => {
+            (TableType::RouteFwdIpv6, "forward") => {
                 let mut params = Vec::new();
                 for arg in action_data.args.iter() {
                     match &arg.value {
@@ -361,7 +334,7 @@ impl TableOps<Handle> for Table {
                                 x => {
                                     error!(
                                         hdl.log,
-                                        "unexpected parameter: {dpd_table}::forward {x}"
+                                        "unexpected parameter: {name}::forward {x}"
                                     )
                                 }
                             }
@@ -375,7 +348,7 @@ impl TableOps<Handle> for Table {
                 }
                 ("forward", params)
             }
-            (ROUTER6_LOOKUP_RT, "forward_vlan") => {
+            (TableType::RouteFwdIpv6, "forward_vlan") => {
                 let mut params = Vec::new();
                 for arg in action_data.args.iter() {
                     match &arg.value {
@@ -396,7 +369,7 @@ impl TableOps<Handle> for Table {
                                 x => {
                                     error!(
                                         hdl.log,
-                                        "unexpected parameter: {dpd_table}::forward_vlan {x}"
+                                        "unexpected parameter: {name}::forward_vlan {x}"
                                     )
                                 }
                             }
@@ -410,7 +383,7 @@ impl TableOps<Handle> for Table {
                 }
                 ("forward_vlan", params)
             }
-            (ARP, "rewrite") => {
+            (TableType::ArpIpv4, "rewrite") => {
                 let mut params = Vec::new();
                 for arg in action_data.args {
                     match arg.value {
@@ -425,7 +398,7 @@ impl TableOps<Handle> for Table {
                 }
                 ("rewrite_dst", params)
             }
-            (NDP, "rewrite") => {
+            (TableType::NeighborIpv6, "rewrite") => {
                 let mut params = Vec::new();
                 for arg in action_data.args {
                     match arg.value {
@@ -440,7 +413,7 @@ impl TableOps<Handle> for Table {
                 }
                 ("rewrite_dst", params)
             }
-            (DPD_MAC_REWRITE, "rewrite") => {
+            (TableType::PortMacAddress, "rewrite") => {
                 let mut params = Vec::new();
                 for arg in action_data.args {
                     match arg.value {
@@ -455,10 +428,10 @@ impl TableOps<Handle> for Table {
                 }
                 ("rewrite", params)
             }
-            (NAT_INGRESS4, "forward_ipv4_to")
-            | (NAT_INGRESS6, "forward_ipv6_to")
-            | (ATTACHED_SUBNET_INGRESS4, "forward_to_v4")
-            | (ATTACHED_SUBNET_INGRESS6, "forward_to_v6") => {
+            (TableType::NatIngressIpv4, "forward_ipv4_to")
+            | (TableType::NatIngressIpv6, "forward_ipv6_to")
+            | (TableType::AttachedSubnetIpv4, "forward_to_v4")
+            | (TableType::AttachedSubnetIpv6, "forward_to_v6") => {
                 let mut target = Vec::new();
                 let mut vni = Vec::new();
                 let mut mac = Vec::new();
@@ -538,20 +511,20 @@ impl TableOps<Handle> for Table {
                 params.extend_from_slice(mac.as_slice());
                 ("forward_to_sled", params)
             }
-            (tbl, x) => {
-                error!(hdl.log, "ACTION NOT HANDLED {tbl} {x}");
+            (_, x) => {
+                error!(hdl.log, "ACTION NOT HANDLED {name} {x}");
                 return Ok(());
             }
         };
         let action = action.to_string();
         trace!(hdl.log, "sending request to softnpu");
-        trace!(hdl.log, "table: {}", table);
+        trace!(hdl.log, "table: {name}");
         trace!(hdl.log, "action: {:#?}", action);
         trace!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
         trace!(hdl.log, "parameter_data:\n{:#?}", parameter_data);
 
         let msg = ManagementRequest::TableAdd(TableAdd {
-            table,
+            table: table.to_string(),
             action,
             keyset_data,
             parameter_data,
@@ -568,15 +541,16 @@ impl TableOps<Handle> for Table {
         key: &M,
         data: &A,
     ) -> AsicResult<()> {
-        let table = match &self.id {
-            None => return Ok(()),
-            Some(id) => id.clone(),
+        let Some(_table) = self.softnpu_table_name() else {
+            return Ok(());
         };
+        let name = self.type_.to_string();
+
         let match_data = key.key_to_ir().unwrap();
         let action_data = data.action_to_ir().unwrap();
 
         trace!(hdl.log, "entry_update called");
-        trace!(hdl.log, "table: {}", table);
+        trace!(hdl.log, "table: {name}");
         trace!(hdl.log, "match_data:\n{:#?}", match_data);
         trace!(hdl.log, "action_data:\n{:#?}", action_data);
 
@@ -589,24 +563,26 @@ impl TableOps<Handle> for Table {
         hdl: &Handle,
         key: &M,
     ) -> AsicResult<()> {
-        let table = match &self.id {
-            None => return Ok(()),
-            Some(id) => id.clone(),
+        let Some(table) = self.softnpu_table_name() else {
+            return Ok(());
         };
+        let name = self.type_.to_string();
         let match_data = key.key_to_ir().unwrap();
 
         trace!(hdl.log, "entry_del called");
-        trace!(hdl.log, "table: {}", table);
+        trace!(hdl.log, "table: {name}");
         trace!(hdl.log, "match_data:\n{:#?}", match_data);
 
-        let keyset_data = keyset_data(match_data.fields, &table);
+        let keyset_data = keyset_data(match_data.fields, self.type_);
 
         trace!(hdl.log, "sending request to softnpu");
-        trace!(hdl.log, "table: {}", table);
+        trace!(hdl.log, "table: {name}");
         trace!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
 
-        let msg =
-            ManagementRequest::TableRemove(TableRemove { keyset_data, table });
+        let msg = ManagementRequest::TableRemove(TableRemove {
+            keyset_data,
+            table: table.to_string(),
+        });
 
         crate::softnpu::mgmt::write(msg, &hdl.mgmt_config);
 
@@ -632,7 +608,7 @@ impl TableOps<Handle> for Table {
 
 /// Extract keys from `match_data` and ensure that they are
 /// in a data structure with the correct length
-fn keyset_data(match_data: Vec<MatchEntryField>, table: &str) -> Vec<u8> {
+fn keyset_data(match_data: Vec<MatchEntryField>, table: TableType) -> Vec<u8> {
     let mut keyset_data: Vec<u8> = Vec::new();
     for m in match_data {
         match m.value {
@@ -640,40 +616,40 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: &str) -> Vec<u8> {
             MatchEntryValue::Value(x) => {
                 let mut data: Vec<u8> = Vec::new();
                 match table {
-                    RESOLVER_V4 => {
+                    TableType::ArpIpv4 => {
                         // "nexthop_ipv4" => bit<32>
                         serialize_value_type(&x, &mut data);
                         keyset_data.extend_from_slice(&data[..4]);
                     }
-                    RESOLVER_V6 => {
+                    TableType::NeighborIpv6 => {
                         // "nexthop_ipv4" => bit<128>
                         let mut buf = Vec::new();
                         serialize_value_type(&x, &mut buf);
                         buf.reverse();
                         keyset_data.extend_from_slice(&buf);
                     }
-                    MAC_REWRITE => {
+                    TableType::PortMacAddress => {
                         serialize_value_type(&x, &mut data);
                         keyset_data.extend_from_slice(&data[..2]);
                     }
-                    ROUTER_V4_RT => {
+                    TableType::RouteIdxIpv4 => {
                         // "idx" => exact => bit<16>
                         serialize_value_type(&x, &mut data);
                         keyset_data.extend_from_slice(&data[..2]);
                     }
-                    NAT_V4 => {
+                    TableType::NatIngressIpv4 => {
                         // "dst_addr" => hdr.ipv4.dst: exact => bit<32>
                         serialize_value_type(&x, &mut data);
                         keyset_data.extend_from_slice(&data[..4]);
                     }
-                    NAT_V6 => {
+                    TableType::NatIngressIpv6 => {
                         // "dst_addr" => hdr.ipv6.dst: exact => bit<128>
                         let mut buf = Vec::new();
                         serialize_value_type(&x, &mut buf);
                         buf.reverse();
                         keyset_data.extend_from_slice(&buf);
                     }
-                    LOCAL_V6 => {
+                    TableType::PortAddrIpv6 => {
                         let mut buf = Vec::new();
                         serialize_value_type(&x, &mut buf);
                         buf.reverse();
@@ -688,7 +664,7 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: &str) -> Vec<u8> {
             MatchEntryValue::Lpm(x) => {
                 let mut data: Vec<u8> = Vec::new();
                 match table {
-                    ROUTER_V4_IDX | ATTACHED_SUBNET_V4 => {
+                    TableType::RouteIdxIpv4 | TableType::AttachedSubnetIpv4 => {
                         // prefix for longest prefix match operation
                         // "dst_addr" => hdr.ipv4.dst: lpm => bit<32>
                         serialize_value_type_be(&x.prefix, &mut data);
@@ -705,7 +681,7 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: &str) -> Vec<u8> {
             // Ranges (i.e. port ranges)
             MatchEntryValue::Range(x) => {
                 match table {
-                    NAT_V4 | NAT_V6 => {
+                    TableType::NatIngressIpv4 | TableType::NatIngressIpv6 => {
                         // "l4_dst_port" => ingress.nat_id: range =>  bit<16>
                         let low = &x.low.to_le_bytes();
                         let high = &x.high.to_le_bytes();

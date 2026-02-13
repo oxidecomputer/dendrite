@@ -11,6 +11,8 @@ use slog::debug;
 use slog::o;
 
 use crate::Switch;
+#[cfg(feature = "tofino_asic")]
+use crate::table::mac;
 use crate::types::DpdError;
 use crate::types::DpdResult;
 use common::network::MacAddr;
@@ -24,8 +26,6 @@ cfg_if::cfg_if! {
         use std::convert::TryFrom;
         #[cfg(feature = "multicast")]
         use crate::table::mcast;
-        use crate::table::port_mac;
-        use crate::table::MacOps;
         use common::ports::PortFec;
         use common::ports::PortSpeed;
         use common::ports::InternalPort;
@@ -428,10 +428,10 @@ impl Switch {
         }
 
         // Reset ingress and egress MAC tables and Port ID table(s).
-        MacOps::<port_mac::PortMacTable>::reset(self)?;
+        mac::reset(self)?;
         #[cfg(feature = "multicast")]
         {
-            MacOps::<mcast::mcast_port_mac::PortMacTable>::reset(self)?;
+            mac::mcast_reset(self)?;
             mcast::mcast_egress::reset_bitmap_table(self)?;
         }
 

@@ -16,9 +16,6 @@ use crate::Switch;
 use crate::table::*;
 use common::network::{InstanceTarget, MacAddr};
 
-pub const EXT_SUBNET_IPV6_TABLE_NAME: &str =
-    "pipe.Ingress.attached_subnet_ingress.attached_subnets_v6";
-
 // Used to identify entries in the external subnet table
 #[derive(MatchParse, Hash, Debug)]
 struct AttachedSubnetV6MatchKey {

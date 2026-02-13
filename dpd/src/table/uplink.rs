@@ -13,9 +13,6 @@ use crate::table::*;
 use aal::{ActionParse, MatchParse};
 use aal_macros::*;
 
-pub const INGRESS_TABLE_NAME: &str = "pipe.Ingress.filter.uplink_ports";
-pub const EGRESS_TABLE_NAME: &str = "pipe.Ingress.egress_filter.egress_filter";
-
 #[derive(MatchParse, Debug, Hash)]
 struct IngressMatchKey {
     #[match_xlate(name = "ingress_port")]

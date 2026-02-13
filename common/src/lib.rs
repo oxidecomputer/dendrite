@@ -17,6 +17,7 @@ pub mod logging;
 pub mod nat;
 pub mod network;
 pub mod ports;
+pub mod table;
 
 #[cfg(target_os = "illumos")]
 pub mod illumos;

@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Nils Nieuwejaar <nils@oxide.computer>"]
 edition = "2024"
 
+[features]
+multicast = []
+
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
