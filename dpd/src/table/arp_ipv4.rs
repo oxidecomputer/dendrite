@@ -14,8 +14,6 @@ use common::network::MacAddr;
 
 use aal::{ActionParse, MatchParse};
 
-pub const TABLE_NAME: &str = "pipe.Ingress.l3_router.Arp.tbl";
-
 #[derive(MatchParse, Hash)]
 struct MatchKey {
     #[match_xlate(name = "nexthop_ipv4")]

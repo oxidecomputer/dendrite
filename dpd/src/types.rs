@@ -307,3 +307,13 @@ impl convert::From<dpd_types::mcast::Error> for DpdError {
         DpdError::Invalid(err.to_string())
     }
 }
+
+impl convert::From<common::table::TableError> for DpdError {
+    fn from(err: common::table::TableError) -> Self {
+        match err {
+            common::table::TableError::NoSuchTable(x) => {
+                DpdError::NoSuchTable(x)
+            }
+        }
+    }
+}

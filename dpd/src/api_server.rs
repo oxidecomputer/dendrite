@@ -1959,10 +1959,12 @@ impl DpdApi for DpdApiImpl {
     async fn counter_list(
         _rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<String>>, HttpError> {
-        match counters::get_counter_names() {
-            Err(e) => Err(e.into()),
-            Ok(counters) => Ok(HttpResponseOk(counters)),
-        }
+        Ok(HttpResponseOk(
+            counters::get_counter_ids()
+                .iter()
+                .map(|id| id.to_string())
+                .collect(),
+        ))
     }
 
     async fn counter_reset(

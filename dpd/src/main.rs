@@ -40,8 +40,10 @@ use crate::port_map::SidecarRevision;
 use crate::rpw::WorkflowServer;
 use crate::switch_port::SwitchPorts;
 use aal::{ActionParse, AsicError, MatchParse};
+use common::counters::CounterId;
 use common::network::MacAddr;
 use common::ports::PortId;
+use common::table::TableType;
 use dpd_types::switch_identifiers::SwitchIdentifiers;
 use table::Table;
 use types::*;
@@ -183,8 +185,8 @@ pub struct Switch {
     pub config: Mutex<config::Config>,
     pub log: slog::Logger,
     pub asic_hdl: asic::Handle,
-    pub tables: BTreeMap<table::TableType, Mutex<Table>>,
-    pub counters: BTreeMap<String, Mutex<counters::Counter>>,
+    pub tables: BTreeMap<TableType, Mutex<Table>>,
+    pub counters: BTreeMap<CounterId, Mutex<counters::Counter>>,
     pub links: Mutex<link::LinkMap>,
     pub routes: TokioMutex<route::RouteData>,
     pub arp: Mutex<arp::ArpData>,
@@ -319,10 +321,7 @@ impl Switch {
     }
 
     /// Get exclusive access to a table of the requested type, if it exists.
-    pub fn table_get(
-        &self,
-        id: table::TableType,
-    ) -> DpdResult<MutexGuard<'_, Table>> {
+    pub fn table_get(&self, id: TableType) -> DpdResult<MutexGuard<'_, Table>> {
         match self.tables.get(&id) {
             Some(table) => Ok(table.lock().unwrap()),
             None => Err("no such table".into()),
@@ -330,19 +329,15 @@ impl Switch {
     }
 
     // Add a new table to the internal list of tables.
-    fn table_add(
-        &mut self,
-        name: &str,
-        id: table::TableType,
-    ) -> anyhow::Result<()> {
-        let t = table::Table::new(&self.asic_hdl, name)
+    fn table_add(&mut self, id: TableType) -> anyhow::Result<()> {
+        let t = table::Table::new(&self.asic_hdl, id)
             .with_context(|| format!("creating {id:?} table"))?;
         self.tables.insert(id, Mutex::new(t));
         Ok(())
     }
 
     /// Returns the number of entries the table can hold
-    pub fn table_size(&self, table_type: table::TableType) -> DpdResult<u32> {
+    pub fn table_size(&self, table_type: TableType) -> DpdResult<u32> {
         let t = self.table_get(table_type)?;
         Ok(t.size())
     }
@@ -350,7 +345,7 @@ impl Switch {
     /// Add a single entry to the requested table.
     pub fn table_entry_add<M: MatchParse + Hash, A: ActionParse>(
         &self,
-        table_type: table::TableType,
+        table_type: TableType,
         key: &M,
         data: &A,
     ) -> DpdResult<()> {
@@ -367,7 +362,7 @@ impl Switch {
     /// Update a single table entry.
     pub fn table_entry_update<M: MatchParse + Hash, A: ActionParse>(
         &self,
-        table_type: table::TableType,
+        table_type: TableType,
         key: &M,
         data: &A,
     ) -> DpdResult<()> {
@@ -384,7 +379,7 @@ impl Switch {
     /// Delete a single table entry.
     pub fn table_entry_del<M: MatchParse + Hash>(
         &self,
-        table_type: table::TableType,
+        table_type: TableType,
         key: &M,
     ) -> DpdResult<()> {
         let mut t = self.table_get(table_type)?;
@@ -400,19 +395,19 @@ impl Switch {
     /// Fetch all of the entries in a P4 table and return them
     pub fn table_dump<M: MatchParse, A: ActionParse>(
         &self,
-        t: table::TableType,
+        t: TableType,
         from_hardware: bool,
     ) -> DpdResult<dpd_types::views::Table> {
         let t = self.table_get(t)?;
 
         Ok(dpd_types::views::Table {
-            name: t.name.to_string(),
+            name: t.type_.to_string(),
             size: t.usage.size as usize,
             entries: t
                 .get_entries::<M, A>(&self.asic_hdl, from_hardware)
                 .map_err(|e| {
                     error!(self.log, "failed to get table contents";
-	            "table" => t.name.to_string(),
+	            "table" => t.type_.to_string(),
 		    "error" => %e);
                     e
                 })
@@ -430,14 +425,14 @@ impl Switch {
     pub fn counter_fetch<M: MatchParse>(
         &self,
         force_sync: bool,
-        t: table::TableType,
+        t: TableType,
     ) -> DpdResult<Vec<dpd_types::views::TableCounterEntry>> {
         let t = self.table_get(t)?;
 
         t.get_counters::<M>(&self.asic_hdl, force_sync)
             .map_err(|e| {
                 error!(self.log, "failed to get counter data";
-	            "table" => t.name.to_string(),
+	            "table" => t.type_.to_string(),
 		    "error" => %e);
                 e
             })
@@ -451,7 +446,7 @@ impl Switch {
     }
 
     /// Completely clear the requested table.
-    pub fn table_clear(&self, t: table::TableType) -> DpdResult<()> {
+    pub fn table_clear(&self, t: TableType) -> DpdResult<()> {
         let mut t = self.table_get(t)?;
         t.clear(&self.asic_hdl)
     }

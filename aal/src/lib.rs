@@ -12,6 +12,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use common::ports::{PortFec, PortMedia, PortPrbsMode, PortSpeed, TxEq};
+use common::table::TableType;
 
 mod match_action;
 pub use match_action::*;
@@ -259,7 +260,7 @@ pub trait AsicOps {
 /// the intermediate representation to the ASIC-specific format expected by the
 /// underlying hardware or emulator.
 pub trait TableOps<H: AsicOps> {
-    fn new(hdl: &H, name: &str) -> AsicResult<Self>
+    fn new(hdl: &H, type_: TableType) -> AsicResult<Self>
     where
         Self: Sized;
 

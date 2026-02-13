@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Multicast table operations.
 
@@ -17,7 +17,6 @@ use aal_macros::*;
 
 pub(crate) mod mcast_egress;
 pub(crate) mod mcast_nat;
-pub(crate) mod mcast_port_mac;
 pub(crate) mod mcast_replication;
 pub(crate) mod mcast_route;
 pub(crate) mod mcast_src_filter;
