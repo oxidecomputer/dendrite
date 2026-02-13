@@ -23,13 +23,6 @@ use slog::debug;
 use super::{Ipv4MatchKey, Ipv6MatchKey};
 use crate::{Switch, table::*};
 
-/// IPv4 Table for multicast routing entries.
-pub(crate) const IPV4_TABLE_NAME: &str =
-    "pipe.Ingress.l3_router.MulticastRouter4.tbl";
-/// IPv6 Table for multicast routing entries.
-pub(crate) const IPV6_TABLE_NAME: &str =
-    "pipe.Ingress.l3_router.MulticastRouter6.tbl";
-
 #[derive(ActionParse, Debug)]
 enum Ipv4Action {
     #[action_xlate(name = "forward")]

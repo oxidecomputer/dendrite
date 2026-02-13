@@ -18,13 +18,6 @@ use aal_macros::*;
 use oxnet::{Ipv4Net, Ipv6Net};
 use slog::debug;
 
-/// IPv4 Table for multicast source filter entries.
-pub(crate) const IPV4_TABLE_NAME: &str =
-    "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4";
-/// IPv6 Table for multicast source filter entries.
-pub(crate) const IPV6_TABLE_NAME: &str =
-    "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv6";
-
 #[derive(MatchParse, Hash)]
 struct Ipv4MatchKey {
     #[match_xlate(name = "src_addr", type = "lpm")]

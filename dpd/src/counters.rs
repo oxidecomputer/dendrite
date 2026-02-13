@@ -10,7 +10,6 @@
 /// differ from regular match-action tables in that they are accessed with an
 /// index number rather than a match-key, and they have no actions associated
 /// with them.
-///
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
@@ -23,6 +22,10 @@ use crate::types::{DpdError, DpdResult};
 use aal::MatchParse;
 use aal_macros::*;
 use asic::Handle;
+use common::counters::CounterId;
+#[cfg(feature = "multicast")]
+use common::counters::MulticastCounterId;
+use common::table::TableType;
 
 use anyhow::Context;
 use dpd_types::views;
@@ -38,160 +41,52 @@ struct IndexKey {
 
 /// Represents an indirect counter in a P4 program.
 pub struct Counter {
-    /// The CounterId assigned to this counter at build time.
-    id: CounterId,
     /// The asic-layer Table structure used to identify the indirect counter in
     /// the program.
     table: table::Table,
 }
 
-/// sidecar.p4 defines the following set of indirect counters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[repr(u8)]
-enum CounterId {
-    Service,
-    Ingress,
-    Egress,
-    Packet,
-    DropPort,
-    DropReason,
+pub fn get_counter_ids() -> Vec<CounterId> {
+    let mut base = vec![
+        CounterId::Service,
+        CounterId::Ingress,
+        CounterId::Egress,
+        CounterId::Packet,
+        CounterId::DropPort,
+        CounterId::DropReason,
+    ];
+    let mut multicast;
     #[cfg(feature = "multicast")]
-    EgressDropPort,
-    #[cfg(feature = "multicast")]
-    EgressDropReason,
-    #[cfg(feature = "multicast")]
-    Unicast,
-    #[cfg(feature = "multicast")]
-    Multicast,
-    #[cfg(feature = "multicast")]
-    MulticastExt,
-    #[cfg(feature = "multicast")]
-    MulticastLL,
-    #[cfg(feature = "multicast")]
-    MulticastUL,
-    #[cfg(feature = "multicast")]
-    MulticastDrop,
-}
-
-impl From<CounterId> for u8 {
-    fn from(c: CounterId) -> u8 {
-        c as u8
+    {
+        multicast = vec![
+            CounterId::Multicast(MulticastCounterId::EgressDropPort),
+            CounterId::Multicast(MulticastCounterId::EgressDropReason),
+            CounterId::Multicast(MulticastCounterId::Unicast),
+            CounterId::Multicast(MulticastCounterId::Multicast),
+            CounterId::Multicast(MulticastCounterId::MulticastExt),
+            CounterId::Multicast(MulticastCounterId::MulticastLL),
+            CounterId::Multicast(MulticastCounterId::MulticastUL),
+            CounterId::Multicast(MulticastCounterId::MulticastDrop),
+        ];
     }
-}
-
-/// Each indirect counter is identified by different names at different places
-/// in the code flow.  This structure is used to define all the different names
-/// used by each table in a single place.
-struct CounterDescription {
-    // Each counter is assigned an ID, which lets us associate the static
-    // definitions with the Counter state maintained in the switch
-    // structure.
-    id: CounterId,
-    // The name by which clients will identify a table
-    client_name: &'static str,
-    // The name assigned to the table in the compiled p4 program
-    p4_name: &'static str,
-}
-
-const BASE_COUNTERS: [CounterDescription; 6] = [
-    CounterDescription {
-        id: CounterId::Service,
-        client_name: "Service",
-        p4_name: "pipe.Ingress.services.service_ctr",
-    },
-    CounterDescription {
-        id: CounterId::Ingress,
-        client_name: "Ingress",
-        p4_name: "pipe.Ingress.ingress_ctr",
-    },
-    CounterDescription {
-        id: CounterId::Packet,
-        client_name: "Packet",
-        p4_name: "pipe.Ingress.packet_ctr",
-    },
-    CounterDescription {
-        id: CounterId::Egress,
-        client_name: "Egress",
-        p4_name: "pipe.Ingress.egress_ctr",
-    },
-    CounterDescription {
-        id: CounterId::DropPort,
-        client_name: "Ingress_Drop_Port",
-        p4_name: "pipe.Ingress.drop_port_ctr",
-    },
-    CounterDescription {
-        id: CounterId::DropReason,
-        client_name: "Ingress_Drop_Reason",
-        p4_name: "pipe.Ingress.drop_reason_ctr",
-    },
-];
-
-#[cfg(not(feature = "multicast"))]
-const MULTICAST_COUNTERS: [CounterDescription; 0] = [];
-#[cfg(feature = "multicast")]
-const MULTICAST_COUNTERS: [CounterDescription; 8] = [
-    CounterDescription {
-        id: CounterId::EgressDropPort,
-        client_name: "Egress_Drop_Port",
-        p4_name: "pipe.Egress.drop_port_ctr",
-    },
-    CounterDescription {
-        id: CounterId::EgressDropReason,
-        client_name: "Egress_Drop_Reason",
-        p4_name: "pipe.Egress.drop_reason_ctr",
-    },
-    CounterDescription {
-        id: CounterId::Unicast,
-        client_name: "Unicast",
-        p4_name: "pipe.Egress.unicast_ctr",
-    },
-    CounterDescription {
-        id: CounterId::Multicast,
-        client_name: "Multicast",
-        p4_name: "pipe.Egress.mcast_ctr",
-    },
-    CounterDescription {
-        id: CounterId::MulticastExt,
-        client_name: "Multicast_External",
-        p4_name: "pipe.Egress.external_mcast_ctr",
-    },
-    CounterDescription {
-        id: CounterId::MulticastLL,
-        client_name: "Multicast_Link_Local",
-        p4_name: "pipe.Egress.link_local_mcast_ctr",
-    },
-    CounterDescription {
-        id: CounterId::MulticastUL,
-        client_name: "Multicast_Underlay",
-        p4_name: "pipe.Egress.underlay_mcast_ctr",
-    },
-    CounterDescription {
-        id: CounterId::MulticastDrop,
-        client_name: "Multicast_Drop",
-        p4_name: "pipe.Ingress.filter.drop_mcast_ctr",
-    },
-];
-
-/// Get the list of names by which end users can refer to a counter.
-pub fn get_counter_names() -> DpdResult<Vec<String>> {
-    Ok(BASE_COUNTERS
-        .iter()
-        .chain(MULTICAST_COUNTERS.iter())
-        .map(|c| c.client_name.to_string())
-        .collect())
+    #[cfg(not(feature = "multicast"))]
+    {
+        multicast = Vec::new();
+    }
+    base.append(&mut multicast);
+    base
 }
 
 /// Fetch a counter by name from the switch's list of counters.  This call
 /// returns a pointer to the mutex that controls access to the counter, and the
 /// caller is responsible for locking the mutex.
-fn get_counter<'a>(
-    switch: &'a Switch,
-    name: &str,
-) -> DpdResult<&'a Mutex<Counter>> {
-    let name = name.to_lowercase();
+fn get_counter(
+    switch: &Switch,
+    counter: CounterId,
+) -> DpdResult<&Mutex<Counter>> {
     switch
         .counters
-        .get(&name)
+        .get(&counter)
         .ok_or(DpdError::Invalid("no such counter".to_string()))
 }
 
@@ -403,22 +298,14 @@ pub async fn get_values(
     force_sync: bool,
     counter_name: String,
 ) -> DpdResult<Vec<views::TableCounterEntry>> {
-    let counter_id = {
-        // While we are grabbing the CounterId here, the primary purpose of this
-        // little dance is to verify that the counter exists before referencing it
-        // in the closure below.  We can't just pass the counter into the closure,
-        // because the compiler is worried that the Counter lifetime will exceed
-        // that of the Switch that contains it.
-        get_counter(switch, &counter_name)?.lock().unwrap().id
-    };
+    let counter_id = counter_name.parse::<CounterId>()?;
 
     let counters = {
         let switch = switch.clone();
-        let name = counter_name.clone();
         // Because this call may initiate an ASIC->memory sync operation it can
         // be long-running, so we run it in a new task.
         tokio::task::spawn_blocking(move || {
-            get_counter(&switch, &name)
+            get_counter(&switch, counter_id)
                 .expect("verified that the table exists in the outer function")
                 .lock()
                 .unwrap()
@@ -440,15 +327,19 @@ pub async fn get_values(
             }
             CounterId::DropReason => reason_label(idx.idx as u8)?,
             #[cfg(feature = "multicast")]
-            CounterId::EgressDropPort
-            | CounterId::Unicast
-            | CounterId::Multicast
-            | CounterId::MulticastExt
-            | CounterId::MulticastLL
-            | CounterId::MulticastUL
-            | CounterId::MulticastDrop => port_label(switch, idx.idx).await,
+            CounterId::Multicast(MulticastCounterId::EgressDropPort)
+            | CounterId::Multicast(MulticastCounterId::Unicast)
+            | CounterId::Multicast(MulticastCounterId::Multicast)
+            | CounterId::Multicast(MulticastCounterId::MulticastExt)
+            | CounterId::Multicast(MulticastCounterId::MulticastLL)
+            | CounterId::Multicast(MulticastCounterId::MulticastUL)
+            | CounterId::Multicast(MulticastCounterId::MulticastDrop) => {
+                port_label(switch, idx.idx).await
+            }
             #[cfg(feature = "multicast")]
-            CounterId::EgressDropReason => reason_label(idx.idx as u8)?,
+            CounterId::Multicast(MulticastCounterId::EgressDropReason) => {
+                reason_label(idx.idx as u8)?
+            }
         };
 
         if let Some(key) = key {
@@ -473,22 +364,24 @@ pub async fn get_values(
 }
 
 pub fn reset(switch: &Switch, counter_name: String) -> DpdResult<()> {
-    let mut counter = get_counter(switch, &counter_name)?.lock().unwrap();
+    let id = counter_name.parse::<CounterId>()?;
+    let mut counter = get_counter(switch, id)?.lock().unwrap();
     counter.table.clear(&switch.asic_hdl)
 }
 
 /// Create internal structures for managing the counters built into sidecar.p4
-pub fn init(hdl: &Handle) -> anyhow::Result<BTreeMap<String, Mutex<Counter>>> {
+pub fn init(
+    hdl: &Handle,
+) -> anyhow::Result<BTreeMap<CounterId, Mutex<Counter>>> {
     let mut counters = BTreeMap::new();
 
-    for c in BASE_COUNTERS.iter().chain(MULTICAST_COUNTERS.iter()) {
+    for id in get_counter_ids() {
+        let name = id.to_string();
         counters.insert(
-            c.client_name.to_string().to_lowercase(),
+            id,
             Mutex::new(Counter {
-                id: c.id,
-                table: table::Table::new(hdl, c.p4_name).with_context(
-                    || format!("creating {} counter", c.client_name),
-                )?,
+                table: table::Table::new(hdl, TableType::Counter(id))
+                    .with_context(|| format!("creating {name} counter"))?,
             }),
         );
     }
