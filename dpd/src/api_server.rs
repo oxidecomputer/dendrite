@@ -49,6 +49,8 @@ use transceiver_controller::Monitors;
 #[cfg(feature = "tofino_asic")]
 use asic::tofino_asic::serdes;
 #[cfg(feature = "tofino_asic")]
+use asic::tofino_asic::snapshot;
+#[cfg(feature = "tofino_asic")]
 use asic::tofino_asic::stats;
 
 #[cfg(feature = "softnpu")]
@@ -88,6 +90,26 @@ fn client_error(message: impl ToString) -> HttpError {
         ClientErrorStatusCode::BAD_REQUEST,
         message.to_string(),
     )
+}
+
+fn parse_hex_bytes(s: &str) -> Result<Vec<u8>, String> {
+    let s = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
+    // Pad to even length so we can decode full bytes.
+    let padded = if !s.len().is_multiple_of(2) {
+        format!("0{s}")
+    } else {
+        s.to_string()
+    };
+    (0..padded.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&padded[i..i + 2], 16)
+                .map_err(|e| e.to_string())
+        })
+        .collect()
 }
 
 // Generate a 501 client error with the provided message.
@@ -2673,6 +2695,217 @@ impl DpdApi for DpdApiImpl {
         _rqctx: RequestContext<Self::Context>,
         _path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<Ber>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn snapshot_capture(
+        rqctx: RequestContext<Self::Context>,
+        body: TypedBody<SnapshotCreate>,
+    ) -> Result<HttpResponseOk<SnapshotResult>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let req = body.into_inner();
+        let hdl = &switch.asic_hdl;
+
+        let dir = match req.dir {
+            SnapshotDirection::Ingress => snapshot::SnapshotDir::Ingress,
+            SnapshotDirection::Egress => snapshot::SnapshotDir::Egress,
+        };
+
+        // Create the snapshot.
+        let snap_hdl = snapshot::snapshot_create(
+            hdl,
+            req.pipe,
+            req.start_stage,
+            req.end_stage,
+            dir,
+        )
+        .map_err(|e| HttpError::from(DpdError::from(e)))?;
+
+        // Helper closure to ensure cleanup on any error path.
+        let result = (|| -> Result<SnapshotResult, HttpError> {
+            // Set up trigger fields.
+            for trig in &req.triggers {
+                let value = parse_hex_bytes(&trig.value).map_err(|e| {
+                    client_error(format!(
+                        "bad trigger value '{}': {e}",
+                        trig.value
+                    ))
+                })?;
+                let mask = parse_hex_bytes(&trig.mask).map_err(|e| {
+                    client_error(format!(
+                        "bad trigger mask '{}': {e}",
+                        trig.mask
+                    ))
+                })?;
+                snapshot::snapshot_add_trigger(
+                    hdl, snap_hdl, &trig.field, &value, &mask,
+                )
+                .map_err(|e| HttpError::from(DpdError::from(e)))?;
+            }
+
+            // Arm the snapshot.
+            snapshot::snapshot_arm(hdl, snap_hdl, 0)
+                .map_err(|e| HttpError::from(DpdError::from(e)))?;
+
+            // Wait for capture.
+            let timeout = std::time::Duration::from_secs(req.timeout_secs);
+            let poll_interval = std::time::Duration::from_millis(100);
+            let start = std::time::Instant::now();
+            loop {
+                let _ = snapshot::snapshot_poll(hdl);
+                let states = snapshot::snapshot_state_get(hdl, snap_hdl)
+                    .map_err(|e| HttpError::from(DpdError::from(e)))?;
+                // For a single-pipe snapshot, bf_snapshot_state_get
+                // writes the FSM state to index 0 of the output array
+                // regardless of which pipe was specified.  Check all
+                // entries so this works for any pipe value.
+                if states.contains(&snapshot::PipeState::Full)
+                {
+                    break;
+                }
+                if start.elapsed() > timeout {
+                    return Err(client_error(
+                        "timed out waiting for snapshot trigger",
+                    ));
+                }
+                std::thread::sleep(poll_interval);
+            }
+
+            // Read captured data.
+            let mut cap =
+                snapshot::snapshot_capture(hdl, snap_hdl, req.pipe)
+                    .map_err(|e| HttpError::from(DpdError::from(e)))?;
+
+            // Build stage results with decoded fields.
+            let mut stages = Vec::new();
+            for ctrl in &cap.ctrls {
+                let tables = ctrl
+                    .tables
+                    .iter()
+                    .map(|t| SnapshotTableResult {
+                        name: t.name.clone(),
+                        hit: t.hit,
+                        inhibited: t.inhibited,
+                        executed: t.executed,
+                        match_hit_address: t.match_hit_address,
+                    })
+                    .collect();
+
+                let mut fields = Vec::new();
+                for field_name in &req.fields {
+                    let val = snapshot::snapshot_decode_field(
+                        hdl,
+                        snap_hdl,
+                        req.pipe,
+                        ctrl.stage_id,
+                        &mut cap.capture_buf,
+                        cap.num_captures,
+                        field_name,
+                    )
+                    .map_err(|e| HttpError::from(DpdError::from(e)))?;
+
+                    fields.push(SnapshotFieldValue {
+                        name: field_name.clone(),
+                        value: val.map(|v| {
+                        let hex: String = v
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect();
+                        format!("0x{hex}")
+                    }),
+                    });
+                }
+
+                stages.push(SnapshotStageResult {
+                    stage_id: ctrl.stage_id,
+                    local_stage_trigger: ctrl.local_stage_trigger,
+                    prev_stage_trigger: ctrl.prev_stage_trigger,
+                    timer_trigger: ctrl.timer_trigger,
+                    next_table: ctrl.next_table.clone(),
+                    ingress_dp_error: ctrl.ingress_dp_error,
+                    egress_dp_error: ctrl.egress_dp_error,
+                    tables,
+                    fields,
+                });
+            }
+
+            Ok(SnapshotResult { stages })
+        })();
+
+        // Always clean up the snapshot handle.
+        let _ = snapshot::snapshot_clear_triggers(hdl, snap_hdl);
+        let _ = snapshot::snapshot_delete(hdl, snap_hdl);
+
+        result.map(HttpResponseOk)
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn snapshot_capture(
+        _rqctx: RequestContext<Self::Context>,
+        _body: TypedBody<SnapshotCreate>,
+    ) -> Result<HttpResponseOk<SnapshotResult>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn snapshot_scope(
+        rqctx: RequestContext<Self::Context>,
+        body: TypedBody<SnapshotScopeRequest>,
+    ) -> Result<HttpResponseOk<Vec<SnapshotFieldScope>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let req = body.into_inner();
+        let hdl = &switch.asic_hdl;
+
+        let dir = match req.dir {
+            SnapshotDirection::Ingress => snapshot::SnapshotDir::Ingress,
+            SnapshotDirection::Egress => snapshot::SnapshotDir::Egress,
+        };
+
+        // Create a temporary snapshot to initialize the internal field
+        // dictionary in the SDE.
+        let snap_hdl = snapshot::snapshot_create(
+            hdl, req.pipe, req.stage, req.stage, dir,
+        )
+        .map_err(|e| HttpError::from(DpdError::from(e)))?;
+
+        let result = (|| -> Result<Vec<SnapshotFieldScope>, HttpError> {
+            let mut results = Vec::new();
+            for field_name in &req.fields {
+                let in_scope = if req.trigger {
+                    snapshot::snapshot_trigger_field_in_scope(
+                        hdl, req.pipe, req.stage, dir, field_name,
+                    )
+                } else {
+                    snapshot::snapshot_field_in_scope(
+                        hdl, req.pipe, req.stage, dir, field_name,
+                    )
+                }
+                .map_err(|e| HttpError::from(DpdError::from(e)))?;
+
+                results.push(SnapshotFieldScope {
+                    field: field_name.clone(),
+                    in_scope,
+                });
+            }
+            Ok(results)
+        })();
+
+        let _ = snapshot::snapshot_delete(hdl, snap_hdl);
+        result.map(HttpResponseOk)
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn snapshot_scope(
+        _rqctx: RequestContext<Self::Context>,
+        _body: TypedBody<SnapshotScopeRequest>,
+    ) -> Result<HttpResponseOk<Vec<SnapshotFieldScope>>, HttpError> {
         Err(HttpError::for_unavail(
             None,
             "not implemented for this asic".to_string(),

@@ -16,6 +16,7 @@ colored.workspace = true
 common.workspace = true
 dpd-client.workspace = true
 futures.workspace = true
+reqwest.workspace = true
 oxide-tokio-rt.workspace = true
 oxnet.workspace = true
 slog.workspace = true
