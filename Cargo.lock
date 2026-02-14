@@ -6993,6 +6993,7 @@ dependencies = [
  "futures",
  "oxide-tokio-rt",
  "oxnet",
+ "reqwest 0.13.2",
  "slog",
  "tabwriter",
  "tokio",

@@ -24,6 +24,7 @@ pub mod ports;
 pub mod qsfp;
 mod sde_log;
 pub mod serdes;
+pub mod snapshot;
 pub mod stats;
 pub mod table;
 

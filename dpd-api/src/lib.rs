@@ -63,6 +63,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (9, SNAPSHOT),
     (8, MCAST_STRICT_UNDERLAY),
     (7, MCAST_SOURCE_FILTER_ANY),
     (6, CONSOLIDATED_V4_ROUTES),
@@ -2518,6 +2519,29 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<Ber>, HttpError>;
+
+    /// Capture a PHV snapshot: create snapshot, set triggers, arm, wait
+    /// for trigger, read capture, decode fields, and clean up.
+    #[endpoint {
+        method = POST,
+        path = "/snapshot/capture",
+        versions = VERSION_SNAPSHOT..
+    }]
+    async fn snapshot_capture(
+        rqctx: RequestContext<Self::Context>,
+        body: TypedBody<SnapshotCreate>,
+    ) -> Result<HttpResponseOk<SnapshotResult>, HttpError>;
+
+    /// Check which fields are in scope at a given stage.
+    #[endpoint {
+        method = POST,
+        path = "/snapshot/scope",
+        versions = VERSION_SNAPSHOT..
+    }]
+    async fn snapshot_scope(
+        rqctx: RequestContext<Self::Context>,
+        body: TypedBody<SnapshotScopeRequest>,
+    ) -> Result<HttpResponseOk<Vec<SnapshotFieldScope>>, HttpError>;
 }
 
 /// Parameter used to create a port.
@@ -3353,4 +3377,93 @@ pub struct Ber {
     pub ber: Vec<f32>,
     /// Aggregate BER on the link.
     pub total_ber: f32,
+}
+
+// --- Snapshot types ---
+
+/// Direction of a PHV snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub enum SnapshotDirection {
+    Ingress,
+    Egress,
+}
+
+/// A trigger field for a snapshot, with hex-encoded value and mask.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotTrigger {
+    pub field: String,
+    /// Hex-encoded value (e.g. "0x112233445566")
+    pub value: String,
+    /// Hex-encoded mask (e.g. "0xffffffffffff")
+    pub mask: String,
+}
+
+/// Request body for creating and capturing a PHV snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotCreate {
+    pub pipe: u32,
+    pub start_stage: u8,
+    pub end_stage: u8,
+    pub dir: SnapshotDirection,
+    pub triggers: Vec<SnapshotTrigger>,
+    /// Field names to decode from the capture.
+    pub fields: Vec<String>,
+    /// Timeout in seconds to wait for trigger.
+    pub timeout_secs: u64,
+}
+
+/// Table hit/miss result from a snapshot capture.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotTableResult {
+    pub name: String,
+    pub hit: bool,
+    pub inhibited: bool,
+    pub executed: bool,
+    pub match_hit_address: u32,
+}
+
+/// Per-stage result from a snapshot capture.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotStageResult {
+    pub stage_id: u8,
+    pub local_stage_trigger: bool,
+    pub prev_stage_trigger: bool,
+    pub timer_trigger: bool,
+    pub next_table: String,
+    pub ingress_dp_error: bool,
+    pub egress_dp_error: bool,
+    pub tables: Vec<SnapshotTableResult>,
+    pub fields: Vec<SnapshotFieldValue>,
+}
+
+/// A decoded field value from a snapshot capture.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotFieldValue {
+    pub name: String,
+    /// None if the field is not valid at this stage.
+    pub value: Option<String>,
+}
+
+/// Result of a snapshot capture operation.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotResult {
+    pub stages: Vec<SnapshotStageResult>,
+}
+
+/// Request body for checking field scope at a given stage.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotScopeRequest {
+    pub pipe: u32,
+    pub stage: u8,
+    pub dir: SnapshotDirection,
+    pub fields: Vec<String>,
+    /// If true, check trigger scope; otherwise check capture scope.
+    pub trigger: bool,
+}
+
+/// Whether a field is in scope at a given stage.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotFieldScope {
+    pub field: String,
+    pub in_scope: bool,
 }
