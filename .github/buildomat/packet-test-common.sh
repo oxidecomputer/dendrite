@@ -53,7 +53,8 @@ if [[ $JUST_TEST -ne 1 ]]; then
         libssl-dev \
         pkg-config \
         libcli-dev \
-        sysvbanner
+        sysvbanner \
+        libboost-all-dev
 fi
 
 export SDE=/opt/oxide/tofino_sde
