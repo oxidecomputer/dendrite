@@ -171,6 +171,7 @@ struct NatTest {
     // uplink network info
     uplink_port: PhysPort,
     uplink_port_external: String, // external addr assigned to our upstream port
+    uplink_port_registered: bool, // register this port as an uplink
     uplink_route: String,         // subnet to which the switch is connected
     router_ip: String,            // ip address of the upstream router
     router_mac: String,           // mac address of the upstream router
@@ -206,6 +207,8 @@ async fn test_nat_egress(switch: &Switch, test: &NatTest) -> TestResult {
         tag: switch.client.inner().tag.clone(),
     };
     switch.client.link_ipv6_create(&port_id, &link_id, &entry).await.unwrap();
+
+    switch.set_uplink(test.uplink_port, test.uplink_port_registered).await;
 
     if test.router_ip.parse::<Ipv4Addr>().is_ok() {
         common::set_route_ipv4(
@@ -293,15 +296,25 @@ async fn test_nat_egress(switch: &Switch, test: &NatTest) -> TestResult {
         &payload[14..],
     );
 
-    let mut to_recv =
-        common::gen_packet_routed(switch, test.uplink_port, &payload_pkt);
-    eth::EthHdr::rewrite_dmac(&mut to_recv, router_mac);
+    let expected = match test.uplink_port_registered {
+        true => {
+            let mut to_recv = common::gen_packet_routed(
+                switch,
+                test.uplink_port,
+                &payload_pkt,
+            );
+            eth::EthHdr::rewrite_dmac(&mut to_recv, router_mac);
+            vec![TestPacket {
+                packet: Arc::new(to_recv),
+                port: test.uplink_port,
+            }]
+        }
+        false => Vec::new(),
+    };
 
     let send = TestPacket { packet: Arc::new(to_send), port: test.gimlet_port };
-    let expected =
-        TestPacket { packet: Arc::new(to_recv), port: test.uplink_port };
 
-    switch.packet_test(vec![send], vec![expected])
+    switch.packet_test(vec![send], expected)
 }
 
 async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
@@ -448,15 +461,16 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
     switch.packet_test(send, expected)
 }
 
-// UDP packet to/from IPv4 addresses, with an IPv6 address for the OPTE host
-#[tokio::test]
-#[ignore]
-async fn test_egress_ipv4() -> TestResult {
-    let switch = &*get_switch().await;
-
+// packet to/from IPv4 addresses, with an IPv6 address for the OPTE host
+async fn test_egress_ipv4(
+    switch: &Switch,
+    l4_protocol: L4Protocol,
+    uplink_port_registered: bool,
+) -> TestResult {
     let test = NatTest {
         uplink_port: PhysPort(14),
         uplink_port_external: "192.168.1.2".to_string(),
+        uplink_port_registered,
         uplink_route: "0.0.0.0/0".to_string(),
         router_ip: "192.168.1.1".to_string(),
         router_mac: "02:aa:bb:cc:dd:ee".to_string(),
@@ -474,44 +488,43 @@ async fn test_egress_ipv4() -> TestResult {
         gimlet_port_ip: "fd00:1122:3344:0101::5".to_string(),
 
         nat_l4_port: 10,
-        l4_protocol: L4Protocol::Udp,
+        l4_protocol,
         geneve_vni: 1, // not used on egress tests
     };
 
     test_nat_egress(switch, &test).await
 }
 
-// ICMP packet to/from IPv4 addresses, with an IPv6 address for the OPTE host
+// UDP packet to/from IPv4 addresses
+#[tokio::test]
+#[ignore]
+async fn test_egress_ipv4_udp() -> TestResult {
+    let switch = &*get_switch().await;
+    test_egress_ipv4(switch, L4Protocol::Udp, true).await
+}
+
+// TCP packet to/from IPv4 addresses
+#[tokio::test]
+#[ignore]
+async fn test_egress_ipv4_tcp() -> TestResult {
+    let switch = &*get_switch().await;
+    test_egress_ipv4(switch, L4Protocol::Tcp, true).await
+}
+
+// ICMP packet to/from IPv4 addresses
 #[tokio::test]
 #[ignore]
 async fn test_egress_ipv4_icmp() -> TestResult {
     let switch = &*get_switch().await;
+    test_egress_ipv4(switch, L4Protocol::Icmp, true).await
+}
 
-    let test = NatTest {
-        uplink_port: PhysPort(14),
-        uplink_port_external: "192.168.1.2".to_string(),
-        uplink_route: "0.0.0.0/0".to_string(),
-        router_ip: "192.168.1.1".to_string(),
-        router_mac: "02:aa:bb:cc:dd:ee".to_string(),
-
-        vpc_src_ip: "172.16.10.33".to_string(),
-        vpc_src_mac: "04:01:01:01:01:01".to_string(),
-        vpc_src_port: 3333,
-        vpc_dst_ip: "10.10.10.32".to_string(),
-        vpc_dst_mac: "04:01:01:01:01:02".to_string(),
-        vpc_dst_port: 4444,
-
-        gimlet_port: PhysPort(10),
-        gimlet_ip: "fd00:1122:7788:0101::4".to_string(),
-        gimlet_mac: "11:22:33:44:55:66".to_string(),
-        gimlet_port_ip: "fd00:1122:3344:0101::5".to_string(),
-
-        nat_l4_port: 10,
-        l4_protocol: L4Protocol::Icmp,
-        geneve_vni: 1, // not used on egress tests
-    };
-
-    test_nat_egress(switch, &test).await
+// UDP packet to an IPv4 address, egressing a backplane port.
+#[tokio::test]
+#[ignore]
+async fn test_backplane_egress_ipv4_udp() -> TestResult {
+    let switch = &*get_switch().await;
+    test_egress_ipv4(switch, L4Protocol::Udp, false).await
 }
 
 async fn test_ingress_ipv4(
@@ -521,6 +534,7 @@ async fn test_ingress_ipv4(
     let test = NatTest {
         uplink_port: PhysPort(14),
         uplink_port_external: "192.168.1.2".to_string(),
+        uplink_port_registered: true,
         uplink_route: "unused".to_string(),
         router_ip: "192.168.1.1".to_string(),
         router_mac: "02:aa:bb:cc:dd:ee".to_string(),
@@ -574,14 +588,16 @@ async fn test_ingress_ipv4_tcp() -> TestResult {
     test_ingress_ipv4(switch, L4Protocol::Tcp).await
 }
 
-// UDP packet to/from IPv6 addresses,
+// packet to/from IPv6 addresses,
 async fn test_egress_ipv6(
     switch: &Switch,
     l4_protocol: L4Protocol,
+    uplink_port_registered: bool,
 ) -> TestResult {
     let test = NatTest {
         uplink_port: PhysPort(14),
         uplink_port_external: "fd00:3344:5566::4".to_string(),
+        uplink_port_registered,
         uplink_route: "0::0/0".to_string(),
         router_ip: "fd00:3344:5566::1".to_string(),
         router_mac: "02:aa:bb:cc:dd:ee".to_string(),
@@ -610,14 +626,21 @@ async fn test_egress_ipv6(
 #[ignore]
 async fn test_egress_ipv6_udp() -> TestResult {
     let switch = &*get_switch().await;
-    test_egress_ipv6(switch, L4Protocol::Udp).await
+    test_egress_ipv6(switch, L4Protocol::Udp, true).await
 }
 
 #[tokio::test]
 #[ignore]
 async fn test_egress_ipv6_tcp() -> TestResult {
     let switch = &*get_switch().await;
-    test_egress_ipv6(switch, L4Protocol::Tcp).await
+    test_egress_ipv6(switch, L4Protocol::Tcp, true).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_backplane_egress_ipv6_tcp() -> TestResult {
+    let switch = &*get_switch().await;
+    test_egress_ipv6(switch, L4Protocol::Tcp, false).await
 }
 
 async fn test_ingress_ipv6(
@@ -627,6 +650,7 @@ async fn test_ingress_ipv6(
     let test = NatTest {
         uplink_port: PhysPort(14),
         uplink_port_external: "fd00:3344:5566::4".to_string(),
+        uplink_port_registered: true,
         uplink_route: "0:0::0/0".to_string(),
         router_ip: "fd00:3344:5566::1".to_string(),
         router_mac: "02:aa:bb:cc:dd:ee".to_string(),

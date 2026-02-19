@@ -1,6 +1,6 @@
 #!/bin/bash
 #:
-#: name = "packet-test"
+#: name = "multicast-test"
 #: variety = "basic"
 #: target = "ubuntu-22.04"
 #: rust_toolchain = true
@@ -30,4 +30,5 @@ set -o errexit
 set -o pipefail
 set -o xtrace
 
+export MULTICAST=1
 source .github/buildomat/packet-test-common.sh

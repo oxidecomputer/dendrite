@@ -81,14 +81,15 @@ const bit<8> DROP_IPV6_TTL_EXCEEDED             = 0x0E;
 const bit<8> DROP_IPV4_UNROUTEABLE              = 0x0F;
 const bit<8> DROP_IPV6_UNROUTEABLE              = 0x10;
 const bit<8> DROP_NAT_INGRESS_MISS              = 0x11;
-const bit<8> DROP_MULTICAST_NO_GROUP            = 0x12;
-const bit<8> DROP_MULTICAST_INVALID_MAC         = 0x13;
-const bit<8> DROP_MULTICAST_CPU_COPY            = 0x14;
-const bit<8> DROP_MULTICAST_SOURCE_FILTERED     = 0x15;
-const bit<8> DROP_MULTICAST_PATH_FILTERED       = 0x16;
-const bit<8> DROP_GENEVE_OPTIONS_TOO_LONG       = 0x17;
-const bit<8> DROP_GENEVE_OPTION_MALFORMED       = 0x18;
-const bit<8> DROP_GENEVE_OPTION_UNKNOWN         = 0x19;
+const bit<8> DROP_NAT_EGRESS_BLOCKED            = 0x12;
+const bit<8> DROP_MULTICAST_NO_GROUP            = 0x13;
+const bit<8> DROP_MULTICAST_INVALID_MAC         = 0x14;
+const bit<8> DROP_MULTICAST_CPU_COPY            = 0x15;
+const bit<8> DROP_MULTICAST_SOURCE_FILTERED     = 0x16;
+const bit<8> DROP_MULTICAST_PATH_FILTERED       = 0x17;
+const bit<8> DROP_GENEVE_OPTIONS_TOO_LONG       = 0x18;
+const bit<8> DROP_GENEVE_OPTION_MALFORMED       = 0x19;
+const bit<8> DROP_GENEVE_OPTION_UNKNOWN         = 0x1A;
 // MAX(DROP_xxx) + 1
-const bit<32> DROP_REASON_MAX                   = 0x1A;
+const bit<32> DROP_REASON_MAX                   = 0x1B;
 

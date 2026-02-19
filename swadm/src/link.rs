@@ -504,7 +504,7 @@ pub enum LinkProp {
     #[clap(visible_alias = "an")]
     Autoneg,
     /// Fetch whether nat-only restrictions are enabled for the link.
-    NatOnly,
+    Uplink,
     /// Fetch whether the link is enabled.
     #[clap(visible_alias = "ena")]
     Enabled,
@@ -561,7 +561,7 @@ pub enum SetLinkProp {
     #[clap(visible_alias = "an")]
     Autoneg { autoneg: OnOff },
     /// Set whether nat-only restrictions are enabled for the link.
-    NatOnly { nat_only: OnOff },
+    Uplink { uplink: OnOff },
     /// Set whether the link is enabled.
     #[clap(visible_alias = "ena")]
     Enabled { enabled: OnOff },
@@ -1667,9 +1667,9 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                         .into_inner();
                     println!("{an}");
                 }
-                LinkProp::NatOnly => {
+                LinkProp::Uplink => {
                     let no = client
-                        .link_nat_only_get(&link.port_id, &link.link_id)
+                        .link_uplink_get(&link.port_id, &link.link_id)
                         .await
                         .context("failed to fetch nat-onlt mode")?
                         .into_inner();
@@ -1790,15 +1790,15 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                     .await
                     .context("failed to set autonegotiation mode")?;
             }
-            SetLinkProp::NatOnly { nat_only } => {
+            SetLinkProp::Uplink { uplink } => {
                 client
-                    .link_nat_only_set(
+                    .link_uplink_set(
                         &link.port_id,
                         &link.link_id,
-                        nat_only.into(),
+                        uplink.into(),
                     )
                     .await
-                    .context("failed to set nat_only mode")?;
+                    .context("failed to set uplink mode")?;
             }
             SetLinkProp::Enabled { enabled } => {
                 client

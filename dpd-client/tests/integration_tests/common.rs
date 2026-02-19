@@ -540,6 +540,15 @@ impl Switch {
         Ok(())
     }
 
+    pub async fn set_uplink(&self, phys_port: PhysPort, uplink: bool) {
+        let (port_id, link_id) = self.link_id(phys_port).unwrap();
+        self.client
+            .link_uplink_set(&port_id, &link_id, uplink)
+            .await
+            .unwrap()
+            .into_inner()
+    }
+
     pub fn tofino_port(&self, phys_port: PhysPort) -> u16 {
         let idx: usize = phys_port.into();
         if phys_port == NO_PORT {
@@ -569,6 +578,7 @@ impl Switch {
 
     /// Return the port label for the given physical port, useful for
     /// counter information.
+    #[cfg(feature = "multicast")]
     pub fn port_label(&self, phys_port: PhysPort) -> Option<String> {
         let idx: usize = phys_port.into();
         if phys_port == NO_PORT {
@@ -923,11 +933,13 @@ pub fn gen_udp_routed_pair(
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub enum OxideGeneveOption {
     External,
+    #[cfg(feature = "multicast")]
     Multicast(u8),
     Mss(u32),
 }
 
 /// Build a Geneve packet with a possible multicast tag.
+#[cfg(feature = "multicast")]
 pub fn gen_geneve_packet_with_mcast_tag(
     src: Endpoint,
     dst: Endpoint,
@@ -1002,6 +1014,7 @@ pub fn gen_geneve_packet(
                     0x00,
                 ]);
             }
+            #[cfg(feature = "multicast")]
             OxideGeneveOption::Multicast(tag) if *tag < 3 => {
                 #[rustfmt::skip]
                 geneve.options.extend_from_slice(&[
@@ -1036,6 +1049,7 @@ pub fn gen_geneve_packet(
                 ]);
                 geneve.options.extend_from_slice(&mss.to_be_bytes()[..]);
             }
+            #[cfg(feature = "multicast")]
             _ => {
                 panic!("illegal specification for option: {opt:?}")
             }
@@ -1176,13 +1190,13 @@ async fn set_route_ipv4_common(
     let (port_id, link_id) = switch.link_id(phys_port).unwrap();
     let route = types::Ipv4RouteUpdate {
         cidr,
-        target: types::Ipv4Route {
+        target: types::RouteTarget::V4(types::Ipv4Route {
             port_id: port_id.clone(),
             link_id: link_id.clone(),
             tgt_ip,
             tag: switch.client.inner().tag.clone(),
             vlan_id,
-        },
+        }),
         replace: false,
     };
     switch
@@ -1229,20 +1243,20 @@ async fn set_route_ipv4_over_ipv6_common(
     let cidr = subnet.parse::<Ipv4Net>()?;
     let tgt_ip: Ipv6Addr = gw.parse()?;
     let (port_id, link_id) = switch.link_id(phys_port).unwrap();
-    let route = types::Ipv4OverIpv6RouteUpdate {
+    let route = types::Ipv4RouteUpdate {
         cidr,
-        target: types::Ipv6Route {
+        target: types::RouteTarget::V6(types::Ipv6Route {
             port_id: port_id.clone(),
             link_id: link_id.clone(),
             tgt_ip,
             tag: switch.client.inner().tag.clone(),
             vlan_id,
-        },
+        }),
         replace: false,
     };
     switch
         .client
-        .route_ipv4_over_ipv6_set(&route)
+        .route_ipv4_set(&route)
         .await
         .expect("Failed to add IPv4 route entry");
 

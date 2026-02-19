@@ -7,7 +7,8 @@
 //! DPD endpoint definitions.
 
 pub mod v1;
-pub mod v5;
+pub mod v2;
+pub mod v7;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -62,8 +63,10 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
-    (6, MCAST_STRICT_UNDERLAY),
-    (5, MCAST_SOURCE_FILTER_ANY),
+    (8, MCAST_STRICT_UNDERLAY),
+    (7, MCAST_SOURCE_FILTER_ANY),
+    (6, CONSOLIDATED_V4_ROUTES),
+    (5, UPLINK_PORTS),
     (4, V4_OVER_V6_ROUTES),
     (3, ATTACHED_SUBNETS),
     (2, DUAL_STACK_NAT_WORKFLOW),
@@ -382,6 +385,35 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/route/ipv4",
+        versions = ..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_add",
+    }]
+    async fn route_ipv4_add_v1(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<v2::Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let route = update.into_inner();
+        Self::route_ipv4_add(
+            rqctx,
+            TypedBody::from(Ipv4RouteUpdate {
+                cidr: route.cidr,
+                target: RouteTarget::V4(route.target),
+                replace: route.replace,
+            }),
+        )
+        .await
+    }
+
+    /**
+     * Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).
+     *
+     * This call can be used to create a new single-path route or to add new targets
+     * to a multipath route.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/route/ipv4",
+        versions = VERSION_CONSOLIDATED_V4_ROUTES..
     }]
     async fn route_ipv4_add(
         rqctx: RequestContext<Self::Context>,
@@ -397,12 +429,23 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/route/ipv4-over-ipv6",
-        versions = VERSION_V4_OVER_V6_ROUTES..,
+        versions = VERSION_V4_OVER_V6_ROUTES..VERSION_CONSOLIDATED_V4_ROUTES,
     }]
     async fn route_ipv4_over_ipv6_add(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<Ipv4OverIpv6RouteUpdate>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let route = update.into_inner();
+        Self::route_ipv4_add(
+            rqctx,
+            TypedBody::from(Ipv4RouteUpdate {
+                cidr: route.cidr,
+                target: RouteTarget::V6(route.target),
+                replace: route.replace,
+            }),
+        )
+        .await
+    }
 
     /**
      * Route an IPv4 subnet to a link and a nexthop gateway.
@@ -413,6 +456,35 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/route/ipv4",
+        versions = ..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_set",
+    }]
+    async fn route_ipv4_set_v1(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<v2::Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let route = update.into_inner();
+        Self::route_ipv4_set(
+            rqctx,
+            TypedBody::from(Ipv4RouteUpdate {
+                cidr: route.cidr,
+                target: RouteTarget::V4(route.target),
+                replace: route.replace,
+            }),
+        )
+        .await
+    }
+
+    /**
+     * Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).
+     *
+     * This call can be used to create a new single-path route or to replace any
+     * existing routes with a new single-path route.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/route/ipv4",
+        versions = VERSION_CONSOLIDATED_V4_ROUTES..
     }]
     async fn route_ipv4_set(
         rqctx: RequestContext<Self::Context>,
@@ -428,12 +500,23 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/route/ipv4-over-ipv6",
-        versions = VERSION_V4_OVER_V6_ROUTES..,
+        versions = VERSION_V4_OVER_V6_ROUTES..VERSION_CONSOLIDATED_V4_ROUTES,
     }]
     async fn route_ipv4_over_ipv6_set(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<Ipv4OverIpv6RouteUpdate>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let route = update.into_inner();
+        Self::route_ipv4_set(
+            rqctx,
+            TypedBody::from(Ipv4RouteUpdate {
+                cidr: route.cidr,
+                target: RouteTarget::V6(route.target),
+                replace: route.replace,
+            }),
+        )
+        .await
+    }
 
     /**
      * Remove all targets for the given subnet
@@ -453,6 +536,33 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}",
+        versions = ..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_delete_target",
+    }]
+    async fn route_ipv4_delete_target_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v2::RouteTargetIpv4Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let p = path.into_inner();
+        Self::route_ipv4_delete_target(
+            rqctx,
+            Path::from(RouteTargetIpv4Path {
+                cidr: p.cidr,
+                port_id: p.port_id,
+                link_id: p.link_id,
+                tgt_ip: IpAddr::V4(p.tgt_ip),
+            }),
+        )
+        .await
+    }
+
+    /**
+     * Remove a single target for the given IPv4 subnet (IPv4 or IPv6 next hop)
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}",
+        versions = VERSION_CONSOLIDATED_V4_ROUTES..
     }]
     async fn route_ipv4_delete_target(
         rqctx: RequestContext<Self::Context>,
@@ -1011,8 +1121,22 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/nat_only",
+	versions = ..VERSION_UPLINK_PORTS
     }]
     async fn link_nat_only_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<bool>, HttpError> {
+        Self::link_uplink_get(rqctx, path).await
+    }
+
+    /// Return whether a port is intended to carry uplink traffic
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/uplink",
+	versions = VERSION_UPLINK_PORTS..
+    }]
+    async fn link_uplink_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError>;
@@ -1021,8 +1145,23 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/ports/{port_id}/links/{link_id}/nat_only",
+	versions = ..VERSION_UPLINK_PORTS
     }]
     async fn link_nat_only_set(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+        body: TypedBody<bool>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::link_uplink_set(rqctx, path, body).await
+    }
+
+    /// Set whether a port is intended to carry uplink traffic
+    #[endpoint {
+        method = PUT,
+        path = "/ports/{port_id}/links/{link_id}/uplink",
+	versions = VERSION_UPLINK_PORTS..
+    }]
+    async fn link_uplink_set(
         rqctx: RequestContext<Self::Context>,
         path: Path<LinkPath>,
         body: TypedBody<bool>,
@@ -1669,12 +1808,13 @@ pub trait DpdApi {
         method = POST,
         path = "/multicast/external-groups",
         versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_create_external",
     }]
-    async fn multicast_group_create_external_v5(
+    async fn multicast_group_create_external_v7(
         rqctx: RequestContext<Self::Context>,
         group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<v5::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v7::MulticastGroupExternalResponse>,
         HttpError,
     > {
         Self::multicast_group_create_external(rqctx, group)
@@ -1817,11 +1957,12 @@ pub trait DpdApi {
         method = GET,
         path = "/multicast/groups/{group_ip}",
         versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_get",
     }]
-    async fn multicast_group_get_v5(
+    async fn multicast_group_get_v7(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
-    ) -> Result<HttpResponseOk<v5::MulticastGroupResponse>, HttpError> {
+    ) -> Result<HttpResponseOk<v7::MulticastGroupResponse>, HttpError> {
         Self::multicast_group_get(rqctx, path)
             .await
             .map(|resp| resp.map(Into::into))
@@ -1953,13 +2094,14 @@ pub trait DpdApi {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",
         versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_update_external",
     }]
-    async fn multicast_group_update_external_v5(
+    async fn multicast_group_update_external_v7(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
-        group: TypedBody<v5::MulticastGroupUpdateExternalEntry>,
+        group: TypedBody<v7::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<v5::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v7::MulticastGroupExternalResponse>,
         HttpError,
     >;
 
@@ -2007,14 +2149,15 @@ pub trait DpdApi {
         method = GET,
         path = "/multicast/groups",
         versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_groups_list",
     }]
-    async fn multicast_groups_list_v5(
+    async fn multicast_groups_list_v7(
         rqctx: RequestContext<Self::Context>,
         query_params: Query<
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
     ) -> Result<
-        HttpResponseOk<ResultsPage<v5::MulticastGroupResponse>>,
+        HttpResponseOk<ResultsPage<v7::MulticastGroupResponse>>,
         HttpError,
     > {
         let HttpResponseOk(page) =
@@ -2079,15 +2222,16 @@ pub trait DpdApi {
         method = GET,
         path = "/multicast/tags/{tag}",
         versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_groups_list_by_tag",
     }]
-    async fn multicast_groups_list_by_tag_v5(
+    async fn multicast_groups_list_by_tag_v7(
         rqctx: RequestContext<Self::Context>,
         path: Path<TagPath>,
         query_params: Query<
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
     ) -> Result<
-        HttpResponseOk<ResultsPage<v5::MulticastGroupResponse>>,
+        HttpResponseOk<ResultsPage<v7::MulticastGroupResponse>>,
         HttpError,
     > {
         let HttpResponseOk(page) = Self::multicast_groups_list_by_tag(
@@ -2473,15 +2617,15 @@ impl TryFrom<RouteTarget> for Ipv6Route {
     }
 }
 
-/// Represents a new or replacement mapping of a subnet to a single IPv4
-/// RouteTarget nexthop target.
+/// Represents a new or replacement mapping of an IPv4 subnet to a single
+/// RouteTarget nexthop target, which may be either IPv4 or IPv6.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct Ipv4RouteUpdate {
     /// Traffic destined for any address within the CIDR block is routed using
     /// this information.
     pub cidr: Ipv4Net,
     /// A single Route associated with this CIDR
-    pub target: Ipv4Route,
+    pub target: RouteTarget,
     /// Should this route replace any existing route?  If a route exists and
     /// this parameter is false, then the call will fail.
     pub replace: bool,
@@ -2588,7 +2732,8 @@ pub struct SubnetPath {
     pub subnet: IpNet,
 }
 
-/// Represents a single subnet->target route entry
+/// Represents a single subnet->target route entry with an IPv4 or IPv6
+/// next hop.
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct RouteTargetIpv4Path {
     /// The subnet being routed
@@ -2597,8 +2742,8 @@ pub struct RouteTargetIpv4Path {
     pub port_id: PortId,
     /// The link to which packets should be sent
     pub link_id: LinkId,
-    /// The next hop in the IPv4 route
-    pub tgt_ip: Ipv4Addr,
+    /// The next hop in the route (IPv4 or IPv6)
+    pub tgt_ip: IpAddr,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]

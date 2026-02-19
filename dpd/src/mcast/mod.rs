@@ -63,7 +63,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use aal::{AsicError, AsicOps};
+use aal::{AsicError, AsicMulticastOps};
 use common::{network::NatTarget, ports::PortId};
 use dpd_types::{
     link::LinkId,
@@ -694,9 +694,18 @@ pub(crate) fn modify_group_external(
         let new_internal_ip = nat_target.internal_ip;
 
         if old_internal_ip != new_internal_ip {
-            // Validate both IPs before mutating state to avoid partial updates
-            let old_admin = UnderlayMulticastIpv6::new(old_internal_ip)?;
-            let new_admin = UnderlayMulticastIpv6::new(new_internal_ip)?;
+            // Validate both IPs before mutating state to avoid partial updates.
+            // On error, restore the group entry before returning.
+            let (old_admin, new_admin) = match (
+                UnderlayMulticastIpv6::new(old_internal_ip),
+                UnderlayMulticastIpv6::new(new_internal_ip),
+            ) {
+                (Ok(old), Ok(new)) => (old, new),
+                (Err(e), _) | (_, Err(e)) => {
+                    mcast.groups.insert(group_ip, group_entry);
+                    return Err(DpdError::Invalid(e.to_string()));
+                }
+            };
             mcast.rm_forwarding_refs(old_admin);
             mcast.add_forwarding_refs(group_ip, new_admin);
         }
@@ -1177,7 +1186,7 @@ pub(super) fn sources_contain_any(sources: &[IpSrc]) -> bool {
 /// This ensures uniqueness across the group's lifecycle and prevents
 /// tag collision when group IPs are reused after deletion.
 fn generate_default_tag(group_ip: IpAddr) -> String {
-    format!("{}:{}", Uuid::new_v4(), group_ip)
+    format!("{}:{group_ip}", Uuid::new_v4())
 }
 
 /// Canonicalize sources before storage to eliminate semantic ambiguity.
@@ -1195,7 +1204,11 @@ fn canonicalize_sources(sources: Option<Vec<IpSrc>>) -> Option<Vec<IpSrc>> {
     match sources {
         None => None,
         Some(srcs) if srcs.is_empty() || sources_contain_any(&srcs) => None,
-        Some(srcs) => Some(srcs),
+        Some(srcs) => {
+            let deduped: Vec<IpSrc> =
+                srcs.into_iter().collect::<HashSet<_>>().into_iter().collect();
+            Some(deduped)
+        }
     }
 }
 
@@ -1939,7 +1952,16 @@ fn update_fwding_tables(
                 .and_then(|_| {
                     // Update external bitmap for external members
                     // (only external bitmap entries exist; underlay replication
-                    // uses ASIC multicast groups directly)
+                    // uses ASIC multicast groups directly).
+                    // Skip if no external members to avoid spurious errors
+                    // when called during rollback on empty groups.
+                    if !members
+                        .iter()
+                        .any(|m| m.direction == Direction::External)
+                    {
+                        return Ok(());
+                    }
+
                     let external_port_bitmap =
                         create_port_bitmap(members, Direction::External);
                     table::mcast::mcast_egress::update_bitmap_entry(

@@ -6,7 +6,3 @@ xtask = "run --package xtask --"
 # See https://doc.rust-lang.org/cargo/reference/config.html#target.
 [build]
 rustflags = ["--cfg", "tokio_unstable"]
-
-# Workaround for omicron's bootstore transitive dependency on pq-sys
-[env]
-DEP_PQ_LIBDIRS = "1"
