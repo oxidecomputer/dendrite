@@ -175,8 +175,11 @@ pub fn build(
     args.push(app_path);
     println!("op: {args:?}");
 
-    if !Command::new(&p4c_path).args(&args).status()?.success() {
-        return Err(anyhow!("p4 build failed"));
+    let out = Command::new(&p4c_path).args(&args).output()?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() {
+        return Err(anyhow!("p4 build failed: {stdout} {stderr}"));
     }
 
     let config = P4Config::new(&app_name, "tofino2");

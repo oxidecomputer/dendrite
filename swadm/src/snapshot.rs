@@ -85,12 +85,10 @@ pub enum Snapshot {
 
 /// Parse a trigger spec: "field=value/mask" where value and mask are hex.
 fn parse_trigger(s: &str) -> Result<types::SnapshotTrigger> {
-    let (field, rest) = s
-        .split_once('=')
-        .context("expected field=value/mask")?;
-    let (val_str, mask_str) = rest
-        .split_once('/')
-        .context("expected value/mask after =")?;
+    let (field, rest) =
+        s.split_once('=').context("expected field=value/mask")?;
+    let (val_str, mask_str) =
+        rest.split_once('/').context("expected value/mask after =")?;
     Ok(types::SnapshotTrigger {
         field: field.trim().to_string(),
         value: val_str.trim().to_string(),
@@ -147,18 +145,9 @@ pub async fn snapshot_cmd(client: &Client, cmd: Snapshot) -> Result<()> {
 
             for stage in &result.stages {
                 println!("\n--- stage {} ---", stage.stage_id);
-                println!(
-                    "  local_trigger: {}",
-                    stage.local_stage_trigger
-                );
-                println!(
-                    "  prev_trigger:  {}",
-                    stage.prev_stage_trigger
-                );
-                println!(
-                    "  timer_trigger: {}",
-                    stage.timer_trigger
-                );
+                println!("  local_trigger: {}", stage.local_stage_trigger);
+                println!("  prev_trigger:  {}", stage.prev_stage_trigger);
+                println!("  timer_trigger: {}", stage.timer_trigger);
                 println!("  next_table:    {}", stage.next_table);
                 if stage.ingress_dp_error {
                     println!("  INGRESS DATAPATH ERROR");
@@ -169,8 +158,7 @@ pub async fn snapshot_cmd(client: &Client, cmd: Snapshot) -> Result<()> {
 
                 for tbl in &stage.tables {
                     let status = if tbl.hit { "HIT" } else { "miss" };
-                    let extra =
-                        if tbl.inhibited { " [inhibited]" } else { "" };
+                    let extra = if tbl.inhibited { " [inhibited]" } else { "" };
                     println!(
                         "  table: {} -> {status}{extra} (addr={:#x})",
                         tbl.name, tbl.match_hit_address,
@@ -190,13 +178,7 @@ pub async fn snapshot_cmd(client: &Client, cmd: Snapshot) -> Result<()> {
             println!("\nsnapshot complete.");
         }
 
-        Snapshot::Scope {
-            stage,
-            dir,
-            pipe,
-            fields,
-            trigger,
-        } => {
+        Snapshot::Scope { stage, dir, pipe, fields, trigger } => {
             let kind = if trigger { "trigger" } else { "capture" };
             println!("field {kind} scope at stage {stage} ({dir:?}):\n");
 

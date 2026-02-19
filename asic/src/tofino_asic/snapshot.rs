@@ -60,10 +60,10 @@ pub enum PipeState {
 impl PipeState {
     fn from_raw(v: u32) -> Self {
         match v {
-            0 => PipeState::Passive,      // PIPE_SNAPSHOT_FSM_ST_PASSIVE
-            1 => PipeState::Armed,         // PIPE_SNAPSHOT_FSM_ST_ARMED
-            2 => PipeState::TriggerHappy,  // PIPE_SNAPSHOT_FSM_ST_TRIGGER_HAPPY
-            3 => PipeState::Full,          // PIPE_SNAPSHOT_FSM_ST_FULL
+            0 => PipeState::Passive, // PIPE_SNAPSHOT_FSM_ST_PASSIVE
+            1 => PipeState::Armed,   // PIPE_SNAPSHOT_FSM_ST_ARMED
+            2 => PipeState::TriggerHappy, // PIPE_SNAPSHOT_FSM_ST_TRIGGER_HAPPY
+            3 => PipeState::Full,    // PIPE_SNAPSHOT_FSM_ST_FULL
             other => PipeState::Unknown(other),
         }
     }
@@ -123,13 +123,8 @@ pub fn snapshot_create(
 }
 
 /// Delete a snapshot.
-pub fn snapshot_delete(
-    _hdl: &Handle,
-    snap_hdl: SnapshotHdl,
-) -> AsicResult<()> {
-    unsafe {
-        bf_snapshot_delete(snap_hdl).check_error("bf_snapshot_delete")
-    }
+pub fn snapshot_delete(_hdl: &Handle, snap_hdl: SnapshotHdl) -> AsicResult<()> {
+    unsafe { bf_snapshot_delete(snap_hdl).check_error("bf_snapshot_delete") }
 }
 
 /// Arm a snapshot (enable it and begin waiting for a trigger).
@@ -165,16 +160,13 @@ pub fn snapshot_state_get(
         )
         .check_error("bf_snapshot_state_get")?;
     }
-    Ok((0..size as usize)
-        .map(|i| PipeState::from_raw(fsm_raw[i]))
-        .collect())
+    Ok((0..size as usize).map(|i| PipeState::from_raw(fsm_raw[i])).collect())
 }
 
 /// Poll for triggered snapshots (drives the FSM).
 pub fn snapshot_poll(hdl: &Handle) -> AsicResult<()> {
     unsafe {
-        bf_snapshot_do_polling(hdl.dev_id)
-            .check_error("bf_snapshot_do_polling")
+        bf_snapshot_do_polling(hdl.dev_id).check_error("bf_snapshot_do_polling")
     }
 }
 
@@ -335,11 +327,7 @@ pub fn snapshot_decode_field(
         .check_error(&format!("decode_field({field})"))?;
     }
 
-    if valid {
-        Ok(Some(buf[..width as usize].to_vec()))
-    } else {
-        Ok(None)
-    }
+    if valid { Ok(Some(buf[..width as usize].to_vec())) } else { Ok(None) }
 }
 
 /// Check if a field is in scope for capture at a given stage.
@@ -402,7 +390,5 @@ fn c_char_array_to_string(arr: &[c_char]) -> String {
     let ptr = arr.as_ptr();
     // Safety: the array comes from the SDE which NUL-terminates its strings,
     // and we bound the search to the array length.
-    unsafe { CStr::from_ptr(ptr) }
-        .to_string_lossy()
-        .into_owned()
+    unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned()
 }
