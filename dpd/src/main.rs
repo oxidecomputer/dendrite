@@ -284,6 +284,9 @@ impl Switch {
         let route_data = route::init(&log);
         let mac_mgmt = Mutex::new(macaddrs::MacManagement::new(&log));
 
+        #[cfg(feature = "tofino_asic")]
+        run_interrupt_monitor(log.clone());
+
         let ws_log = log.new(slog::o!("unit" => "workflow_server"));
         let workflow_server = rpw::WorkflowServer::new(ws_log);
 
@@ -809,4 +812,11 @@ async fn run_dpd(opt: Opt) -> anyhow::Result<()> {
         info!(switch.log, "running as stub to support p4 program: {p4_name}");
         stub_main(switch).await
     }
+}
+
+#[cfg(feature = "tofino_asic")]
+fn run_interrupt_monitor(log: slog::Logger) {
+    std::thread::spawn(move || {
+        asic::tofino_asic::interrupt_monitor::monitor_interrupts(log);
+    });
 }

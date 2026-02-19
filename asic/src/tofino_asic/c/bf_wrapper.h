@@ -43,4 +43,46 @@ struct driver_version {
 	uint32_t patch;
 };
 
+bf_status_t
+lld_enable_all_ints(
+  bf_dev_id_t dev_id,
+  bf_subdev_id_t subdev_id
+);
+
+bf_status_t
+lld_dump_new_ints(
+  bf_dev_id_t dev_id,
+  bf_subdev_id_t subdev_id
+);
+
+bf_status_t
+lld_int_poll(
+  bf_dev_id_t dev_id,
+  bf_subdev_id_t subdev_id,
+  bool all_ints
+);
+
+bf_status_t
+bf_err_interrupt_handling_mode_set(
+  bf_dev_id_t dev_id,
+  bool enable
+);
+
+pipe_status_t
+pipe_mgr_tcam_scrub_timer_set(
+  bf_dev_id_t dev,
+  uint32_t msec_timer
+);
+
+uint32_t
+pipe_mgr_tcam_scrub_timer_get(
+  bf_dev_id_t dev
+);
+
+bool
+pipe_mgr_is_device_locked(
+  bf_dev_id_t dev_id
+);
+
+
 #endif /* BF_WRAPPER_H */

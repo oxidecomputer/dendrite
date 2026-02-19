@@ -17,6 +17,7 @@ use common::ports::*;
 mod bf_wrapper;
 mod genpd;
 
+pub mod interrupt_monitor;
 mod link_fsm;
 #[cfg(feature = "multicast")]
 pub mod mcast;
