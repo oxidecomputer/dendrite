@@ -159,7 +159,6 @@ pub fn build(
         "tofino2".to_string(),
         "--arch".to_string(),
         "default".to_string(),
-        "--enable-bf-asm".to_string(),
         "--create-graphs".to_string(),
         "-I".to_string(),
         src_dir.clone(),
