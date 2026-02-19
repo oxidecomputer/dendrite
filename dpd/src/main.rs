@@ -401,6 +401,7 @@ impl Switch {
     pub fn table_dump<M: MatchParse, A: ActionParse>(
         &self,
         t: table::TableType,
+        from_hardware: bool,
     ) -> DpdResult<dpd_types::views::Table> {
         let t = self.table_get(t)?;
 
@@ -408,7 +409,7 @@ impl Switch {
             name: t.name.to_string(),
             size: t.usage.size as usize,
             entries: t
-                .get_entries::<M, A>(&self.asic_hdl)
+                .get_entries::<M, A>(&self.asic_hdl, from_hardware)
                 .map_err(|e| {
                     error!(self.log, "failed to get table contents";
 	            "table" => t.name.to_string(),

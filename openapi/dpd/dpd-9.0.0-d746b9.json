@@ -206,40 +206,6 @@
         }
       }
     },
-    "/asic-table/dump": {
-      "post": {
-        "summary": "Dump all entries from a P4 table, optionally reading from hardware.",
-        "operationId": "table_dump_asic",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TableDumpRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "successful operation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TableDumpResult"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/attached_subnet": {
       "get": {
         "summary": "Get all of the external subnets with internal mappings",
@@ -5481,6 +5447,14 @@
         "operationId": "table_dump",
         "parameters": [
           {
+            "in": "query",
+            "name": "from_hardware",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "in": "path",
             "name": "table",
             "required": true,
@@ -9963,89 +9937,6 @@
         "required": [
           "data",
           "keys"
-        ]
-      },
-      "TableDumpEntry": {
-        "description": "A single entry from a table dump.",
-        "type": "object",
-        "properties": {
-          "action": {
-            "type": "string"
-          },
-          "match_fields": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TableDumpKeyField"
-            }
-          }
-        },
-        "required": [
-          "action",
-          "match_fields"
-        ]
-      },
-      "TableDumpKeyField": {
-        "description": "A key field from a table entry dump.",
-        "type": "object",
-        "properties": {
-          "mask": {
-            "nullable": true,
-            "description": "For ternary fields: the mask.  For LPM: the prefix length.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "value": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "value"
-        ]
-      },
-      "TableDumpRequest": {
-        "description": "Request body for dumping table entries.",
-        "type": "object",
-        "properties": {
-          "from_hw": {
-            "description": "If true, read entries from ASIC hardware via indirect register reads instead of the SDE's software shadow.",
-            "type": "boolean"
-          },
-          "table_name": {
-            "description": "Fully-qualified P4 table name (e.g. \"Ingress.services.service\").",
-            "type": "string"
-          }
-        },
-        "required": [
-          "from_hw",
-          "table_name"
-        ]
-      },
-      "TableDumpResult": {
-        "description": "Result of a table dump operation.",
-        "type": "object",
-        "properties": {
-          "entries": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TableDumpEntry"
-            }
-          },
-          "num_entries": {
-            "type": "integer",
-            "format": "uint",
-            "minimum": 0
-          },
-          "table_name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "entries",
-          "num_entries",
-          "table_name"
         ]
       },
       "TableEntry": {

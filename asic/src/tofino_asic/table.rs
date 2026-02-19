@@ -61,6 +61,7 @@ pub trait TofinoTableOps {
         hdl: &Handle,
         last_key: Option<KeyHdl>,
         max: usize,
+        from_hardware: bool,
     ) -> AsicResult<(Vec<KeyHdl>, Vec<DataHdl>)>;
 }
 
@@ -613,6 +614,7 @@ impl TofinoTableOps for Table {
         hdl: &Handle,
         last_key: Option<KeyHdl>,
         mut max: usize,
+        from_hardware: bool,
     ) -> AsicResult<(Vec<KeyHdl>, Vec<DataHdl>)> {
         if last_key.is_none() {
             max = 1;
@@ -654,7 +656,7 @@ impl TofinoTableOps for Table {
                     data_hdls.as_mut_ptr(),
                     max as u32,
                     &mut n,
-                    0, // read from cache
+                    if from_hardware { 1 } else { 0 },
                 )
             } {
                 // If the table isn't full, we can get an BF_OBJECT_NOT_FOUND error
@@ -808,12 +810,14 @@ impl aal::TableOps<Handle> for Table {
     fn get_entries<M: MatchParse, A: ActionParse>(
         &self,
         hdl: &Handle,
+        from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>> {
         let mut last_key: Option<KeyHdl> = None;
         let mut rval = Vec::new();
 
         loop {
-            let (mut keys, data) = self.entries_get(hdl, last_key, 256)?;
+            let (mut keys, data) =
+                self.entries_get(hdl, last_key, 256, from_hardware)?;
             assert_eq!(keys.len(), data.len());
 
             if keys.is_empty() {
@@ -863,7 +867,8 @@ impl aal::TableOps<Handle> for Table {
         let mut values: Vec<(M, CounterData)> = Vec::new();
         let mut last_key: Option<KeyHdl> = None;
         loop {
-            let (mut keys, data) = self.entries_get(hdl, last_key, 256)?;
+            let (mut keys, data) =
+                self.entries_get(hdl, last_key, 256, false)?;
             assert_eq!(keys.len(), data.len());
             if keys.is_empty() {
                 break;
@@ -879,151 +884,5 @@ impl aal::TableOps<Handle> for Table {
         }
 
         Ok(values)
-    }
-}
-
-/// A single entry from a table dump, containing key fields and action name.
-#[derive(Debug)]
-pub struct DumpEntry {
-    pub match_fields: Vec<DumpField>,
-    pub action: String,
-}
-
-/// A key field from a table dump.
-#[derive(Debug)]
-pub struct DumpField {
-    pub name: String,
-    pub value: String,
-    pub mask: Option<String>,
-}
-
-/// Read all entries from a named table, optionally from hardware.
-///
-/// When `from_hw` is true, the SDE reads actual TCAM/SRAM memory via
-/// `lld_ind_read` instead of returning its software shadow.  This lets
-/// us verify that entries were correctly programmed to the ASIC.
-pub fn dump_table(
-    hdl: &Handle,
-    table_name: &str,
-    from_hw: bool,
-) -> AsicResult<Vec<DumpEntry>> {
-    let table = <Table as aal::TableOps<Handle>>::new(hdl, table_name)?;
-    let flags: u32 = if from_hw { 1 } else { 0 }; // BF_RT_FROM_HW = bit 0
-
-    let mut results = Vec::new();
-    let mut last_key: Option<KeyHdl> = None;
-
-    loop {
-        // Allocate handles for this batch.
-        let batch_size = if last_key.is_none() { 1 } else { 64 };
-        let mut keys = Vec::with_capacity(batch_size);
-        let mut key_hdls = Vec::with_capacity(batch_size);
-        let mut data = Vec::with_capacity(batch_size);
-        let mut data_hdls = Vec::with_capacity(batch_size);
-
-        for _ in 0..batch_size {
-            let k = KeyHdl::new(&table)?;
-            key_hdls.push(k.key_hdl);
-            keys.push(k);
-
-            let d = DataHdl::new(&table, None)?;
-            data_hdls.push(d.data_hdl);
-            data.push(d);
-        }
-
-        let bf = hdl.bf_get();
-        let n = if let Some(ref lk) = last_key {
-            let mut n = 0u32;
-            match unsafe {
-                bf_rt_table_entry_get_next_n(
-                    table.rt_hdl,
-                    bf.rt_sess,
-                    &TGT,
-                    lk.key_hdl,
-                    key_hdls.as_mut_ptr(),
-                    data_hdls.as_mut_ptr(),
-                    batch_size as u32,
-                    &mut n,
-                    flags,
-                )
-            } {
-                bf_wrapper::BF_OBJECT_NOT_FOUND | bf_wrapper::BF_SUCCESS => n,
-                err => {
-                    err.check_error("dump_table get_next_n")?;
-                    0
-                }
-            }
-        } else {
-            match unsafe {
-                bf_rt_table_entry_get_first(
-                    table.rt_hdl,
-                    bf.rt_sess,
-                    &TGT,
-                    key_hdls[0],
-                    data_hdls[0],
-                    flags,
-                )
-            } {
-                bf_wrapper::BF_OBJECT_NOT_FOUND => 0,
-                bf_wrapper::BF_SUCCESS => 1,
-                err => {
-                    err.check_error("dump_table get_first")?;
-                    0
-                }
-            }
-        };
-        drop(bf);
-
-        keys.truncate(n as usize);
-        data.truncate(n as usize);
-
-        if keys.is_empty() {
-            break;
-        }
-
-        for i in 0..keys.len() {
-            let match_data = keys[i].to_matchdata(&table)?;
-            let action_data = data[i].to_actiondata(&table)?;
-
-            let match_fields = match_data
-                .fields
-                .iter()
-                .map(|f| {
-                    let (value, mask) = match &f.value {
-                        MatchEntryValue::Value(v) => (format_value(v), None),
-                        MatchEntryValue::Mask(m) => (
-                            format!("0x{:x}", m.val),
-                            Some(format!("0x{:x}", m.mask)),
-                        ),
-                        MatchEntryValue::Lpm(l) => (
-                            format_value(&l.prefix),
-                            Some(format!("/{}", l.len)),
-                        ),
-                        MatchEntryValue::Range(r) => (
-                            format!("0x{:x}", r.low),
-                            Some(format!("0x{:x}", r.high)),
-                        ),
-                    };
-                    DumpField { name: f.name.clone(), value, mask }
-                })
-                .collect();
-
-            results
-                .push(DumpEntry { match_fields, action: action_data.action });
-        }
-
-        last_key = keys.pop();
-    }
-
-    Ok(results)
-}
-
-fn format_value(v: &ValueTypes) -> String {
-    match v {
-        ValueTypes::U64(u) => format!("0x{u:x}"),
-        ValueTypes::Ptr(p) => {
-            let hex: String = p.iter().map(|b| format!("{b:02x}")).collect();
-            format!("0x{hex}")
-        }
     }
 }

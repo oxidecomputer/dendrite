@@ -708,7 +708,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
     // Check the bitmap table to see if VLAN 42 is properly set (this is where VLAN matters for P4)
     let bitmap_table = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should clean up internal group")
         .into_inner();
@@ -3481,7 +3481,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     // Note: Only IPv6 has a replication table; IPv4 uses different mechanisms
     let ipv6_repl_table_before = switch
         .client
-        .table_dump("pipe.Ingress.mcast_ingress.mcast_replication_ipv6")
+        .table_dump("pipe.Ingress.mcast_ingress.mcast_replication_ipv6", false)
         .await
         .expect("Should be able to dump IPv6 replication table");
 
@@ -3493,13 +3493,13 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     // Check route tables
     let ipv4_route_table_before = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
         .await
         .expect("Should be able to dump IPv4 route table");
 
     let ipv6_route_table_before = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl")
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl", false)
         .await
         .expect("Should be able to dump IPv6 route table");
 
@@ -3515,13 +3515,13 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     // Check NAT tables
     let ipv4_nat_table_before = switch
         .client
-        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast", false)
         .await
         .expect("Should be able to dump IPv4 NAT table");
 
     let ipv6_nat_table_before = switch
         .client
-        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv6_mcast")
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv6_mcast", false)
         .await
         .expect("Should be able to dump IPv6 NAT table");
 
@@ -3537,13 +3537,19 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     // Check source filter tables
     let ipv4_src_filter_table_before = switch
         .client
-        .table_dump("pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4")
+        .table_dump(
+            "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4",
+            false,
+        )
         .await
         .expect("Should be able to dump IPv4 source filter table");
 
     let ipv6_src_filter_table_before = switch
         .client
-        .table_dump("pipe.Ingress.mcast_ingress.mcast_source_filter_ipv6")
+        .table_dump(
+            "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv6",
+            false,
+        )
         .await
         .expect("Should be able to dump IPv6 source filter table");
 
@@ -3569,7 +3575,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     // Note: Only IPv6 has a replication table; IPv4 uses different mechanisms
     let ipv6_repl_table_after = switch
         .client
-        .table_dump("pipe.Ingress.mcast_ingress.mcast_replication_ipv6")
+        .table_dump("pipe.Ingress.mcast_ingress.mcast_replication_ipv6", false)
         .await
         .expect("Should be able to dump IPv6 replication table");
 
@@ -3581,13 +3587,13 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     // Check route tables after reset
     let ipv4_route_table_after = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
         .await
         .expect("Should be able to dump IPv4 route table");
 
     let ipv6_route_table_after = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl")
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl", false)
         .await
         .expect("Should be able to dump IPv6 route table");
 
@@ -3603,13 +3609,13 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     // Check NAT tables after reset
     let ipv4_nat_table_after = switch
         .client
-        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast", false)
         .await
         .expect("Should be able to dump IPv4 NAT table");
 
     let ipv6_nat_table_after = switch
         .client
-        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv6_mcast")
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv6_mcast", false)
         .await
         .expect("Should be able to dump IPv6 NAT table");
 
@@ -3625,13 +3631,19 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     // Check source filter tables after reset
     let ipv4_src_filter_table_after = switch
         .client
-        .table_dump("pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4")
+        .table_dump(
+            "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4",
+            false,
+        )
         .await
         .expect("Should be able to dump IPv4 source filter table");
 
     let ipv6_src_filter_table_after = switch
         .client
-        .table_dump("pipe.Ingress.mcast_ingress.mcast_source_filter_ipv6")
+        .table_dump(
+            "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv6",
+            false,
+        )
         .await
         .expect("Should be able to dump IPv6 source filter table");
 
@@ -4521,7 +4533,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     // Verify bitmap table is initially empty for both group IDs
     let bitmap_table_initial = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should be able to dump bitmap table initially");
     // Should have no bitmap entries when groups are empty
@@ -4672,7 +4684,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     // Verify bitmap table now has entry for external group ID only (1 entry with bitmap of 2 ports)
     let bitmap_table_with_members = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should be able to dump bitmap table with members");
     assert_eq!(
@@ -4724,7 +4736,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     // Verify bitmap table is empty again after removing all members
     let bitmap_table_final = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should be able to dump bitmap table after emptying");
     // Should have no bitmap entries when group is empty again
@@ -4875,7 +4887,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     // Verify bitmap table is initially empty for both group IDs
     let bitmap_table_initial = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should be able to dump bitmap table initially");
     // Should have no bitmap entries when groups are empty
@@ -5025,7 +5037,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     // Verify bitmap table now has entry for external group ID only (underlay doesn't need decap bitmap)
     let bitmap_table_with_members = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should be able to dump bitmap table with members");
     // Should have bitmap entry for external group ID only (underlay doesn't need decap bitmap)
@@ -5077,7 +5089,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     // Verify bitmap table is empty again after removing all members
     let bitmap_table_final = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should be able to dump bitmap table after emptying");
     // Should have no bitmap entries when group is empty again
@@ -5143,17 +5155,17 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
     // Get initial table states
     let initial_route_table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
         .await
         .expect("Should be able to dump route table");
     let initial_nat_table = switch
         .client
-        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast", false)
         .await
         .expect("Should be able to dump NAT table");
     let initial_bitmap_table = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should be able to dump bitmap table");
     let initial_src_filter_table = switch
@@ -5225,7 +5237,7 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
     // Table states should be unchanged
     let post_route_table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
         .await
         .expect("Should be able to dump route table");
 
@@ -5237,7 +5249,7 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
 
     let post_nat_table = switch
         .client
-        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast", false)
         .await
         .expect("Should be able to dump NAT table");
 
@@ -5249,7 +5261,7 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
 
     let post_bitmap_table = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should be able to dump bitmap table");
 
@@ -5426,7 +5438,7 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
     // Get initial NAT table state
     let initial_nat_table = switch
         .client
-        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast", false)
         .await
         .expect("Should be able to dump NAT table");
 
@@ -5492,7 +5504,7 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
     // Verify NAT table state is unchanged
     let post_nat_table = switch
         .client
-        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast", false)
         .await
         .expect("Should be able to dump NAT table");
 
@@ -5541,7 +5553,7 @@ async fn test_multicast_rollback_vlan_propagation_consistency() {
     // Get initial bitmap table state
     let _initial_bitmap_table = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should be able to dump bitmap table");
 
@@ -5562,12 +5574,12 @@ async fn test_multicast_rollback_vlan_propagation_consistency() {
     // Get initial table states before attempting creation
     let initial_route_table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
         .await
         .expect("Should be able to dump route table");
     let initial_bitmap_table = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should be able to dump bitmap table");
 
@@ -5594,12 +5606,12 @@ async fn test_multicast_rollback_vlan_propagation_consistency() {
     // Verify rollback worked - tables should remain unchanged
     let post_route_table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
         .await
         .expect("Should be able to dump route table after rollback");
     let post_bitmap_table = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should be able to dump bitmap table after rollback");
 
@@ -5685,7 +5697,10 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
     // Get initial source filter table state
     let initial_src_table = switch
         .client
-        .table_dump("pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4")
+        .table_dump(
+            "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4",
+            false,
+        )
         .await
         .expect("Should be able to dump source filter table");
 
@@ -5737,7 +5752,10 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
     // Verify source filter table is back to initial state (rollback worked)
     let post_rollback_src_table = switch
         .client
-        .table_dump("pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4")
+        .table_dump(
+            "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4",
+            false,
+        )
         .await
         .expect("Should be able to dump source filter table after rollback");
 
@@ -5898,17 +5916,17 @@ async fn test_multicast_rollback_table_operation_failure() {
     // Get table states after internal group deletion but before external group attempt
     let initial_route_table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
         .await
         .expect("Should be able to dump route table");
     let initial_nat_table = switch
         .client
-        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast", false)
         .await
         .expect("Should be able to dump NAT table");
     let initial_bitmap_table = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should be able to dump bitmap table");
 
@@ -5945,19 +5963,19 @@ async fn test_multicast_rollback_table_operation_failure() {
     // Verify table rollback worked - all tables should be unchanged
     let post_route_table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
         .await
         .expect("Should be able to dump route table after rollback");
 
     let post_nat_table = switch
         .client
-        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast", false)
         .await
         .expect("Should be able to dump NAT table after rollback");
 
     let post_bitmap_table = switch
         .client
-        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
+        .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
         .await
         .expect("Should be able to dump bitmap table after rollback");
 
