@@ -92,11 +92,9 @@ fn client_error(message: impl ToString) -> HttpError {
     )
 }
 
+#[cfg(feature = "tofino_asic")]
 fn parse_hex_bytes(s: &str) -> Result<Vec<u8>, String> {
-    let s = s
-        .strip_prefix("0x")
-        .or_else(|| s.strip_prefix("0X"))
-        .unwrap_or(s);
+    let s = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
     // Pad to even length so we can decode full bytes.
     let padded = if !s.len().is_multiple_of(2) {
         format!("0{s}")
@@ -106,8 +104,7 @@ fn parse_hex_bytes(s: &str) -> Result<Vec<u8>, String> {
     (0..padded.len())
         .step_by(2)
         .map(|i| {
-            u8::from_str_radix(&padded[i..i + 2], 16)
-                .map_err(|e| e.to_string())
+            u8::from_str_radix(&padded[i..i + 2], 16).map_err(|e| e.to_string())
         })
         .collect()
 }
@@ -2877,7 +2874,11 @@ impl DpdApi for DpdApiImpl {
                     ))
                 })?;
                 snapshot::snapshot_add_trigger(
-                    hdl, snap_hdl, &trig.field, &value, &mask,
+                    hdl,
+                    snap_hdl,
+                    &trig.field,
+                    &value,
+                    &mask,
                 )
                 .map_err(|e| HttpError::from(DpdError::from(e)))?;
             }
@@ -2898,8 +2899,7 @@ impl DpdApi for DpdApiImpl {
                 // writes the FSM state to index 0 of the output array
                 // regardless of which pipe was specified.  Check all
                 // entries so this works for any pipe value.
-                if states.contains(&snapshot::PipeState::Full)
-                {
+                if states.contains(&snapshot::PipeState::Full) {
                     break;
                 }
                 if start.elapsed() > timeout {
@@ -2911,9 +2911,8 @@ impl DpdApi for DpdApiImpl {
             }
 
             // Read captured data.
-            let mut cap =
-                snapshot::snapshot_capture(hdl, snap_hdl, req.pipe)
-                    .map_err(|e| HttpError::from(DpdError::from(e)))?;
+            let mut cap = snapshot::snapshot_capture(hdl, snap_hdl, req.pipe)
+                .map_err(|e| HttpError::from(DpdError::from(e)))?;
 
             // Build stage results with decoded fields.
             let mut stages = Vec::new();
@@ -2946,12 +2945,10 @@ impl DpdApi for DpdApiImpl {
                     fields.push(SnapshotFieldValue {
                         name: field_name.clone(),
                         value: val.map(|v| {
-                        let hex: String = v
-                            .iter()
-                            .map(|b| format!("{b:02x}"))
-                            .collect();
-                        format!("0x{hex}")
-                    }),
+                            let hex: String =
+                                v.iter().map(|b| format!("{b:02x}")).collect();
+                            format!("0x{hex}")
+                        }),
                     });
                 }
 
@@ -3005,10 +3002,9 @@ impl DpdApi for DpdApiImpl {
 
         // Create a temporary snapshot to initialize the internal field
         // dictionary in the SDE.
-        let snap_hdl = snapshot::snapshot_create(
-            hdl, req.pipe, req.stage, req.stage, dir,
-        )
-        .map_err(|e| HttpError::from(DpdError::from(e)))?;
+        let snap_hdl =
+            snapshot::snapshot_create(hdl, req.pipe, req.stage, req.stage, dir)
+                .map_err(|e| HttpError::from(DpdError::from(e)))?;
 
         let result = (|| -> Result<Vec<SnapshotFieldScope>, HttpError> {
             let mut results = Vec::new();
@@ -3045,6 +3041,22 @@ impl DpdApi for DpdApiImpl {
             None,
             "not implemented for this asic".to_string(),
         ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn table_dump_asic(
+        _rqctx: RequestContext<Self::Context>,
+        _body: TypedBody<TableDumpRequest>,
+    ) -> Result<HttpResponseOk<TableDumpResult>, HttpError> {
+        todo!()
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn table_dump_asic(
+        _rqctx: RequestContext<Self::Context>,
+        _body: TypedBody<TableDumpRequest>,
+    ) -> Result<HttpResponseOk<TableDumpResult>, HttpError> {
+        todo!()
     }
 }
 

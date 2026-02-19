@@ -2542,6 +2542,17 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         body: TypedBody<SnapshotScopeRequest>,
     ) -> Result<HttpResponseOk<Vec<SnapshotFieldScope>>, HttpError>;
+
+    /// Dump all entries from a P4 table, optionally reading from hardware.
+    #[endpoint {
+        method = POST,
+        path = "/table/dump",
+        versions = VERSION_SNAPSHOT..
+    }]
+    async fn table_dump_asic(
+        rqctx: RequestContext<Self::Context>,
+        body: TypedBody<TableDumpRequest>,
+    ) -> Result<HttpResponseOk<TableDumpResult>, HttpError>;
 }
 
 /// Parameter used to create a port.
@@ -3466,4 +3477,38 @@ pub struct SnapshotScopeRequest {
 pub struct SnapshotFieldScope {
     pub field: String,
     pub in_scope: bool,
+}
+
+/// Request body for dumping table entries.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TableDumpRequest {
+    /// Fully-qualified P4 table name (e.g. "Ingress.services.service").
+    pub table_name: String,
+    /// If true, read entries from ASIC hardware via indirect register
+    /// reads instead of the SDE's software shadow.
+    pub from_hw: bool,
+}
+
+/// A key field from a table entry dump.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TableDumpKeyField {
+    pub name: String,
+    pub value: String,
+    /// For ternary fields: the mask.  For LPM: the prefix length.
+    pub mask: Option<String>,
+}
+
+/// A single entry from a table dump.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TableDumpEntry {
+    pub action: String,
+    pub match_fields: Vec<TableDumpKeyField>,
+}
+
+/// Result of a table dump operation.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TableDumpResult {
+    pub table_name: String,
+    pub num_entries: usize,
+    pub entries: Vec<TableDumpEntry>,
 }
