@@ -182,3 +182,12 @@ bf_snapshot_trigger_field_in_scope
 bf_snapshot_do_polling
 bf_snapshot_entry_params_get
 bf_snapshot_handle_get
+
+# Interrupt management
+lld_enable_all_ints
+lld_dump_new_ints
+lld_int_poll
+bf_err_interrupt_handling_mode_set
+pipe_mgr_is_device_locked
+pipe_mgr_tcam_scrub_timer_set
+pipe_mgr_tcam_scrub_timer_get
