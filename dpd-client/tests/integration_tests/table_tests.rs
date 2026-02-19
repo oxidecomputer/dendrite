@@ -20,9 +20,6 @@ use dpd_client::types;
 
 use crate::integration_tests::common::prelude::*;
 
-/// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
-const ADMIN_LOCAL_PREFIX: u16 = 0xFF04;
-
 // The expected sizes of each table.  The values are copied from constants.p4.
 //
 // Note: Some tables appear to be 1 entry smaller than the p4 code would
@@ -44,8 +41,16 @@ const ADMIN_LOCAL_PREFIX: u16 = 0xFF04;
 // investigating. If it only changes by an entry or two, it's fine to just
 // adjust the constant below to match the observed result.
 //
-const IPV4_LPM_SIZE: usize = 8188; // ipv4 forwarding table
+#[cfg(feature = "multicast")]
+const IPV4_LPM_SIZE: usize = 7164; // ipv4 forwarding table
+#[cfg(not(feature = "multicast"))]
+const IPV4_LPM_SIZE: usize = 8187; // ipv4 forwarding table
+
+#[cfg(feature = "multicast")]
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
+#[cfg(not(feature = "multicast"))]
+const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
+
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports
 const IPV4_NAT_TABLE_SIZE: usize = 1024; // nat routing table
@@ -54,7 +59,9 @@ const IPV4_ARP_SIZE: usize = 512; // arp cache
 const IPV6_NEIGHBOR_SIZE: usize = 512; // ipv6 neighbor cache
 /// The size of the multicast table related to replication on
 /// admin-local (internal) multicast groups.
+#[cfg(feature = "multicast")]
 const MULTICAST_TABLE_SIZE: usize = 1024;
+#[cfg(feature = "multicast")]
 const MCAST_TAG: &str = "mcast_table_test"; // multicast group tag
 
 // The result of a table insert or delete API operation.
@@ -79,10 +86,20 @@ fn gen_ipv6_cidr(idx: usize) -> Ipv6Net {
 }
 
 // Generates valid IPv6 multicast addresses that are admin-local (scope 4).
+#[cfg(feature = "multicast")]
 fn gen_ipv6_multicast_addr(idx: usize) -> Ipv6Addr {
     // Use admin-local multicast addresses (ff04::/16)
     // This ensures they will be created as internal groups
-    Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, (1000 + idx) as u16)
+    Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        (1000 + idx) as u16,
+    )
 }
 
 // For each table we want to test, we define functions to insert, delete, and
@@ -295,7 +312,16 @@ impl TableTest for types::Ipv4Nat {
         let external_ip = Ipv4Addr::new(192, 168, 0, 1);
 
         let tgt = types::NatTarget {
-            internal_ip: Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 1),
+            internal_ip: Ipv6Addr::new(
+                ADMIN_LOCAL_MULTICAST_PREFIX,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+            ),
             inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             vni: 0.into(),
         };
@@ -373,13 +399,13 @@ impl TableTest for RouteV4 {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
         let route = types::Ipv4RouteUpdate {
             cidr: gen_ipv4_cidr(idx),
-            target: types::Ipv4Route {
+            target: types::RouteTarget::V4(types::Ipv4Route {
                 tag: switch.client.inner().tag.clone(),
                 port_id,
                 link_id,
                 tgt_ip: "10.10.10.1".parse::<Ipv4Addr>().unwrap().into(),
                 vlan_id: None,
-            },
+            }),
             replace: false,
         };
         switch.client.route_ipv4_set(&route).await
@@ -450,9 +476,9 @@ impl TableTest for RouteV6 {
 async fn test_routev6_full() -> TestResult {
     test_table_capacity::<RouteV6, (), ()>(IPV6_LPM_SIZE).await
 }
-
+#[cfg(feature = "multicast")]
 struct MulticastReplicationTableTest {}
-
+#[cfg(feature = "multicast")]
 impl TableTest<types::MulticastGroupUnderlayResponse, ()>
     for MulticastReplicationTableTest
 {
@@ -508,6 +534,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
     }
 }
 
+#[cfg(feature = "multicast")]
 #[tokio::test]
 #[ignore]
 async fn test_multicast_replication_table_full() -> TestResult {

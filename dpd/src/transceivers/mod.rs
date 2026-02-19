@@ -2,11 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Code for operating on QSFP transceiver modules.
 
-// Copyright 2025 Oxide Computer
+// Copyright 2026 Oxide Computer
 
 use crate::types::DpdResult;
 use dpd_types::transceivers::QsfpDevice;

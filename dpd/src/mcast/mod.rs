@@ -63,7 +63,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use aal::{AsicError, AsicOps};
+use aal::{AsicError, AsicMulticastOps};
 use common::{network::NatTarget, ports::PortId};
 use dpd_types::{
     link::LinkId,
@@ -93,6 +93,19 @@ use validate::{
     validate_multicast_address, validate_nat_target,
     validate_not_underlay_subnet, validate_tag, validate_tag_format,
 };
+
+/// Empty source list constant for use with `unwrap_or` when normalizing
+/// `Option<Vec<IpSrc>>`.
+const NO_SOURCES: &[IpSrc] = &[];
+
+/// Convert sources from storage format to slice for table operations.
+///
+/// Treats `None` as an empty slice, which semantically means "any source" in
+/// the context of multicast source filtering. This allows add/remove functions
+/// to handle the `None/empty/Any` trifecta uniformly.
+fn sources_as_slice(sources: &Option<Vec<IpSrc>>) -> &[IpSrc] {
+    sources.as_deref().unwrap_or(NO_SOURCES)
+}
 
 #[derive(Debug)]
 struct ScopedIdInner(MulticastGroupId, Weak<Mutex<Vec<MulticastGroupId>>>);
@@ -260,8 +273,7 @@ impl MulticastGroupData {
     /// Returns a ScopedGroupId that will automatically return the ID to the
     /// free pool when dropped.
     fn generate_group_id(&mut self) -> DpdResult<ScopedGroupId> {
-        let mut pool =
-            self.free_group_ids.lock().expect("group ID pool lock poisoned");
+        let mut pool = self.free_group_ids.lock().unwrap();
         let id = pool.pop().ok_or_else(|| {
             DpdError::ResourceExhausted(
                 "no free multicast group IDs available (exhausted range 100-65534)".to_string(),
@@ -317,7 +329,7 @@ pub(crate) fn add_group_external(
 
     // Acquire the lock to the multicast data structure at the start to ensure
     // deterministic operation order
-    let mut mcast = s.mcast.lock().expect("multicast data lock poisoned");
+    let mut mcast = s.mcast.lock().unwrap();
 
     let nat_target =
         group_info.internal_forwarding.nat_target.ok_or_else(|| {
@@ -399,7 +411,7 @@ pub(crate) fn add_group_external(
         tag,
         int_fwding: group_info.internal_forwarding.clone(),
         ext_fwding: group_info.external_forwarding.clone(),
-        sources: normalize_sources(group_info.sources.clone()),
+        sources: canonicalize_sources(group_info.sources.clone()),
         replication_info: None,
         // External groups are entry points only - actual members reside in referenced internal groups
         members: Vec::new(),
@@ -424,7 +436,7 @@ pub(crate) fn add_group_internal(
 
     // Acquire the lock to the multicast data structure at the start to ensure
     // deterministic operation order
-    let mut mcast = s.mcast.lock().expect("multicast data lock poisoned");
+    let mut mcast = s.mcast.lock().unwrap();
 
     validate_internal_group_creation(&mcast, group_ip)?;
 
@@ -544,7 +556,7 @@ pub(crate) fn del_group(
     group_ip: IpAddr,
     tag: &str,
 ) -> DpdResult<()> {
-    let mut mcast = s.mcast.lock().expect("multicast data lock poisoned");
+    let mut mcast = s.mcast.lock().unwrap();
 
     // Check if this is an internal group referenced by an external group.
     // Internal groups are identified by admin-scoped IPv6 addresses (ff04::/16).
@@ -598,7 +610,7 @@ pub(crate) fn get_group_internal(
     s: &Switch,
     admin_local: UnderlayMulticastIpv6,
 ) -> DpdResult<MulticastGroupUnderlayResponse> {
-    let mcast = s.mcast.lock().expect("multicast data lock poisoned");
+    let mcast = s.mcast.lock().unwrap();
     let group_ip = IpAddr::V6(admin_local.into());
 
     let group = mcast.groups.get(&group_ip).ok_or_else(|| {
@@ -615,7 +627,7 @@ pub(crate) fn get_group(
     s: &Switch,
     group_ip: IpAddr,
 ) -> DpdResult<MulticastGroupResponse> {
-    let mcast = s.mcast.lock().expect("multicast data lock poisoned");
+    let mcast = s.mcast.lock().unwrap();
 
     let group = mcast.groups.get(&group_ip).ok_or_else(|| {
         DpdError::Missing(format!(
@@ -632,7 +644,7 @@ pub(crate) fn modify_group_external(
     tag: &str,
     new_group_info: MulticastGroupUpdateExternalEntry,
 ) -> DpdResult<MulticastGroupExternalResponse> {
-    let mut mcast = s.mcast.lock().expect("multicast data lock poisoned");
+    let mut mcast = s.mcast.lock().unwrap();
 
     // Check existence and validate tag before making any changes
     let existing_group = mcast.groups.get(&group_ip).ok_or_else(|| {
@@ -665,7 +677,8 @@ pub(crate) fn modify_group_external(
     );
 
     // Pre-compute normalized sources for rollback purposes
-    let normalized_sources = normalize_sources(new_group_info.sources.clone());
+    let normalized_sources =
+        canonicalize_sources(new_group_info.sources.clone());
 
     // Try to update external tables first
     if let Err(e) =
@@ -686,9 +699,18 @@ pub(crate) fn modify_group_external(
         let new_internal_ip = nat_target.internal_ip;
 
         if old_internal_ip != new_internal_ip {
-            // Validate both IPs before mutating state to avoid partial updates
-            let old_admin = UnderlayMulticastIpv6::new(old_internal_ip)?;
-            let new_admin = UnderlayMulticastIpv6::new(new_internal_ip)?;
+            // Validate both IPs before mutating state to avoid partial updates.
+            // On error, restore the group entry before returning.
+            let (old_admin, new_admin) = match (
+                UnderlayMulticastIpv6::new(old_internal_ip),
+                UnderlayMulticastIpv6::new(new_internal_ip),
+            ) {
+                (Ok(old), Ok(new)) => (old, new),
+                (Err(e), _) | (_, Err(e)) => {
+                    mcast.groups.insert(group_ip, group_entry);
+                    return Err(DpdError::Invalid(e.to_string()));
+                }
+            };
             mcast.rm_forwarding_refs(old_admin);
             mcast.add_forwarding_refs(group_ip, new_admin);
         }
@@ -701,7 +723,7 @@ pub(crate) fn modify_group_external(
     // VLAN is assigned directly -> Some(x) sets VLAN, None removes VLAN
     updated_group.ext_fwding.vlan_id =
         new_group_info.external_forwarding.vlan_id;
-    updated_group.sources = normalize_sources(
+    updated_group.sources = canonicalize_sources(
         new_group_info.sources.clone().or(updated_group.sources),
     );
 
@@ -774,7 +796,7 @@ pub(crate) fn modify_group_internal(
     tag: &str,
     new_group_info: MulticastGroupUpdateUnderlayEntry,
 ) -> DpdResult<MulticastGroupUnderlayResponse> {
-    let mut mcast = s.mcast.lock().expect("multicast data lock poisoned");
+    let mut mcast = s.mcast.lock().unwrap();
 
     // Check existence and validate tag before making any changes
     let existing_group =
@@ -953,7 +975,7 @@ pub(crate) fn get_range(
     limit: usize,
     tag: Option<&str>,
 ) -> Vec<MulticastGroupResponse> {
-    let mcast = s.mcast.lock().expect("multicast data lock poisoned");
+    let mcast = s.mcast.lock().unwrap();
 
     let lower_bound = match last {
         None => Bound::Unbounded,
@@ -975,7 +997,7 @@ pub(crate) fn get_range(
 /// Reset all multicast groups (and associated routes) for a given tag.
 pub(crate) fn reset_tag(s: &Switch, tag: &str) -> DpdResult<()> {
     let (external_groups, internal_groups) = {
-        let mcast = s.mcast.lock().expect("multicast data lock poisoned");
+        let mcast = s.mcast.lock().unwrap();
         mcast
             .groups
             .iter()
@@ -1014,7 +1036,7 @@ pub(crate) fn reset_untagged(s: &Switch) -> DpdResult<()> {
 
 /// Reset all multicast groups (and associated routes).
 pub(crate) fn reset(s: &Switch) -> DpdResult<()> {
-    let mut mcast = s.mcast.lock().expect("multicast data lock poisoned");
+    let mut mcast = s.mcast.lock().unwrap();
 
     // Destroy ASIC groups
     let group_ids = s.asic_hdl.mc_domains();
@@ -1094,7 +1116,7 @@ fn perform_vlan_propagation(
 fn remove_source_filters(
     s: &Switch,
     group_ip: IpAddr,
-    sources: Option<&[IpSrc]>,
+    sources: &[IpSrc],
 ) -> DpdResult<()> {
     match group_ip {
         IpAddr::V4(ipv4) => remove_ipv4_source_filters(s, ipv4, sources),
@@ -1105,19 +1127,10 @@ fn remove_source_filters(
 fn remove_ipv4_source_filters(
     s: &Switch,
     ipv4: Ipv4Addr,
-    sources: Option<&[IpSrc]>,
+    sources: &[IpSrc],
 ) -> DpdResult<()> {
-    let Some(srcs) = sources else {
-        // No sources means a /0 "any source" entry was added
-        return table::mcast::mcast_src_filter::del_ipv4_entry(
-            s,
-            Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(),
-            ipv4,
-        );
-    };
-
     // If empty or `Any` was present, only a /0 entry was added
-    if srcs.is_empty() || sources_contain_any(srcs) {
+    if sources.is_empty() || sources_contain_any(sources) {
         return table::mcast::mcast_src_filter::del_ipv4_entry(
             s,
             Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(),
@@ -1125,7 +1138,7 @@ fn remove_ipv4_source_filters(
         );
     }
 
-    for src in srcs {
+    for src in sources {
         let prefix = match src {
             IpSrc::Exact(IpAddr::V4(addr)) => Ipv4Net::new(*addr, 32).unwrap(),
             _ => continue,
@@ -1138,19 +1151,10 @@ fn remove_ipv4_source_filters(
 fn remove_ipv6_source_filters(
     s: &Switch,
     ipv6: Ipv6Addr,
-    sources: Option<&[IpSrc]>,
+    sources: &[IpSrc],
 ) -> DpdResult<()> {
-    let Some(srcs) = sources else {
-        // No sources means a ::/0 "any source" entry was added
-        return table::mcast::mcast_src_filter::del_ipv6_entry(
-            s,
-            Ipv6Net::new(Ipv6Addr::UNSPECIFIED, 0).unwrap(),
-            ipv6,
-        );
-    };
-
     // If empty or `Any` was present, only a ::/0 entry was added
-    if srcs.is_empty() || sources_contain_any(srcs) {
+    if sources.is_empty() || sources_contain_any(sources) {
         return table::mcast::mcast_src_filter::del_ipv6_entry(
             s,
             Ipv6Net::new(Ipv6Addr::UNSPECIFIED, 0).unwrap(),
@@ -1158,7 +1162,7 @@ fn remove_ipv6_source_filters(
         );
     }
 
-    for src in srcs {
+    for src in sources {
         let prefix = match src {
             IpSrc::Exact(IpAddr::V6(addr)) => Ipv6Net::new(*addr, 128).unwrap(),
             _ => continue,
@@ -1191,51 +1195,37 @@ fn generate_default_tag(group_ip: IpAddr) -> String {
     format!("{}:{group_ip}", Uuid::new_v4())
 }
 
+/// Canonicalize sources before storage to eliminate semantic ambiguity.
+///
 /// Multiple representations map to "allow any source" in P4:
 /// - `None` (no sources specified)
 /// - `Some([])` (empty source list)
 /// - `Some([IpSrc::Any])` or `Some([..., IpSrc::Any, ...])` (explicit Any)
 ///
-/// This function normalizes all "any source" representations to `None`,
+/// This function canonicalizes all "any source" representations to `None`,
 /// which is what omicron expects for ASM groups. This eliminates semantic
 /// ambiguity and prevents unnecessary P4 table updates when toggling
 /// between equivalent representations.
-fn normalize_sources(sources: Option<Vec<IpSrc>>) -> Option<Vec<IpSrc>> {
+fn canonicalize_sources(sources: Option<Vec<IpSrc>>) -> Option<Vec<IpSrc>> {
     match sources {
         None => None,
         Some(srcs) if srcs.is_empty() || sources_contain_any(&srcs) => None,
-        Some(srcs) => Some(srcs),
+        Some(srcs) => {
+            let deduped: Vec<IpSrc> =
+                srcs.into_iter().collect::<HashSet<_>>().into_iter().collect();
+            Some(deduped)
+        }
     }
 }
 
 fn add_source_filters(
     s: &Switch,
     group_ip: IpAddr,
-    sources: Option<&[IpSrc]>,
+    sources: &[IpSrc],
 ) -> DpdResult<()> {
-    match (sources, group_ip) {
-        // No sources specified: add "any source" entry (0.0.0.0/0 or ::/0)
-        (None, IpAddr::V4(ipv4)) => {
-            table::mcast::mcast_src_filter::add_ipv4_entry(
-                s,
-                Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).unwrap(),
-                ipv4,
-            )
-        }
-        (None, IpAddr::V6(ipv6)) => {
-            table::mcast::mcast_src_filter::add_ipv6_entry(
-                s,
-                Ipv6Net::new(Ipv6Addr::UNSPECIFIED, 0).unwrap(),
-                ipv6,
-            )
-        }
-        // Explicit sources: add the specified filter entries
-        (Some(srcs), IpAddr::V4(ipv4)) => {
-            add_ipv4_source_filters(s, srcs, ipv4)
-        }
-        (Some(srcs), IpAddr::V6(ipv6)) => {
-            add_ipv6_source_filters(s, srcs, ipv6)
-        }
+    match group_ip {
+        IpAddr::V4(ipv4) => add_ipv4_source_filters(s, sources, ipv4),
+        IpAddr::V6(ipv6) => add_ipv6_source_filters(s, sources, ipv6),
     }
 }
 
@@ -1360,7 +1350,7 @@ fn configure_external_tables(
         })?;
 
     // Add source filter entries if needed
-    add_source_filters(s, group_ip, group_info.sources.as_deref())?;
+    add_source_filters(s, group_ip, sources_as_slice(&group_info.sources))?;
 
     // Add NAT entry
     let vlan_id = group_info.external_forwarding.vlan_id;
@@ -1679,8 +1669,8 @@ fn update_group_tables(
     }
 
     if new_sources != old_sources {
-        remove_source_filters(s, group_ip, old_sources.as_deref())?;
-        add_source_filters(s, group_ip, new_sources.as_deref())?;
+        remove_source_filters(s, group_ip, sources_as_slice(old_sources))?;
+        add_source_filters(s, group_ip, sources_as_slice(new_sources))?;
     }
 
     Ok(())
@@ -1693,10 +1683,14 @@ fn update_external_tables(
     new_group_info: &MulticastGroupUpdateExternalEntry,
 ) -> DpdResult<()> {
     // Update sources if they changed (normalize both sides for comparison)
-    let new_sources = normalize_sources(new_group_info.sources.clone());
+    let new_sources = canonicalize_sources(new_group_info.sources.clone());
     if new_sources != group_entry.sources {
-        remove_source_filters(s, group_ip, group_entry.sources.as_deref())?;
-        add_source_filters(s, group_ip, new_sources.as_deref())?;
+        remove_source_filters(
+            s,
+            group_ip,
+            sources_as_slice(&group_entry.sources),
+        )?;
+        add_source_filters(s, group_ip, sources_as_slice(&new_sources))?;
     }
 
     let old_vlan_id = group_entry.ext_fwding.vlan_id;
@@ -1828,7 +1822,11 @@ fn delete_group_tables(
             // Source filters and NAT entries only exist for external groups
             // (which have NAT targets).
             if group.int_fwding.nat_target.is_some() {
-                remove_ipv4_source_filters(s, ipv4, group.sources.as_deref())?;
+                remove_ipv4_source_filters(
+                    s,
+                    ipv4,
+                    sources_as_slice(&group.sources),
+                )?;
                 table::mcast::mcast_nat::del_ipv4_entry(
                     s,
                     ipv4,
@@ -1846,7 +1844,11 @@ fn delete_group_tables(
             // Source filters only exist for external groups (which have
             // NAT targets). Internal groups don't have source filtering.
             if group.int_fwding.nat_target.is_some() {
-                remove_ipv6_source_filters(s, ipv6, group.sources.as_deref())?;
+                remove_ipv6_source_filters(
+                    s,
+                    ipv6,
+                    sources_as_slice(&group.sources),
+                )?;
                 table::mcast::mcast_nat::del_ipv6_entry(
                     s,
                     ipv6,
@@ -2008,8 +2010,14 @@ fn update_fwding_tables(
         )
         .and_then(|_| {
             // Update external bitmap for external members
-            // (only external bitmap entries exist, underlay replication
-            // uses ASIC multicast groups directly)
+            // (only external bitmap entries exist; underlay replication
+            // uses ASIC multicast groups directly).
+            // Skip if no external members to avoid spurious errors
+            // when called during rollback on empty groups.
+            if !members.iter().any(|m| m.direction == Direction::External) {
+                return Ok(());
+            }
+
             let external_port_bitmap =
                 create_port_bitmap(members, Direction::External);
             table::mcast::mcast_egress::update_bitmap_entry(
@@ -2349,19 +2357,19 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_sources() {
+    fn test_canonicalize_sources() {
         // None stays None
-        assert_eq!(normalize_sources(None), None);
+        assert_eq!(canonicalize_sources(None), None);
 
         // Empty vec normalizes to None
-        assert_eq!(normalize_sources(Some(vec![])), None);
+        assert_eq!(canonicalize_sources(Some(vec![])), None);
 
         // Vec with only IpSrc::Any normalizes to None
-        assert_eq!(normalize_sources(Some(vec![IpSrc::Any])), None);
+        assert_eq!(canonicalize_sources(Some(vec![IpSrc::Any])), None);
 
         // Vec with Any mixed with Exact normalizes to None (Any subsumes all)
         assert_eq!(
-            normalize_sources(Some(vec![
+            canonicalize_sources(Some(vec![
                 IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
                 IpSrc::Any,
             ])),
@@ -2374,7 +2382,7 @@ mod tests {
             IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
         ];
         assert_eq!(
-            normalize_sources(Some(exact_sources.clone())),
+            canonicalize_sources(Some(exact_sources.clone())),
             Some(exact_sources)
         );
 
@@ -2383,7 +2391,7 @@ mod tests {
             0x2001, 0xdb8, 0, 0, 0, 0, 0, 1,
         )))];
         assert_eq!(
-            normalize_sources(Some(single_exact.clone())),
+            canonicalize_sources(Some(single_exact.clone())),
             Some(single_exact)
         );
     }

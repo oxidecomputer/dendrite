@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -12,6 +12,8 @@ use tokio::sync::mpsc;
 
 use crate::Identifiers;
 use crate::tofino_common::*;
+#[cfg(feature = "multicast")]
+use aal::AsicMulticastOps;
 use aal::{
     AsicError, AsicOps, AsicResult, Connector, PortHdl, PortUpdate,
     SidecarIdentifiers,
@@ -22,6 +24,7 @@ pub use crate::faux_fsm::FsmState;
 pub use crate::faux_fsm::FsmType;
 pub use crate::faux_fsm::PortFsmState;
 
+#[cfg(feature = "multicast")]
 pub mod mcast;
 pub mod ports;
 pub mod table;
@@ -62,6 +65,77 @@ impl AsicLinkStats {
 
     pub fn stats_per_link() -> usize {
         0
+    }
+}
+
+#[cfg(feature = "multicast")]
+impl AsicMulticastOps for StubHandle {
+    #[cfg(feature = "multicast")]
+    fn mc_domains(&self) -> Vec<u16> {
+        let mc_data = self.mc_data.lock().unwrap();
+        mc_data.domains()
+    }
+    #[cfg(feature = "multicast")]
+    fn mc_port_count(&self, group_id: u16) -> AsicResult<usize> {
+        let mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_count(group_id)
+    }
+    #[cfg(feature = "multicast")]
+    fn mc_port_add(
+        &self,
+        group_id: u16,
+        port: u16,
+        rid: u16,
+        level1_excl_id: u16,
+    ) -> AsicResult<()> {
+        info!(self.log, "adding port {} to multicast group {}", port, group_id);
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_add(group_id, port, rid, level1_excl_id)
+    }
+    #[cfg(feature = "multicast")]
+    fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
+        info!(
+            self.log,
+            "remvoing port {} from multicast group {}", port, group_id
+        );
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_remove(group_id, port)
+    }
+    #[cfg(feature = "multicast")]
+    fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
+        info!(self.log, "creating multicast group {}", group_id);
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_create(group_id)
+    }
+
+    #[cfg(feature = "multicast")]
+    fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()> {
+        info!(self.log, "destroying multicast group {}", group_id);
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_destroy(group_id)
+    }
+
+    #[cfg(feature = "multicast")]
+    fn mc_groups_count(&self) -> AsicResult<usize> {
+        info!(self.log, "number of multicast groups");
+        let mc_data = self.mc_data.lock().unwrap();
+        Ok(mc_data.domains().len())
+    }
+
+    #[cfg(feature = "multicast")]
+    fn mc_set_max_nodes(
+        &self,
+        max_nodes: u32,
+        max_link_aggregated_nodes: u32,
+    ) -> AsicResult<()> {
+        info!(
+            self.log,
+            "setting max nodes to {} and max link aggregated nodes to {}",
+            max_nodes,
+            max_link_aggregated_nodes
+        );
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.set_max_nodes(max_nodes, max_link_aggregated_nodes)
     }
 }
 
@@ -160,66 +234,6 @@ impl AsicOps for StubHandle {
         }
     }
 
-    fn mc_domains(&self) -> Vec<u16> {
-        let mc_data = self.mc_data.lock().unwrap();
-        mc_data.domains()
-    }
-    fn mc_port_count(&self, group_id: u16) -> AsicResult<usize> {
-        let mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_port_count(group_id)
-    }
-    fn mc_port_add(
-        &self,
-        group_id: u16,
-        port: u16,
-        rid: u16,
-        level1_excl_id: u16,
-    ) -> AsicResult<()> {
-        info!(self.log, "adding port {} to multicast group {}", port, group_id);
-        let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_port_add(group_id, port, rid, level1_excl_id)
-    }
-    fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
-        info!(
-            self.log,
-            "remvoing port {} from multicast group {}", port, group_id
-        );
-        let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_port_remove(group_id, port)
-    }
-    fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
-        info!(self.log, "creating multicast group {}", group_id);
-        let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_create(group_id)
-    }
-
-    fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()> {
-        info!(self.log, "destroying multicast group {}", group_id);
-        let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_destroy(group_id)
-    }
-
-    fn mc_groups_count(&self) -> AsicResult<usize> {
-        info!(self.log, "number of multicast groups");
-        let mc_data = self.mc_data.lock().unwrap();
-        Ok(mc_data.domains().len())
-    }
-
-    fn mc_set_max_nodes(
-        &self,
-        max_nodes: u32,
-        max_link_aggregated_nodes: u32,
-    ) -> AsicResult<()> {
-        info!(
-            self.log,
-            "setting max nodes to {} and max link aggregated nodes to {}",
-            max_nodes,
-            max_link_aggregated_nodes
-        );
-        let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.set_max_nodes(max_nodes, max_link_aggregated_nodes)
-    }
-
     fn get_sidecar_identifiers(&self) -> AsicResult<impl SidecarIdentifiers> {
         Ok(Identifiers {
             id: uuid::Uuid::parse_str(SIDECAR_UUID).unwrap(),
@@ -246,6 +260,7 @@ pub struct StubHandle {
     log: slog::Logger,
     phys_ports: Mutex<ports::PortData>,
     port_state: Mutex<BTreeMap<PortHdl, ports::StubPort>>,
+    #[cfg(feature = "multicast")]
     mc_data: Mutex<mcast::McGroupData>,
     update_tx: Mutex<Option<mpsc::UnboundedSender<PortUpdate>>>,
 }
@@ -256,6 +271,7 @@ impl StubHandle {
         let rt = BfRt::init(&p4_dir)?;
         let phys_ports = Mutex::new(ports::init()?);
         let port_state = Mutex::new(BTreeMap::new());
+        #[cfg(feature = "multicast")]
         let mc_data = Mutex::new(mcast::init());
         let log = log.new(o!());
 
@@ -264,6 +280,7 @@ impl StubHandle {
             log,
             phys_ports,
             port_state,
+            #[cfg(feature = "multicast")]
             mc_data,
             update_tx: Mutex::new(None),
         })

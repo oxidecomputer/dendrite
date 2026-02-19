@@ -107,7 +107,7 @@
 
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv6Addr};
 use std::ops::Bound;
 
 use dpd_types::link::LinkId;
@@ -746,15 +746,10 @@ pub async fn delete_route_target_ipv4(
     subnet: Ipv4Net,
     port_id: PortId,
     link_id: LinkId,
-    tgt_ip: Ipv4Addr,
+    tgt_ip: IpAddr,
 ) -> DpdResult<()> {
-    let route = Route {
-        tag: String::new(),
-        port_id,
-        link_id,
-        tgt_ip: IpAddr::V4(tgt_ip),
-        vlan_id: None,
-    };
+    let route =
+        Route { tag: String::new(), port_id, link_id, tgt_ip, vlan_id: None };
 
     let mut route_data = switch.routes.lock().await;
     delete_route_target_locked(

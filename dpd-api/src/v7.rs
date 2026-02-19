@@ -4,12 +4,11 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-//! Version `MCAST_SOURCE_FILTER_ANY` of the dpd API.
+//! Types from API version 7 (MCAST_SOURCE_FILTER_ANY) that changed in
+//! version 8 (MCAST_STRICT_UNDERLAY).
 //!
-//! This version changed the `IpSrc` enum from `{Exact, Subnet}` to `{Exact, Any}`.
-//! External multicast types in this module use the new `IpSrc`.
-//!
-//! Underlay types were not changed in v5 and are re-exported from v1.
+//! Changed `IpSrc` from `{Exact, Subnet}` to `{Exact, Any}`.
+//! External multicast types use the new `IpSrc`.
 
 use std::net::IpAddr;
 
@@ -20,14 +19,7 @@ use dpd_types::mcast::{
     ExternalForwarding, InternalForwarding, IpSrc, MulticastGroupId,
 };
 
-// Re-export underlay types from v1 (unchanged in v5)
-pub use crate::v1::AdminScopedIpv6;
-pub use crate::v1::MulticastGroupCreateUnderlayEntry;
-pub use crate::v1::MulticastGroupUnderlayResponse;
-pub use crate::v1::MulticastGroupUpdateUnderlayEntry;
-pub use crate::v1::MulticastUnderlayGroupIpParam;
-
-// External multicast types changed in v5 (use new IpSrc with Any variant)
+// External multicast types changed in v7 (use new IpSrc with Any variant)
 
 /// Response structure for external multicast group operations.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -40,7 +32,7 @@ pub struct MulticastGroupExternalResponse {
     pub sources: Option<Vec<IpSrc>>,
 }
 
-/// Convert from latest response to v5 response.
+/// Convert from latest response to v7 response.
 impl From<dpd_types::mcast::MulticastGroupExternalResponse>
     for MulticastGroupExternalResponse
 {
@@ -97,7 +89,7 @@ impl MulticastGroupResponse {
     }
 }
 
-/// Convert from latest response to v5 response.
+/// Convert from latest response to v7 response.
 impl From<dpd_types::mcast::MulticastGroupResponse> for MulticastGroupResponse {
     fn from(resp: dpd_types::mcast::MulticastGroupResponse) -> Self {
         match resp {

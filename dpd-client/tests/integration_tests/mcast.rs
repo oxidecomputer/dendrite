@@ -19,9 +19,6 @@ use futures::TryStreamExt;
 use oxnet::MulticastMac;
 use packet::{Endpoint, eth, geneve, ipv4, ipv6, udp};
 
-/// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
-const ADMIN_LOCAL_PREFIX: u16 = 0xFF04;
-
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
 const MULTICAST_TEST_IPV6: Ipv6Addr =
     Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 1, 0x1010);
@@ -29,7 +26,7 @@ const MULTICAST_TEST_IPV4_SSM: Ipv4Addr = Ipv4Addr::new(232, 123, 45, 67);
 const MULTICAST_TEST_IPV6_SSM: Ipv6Addr =
     Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0, 0x1111);
 const MULTICAST_NAT_IP: Ipv6Addr =
-    Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 1);
+    Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 1);
 const GIMLET_MAC: &str = "11:22:33:44:55:66";
 const GIMLET_IP: Ipv6Addr =
     Ipv6Addr::new(0xfd00, 0x1122, 0x7788, 0x0101, 0, 0, 0, 4);
@@ -788,7 +785,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
         "ff04::200".parse::<std::net::Ipv6Addr>().unwrap()
     );
 
-    // Verify IPv4 route table has ONE entry for the VLAN group.
+    // Verify IPv4 route table has one entry for the VLAN group.
     // Route tables use simple dst_addr matching with forward_vlan(vid) action.
     // VLAN isolation (preventing translation) is handled by NAT ingress tables.
     let route_table = switch
@@ -805,7 +802,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
     assert_eq!(
         group_entries.len(),
         1,
-        "Route table uses dst_addr only - 1 entry per group"
+        "Route table uses dst_addr only -> 1 entry per group"
     );
     // Verify the action is forward_vlan with VLAN 42
     assert!(
@@ -817,7 +814,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
         "Route entry should have forward_vlan(42) action"
     );
 
-    // Verify NAT ingress table has TWO entries for VLAN isolation:
+    // Verify NAT ingress table has two entries for VLAN isolation:
     // 1. Untagged match -> forward (for decapsulated Geneve)
     // 2. Tagged match with VLAN 42 -> forward (for already-tagged)
     let nat_table = switch
@@ -3582,7 +3579,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     .await;
 
     // 2b. Admin-local IPv6 group to test internal API with custom replication parameters
-    let ipv6 = Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 2);
+    let ipv6 = Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 2);
 
     let group_entry2b = types::MulticastGroupCreateUnderlayEntry {
         group_ip: types::UnderlayMulticastIpv6(ipv6),
@@ -4040,7 +4037,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
     // Define test ports
     let ingress = PhysPort(10);
 
-    // Use unique multicast IP addresses that we will NOT configure any group for
+    // Use unique multicast IP addresses that we will not configure any group for
     let unconfigured_multicast_ipv4 = IpAddr::V4(Ipv4Addr::new(224, 1, 255, 1)); // Unique IPv4 multicast
     let unconfigured_multicast_ipv6 =
         IpAddr::V6(Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 255, 1)); // Unique IPv6 multicast
@@ -4392,12 +4389,36 @@ async fn test_multicast_group_id_recycling() -> TestResult {
     let switch = &*get_switch().await;
 
     // Use admin-scoped IPv6 addresses that get group IDs assigned
-    let group1_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 10));
-    let group2_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 11));
-    let group3_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 12));
+    let group1_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        10,
+    ));
+    let group2_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        11,
+    ));
+    let group3_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        12,
+    ));
 
     // Create first group and capture its group IDs
     let group1 = create_test_multicast_group(
@@ -4485,8 +4506,16 @@ async fn test_multicast_group_id_recycling() -> TestResult {
         "Group2 should be deleted"
     );
 
-    let group4_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 13));
+    let group4_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        13,
+    ));
     let group4 = create_test_multicast_group(
         switch,
         group4_ip,
@@ -4514,8 +4543,16 @@ async fn test_multicast_group_id_recycling() -> TestResult {
 async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 100));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        100,
+    ));
     let external_group_ip =
         IpAddr::V6(Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 100));
 
@@ -4863,8 +4900,16 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
 async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 101));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        101,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 100));
 
     // Create internal admin-scoped group (empty, no members)
@@ -5210,8 +5255,16 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
 {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 102));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        102,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 102));
 
     // Create internal group with members first
@@ -5376,8 +5429,16 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
 async fn test_multicast_rollback_member_update_failure() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 103));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        103,
+    ));
 
     // Create internal group with initial members
     create_test_multicast_group(
@@ -5455,8 +5516,16 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
 async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 104));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        104,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 104));
 
     // Create internal group
@@ -5592,8 +5661,16 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
 async fn test_multicast_rollback_vlan_propagation_consistency() {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 105));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        105,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 105));
 
     // Create internal group with members (so bitmap entry get created)
@@ -5830,8 +5907,16 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
 async fn test_multicast_rollback_partial_member_addition() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 106));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        106,
+    ));
 
     // Create internal group with initial members
     create_test_multicast_group(
@@ -5928,8 +6013,16 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
 async fn test_multicast_rollback_table_operation_failure() {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 107));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        107,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 107));
 
     // Create internal group first
@@ -6061,8 +6154,16 @@ async fn test_multicast_rollback_table_operation_failure() {
 async fn test_multicast_group_get_underlay() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 200));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        200,
+    ));
 
     // Create an internal/underlay group
     let _created_group = create_test_multicast_group(
@@ -6146,8 +6247,16 @@ const SOURCE_FILTER_IPV6_TABLE: &str =
 async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0x300));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x300,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(239, 1, 1, 100));
 
     // Create internal group first
@@ -6257,8 +6366,16 @@ async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
 async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0x310));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x310,
+    ));
     // Non-admin-local IPv6 multicast address for external group
     let external_group_ip =
         IpAddr::V6(Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 0x100));
@@ -6369,8 +6486,16 @@ async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
 async fn test_source_filter_update_to_any() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0x301));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x301,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(239, 1, 1, 101));
 
     // Create internal group
@@ -6488,8 +6613,16 @@ async fn test_source_filter_update_to_any() -> TestResult {
 async fn test_source_filter_cleanup_on_delete() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0x302));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x302,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(239, 1, 1, 102));
 
     // Create internal group
@@ -6580,8 +6713,16 @@ async fn test_source_filter_cleanup_on_delete() -> TestResult {
 async fn test_source_filter_empty_vec_normalizes_to_any() -> TestResult {
     let switch = &*get_switch().await;
 
-    let internal_group_ip =
-        IpAddr::V6(Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0x303));
+    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x303,
+    ));
     let external_group_ip = IpAddr::V4(Ipv4Addr::new(239, 1, 1, 103));
 
     // Create internal group
@@ -6677,7 +6818,7 @@ async fn test_update_nonexistent_group_returns_404() -> TestResult {
 
     // Case: Update non-existent underlay group
     let nonexistent_underlay: types::UnderlayMulticastIpv6 =
-        Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0xdead)
+        Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 0xdead)
             .try_into()
             .unwrap();
 
@@ -6776,7 +6917,7 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
     let switch = &*get_switch().await;
 
     let group_ip: types::UnderlayMulticastIpv6 =
-        Ipv6Addr::new(ADMIN_LOCAL_PREFIX, 0, 0, 0, 0, 0, 0, 0x501)
+        Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 0x501)
             .try_into()
             .unwrap();
     let tag = "recovery_flow_test";
@@ -6874,11 +7015,10 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
 /// Tests the full VLAN lifecycle for multicast groups, verifying route table
 /// entries are correctly managed through all VLAN transitions.
 ///
-/// Route tables use dst_addr only matching with action-based VLAN tagging:
-/// - 1 entry per group: forward (no VLAN) or forward_vlan(vid)
-///
-/// NAT tables use VLAN-aware matching for isolation:
-/// - 2 entries for VLAN groups: untagged + tagged match keys
+/// Route tables match on dst_addr only with 1 entry per group, using either
+/// forward (no VLAN) or forward_vlan(vid) actions. NAT tables use VLAN-aware
+/// matching for isolation, with 2 entries for VLAN groups (untagged + tagged
+/// match keys).
 #[tokio::test]
 #[ignore]
 async fn test_vlan_lifecycle_route_entries() -> TestResult {
@@ -6903,7 +7043,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
     let nat_target = create_nat_target_ipv4();
     let test_ip = "224.0.1.0";
 
-    // Case: Create with NO VLAN - should have 1 route entry
+    // Case: create without VLAN, should have 1 route entry
     let create_no_vlan = types::MulticastGroupCreateExternalEntry {
         group_ip,
         tag: Some(tag.to_string()),
@@ -6931,7 +7071,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
         "Group without VLAN should have 1 route entry"
     );
 
-    // Case: Update to ADD VLAN 10
+    // Case: update to add VLAN 10
     // Route: 1 entry with forward_vlan(10) action
     // NAT: 2 entries (untagged + tagged) for VLAN isolation
     let update_add_vlan = types::MulticastGroupUpdateExternalEntry {
@@ -6961,7 +7101,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
     assert_eq!(
         count_entries_for_ip(&table.entries, test_ip),
         1,
-        "Route table uses dst_addr only - 1 entry per group"
+        "Route table uses dst_addr only -> 1 entry per group"
     );
     assert!(
         has_vlan_action_for_ip(&table.entries, test_ip, 10),
@@ -6980,7 +7120,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
         "NAT table should have 2 entries for VLAN group (untagged + tagged)"
     );
 
-    // Case: Update to CHANGE VLAN 10 -> 20
+    // Case: update to change VLAN 10 -> 20
     // Route: same 1 entry, action changes to forward_vlan(20)
     // NAT: 2 entries with new VLAN, no stale entries
     let update_change_vlan = types::MulticastGroupUpdateExternalEntry {
@@ -7010,7 +7150,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
     assert_eq!(
         count_entries_for_ip(&table.entries, test_ip),
         1,
-        "Route table uses dst_addr only - 1 entry per group"
+        "Route table uses dst_addr only -> 1 entry per group"
     );
     assert!(
         has_vlan_action_for_ip(&table.entries, test_ip, 20),
@@ -7018,7 +7158,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
     );
     assert!(
         !has_vlan_action_for_ip(&table.entries, test_ip, 10),
-        "Should NOT have stale forward_vlan(10) action"
+        "Should not have stale forward_vlan(10) action"
     );
 
     // NAT table should still have 2 entries
@@ -7033,7 +7173,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
         "NAT table should have 2 entries for VLAN group"
     );
 
-    // Case: Update to REMOVE VLAN
+    // Case: update to remove VLAN
     // Route: 1 entry with forward action (no VLAN)
     // NAT: 1 entry (untagged only)
     let update_remove_vlan = types::MulticastGroupUpdateExternalEntry {
@@ -7064,18 +7204,226 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
     assert_eq!(
         count_entries_for_ip(&table.entries, test_ip),
         1,
-        "Route table uses dst_addr only - 1 entry per group"
+        "Route table uses dst_addr only -> 1 entry per group"
     );
 
     assert!(
         !has_vlan_action_for_ip(&table.entries, test_ip, 20),
-        "Should NOT have forward_vlan action after VLAN removal"
+        "Should not have forward_vlan action after VLAN removal"
     );
 
     // NAT table should have 1 entry now (no VLAN = untagged only)
     let nat_table = switch
         .client
         .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&nat_table.entries, test_ip),
+        1,
+        "NAT table should have 1 entry after VLAN removal"
+    );
+
+    // Cleanup
+    switch
+        .client
+        .multicast_reset_by_tag(&make_tag(tag))
+        .await
+        .expect("Should cleanup by tag");
+
+    Ok(())
+}
+
+/// IPv6 version of the VLAN lifecycle test. Exercises the same
+/// None -> Some(10) -> Some(20) -> None transitions on an IPv6
+/// external multicast group, verifying route and NAT table entries.
+#[tokio::test]
+#[ignore]
+async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
+    let switch = &*get_switch().await;
+    let tag = "vlan_lifecycle_v6_test";
+
+    // Setup: create internal admin-scoped group for NAT target
+    let internal_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    let egress_port = PhysPort(28);
+    create_test_multicast_group(
+        switch,
+        internal_ip,
+        Some(tag),
+        &[(egress_port, types::Direction::Underlay)],
+        types::InternalForwarding { nat_target: None },
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
+    // Use a distinct IPv6 multicast address (global scope, external group)
+    let group_ip: IpAddr = "ff0e::1:2020".parse().unwrap();
+    let nat_target = create_nat_target_ipv6();
+    let test_ip = "ff0e::1:2020";
+
+    // Case: create without VLAN, should have 1 route entry
+    let create_no_vlan = types::MulticastGroupCreateExternalEntry {
+        group_ip,
+        tag: Some(tag.to_string()),
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: None },
+        sources: None,
+    };
+
+    switch
+        .client
+        .multicast_group_create_external(&create_no_vlan)
+        .await
+        .expect("Should create IPv6 group without VLAN");
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&table.entries, test_ip),
+        1,
+        "IPv6 group without VLAN should have 1 route entry"
+    );
+
+    // Case: update to add VLAN 10
+    let update_add_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_add_vlan,
+        )
+        .await
+        .expect("Should update IPv6 group to add VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, Some(10));
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&table.entries, test_ip),
+        1,
+        "Route table uses dst_addr only -> 1 entry per group"
+    );
+    assert!(
+        has_vlan_action_for_ip(&table.entries, test_ip, 10),
+        "Route entry should have forward_vlan(10) action"
+    );
+
+    let nat_table = switch
+        .client
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv6_mcast")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&nat_table.entries, test_ip),
+        2,
+        "NAT table should have 2 entries for VLAN group (untagged + tagged)"
+    );
+
+    // Case: update to change VLAN 10 -> 20
+    let update_change_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(20) },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_change_vlan,
+        )
+        .await
+        .expect("Should update IPv6 group to change VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, Some(20));
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&table.entries, test_ip),
+        1,
+        "Route table uses dst_addr only -> 1 entry per group"
+    );
+    assert!(
+        has_vlan_action_for_ip(&table.entries, test_ip, 20),
+        "Route entry should have forward_vlan(20) action"
+    );
+    assert!(
+        !has_vlan_action_for_ip(&table.entries, test_ip, 10),
+        "Should not have stale forward_vlan(10) action"
+    );
+
+    let nat_table = switch
+        .client
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv6_mcast")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&nat_table.entries, test_ip),
+        2,
+        "NAT table should have 2 entries for VLAN group"
+    );
+
+    // Case: update to remove VLAN
+    let update_remove_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: None },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_remove_vlan,
+        )
+        .await
+        .expect("Should update IPv6 group to remove VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, None);
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&table.entries, test_ip),
+        1,
+        "Route table uses dst_addr only -> 1 entry per group"
+    );
+    assert!(
+        !has_vlan_action_for_ip(&table.entries, test_ip, 20),
+        "Should not have forward_vlan action after VLAN removal"
+    );
+
+    let nat_table = switch
+        .client
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv6_mcast")
         .await?
         .into_inner();
     assert_eq!(

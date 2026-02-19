@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 // This is a very limited function daemon.  It watches the smf database, looking
 // for entries in the uplinks/* property group.  Each entry contains a tofino
@@ -58,9 +58,34 @@ struct Global {
     // system has a working ipadm
     ipadm_works: bool,
     // Addresses configured in the smf database
-    desired: BTreeMap<String, BTreeSet<IpNet>>,
+    desired: BTreeMap<String, BTreeSet<UplinkNet>>,
     // Addresses instantiated on the local illumos system
-    current: BTreeMap<String, BTreeMap<String, IpNet>>,
+    current: BTreeMap<String, BTreeMap<String, UplinkNet>>,
+}
+
+#[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq)]
+enum UplinkNet {
+    IpNet(IpNet),
+    LinkLocal,
+}
+
+impl std::convert::From<IpNet> for UplinkNet {
+    fn from(value: IpNet) -> Self {
+        if is_link_local(&value) {
+            UplinkNet::LinkLocal
+        } else {
+            UplinkNet::IpNet(value)
+        }
+    }
+}
+
+impl std::fmt::Display for UplinkNet {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            UplinkNet::IpNet(ipnet) => write!(f, "{ipnet}"),
+            UplinkNet::LinkLocal => write!(f, "link-local"),
+        }
+    }
 }
 
 /// uplink address management daemon
@@ -107,16 +132,21 @@ fn interface_vlan_id(iface: &str) -> (String, Option<u16>) {
 
 fn parse_uplink_property(
     prop: &str,
-) -> Result<(IpNet, Option<u16>), anyhow::Error> {
+) -> Result<(UplinkNet, Option<u16>), anyhow::Error> {
     let fields: Vec<&str> = prop.split(';').collect();
     let (address, vlan_id) = match fields.len() {
         1 => Ok((fields[0], None)),
         2 => Ok((fields[0], parse_vlan_id(fields[1])?)),
         _ => Err(anyhow!("not a valid uplink address: {prop}")),
     }?;
-    let address = address
-        .parse()
-        .map_err(|_| anyhow!("not a valid ip address: {address}"))?;
+    let address = if address.to_lowercase() == "link-local" {
+        UplinkNet::LinkLocal
+    } else {
+        address
+            .parse::<IpNet>()
+            .map(|addr| addr.into())
+            .map_err(|_| anyhow!("not a valid ip address: {address}"))?
+    };
     Ok((address, vlan_id))
 }
 
@@ -197,6 +227,25 @@ fn refresh_smf_config(g: &mut Global) -> Result<()> {
             let addrs = vlans.entry(vlan_id).or_insert(BTreeSet::new());
             addrs.insert(addr);
         }
+
+        // Identify which vlans need a link-local address
+        for addrs in vlans.values_mut() {
+            let mut needs_linklocal = false;
+            let mut has_linklocal = false;
+            for a in addrs.iter() {
+                match a {
+                    UplinkNet::LinkLocal => has_linklocal = true,
+                    UplinkNet::IpNet(addr) if addr.is_ipv6() => {
+                        needs_linklocal = true
+                    }
+                    _ => {}
+                }
+            }
+            if needs_linklocal && !has_linklocal {
+                addrs.insert(UplinkNet::LinkLocal);
+            }
+        }
+
         for (vlan_id, addrs) in vlans {
             // convert a link name (e.g., qsfp0_0) into a tfport name (e.g.,
             // tfportqsfp0_0).  VLAN x on the interface becomes tfportqsfp0_0.x.
@@ -219,6 +268,15 @@ fn parse_ipadm_address(addr: &str) -> Result<IpNet> {
         let prefix = local.parse()?;
         Ok(IpNet::V4(Ipv4Net::new(prefix, 31).unwrap()))
     } else {
+        // If we find an address with an interface name in it
+        // (e.g., fd00::aa40::1%tfportqsfp0_0/10), strip that name out.
+        let fields = addr.split(&['%', '/']).collect::<Vec<&str>>();
+        let addr = if fields.len() == 3 {
+            format!("{}/{}", fields[0], fields[2])
+        } else {
+            addr.to_string()
+        };
+
         addr.parse()
             .map_err(|e| anyhow!("unable to parse {addr} as a CIDR: {e:?}"))
     }
@@ -240,7 +298,7 @@ async fn get_interfaces(log: &slog::Logger) -> BTreeSet<String> {
 async fn get_addrs(
     log: &slog::Logger,
     iface: &str,
-) -> Result<BTreeMap<String, IpNet>> {
+) -> Result<BTreeMap<String, UplinkNet>> {
     let if_name = format!("{iface}/");
 
     let mut addrs = BTreeMap::new();
@@ -256,10 +314,7 @@ async fn get_addrs(
 
         match parse_ipadm_address(&address) {
             Ok(cidr) => {
-                // We don't manage link-local addresses, so skip over them
-                if !is_link_local(&cidr) {
-                    addrs.insert(addrobj.to_string(), cidr);
-                }
+                addrs.insert(addrobj.to_string(), cidr.into());
             }
             Err(e) => {
                 error!(log, "unparseable address {address} on {iface} -> {e:?}")
@@ -347,11 +402,19 @@ async fn create_v4_ptp_link_ifconfig(
     .map_err(|e| e.into())
 }
 
-// Add a normal, non-PtP link using ipadm
+// Add a normal, non-PtP address using ipadm
 async fn create_link(iface: &str, tag: &str, addr: &IpNet) -> Result<String> {
     illumos::address_add(iface, tag, *addr)
         .await
         .map(|_| format!("created {addr} as addrobj {iface}/{tag}"))
+        .map_err(|e| e.into())
+}
+
+// Add a link-local address using ipadm
+async fn create_linklocal(iface: &str) -> Result<String> {
+    illumos::linklocal_add(iface, "ll")
+        .await
+        .map(|_| format!("created link-local as {iface}/ll"))
         .map_err(|e| e.into())
 }
 
@@ -361,19 +424,26 @@ async fn create_addrobj(
     ipadm_works: bool,
     iface: &str,
     tag: &str,
-    addr: &IpNet,
+    addr: &UplinkNet,
 ) -> Result<()> {
     debug!(log, "create_addrobj addr: {addr}  iface: {iface}  tag: {tag}");
     // ipadm can't create point-to-point links, so we need to special-case them
     match addr {
-        IpNet::V4(v4cidr) if v4cidr.width() == 31 => match ipadm_works {
-            true => create_v4_ptp_link_ipadm(iface, tag, v4cidr.addr()).await,
-            false => create_v4_ptp_link_ifconfig(iface, v4cidr.addr()).await,
-        },
-        IpNet::V6(v6cidr) if v6cidr.width() == 127 => {
+        UplinkNet::IpNet(IpNet::V4(v4cidr)) if v4cidr.width() == 31 => {
+            match ipadm_works {
+                true => {
+                    create_v4_ptp_link_ipadm(iface, tag, v4cidr.addr()).await
+                }
+                false => {
+                    create_v4_ptp_link_ifconfig(iface, v4cidr.addr()).await
+                }
+            }
+        }
+        UplinkNet::IpNet(IpNet::V6(v6cidr)) if v6cidr.width() == 127 => {
             create_v6_ptp_link(iface, v6cidr.addr())
         }
-        addr => create_link(iface, tag, addr).await,
+        UplinkNet::IpNet(addr) => create_link(iface, tag, addr).await,
+        UplinkNet::LinkLocal => create_linklocal(iface).await,
     }
     .map(|msg| info!(log, "{msg}"))
     .map_err(|e| {

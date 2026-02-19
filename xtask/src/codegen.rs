@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::fs;
 use std::path::Path;
@@ -126,6 +126,7 @@ pub fn build(
     app_name: String,
     sde_location: String,
     stages: Option<u8>,
+    multicast: bool,
 ) -> Result<()> {
     let root = super::project_root()?;
     let src_dir = match app_name.as_str() {
@@ -167,6 +168,10 @@ pub fn build(
     ];
     if let Some(s) = stages {
         args.push(format!("--num-stages-override={s}"));
+    }
+    if multicast {
+        args.push("-D".to_string());
+        args.push("MULTICAST".to_string());
     }
     args.push(app_path);
     println!("op: {args:?}");

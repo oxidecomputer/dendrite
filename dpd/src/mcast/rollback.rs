@@ -16,7 +16,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
-use aal::AsicOps;
+use aal::AsicMulticastOps;
 use oxnet::{Ipv4Net, Ipv6Net};
 use slog::{debug, error};
 
@@ -24,9 +24,9 @@ use common::{network::NatTarget, ports::PortId};
 
 use super::{
     Direction, IpSrc, LinkId, MulticastGroup, MulticastGroupId,
-    MulticastGroupMember, MulticastReplicationInfo, add_source_filters,
-    remove_source_filters, sources_contain_any, update_fwding_tables,
-    update_replication_tables,
+    MulticastGroupMember, MulticastReplicationInfo, NO_SOURCES,
+    add_source_filters, remove_source_filters, sources_contain_any,
+    update_fwding_tables, update_replication_tables,
 };
 use crate::{Switch, table, types::DpdResult};
 
@@ -58,12 +58,20 @@ trait RollbackOps {
         self.log_rollback_error(
             "remove new source filters",
             &format!("for group {group_ip}", group_ip = self.group_ip()),
-            remove_source_filters(self.switch(), self.group_ip(), new_sources),
+            remove_source_filters(
+                self.switch(),
+                self.group_ip(),
+                new_sources.unwrap_or(NO_SOURCES),
+            ),
         );
         self.log_rollback_error(
             "restore original source filters",
             &format!("for group {group_ip}", group_ip = self.group_ip()),
-            add_source_filters(self.switch(), self.group_ip(), orig_sources),
+            add_source_filters(
+                self.switch(),
+                self.group_ip(),
+                orig_sources.unwrap_or(NO_SOURCES),
+            ),
         );
         Ok(())
     }

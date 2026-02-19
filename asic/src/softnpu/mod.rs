@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -16,6 +16,8 @@ pub use crate::faux_fsm::FsmState;
 pub use crate::faux_fsm::FsmType;
 pub use crate::faux_fsm::PortFsmState;
 
+#[cfg(feature = "multicast")]
+use aal::AsicMulticastOps;
 use aal::{
     AsicError, AsicId, AsicOps, AsicResult, Connector, PortHdl, PortUpdate,
     SidecarIdentifiers,
@@ -141,6 +143,52 @@ impl Handle {
     }
 
     pub fn fini(&self) {}
+}
+
+#[cfg(feature = "multicast")]
+impl AsicMulticastOps for Handle {
+    fn mc_domains(&self) -> Vec<u16> {
+        let len = self.ports.lock().unwrap().len() as u16;
+        (0..len).collect()
+    }
+
+    fn mc_port_count(&self, _group_id: u16) -> AsicResult<usize> {
+        Ok(self.ports.lock().unwrap().len())
+    }
+
+    fn mc_port_add(
+        &self,
+        _group_id: u16,
+        _port: u16,
+        _rid: u16,
+        _level1_excl_id: u16,
+    ) -> AsicResult<()> {
+        Err(AsicError::OperationUnsupported)
+    }
+
+    fn mc_port_remove(&self, _group_id: u16, _port: u16) -> AsicResult<()> {
+        Ok(())
+    }
+
+    fn mc_group_create(&self, _group_id: u16) -> AsicResult<()> {
+        Err(AsicError::OperationUnsupported)
+    }
+
+    fn mc_group_destroy(&self, _group_id: u16) -> AsicResult<()> {
+        Ok(())
+    }
+
+    fn mc_groups_count(&self) -> AsicResult<usize> {
+        Ok(self.ports.lock().unwrap().len())
+    }
+
+    fn mc_set_max_nodes(
+        &self,
+        _max_nodes: u32,
+        _max_link_aggregated_nodes: u32,
+    ) -> AsicResult<()> {
+        Ok(())
+    }
 }
 
 impl AsicOps for Handle {
@@ -325,50 +373,6 @@ impl AsicOps for Handle {
     ) -> AsicResult<Vec<u8>> {
         Ok(vec![0])
     }
-
-    fn mc_domains(&self) -> Vec<u16> {
-        let len = self.ports.lock().unwrap().len() as u16;
-        (0..len).collect()
-    }
-
-    fn mc_port_count(&self, _group_id: u16) -> AsicResult<usize> {
-        Ok(self.ports.lock().unwrap().len())
-    }
-
-    fn mc_port_add(
-        &self,
-        _group_id: u16,
-        _port: u16,
-        _rid: u16,
-        _level1_excl_id: u16,
-    ) -> AsicResult<()> {
-        Err(AsicError::OperationUnsupported)
-    }
-
-    fn mc_port_remove(&self, _group_id: u16, _port: u16) -> AsicResult<()> {
-        Ok(())
-    }
-
-    fn mc_group_create(&self, _group_id: u16) -> AsicResult<()> {
-        Err(AsicError::OperationUnsupported)
-    }
-
-    fn mc_group_destroy(&self, _group_id: u16) -> AsicResult<()> {
-        Ok(())
-    }
-
-    fn mc_groups_count(&self) -> AsicResult<usize> {
-        Ok(self.ports.lock().unwrap().len())
-    }
-
-    fn mc_set_max_nodes(
-        &self,
-        _max_nodes: u32,
-        _max_link_aggregated_nodes: u32,
-    ) -> AsicResult<()> {
-        Ok(())
-    }
-
     fn get_sidecar_identifiers(&self) -> AsicResult<impl SidecarIdentifiers> {
         Ok(Identifiers {
             id: Uuid::new_v4(),

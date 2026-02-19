@@ -4,12 +4,11 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-//! Version `INITIAL` of the dpd API.
+//! Types from API version 1 (INITIAL) that changed in later versions.
 //!
-//! This module contains types introduced in version 1 that were later changed.
-//! - `IpSrc` was changed in v5 (`MCAST_SOURCE_FILTER_ANY`): `Subnet` → `Any`
-//! - `AdminScopedIpv6` was changed in v6 (`MCAST_STRICT_UNDERLAY`): ff04::/16 → ff04::/64
-//! - Response `tag` fields were changed in v6: `Option<String>` → `String`
+//! - `IpSrc` was changed in v7 (MCAST_SOURCE_FILTER_ANY): `Subnet` -> `Any`
+//! - `AdminScopedIpv6` was changed in v8 (MCAST_STRICT_UNDERLAY): ff04::/16 -> ff04::/64
+//! - Response `tag` fields were changed in v8: `Option<String>` -> `String`
 
 use std::{
     fmt,
@@ -172,7 +171,7 @@ impl FromStr for AdminScopedIpv6 {
     }
 }
 
-// External multicast types (v1-v4, before IpSrc changed in v5)
+// External multicast types (v1-v6, before IpSrc changed in v7)
 
 /// A multicast group configuration for POST requests for external (to the
 /// rack) groups.
@@ -237,11 +236,11 @@ pub struct MulticastGroupExternalResponse {
     pub sources: Option<Vec<IpSrc>>,
 }
 
-/// Convert from v5 response to v1 response.
-impl From<crate::v5::MulticastGroupExternalResponse>
+/// Convert from v7 response to v1 response.
+impl From<crate::v7::MulticastGroupExternalResponse>
     for MulticastGroupExternalResponse
 {
-    fn from(resp: crate::v5::MulticastGroupExternalResponse) -> Self {
+    fn from(resp: crate::v7::MulticastGroupExternalResponse) -> Self {
         Self {
             group_ip: resp.group_ip,
             external_group_id: resp.external_group_id,
@@ -255,16 +254,16 @@ impl From<crate::v5::MulticastGroupExternalResponse>
     }
 }
 
-/// Convert from latest response to v1 response (chains through v5).
+/// Convert from latest response to v1 response (chains through v7).
 impl From<dpd_types::mcast::MulticastGroupExternalResponse>
     for MulticastGroupExternalResponse
 {
     fn from(resp: dpd_types::mcast::MulticastGroupExternalResponse) -> Self {
-        crate::v5::MulticastGroupExternalResponse::from(resp).into()
+        crate::v7::MulticastGroupExternalResponse::from(resp).into()
     }
 }
 
-// Underlay multicast types (v1-v5, before AdminScopedIpv6 changed in v6)
+// Underlay multicast types (v1-v7, before AdminScopedIpv6 changed in v8)
 
 /// Path parameter for underlay multicast group endpoints.
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -343,24 +342,24 @@ impl MulticastGroupResponse {
     }
 }
 
-/// Convert from v5 response to v1 response.
-impl From<crate::v5::MulticastGroupResponse> for MulticastGroupResponse {
-    fn from(resp: crate::v5::MulticastGroupResponse) -> Self {
+/// Convert from v7 response to v1 response.
+impl From<crate::v7::MulticastGroupResponse> for MulticastGroupResponse {
+    fn from(resp: crate::v7::MulticastGroupResponse) -> Self {
         match resp {
-            crate::v5::MulticastGroupResponse::Underlay(u) => {
-                // v5 underlay is re-exported from v1, so it's the same type
+            crate::v7::MulticastGroupResponse::Underlay(u) => {
+                // v7 underlay is re-exported from v1, so it's the same type
                 Self::Underlay(u)
             }
-            crate::v5::MulticastGroupResponse::External(e) => {
+            crate::v7::MulticastGroupResponse::External(e) => {
                 Self::External(e.into())
             }
         }
     }
 }
 
-/// Convert from latest response to v1 response (chains through v5).
+/// Convert from latest response to v1 response (chains through v7).
 impl From<dpd_types::mcast::MulticastGroupResponse> for MulticastGroupResponse {
     fn from(resp: dpd_types::mcast::MulticastGroupResponse) -> Self {
-        crate::v5::MulticastGroupResponse::from(resp).into()
+        crate::v7::MulticastGroupResponse::from(resp).into()
     }
 }

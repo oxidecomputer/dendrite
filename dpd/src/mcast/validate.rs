@@ -75,6 +75,11 @@ pub(crate) fn is_ssm(addr: IpAddr) -> bool {
     }
 }
 
+/// Check if sources contain an Any variant.
+fn contains_any_source(sources: &[IpSrc]) -> bool {
+    sources.iter().any(|s| matches!(s, IpSrc::Any))
+}
+
 /// Validates IPv4 multicast addresses.
 fn validate_ipv4_multicast(
     addr: Ipv4Addr,
@@ -87,12 +92,18 @@ fn validate_ipv4_multicast(
         )));
     }
 
-    // If this is SSM, require sources to be defined
+    // If this is SSM, require specific sources (RFC 4607)
     if is_ssm(addr.into()) {
         if sources.is_none() || sources.unwrap().is_empty() {
             return Err(DpdError::Invalid(format!(
                 "{addr} is a Source-Specific Multicast address and \
                  requires at least one source to be defined",
+            )));
+        }
+        if contains_any_source(sources.unwrap()) {
+            return Err(DpdError::Invalid(format!(
+                "{addr} is a Source-Specific Multicast address and \
+                 requires specific sources (IpSrc::Any is not allowed)",
             )));
         }
         return Ok(());
@@ -119,12 +130,18 @@ fn validate_ipv6_multicast(
         )));
     }
 
-    // If this is SSM, require sources to be defined
+    // If this is SSM, require specific sources (RFC 4607)
     if is_ssm(addr.into()) {
         if sources.is_none() || sources.unwrap().is_empty() {
             return Err(DpdError::Invalid(format!(
                 "{addr} is an IPv6 Source-Specific Multicast address (ff3x::/32) \
                  and requires at least one source to be defined",
+            )));
+        }
+        if contains_any_source(sources.unwrap()) {
+            return Err(DpdError::Invalid(format!(
+                "{addr} is an IPv6 Source-Specific Multicast address (ff3x::/32) \
+                 and requires specific sources (IpSrc::Any is not allowed)",
             )));
         }
         return Ok(());
@@ -385,8 +402,8 @@ mod tests {
             validate_ipv4_multicast(ssm_addr, Some(&exact_sources)).is_ok()
         );
 
-        // SSM with any-source
-        assert!(validate_ipv4_multicast(ssm_addr, Some(&any_source)).is_ok());
+        // SSM with any-source is not allowed (RFC 4607)
+        assert!(validate_ipv4_multicast(ssm_addr, Some(&any_source)).is_err());
 
         // ASM without sources
         assert!(validate_ipv4_multicast(asm_addr, None).is_ok());
@@ -418,8 +435,8 @@ mod tests {
             validate_ipv6_multicast(ssm_addr, Some(&exact_sources)).is_ok()
         );
 
-        // SSM with any-source
-        assert!(validate_ipv6_multicast(ssm_addr, Some(&any_source)).is_ok());
+        // SSM with any-source is not allowed (RFC 4607)
+        assert!(validate_ipv6_multicast(ssm_addr, Some(&any_source)).is_err());
 
         // ASM without sources
         assert!(validate_ipv6_multicast(asm_addr, None).is_ok());
@@ -473,17 +490,28 @@ mod tests {
             .is_ok()
         );
 
-        // Valid IPv4 SSM address with sources
-        let sources = vec![
+        // Valid IPv4 SSM address with exact sources
+        let ssm_sources =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))];
+        assert!(
+            validate_multicast_address(
+                IpAddr::V4(Ipv4Addr::new(232, 1, 2, 3)),
+                Some(&ssm_sources)
+            )
+            .is_ok()
+        );
+
+        // IPv4 SSM with Any is rejected (RFC 4607)
+        let ssm_with_any = vec![
             IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
             IpSrc::Any,
         ];
         assert!(
             validate_multicast_address(
                 IpAddr::V4(Ipv4Addr::new(232, 1, 2, 3)),
-                Some(&sources)
+                Some(&ssm_with_any)
             )
-            .is_ok()
+            .is_err()
         );
 
         // Valid IPv6 non-SSM address, no sources
@@ -527,11 +555,15 @@ mod tests {
             .is_err()
         );
 
-        // IPv4 ASM with sources
+        // IPv4 ASM with sources (including Any, which is valid for ASM)
+        let asm_sources = vec![
+            IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
+            IpSrc::Any,
+        ];
         assert!(
             validate_multicast_address(
                 IpAddr::V4(Ipv4Addr::new(224, 1, 2, 3)),
-                Some(&sources)
+                Some(&asm_sources)
             )
             .is_ok()
         );

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Integration test for swadm P4 counter functionality.
 
@@ -38,13 +38,20 @@ fn test_p4_counter_list() {
     assert!(!stdout.is_empty(), "Counter list output should not be empty");
 
     // Expected P4 counters from dpd/src/counters.rs COUNTERS array
-    let expected_counters = [
+    let base_counters = [
         "Service",
         "Ingress",
         "Packet",
         "Egress",
         "Ingress_Drop_Port",
         "Ingress_Drop_Reason",
+    ];
+
+    #[cfg(not(feature = "multicast"))]
+    let multicast_counters = Vec::new();
+
+    #[cfg(feature = "multicast")]
+    let multicast_counters = vec![
         "Egress_Drop_Port",
         "Egress_Drop_Reason",
         "Unicast",
@@ -56,7 +63,7 @@ fn test_p4_counter_list() {
     ];
 
     // Verify all expected counters are present in the output
-    for counter in &expected_counters {
+    for counter in base_counters.iter().chain(multicast_counters.iter()) {
         assert!(
             stdout.contains(counter),
             "Counter list should contain '{counter}' counter. Output: {stdout}"
