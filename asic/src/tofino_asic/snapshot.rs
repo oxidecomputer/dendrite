@@ -4,7 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-//! Safe Rust wrappers around the SDE snapshot C APIs.
+//! Rust wrappers around the SDE snapshot C APIs.
 
 use std::ffi::{CStr, CString, c_char};
 
@@ -160,7 +160,9 @@ pub fn snapshot_state_get(
         )
         .check_error("bf_snapshot_state_get")?;
     }
-    Ok((0..size as usize).map(|i| PipeState::from_raw(fsm_raw[i])).collect())
+    Ok((0..usize::try_from(size).expect("pipeline count as usize"))
+        .map(|i| PipeState::from_raw(fsm_raw[i]))
+        .collect())
 }
 
 /// Poll for triggered snapshots (drives the FSM).
@@ -235,7 +237,11 @@ pub fn snapshot_capture(
         .check_error("capture_phv_fields_dict_size")?;
     }
 
-    let mut capture_buf = vec![0u8; total_size as usize];
+    let mut capture_buf = vec![
+        0u8;
+        usize::try_from(total_size)
+            .expect("total capture size as usize")
+    ];
     let mut ctrl_arr = Box::new(unsafe {
         std::mem::zeroed::<bf_snapshot_capture_ctrl_info_arr_t>()
     });
@@ -252,7 +258,7 @@ pub fn snapshot_capture(
         .check_error("snapshot_capture_get")?;
     }
 
-    // Convert ctrl info to safe Rust structs.
+    // Convert ctrl info to Rust structs.
     let mut ctrls = Vec::new();
     for i in 0..num_captures as usize {
         let c = &ctrl_arr.ctrl[i];
@@ -320,14 +326,22 @@ pub fn snapshot_decode_field(
             num_captures,
             c_name.as_ptr() as *mut c_char,
             buf.as_mut_ptr(),
-            buf.len() as i32,
+            i32::try_from(buf.len()).expect("snapshot buffer length as i32"),
             &mut width,
             &mut valid,
         )
         .check_error(&format!("decode_field({field})"))?;
     }
 
-    if valid { Ok(Some(buf[..width as usize].to_vec())) } else { Ok(None) }
+    if valid {
+        Ok(Some(
+            buf[..usize::try_from(width)
+                .expect("snapshot buffer width as usize")]
+                .to_vec(),
+        ))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Check if a field is in scope for capture at a given stage.

@@ -148,12 +148,24 @@ pub fn delete_ipv4_entry(
     s.table_entry_del(TableType::NatIngressIpv4, &match_key)
 }
 
-pub fn ipv4_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv4MatchKey, Ipv4Action>(TableType::NatIngressIpv4)
+pub fn ipv4_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv4MatchKey, Ipv4Action>(
+        TableType::NatIngressIpv4,
+        from_hardware,
+    )
 }
 
-pub fn ipv6_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv6MatchKey, Ipv6Action>(TableType::NatIngressIpv6)
+pub fn ipv6_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv6MatchKey, Ipv6Action>(
+        TableType::NatIngressIpv6,
+        from_hardware,
+    )
 }
 
 pub fn ipv4_counter_fetch(

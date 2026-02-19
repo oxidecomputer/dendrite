@@ -47,9 +47,11 @@ fn wait_for_unlock(log: &Logger) {
 
 fn enable_tcam_scrub(log: &Logger) {
     loop {
-        let rc = unsafe { pipe_mgr_tcam_scrub_timer_set(DEV_ID, 5000) };
+        // This value is in milliseconds so this is 2 minutes. This is the
+        // default SDE value.
+        let rc = unsafe { pipe_mgr_tcam_scrub_timer_set(DEV_ID, 120000) };
         if rc == BF_SUCCESS {
-            info!(log, "tcam scrub set to 5 second interval");
+            info!(log, "tcam scrub set to 2 minute interval");
             break;
         }
         warn!(

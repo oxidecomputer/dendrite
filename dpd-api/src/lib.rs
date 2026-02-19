@@ -1698,12 +1698,31 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
-        path = "/table/{table}/dump"
+        path = "/table/{table}/dump",
+        versions = VERSION_SNAPSHOT..
     }]
     async fn table_dump(
         rqctx: RequestContext<Self::Context>,
+        query: Query<TableDumpOptions>,
         path: Path<TableParam>,
     ) -> Result<HttpResponseOk<views::Table>, HttpError>;
+
+    #[endpoint {
+        method = GET,
+        path = "/table/{table}/dump",
+        versions = ..VERSION_SNAPSHOT
+    }]
+    async fn table_dump_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<TableParam>,
+    ) -> Result<HttpResponseOk<views::Table>, HttpError> {
+        Self::table_dump(
+            rqctx,
+            Query::from(TableDumpOptions { from_hardware: false }),
+            path,
+        )
+        .await
+    }
 
     /**
      * Get any counter data from a single P4 match-action table.
@@ -2144,17 +2163,6 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         body: TypedBody<SnapshotScopeRequest>,
     ) -> Result<HttpResponseOk<Vec<SnapshotFieldScope>>, HttpError>;
-
-    /// Dump all entries from a P4 table, optionally reading from hardware.
-    #[endpoint {
-        method = POST,
-        path = "/asic-table/dump",
-        versions = VERSION_SNAPSHOT..
-    }]
-    async fn table_dump_asic(
-        rqctx: RequestContext<Self::Context>,
-        body: TypedBody<TableDumpRequest>,
-    ) -> Result<HttpResponseOk<TableDumpResult>, HttpError>;
 }
 
 /// Parameter used to create a port.
@@ -2649,6 +2657,11 @@ pub struct CounterSync {
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct TableParam {
     pub table: String,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct TableDumpOptions {
+    pub from_hardware: bool,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]

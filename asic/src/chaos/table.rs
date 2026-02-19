@@ -137,6 +137,7 @@ impl TableOps<Handle> for Table {
     fn get_entries<M: MatchParse, A: ActionParse>(
         &self,
         _hdl: &Handle,
+        _from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>> {
         Err(AsicError::OperationUnsupported)
     }

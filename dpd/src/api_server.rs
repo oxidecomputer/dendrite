@@ -1929,13 +1929,18 @@ impl DpdApi for DpdApiImpl {
 
     async fn table_dump(
         rqctx: RequestContext<Arc<Switch>>,
+        query: Query<TableDumpOptions>,
         path: Path<TableParam>,
     ) -> Result<HttpResponseOk<views::Table>, HttpError> {
         let switch: &Switch = rqctx.context();
         let table = path.into_inner().table;
-        crate::table::get_entries(switch, table)
-            .map(HttpResponseOk)
-            .map_err(HttpError::from)
+        crate::table::get_entries(
+            switch,
+            table,
+            query.into_inner().from_hardware,
+        )
+        .map(HttpResponseOk)
+        .map_err(HttpError::from)
     }
 
     async fn table_counters(
@@ -2906,22 +2911,6 @@ impl DpdApi for DpdApiImpl {
             None,
             "not implemented for this asic".to_string(),
         ))
-    }
-
-    #[cfg(feature = "tofino_asic")]
-    async fn table_dump_asic(
-        _rqctx: RequestContext<Self::Context>,
-        _body: TypedBody<TableDumpRequest>,
-    ) -> Result<HttpResponseOk<TableDumpResult>, HttpError> {
-        todo!()
-    }
-
-    #[cfg(not(feature = "tofino_asic"))]
-    async fn table_dump_asic(
-        _rqctx: RequestContext<Self::Context>,
-        _body: TypedBody<TableDumpRequest>,
-    ) -> Result<HttpResponseOk<TableDumpResult>, HttpError> {
-        todo!()
     }
 }
 
