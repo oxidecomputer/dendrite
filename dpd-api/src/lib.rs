@@ -2546,7 +2546,7 @@ pub trait DpdApi {
     /// Dump all entries from a P4 table, optionally reading from hardware.
     #[endpoint {
         method = POST,
-        path = "/table/asic-dump",
+        path = "/asic-table/dump",
         versions = VERSION_SNAPSHOT..
     }]
     async fn table_dump_asic(
