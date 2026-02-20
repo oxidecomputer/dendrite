@@ -125,5 +125,5 @@ pub fn timestamp_ms() -> i64 {
 /// Return a time-of-day timestamp in milliseconds
 pub fn wallclock_ms() -> i64 {
     let now = chrono::Utc::now();
-    i64::try_from(now.timestamp_millis()).unwrap()
+    now.timestamp_millis()
 }
