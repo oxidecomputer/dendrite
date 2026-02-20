@@ -24,6 +24,7 @@ use dpd_client::types;
 /// non-development debugging, you probably want "swadm link counters".
 pub enum P4Counters {
     /// list all available counters
+    #[clap(visible_alias = "ls")]
     List,
     /// get data from the given counter
     Get {

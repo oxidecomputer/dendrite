@@ -25,6 +25,7 @@ use crate::IpFamily;
 /// manage the ARP or NDP tables
 pub enum Arp {
     /// list all ARP / NDP entries
+    #[clap(visible_alias = "ls")]
     List {
         /// IPv4 or IPv6
         family: Option<IpFamily>,

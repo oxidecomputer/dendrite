@@ -9,9 +9,11 @@ use std::convert::From;
 use std::io::{Write, stdout};
 use std::net::IpAddr;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::Context;
 use anyhow::bail;
+use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use colored::*;
 use futures::stream::TryStreamExt;
@@ -331,7 +333,7 @@ pub enum Link {
         /// This does a simple substring search in the link name, e.g.,
         /// "rear0/0". Those whose link name contains the substring are printed,
         /// and others are filtered out.
-        filter: Option<String>,
+        filter: Vec<String>,
     },
 
     /// Enable a link.
@@ -365,15 +367,13 @@ pub enum Link {
     /// be relative to the current time when displaying events in the default
     /// order, or relative to the oldest time when displaying events from oldest
     /// to newest.
-    ///
-    /// The --raw option will cause the raw timestamps to be displayed.  This
-    /// timestamp can't be used to determine the wallclock time of an event, but
-    /// it can be used to correlate events across multiple links.
     History {
-        /// The link to get the history of.
-        link: LinkPath,
-        /// Display raw timestamps rather than relative
-        #[clap(long, visible_alias = "R")]
+        /// Display the time of day for each event, to enable correlation with
+        /// logfile messages.
+        #[clap(long, group = "time")]
+        tod: bool,
+        /// Display the time of each event in raw milliseconds.
+        #[clap(long, group = "time")]
         raw: bool,
         /// Display history from oldest event to newest event
         #[clap(long, short)]
@@ -381,6 +381,8 @@ pub enum Link {
         /// Maximum number of events to display
         #[clap(short)]
         n: Option<usize>,
+        /// The link to get the history of.
+        link: LinkPath,
     },
 
     /// Manage a link in the Faulted state
@@ -862,7 +864,7 @@ async fn link_rmon_counters(
 
     let delay = match interval {
         None => None,
-        Some(d) if d >= 1 => Some(std::time::Duration::from_secs(d as u64)),
+        Some(d) if d >= 1 => Some(Duration::from_secs(d as u64)),
         _ => bail!("interval must be > 0"),
     };
 
@@ -1472,16 +1474,51 @@ fn print_link_verbose(
     Ok(())
 }
 
+fn fmt_time(mut ms: i64) -> String {
+    const MS_PER_SEC: i64 = 1000;
+    const MS_PER_MIN: i64 = MS_PER_SEC * 60;
+    const MS_PER_HOUR: i64 = MS_PER_MIN * 60;
+    const MS_PER_DAY: i64 = MS_PER_HOUR * 24;
+
+    let mut t = String::new();
+    if ms > MS_PER_SEC {
+        if ms > MS_PER_MIN {
+            if ms > MS_PER_HOUR {
+                if ms > MS_PER_DAY {
+                    let days = ms / MS_PER_DAY;
+                    ms -= days * MS_PER_DAY;
+                    t = format!("{days}d");
+                }
+                let hours = ms / MS_PER_HOUR;
+                ms -= hours * MS_PER_HOUR;
+                t = format!("{t}{hours}h");
+            }
+            let minutes = ms / MS_PER_MIN;
+            ms -= minutes * MS_PER_MIN;
+            t = format!("{t}{minutes}m");
+        }
+        let seconds = ms / MS_PER_SEC;
+        ms -= seconds * MS_PER_SEC;
+        t = format!("{t}{seconds}s");
+    }
+    t = format!("{t}{ms}ms");
+
+    t
+}
+
 fn display_link_history(
     history: types::LinkHistory,
+    tod: bool,
     raw: bool,
     reverse: bool,
     n: Option<usize>,
 ) {
-    let (newest, mut events) = (history.timestamp, history.events);
+    let (newest, mut events) = (history.relative, history.events);
     if events.is_empty() {
         return;
     }
+    let collect_time =
+        DateTime::<Utc>::from_timestamp_millis(history.timestamp).unwrap();
     let oldest = if reverse {
         events.sort_by_key(|a| a.timestamp);
         events[0].timestamp
@@ -1506,12 +1543,18 @@ fn display_link_history(
         writeln!(
             &mut tw,
             "{}\t{}\t{}\t{}\t{}",
-            if raw {
-                event.timestamp
-            } else if reverse {
-                event.timestamp - oldest
+            if tod {
+                let delta =
+                    Duration::from_millis((newest - event.timestamp) as u64);
+                let dt = collect_time - delta;
+                dt.format("%+").to_string()
             } else {
-                newest - event.timestamp
+                let timing = if reverse {
+                    event.timestamp - oldest
+                } else {
+                    newest - event.timestamp
+                };
+                if raw { timing.to_string() } else { fmt_time(timing) }
             },
             event.class,
             event.subclass,
@@ -1619,11 +1662,23 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 print_link_fields();
                 return Ok(());
             }
-            let links = client
-                .link_list_all(filter.as_deref())
+            let mut links = client
+                .link_list_all(None)
                 .await
                 .context("failed to list all links")?
                 .into_inner();
+            if !filter.is_empty() {
+                links = links
+                    .into_iter()
+                    .filter(|l| {
+                        let p = l.port_id.to_string();
+                        filter.iter().any(|f| p.contains(f))
+                    })
+                    .collect::<Vec<dpd_client::types::Link>>();
+                if links.is_empty() {
+                    bail!("no links found with matching names");
+                }
+            }
             if parseable {
                 let fields =
                     fields.as_deref().unwrap_or(DEFAULT_PARSEABLE_FIELDS);
@@ -1861,12 +1916,12 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 .await
                 .with_context(|| "failed to disable link")?;
         }
-        Link::History { link, raw, reverse, n } => {
+        Link::History { link, tod, raw, reverse, n } => {
             let history = client
                 .link_history_get(&link.port_id, &link.link_id)
                 .await
                 .context("failed to get Link history")?;
-            display_link_history(history.into_inner(), raw, reverse, n);
+            display_link_history(history.into_inner(), tod, raw, reverse, n);
         }
         Link::Fault { cmd: fault } => match fault {
             Fault::Show { link_path } => {

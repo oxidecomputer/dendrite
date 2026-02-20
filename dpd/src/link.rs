@@ -996,7 +996,8 @@ impl Switch {
         let mut events = self.fetch_history(asic_ids);
         events.sort_by_key(|a| a.timestamp);
         Ok(views::LinkHistory {
-            timestamp: common::timestamp_ms(),
+            timestamp: common::wallclock_ms(),
+            relative: common::timestamp_ms(),
             events: events.iter().map(|er| er.into()).collect(),
         })
     }
