@@ -7,6 +7,7 @@
 //! DPD endpoint definitions.
 
 pub mod v1;
+pub mod v11;
 pub mod v2;
 pub mod v7;
 
@@ -63,6 +64,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (11, WALLCLOCK_HISTORY),
     (10, ASIC_DETAILS),
     (9, SNAPSHOT),
     (8, MCAST_STRICT_UNDERLAY),
@@ -1173,6 +1175,24 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/history",
+        versions = ..VERSION_WALLCLOCK_HISTORY
+    }]
+    async fn link_history_get_v11(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<v11::LinkHistory>, HttpError> {
+        let history = Self::link_history_get(rqctx, path).await?.0;
+        Ok(HttpResponseOk(v11::LinkHistory {
+            timestamp: history.relative,
+            events: history.events,
+        }))
+    }
+
+    /// Get the event history for the given link.
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/history",
+        versions = VERSION_WALLCLOCK_HISTORY..
     }]
     async fn link_history_get(
         rqctx: RequestContext<Self::Context>,
