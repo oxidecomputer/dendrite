@@ -80,14 +80,14 @@ pub fn mac_clear(s: &Switch, port: u16) -> DpdResult<()> {
 }
 
 pub fn table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<MacMatchKey, MacAction>(TableType::PortMacAddress)
+    s.table_dump::<MacMatchKey, MacAction>(TableType::PortMacAddress, false)
 }
 
 pub fn counter_fetch(
     s: &Switch,
     force_sync: bool,
 ) -> DpdResult<Vec<views::TableCounterEntry>> {
-    s.counter_fetch::<MacMatchKey>(force_sync, TableType::PortMacAddress)
+    s.counter_fetch::<MacMatchKey>(force_sync, TableType::PortMacAddress, false)
 }
 
 /// Remove all entries from the MAC table.
