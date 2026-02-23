@@ -17,16 +17,14 @@ use aal::{
 use common::table::TableType;
 
 pub struct Table {
-    name: String,
     type_: TableType,
     keys: Mutex<HashSet<u64>>,
 }
 
 impl TableOps<Handle> for Table {
     fn new(hdl: &Handle, type_: TableType) -> AsicResult<Table> {
-        let name = type_.to_string();
         table_unfurl!(hdl, type_, table_new);
-        Ok(Table { name, type_, keys: Mutex::new(HashSet::new()) })
+        Ok(Table { type_, keys: Mutex::new(HashSet::new()) })
     }
 
     fn size(&self) -> usize {

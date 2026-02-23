@@ -79,15 +79,18 @@ pub fn mac_clear(s: &Switch, port: u16) -> DpdResult<()> {
     mac_clear_common(s, TableType::PortMacAddress, port)
 }
 
-pub fn table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<MacMatchKey, MacAction>(TableType::PortMacAddress, false)
+pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
+    s.table_dump::<MacMatchKey, MacAction>(
+        TableType::PortMacAddress,
+        from_hardware,
+    )
 }
 
 pub fn counter_fetch(
     s: &Switch,
     force_sync: bool,
 ) -> DpdResult<Vec<views::TableCounterEntry>> {
-    s.counter_fetch::<MacMatchKey>(force_sync, TableType::PortMacAddress, false)
+    s.counter_fetch::<MacMatchKey>(force_sync, TableType::PortMacAddress)
 }
 
 /// Remove all entries from the MAC table.
@@ -111,8 +114,14 @@ pub fn mcast_mac_clear(s: &Switch, port: u16) -> DpdResult<()> {
 }
 
 #[cfg(feature = "multicast")]
-pub fn mcast_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<MacMatchKey, MacAction>(TableType::PortMacAddressMcast)
+pub fn mcast_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<MacMatchKey, MacAction>(
+        TableType::PortMacAddressMcast,
+        from_hardware,
+    )
 }
 
 #[cfg(feature = "multicast")]
