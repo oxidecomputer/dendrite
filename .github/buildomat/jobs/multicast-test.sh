@@ -30,5 +30,4 @@ set -o errexit
 set -o pipefail
 set -o xtrace
 
-export MULTICAST=1
 source .github/buildomat/packet-test-common.sh
