@@ -1,15 +1,11 @@
 #!/bin/bash
 
-# The tofino2 has 20 stages. Base sidecar.p4 needs 15 stages, and with
-# multicast support it needs 18. Specifying the number of stages isn't strictly
-# necessary, but it allows us to track when we exceed the current ceiling.
-# The underlying intention is to grow deliberately and thoughtfully, given the
-# limited space on the ASIC.
-if [[ "${BUILD_FEATURES:-}" == *"multicast"* ]]; then
-    TOFINO_STAGES=18
-else
-    TOFINO_STAGES=15
-fi
+# The tofino2 has 20 stages. With multicast as a default feature, sidecar.p4
+# needs 18 stages. Specifying the number of stages isn't strictly necessary,
+# but it allows us to track when we exceed the current ceiling. The underlying
+# intention is to grow deliberately and thoughtfully, given the limited space
+# on the ASIC.
+TOFINO_STAGES=18
 
 # These describe which version of the SDE to download and where to find it
 SDE_COMMIT=e61fe02c3c1c384b2e212c90177fcea76a31fd4e
