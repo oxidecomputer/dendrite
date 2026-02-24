@@ -9535,9 +9535,15 @@
         "type": "object",
         "properties": {
           "dir": {
-            "$ref": "#/components/schemas/SnapshotDirection"
+            "description": "Whether to capture on the ingress or egress pipeline.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotDirection"
+              }
+            ]
           },
           "end_stage": {
+            "description": "Tofino hardware stage to stop capturing at.\n\nSee /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa to get a sense of stage layout.",
             "type": "integer",
             "format": "uint8",
             "minimum": 0
@@ -9550,11 +9556,13 @@
             }
           },
           "pipe": {
+            "description": "Index of the pipeline to capture. Typically this will be 0 through 3. Different ports map to different pipelines.",
             "type": "integer",
             "format": "uint32",
             "minimum": 0
           },
           "start_stage": {
+            "description": "Tofino hardware stage to start capturing at.\n\nSee /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa to get a sense of stage layout.",
             "type": "integer",
             "format": "uint8",
             "minimum": 0
@@ -9566,6 +9574,7 @@
             "minimum": 0
           },
           "triggers": {
+            "description": "Fields and masks to use as snapshot trigger. Triggers are combined as a logical `and`.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SnapshotTrigger"
@@ -9584,10 +9593,21 @@
       },
       "SnapshotDirection": {
         "description": "Direction of a PHV snapshot.",
-        "type": "string",
-        "enum": [
-          "Ingress",
-          "Egress"
+        "oneOf": [
+          {
+            "description": "Take snapshot of ingress pipeline",
+            "type": "string",
+            "enum": [
+              "Ingress"
+            ]
+          },
+          {
+            "description": "Take snapshot of egress pipeline",
+            "type": "string",
+            "enum": [
+              "Egress"
+            ]
+          }
         ]
       },
       "SnapshotFieldScope": {
@@ -9595,9 +9615,11 @@
         "type": "object",
         "properties": {
           "field": {
+            "description": "Field name",
             "type": "string"
           },
           "in_scope": {
+            "description": "Whether or not the field is in scope.",
             "type": "boolean"
           }
         },
@@ -9611,6 +9633,7 @@
         "type": "object",
         "properties": {
           "name": {
+            "description": "Name of the field.",
             "type": "string"
           },
           "value": {
@@ -9628,6 +9651,7 @@
         "type": "object",
         "properties": {
           "stages": {
+            "description": "Stages captured in the result.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SnapshotStageResult"
@@ -9643,20 +9667,28 @@
         "type": "object",
         "properties": {
           "dir": {
-            "$ref": "#/components/schemas/SnapshotDirection"
+            "description": "Whether to check the ingress or egress pipeline.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotDirection"
+              }
+            ]
           },
           "fields": {
+            "description": "Fields to check.",
             "type": "array",
             "items": {
               "type": "string"
             }
           },
           "pipe": {
+            "description": "Pipeline index to check.",
             "type": "integer",
             "format": "uint32",
             "minimum": 0
           },
           "stage": {
+            "description": "Stage index.",
             "type": "integer",
             "format": "uint8",
             "minimum": 0
@@ -9679,38 +9711,47 @@
         "type": "object",
         "properties": {
           "egress_dp_error": {
+            "description": "Datapath error detected in the egress pipeline at capture time. Only reported on Tofino 2+; always false on Tofino 1.",
             "type": "boolean"
           },
           "fields": {
+            "description": "Fields captured in the result.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SnapshotFieldValue"
             }
           },
           "ingress_dp_error": {
+            "description": "Datapath error detected in the ingress pipeline at capture time. Only reported on Tofino 2+; always false on Tofino 1.",
             "type": "boolean"
           },
           "local_stage_trigger": {
+            "description": "Whether this stage's own PHV match criteria fired the snapshot. This is the primary trigger: the PHV contents at this stage matched the key/mask programmed via the snapshot trigger configuration.",
             "type": "boolean"
           },
           "next_table": {
+            "description": "The P4 table name that the MAU pipeline selected for execution in the following stage after processing this one.",
             "type": "string"
           },
           "prev_stage_trigger": {
+            "description": "Whether the snapshot was triggered because the previous stage was already triggered and propagated its trigger signal forward. A `prev_stage_trigger` with no `local_stage_trigger` means this stage did not match the trigger criteria itself -- it was captured solely because an adjacent stage matched.",
             "type": "boolean"
           },
           "stage_id": {
+            "description": "The index of the stage this result came from.",
             "type": "integer",
             "format": "uint8",
             "minimum": 0
           },
           "tables": {
+            "description": "Tables captured in the result.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SnapshotTableResult"
             }
           },
           "timer_trigger": {
+            "description": "Whether the snapshot was triggered by the timer mechanism rather than a PHV field match. Useful for capturing pipeline state at a specific time regardless of packet contents.",
             "type": "boolean"
           }
         },
@@ -9731,20 +9772,25 @@
         "type": "object",
         "properties": {
           "executed": {
+            "description": "Whether the table was active in this stage. This is the primary gate: if a table was not executed, `hit`, `inhibited`, and `match_hit_address` are all meaningless (zeroed by the SDE).",
             "type": "boolean"
           },
           "hit": {
+            "description": "Whether the match lookup found a matching entry.\n\nOnly meaningful when `executed` is true and `inhibited` is false. The absence of `hit` does not necessarily mean that a lookup was attempted. It simply means there was no hit, which could mean no lookup was attempted or that the table's gateway inhibited it.",
             "type": "boolean"
           },
           "inhibited": {
+            "description": "Whether the table's gateway inhibited the match lookup from proceeding. Gateways are conditional guards attached to tables that can skip the lookup entirely. When inhibited, `hit` and `match_hit_address` will be 0. Only applicable to tables that have an attached gateway.",
             "type": "boolean"
           },
           "match_hit_address": {
+            "description": "The physical address of the entry that matched, sourced from the exact-match or TCAM hit-address register depending on table type. Zero when the table was not executed or was inhibited.",
             "type": "integer",
             "format": "uint32",
             "minimum": 0
           },
           "name": {
+            "description": "Name of the table",
             "type": "string"
           }
         },
@@ -9761,6 +9807,7 @@
         "type": "object",
         "properties": {
           "field": {
+            "description": "Name of the field to capture.\n\nMust match what's in the phv ingress or phv egress section of /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa.",
             "type": "string"
           },
           "mask": {

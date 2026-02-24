@@ -4,4 +4,4 @@ name = "rust"
 # default to tofino_sde, can change this to any other feature such as softnpu
 # as needed during development but in source control this should probably
 # remain as tofino_sde
-features = [ "tofino_asic", "multicast" ]
+features = [ "tofino_asic" ]

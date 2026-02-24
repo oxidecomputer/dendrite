@@ -48,10 +48,16 @@ pub enum Snapshot {
 
         /// Trigger fields as "field=value/mask" (hex values).
         /// Example: "hdr.ethernet.dst_addr=0x112233445566/0xffffffffffff"
+        ///
+        /// Field names must match what's in the phv ingress or phv egress
+        /// /section of opt/oxide/dendrite/sidecar/pipe/sidecar.bfa.
         #[arg(long = "trigger", short = 't')]
         triggers: Vec<String>,
 
         /// P4 field names to decode from the capture.
+        ///
+        /// Field names must match what's in the phv ingress or phv egress
+        /// /section of opt/oxide/dendrite/sidecar/pipe/sidecar.bfa.
         #[arg(long = "field", short = 'f')]
         fields: Vec<String>,
 
@@ -158,12 +164,24 @@ pub async fn snapshot_cmd(client: &Client, cmd: Snapshot) -> Result<()> {
                 }
 
                 for tbl in &stage.tables {
-                    let status = if tbl.hit { "HIT" } else { "miss" };
-                    let extra = if tbl.inhibited { " [inhibited]" } else { "" };
-                    println!(
-                        "  table: {} -> {status}{extra} (addr={:#x})",
-                        tbl.name, tbl.match_hit_address,
-                    );
+                    if !tbl.executed {
+                        println!(
+                            "  table: {} -> not active in this stage",
+                            tbl.name
+                        );
+                    } else if tbl.inhibited {
+                        println!(
+                            "  table: {} -> inhibited by gateway logic",
+                            tbl.name
+                        );
+                    } else if tbl.hit {
+                        println!(
+                            "  table: {} -> HIT (addr={:#x})",
+                            tbl.name, tbl.match_hit_address,
+                        );
+                    } else {
+                        println!("  table: {} -> miss", tbl.name);
+                    }
                 }
 
                 for field in &stage.fields {
