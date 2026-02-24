@@ -1474,38 +1474,6 @@ fn print_link_verbose(
     Ok(())
 }
 
-fn fmt_time(mut ms: i64) -> String {
-    const MS_PER_SEC: i64 = 1000;
-    const MS_PER_MIN: i64 = MS_PER_SEC * 60;
-    const MS_PER_HOUR: i64 = MS_PER_MIN * 60;
-    const MS_PER_DAY: i64 = MS_PER_HOUR * 24;
-
-    let mut t = String::new();
-    if ms > MS_PER_SEC {
-        if ms > MS_PER_MIN {
-            if ms > MS_PER_HOUR {
-                if ms > MS_PER_DAY {
-                    let days = ms / MS_PER_DAY;
-                    ms -= days * MS_PER_DAY;
-                    t = format!("{days}d");
-                }
-                let hours = ms / MS_PER_HOUR;
-                ms -= hours * MS_PER_HOUR;
-                t = format!("{t}{hours}h");
-            }
-            let minutes = ms / MS_PER_MIN;
-            ms -= minutes * MS_PER_MIN;
-            t = format!("{t}{minutes}m");
-        }
-        let seconds = ms / MS_PER_SEC;
-        ms -= seconds * MS_PER_SEC;
-        t = format!("{t}{seconds}s");
-    }
-    t = format!("{t}{ms}ms");
-
-    t
-}
-
 fn display_link_history(
     history: types::LinkHistory,
     tod: bool,
@@ -1554,7 +1522,12 @@ fn display_link_history(
                 } else {
                     newest - event.timestamp
                 };
-                if raw { timing.to_string() } else { fmt_time(timing) }
+                if raw {
+                    timing.to_string()
+                } else {
+                    let d = Duration::from_millis(timing.try_into().unwrap());
+                    humantime::format_duration(d).to_string()
+                }
             },
             event.class,
             event.subclass,
