@@ -3,12 +3,13 @@ export RUST_BACKTRACE=1
 source .github/buildomat/common.sh
 source .github/buildomat/linux.sh
 
-wd=`pwd`
+wd=$(pwd)
 export WS=$wd
 MODEL_STARTUP_TIMEOUT=${MODEL_STARTUP_TIMEOUT:=5}
 STARTUP_TIMEOUT=${STARTUP_TIMEOUT:=120}
 
 BUILD_FEATURES=tofino_asic
+TOFINO_STAGES=18
 
 CODEGEN_FEATURES=--multicast
 SWADM_FEATURES="--features=multicast"
@@ -61,29 +62,33 @@ fi
 
 banner "Test"
 sudo -E ./tools/veth_setup.sh
-id=`id -un`
-gr=`id -gn`
+id=$(id -un)
+gr=$(id -gn)
 sudo -E mkdir -p /work
 sudo -E chown $id:$gr /work
-sudo -E ./tools/run_tofino_model.sh &> /work/simulator.log &
+sudo -E ./tools/run_tofino_model.sh &>/work/simulator.log </dev/null &
+stty sane 2>/dev/null || true
 sleep $MODEL_STARTUP_TIMEOUT
-sudo -E ./tools/run_dpd.sh -m 127.0.0.1 &> /work/dpd.log &
+sudo -E ./tools/run_dpd.sh -m 127.0.0.1 &>/work/dpd.log </dev/null &
+stty sane 2>/dev/null || true
 echo "waiting for dpd to come online"
 set +o errexit
 
 SLEEP_TIME=5
-iters=$(( $STARTUP_TIMEOUT / $SLEEP_TIME ))
-while [ 1 ] ; do
-	./target/debug/swadm --host '[::1]' build-info 2> /dev/null
-	if [ $? == 0 ]; then
-		break
-	fi
-	iters=$(($iters - 1))
-	if [ $iters = 0 ]; then
-		echo "dpd failed to come online in $STARTUP_TIMEOUT seconds"
-		exit 1
-	fi
-	sleep $SLEEP_TIME
+iters=$(($STARTUP_TIMEOUT / $SLEEP_TIME))
+while [ 1 ]; do
+    ./target/debug/swadm --host '[::1]' build-info 2>/dev/null
+    rc=$?
+    stty sane 2>/dev/null || true
+    if [ $rc == 0 ]; then
+        break
+    fi
+    iters=$(($iters - 1))
+    if [ $iters = 0 ]; then
+        echo "dpd failed to come online in $STARTUP_TIMEOUT seconds"
+        exit 1
+    fi
+    sleep $SLEEP_TIME
 done
 set -o errexit
 

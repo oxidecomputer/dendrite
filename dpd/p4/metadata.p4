@@ -4,12 +4,98 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+// Guard against compiler bug: RemoveMetadataInits strips explicit `= false`
+// initializations, assuming parser will zero-init the PHV container.
+// ComputeInitZeroContainers only marks containers for zero-init if the field
+// is actually used in the parser, not just initialized. These assumptions are
+// incompatible: fields initialized but only used in MAU get stale data.
+// See: https://github.com/oxidecomputer/tofino-p4c/blob/ry/upstream-merge/rydocs/tofino-metadata-corruption.md
+@pa_no_init("ingress", "meta.service_routed")
+@pa_no_init("ingress", "meta.nat_egress_hit")
+@pa_no_init("ingress", "meta.nat_ingress_hit")
+@pa_no_init("ingress", "meta.uplink_ingress")
+@pa_no_init("ingress", "meta.encap_needed")
+@pa_no_init("ingress", "meta.icmp_recalc")
+@pa_no_init("ingress", "meta.allow_source_mcast")
+@pa_no_init("ingress", "meta.resolve_nexthop")
+@pa_no_init("ingress", "meta.nexthop_is_v6")
+@pa_no_init("ingress", "meta.route_ttl_is_1")
+// These fields are set in the parser on some paths but not all. On paths
+// that skip the set, the field is init-only and vulnerable.
+@pa_no_init("ingress", "meta.is_switch_address")
+@pa_no_init("ingress", "meta.is_link_local_mcastv6")
+
+// Force fields out of mocha containers into normal containers. Mocha containers
+// only support whole-container-set operations, so isolated fields can have
+// their other bits corrupted by stale data from previous packets.
+//
+// Without these pragmas the compiler may pack small metadata fields into mocha
+// containers alongside unrelated fields. A whole-container write to one field
+// then clobbers the others. The risk is highest for 1-bit booleans and fields
+// with long liverange gaps between set and use.
+//
+// Both builds share ipv4_checksum_err: confirmed allocated to mocha MH0 where
+// it shared a container with pkt_type, risking false checksum-error drops.
+@pa_container_type("ingress", "meta.ipv4_checksum_err", "normal")
+
+// 1-bit ingress booleans: high risk of mocha packing. The compiler can
+// pack up to 8 booleans into a single 8-bit mocha container, and a
+// whole-container write to any one clobbers the rest.
+@pa_container_type("ingress", "meta.dropped", "normal")
+@pa_container_type("ingress", "meta.is_switch_address", "normal")
+@pa_container_type("ingress", "meta.is_mcast", "normal")
+@pa_container_type("ingress", "meta.allow_source_mcast", "normal")
+@pa_container_type("ingress", "meta.is_link_local_mcastv6", "normal")
+@pa_container_type("ingress", "meta.service_routed", "normal")
+@pa_container_type("ingress", "meta.nat_egress_hit", "normal")
+@pa_container_type("ingress", "meta.nat_ingress_hit", "normal")
+@pa_container_type("ingress", "meta.uplink_ingress", "normal")
+@pa_container_type("ingress", "meta.encap_needed", "normal")
+@pa_container_type("ingress", "meta.resolve_nexthop", "normal")
+@pa_container_type("ingress", "meta.route_ttl_is_1", "normal")
+@pa_container_type("ingress", "meta.nexthop_is_v6", "normal")
+@pa_container_type("ingress", "meta.icmp_recalc", "normal")
+
+// Wider ingress fields used by NAT encapsulation, checksum computation,
+// and routing. Protected in both builds to avoid relying on incidental
+// co-location with deparsed fields, which is fragile across compiler
+// versions and PHV pressure changes.
+@pa_container_type("ingress", "meta.drop_reason", "normal")
+@pa_container_type("ingress", "meta.l4_src_port", "normal")
+@pa_container_type("ingress", "meta.l4_dst_port", "normal")
+@pa_container_type("ingress", "meta.nat_ingress_tgt", "normal")
+@pa_container_type("ingress", "meta.nat_geneve_vni", "normal")
+@pa_container_type("ingress", "meta.nat_inner_mac", "normal")
+@pa_container_type("ingress", "meta.icmp_csum", "normal")
+@pa_container_type("ingress", "meta.body_checksum", "normal")
+@pa_container_type("ingress", "meta.orig_src_mac", "normal")
+@pa_container_type("ingress", "meta.orig_src_ipv4", "normal")
+@pa_container_type("ingress", "meta.nat_ingress_csum", "normal")
+@pa_container_type("ingress", "meta.nexthop", "normal")
+
+// Egress bridge header fields crossing the ingress/egress boundary.
+@pa_container_type("egress", "meta.bridge_hdr.ingress_port", "normal")
+@pa_container_type("egress", "meta.bridge_hdr.is_mcast_routed", "normal")
+@pa_container_type("egress", "meta.bridge_hdr.nat_egress_hit", "normal")
+// Egress drop_reason is used in the final drop/forward decision in both
+// builds. In the MULTICAST build, additional egress fields are set by
+// multicast table actions and consumed later in the pipeline.
+@pa_container_type("egress", "meta.drop_reason", "normal")
+#ifdef MULTICAST
+@pa_container_type("egress", "meta.vlan_id", "normal")
+@pa_container_type("egress", "meta.port_number", "normal")
+@pa_container_type("egress", "meta.ipv4_checksum_recalc", "normal")
+#endif
+
 /* Flexible bridge header for passing metadata between ingress and egress
  * pipelines.
  */
 @flexible
 header bridge_h {
-	PortId_t ingress_port;
+	PortId_t ingress_port;		// 9 bits
+	bool is_mcast_routed;		// 1 bit: packet was routed to multicast (PRE)
+	bool nat_egress_hit;		// 1 bit: NAT egress matched, check egress filter
+	bit<5> reserved;		// 5 bits: padding to 16-bit boundary
 }
 
 struct sidecar_ingress_meta_t {
@@ -25,8 +111,9 @@ struct sidecar_ingress_meta_t {
 	bool uplink_ingress;		// Packet arrived on an uplink port
 	bool encap_needed;
 	bool resolve_nexthop;		// signals nexthop needs to be resolved
-	ipv4_addr_t nexthop_ipv4;	// ip address of next router
-	ipv6_addr_t nexthop_ipv6;	// ip address of next router
+	bool route_ttl_is_1;		// TTL/hop_limit equals 1 (for route lookup)
+	bool nexthop_is_v6;		// true when nexthop is IPv6
+	ipv6_addr_t nexthop;		// next hop address; IPv4 uses low bits
 	bit<10> pkt_type;
 	bit<8> drop_reason;		// reason a packet was dropped
 	bit<16> l4_src_port;		// tcp or udp destination port
@@ -74,41 +161,11 @@ struct sidecar_egress_meta_t {
 	bit<8> port_number; 		// Port number for the outgoing port (0-255)
 }
 
-struct route4_result_t {
-	/*
-	 * The result of the multistage route selection process is an egress
-	 * port and a nexthop address
-	 */
-	ipv4_addr_t nexthop;
-	ipv6_addr_t nexthop6;
-	PortId_t port;
-
-	/* Did we successfully look up the route in the table? */
-	bool is_hit;
-	bool is_v6;
-
-	/*
-	 * A hash of the (address,port) fields, which is used to choose between
-	 * multiple potential routes.
-	 */
-	bit<8> ecmp_hash;
-
-	/* Index into the target table of the first potential route */
-	bit<16> idx;
-	/* Number of consecutive slots containing potential routes */
-	bit<8> slots;
-	/* Which of those routes we should select, based the flow hash */
-	bit<16> slot;
-}
-
-struct route6_result_t {
-	/*
-	 * The result of the multistage route selection process is an egress
-	 * port and a nexthop address
-	 */
-	ipv6_addr_t nexthop;
-	PortId_t port;
-
+// Unified route result struct for both Router4 and Router6.
+// A single instance is allocated in L3Router and passed to both
+// controls, forcing the compiler to use the same PHV allocation
+// and preventing liverange divergence under high PHV pressure.
+struct route_result_t {
 	/* Did we successfully look up the route in the table? */
 	bool is_hit;
 

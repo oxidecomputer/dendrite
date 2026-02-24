@@ -4,7 +4,13 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-const bit<16> L2_ISOLATED_FLAG = 0x8000;
+// Multicast MAC prefixes per RFC 1112 and RFC 2464.
+const bit<24> IPV4_MCAST_MAC_PREFIX = 0x01005e;
+const bit<16> IPV6_MCAST_MAC_PREFIX = 0x3333;
+
+// Multicast IP address prefixes per RFC 1112 and RFC 4291.
+const bit<4> IPV4_MCAST_PREFIX = 0xe;    // 224.0.0.0/4
+const bit<8> IPV6_MCAST_PREFIX = 0xff;   // ff00::/8
 
 // TODO: these all need to be bigger. Early experimentation is showing that this
 // is going to need to come either through ATCAM/ALPM or code restructuring.
@@ -12,6 +18,7 @@ const int IPV4_NAT_TABLE_SIZE       = 1024; // nat routing table
 const int IPV6_NAT_TABLE_SIZE       = 1024; // nat routing table
 const int IPV4_LPM_SIZE             = 8192; // ipv4 forwarding table
 const int IPV6_LPM_SIZE             = 1024; // ipv6 forwarding table
+const int FWD_ENTRIES_PER_ROUTE     = 2;    // TTL compound key: forward + ttl_exceeded
 const int IPV4_ARP_SIZE             = 512;  // arp cache
 const int IPV6_NEIGHBOR_SIZE        = 512;  // ipv6 neighbor cache
 const int SWITCH_IPV4_ADDRS_SIZE    = 512;  // ipv4 addrs assigned to our ports
@@ -55,16 +62,17 @@ const bit<32> SVC_COUNTER_MAX = 7;
 const bit<2> MULTICAST_TAG_EXTERNAL = 0;
 const bit<2> MULTICAST_TAG_UNDERLAY = 1;
 const bit<2> MULTICAST_TAG_UNDERLAY_EXTERNAL = 2;
+const bit<2> MULTICAST_TAG_INVALID = 3;  // Sentinel for missing/invalid header
 
-/* IPv6 Address Mask Constants */
-const bit<128> IPV6_SCOPE_MASK = 0xffff0000000000000000000000000000;  // Match ff00::/16
-const bit<128> IPV6_ULA_MASK = 0xff000000000000000000000000000000;     // Match fd00::/8
-
-/* IPv6 Address Pattern Constants */
-const bit<128> IPV6_ADMIN_LOCAL_PATTERN = 0xff040000000000000000000000000000;  // ff04::/16
-const bit<128> IPV6_SITE_LOCAL_PATTERN = 0xff050000000000000000000000000000;   // ff05::/16
-const bit<128> IPV6_ORG_SCOPE_PATTERN = 0xff080000000000000000000000000000;    // ff08::/16
-const bit<128> IPV6_ULA_PATTERN = 0xfd000000000000000000000000000000;          // fd00::/8
+/* IPv6 Address Constants (16-bit prefix for TCAM optimization) */
+const bit<16> IPV6_SCOPE_MASK_16 = 0xffff;        // Match all 16 bits of prefix
+const bit<16> IPV6_ULA_MASK_16 = 0xff00;          // Match top 8 bits (fd00::/8)
+const bit<16> IPV6_INTERFACE_LOCAL_16 = 0xff01;   // ff01::/16
+const bit<16> IPV6_LINK_LOCAL_16 = 0xff02;        // ff02::/16
+const bit<16> IPV6_ADMIN_LOCAL_16 = 0xff04;       // ff04::/16
+const bit<16> IPV6_SITE_LOCAL_16 = 0xff05;        // ff05::/16
+const bit<16> IPV6_ORG_SCOPE_16 = 0xff08;         // ff08::/16
+const bit<16> IPV6_ULA_16 = 0xfd00;               // fd00::/8
 
 /* Reasons a packet may be dropped by the p4 pipeline */
 const bit<8> DROP_IPV4_SWITCH_ADDR_MISS         = 0x01;
@@ -95,4 +103,3 @@ const bit<8> DROP_GENEVE_OPTION_MALFORMED       = 0x19;
 const bit<8> DROP_GENEVE_OPTION_UNKNOWN         = 0x1A;
 // MAX(DROP_xxx) + 1
 const bit<32> DROP_REASON_MAX                   = 0x1B;
-

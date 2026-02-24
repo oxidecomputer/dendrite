@@ -1574,6 +1574,7 @@ fn set_mac_config(
         )?;
         mcast::mcast_egress::add_port_mapping_entry(switch, asic_id)?;
     }
+
     Ok(())
 }
 
@@ -1587,6 +1588,7 @@ fn clear_mac_config(switch: &Switch, asic_id: AsicId) -> DpdResult<()> {
         )?;
         mcast::mcast_egress::del_port_mapping_entry(switch, asic_id)?;
     }
+
     Ok(())
 }
 

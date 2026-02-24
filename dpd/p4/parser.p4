@@ -43,8 +43,8 @@ parser IngressParser(
 		meta.l4_dst_port = 0;
 		meta.l4_length = 0;
 		meta.body_checksum = 0;
-		meta.nexthop_ipv4 = 0;
-		meta.nexthop_ipv6 = 0;
+		meta.nexthop = 0;
+		meta.nexthop_is_v6 = false;
 		meta.orig_src_mac = 0;
 		meta.orig_src_ipv4 = 0;
 		meta.orig_dst_ipv4 = 0;
@@ -52,9 +52,12 @@ parser IngressParser(
 		meta.drop_reason = 0;
 		meta.nat_ingress_csum = 0;
 		meta.resolve_nexthop = false;
+		meta.route_ttl_is_1 = false;
 
 		meta.bridge_hdr.setValid();
 		meta.bridge_hdr.ingress_port = ig_intr_md.ingress_port;
+		meta.bridge_hdr.is_mcast_routed = false;
+		meta.bridge_hdr.reserved = 0;
 
 		transition port_metadata;
 	}
@@ -245,8 +248,8 @@ parser IngressParser(
 		});
 
 		transition select(hdr.ipv6.dst_addr[127:112]) {
-			16w0xff01: drop_interface_local_mcast;
-			16w0xff02: set_link_local_mcast;
+			IPV6_INTERFACE_LOCAL_16: drop_interface_local_mcast;
+			IPV6_LINK_LOCAL_16: set_link_local_mcast;
 			default: check_ipv6_mcast;
 		}
 	}
@@ -546,7 +549,6 @@ parser EgressParser(
 		meta.vlan_id = 0;
 		meta.port_number = 0;
 
-
 		transition parse_bridge_hdr;
 	}
 
@@ -583,8 +585,6 @@ parser EgressParser(
 		pkt.extract(hdr.ipv4);
 
 		transition select(hdr.ipv4.protocol) {
-			IPPROTO_ICMP: parse_icmp;
-			IPPROTO_TCP: parse_tcp;
 			IPPROTO_UDP: parse_udp;
 			default: accept;
 		}
@@ -594,22 +594,9 @@ parser EgressParser(
 		pkt.extract(hdr.ipv6);
 
 		transition select(hdr.ipv6.next_hdr) {
-			IPPROTO_TCP: parse_tcp;
 			IPPROTO_UDP: parse_udp;
 			default: accept;
 		}
-	}
-
-	state parse_icmp {
-		pkt.extract(hdr.icmp);
-
-		transition accept;
-	}
-
-	state parse_tcp {
-		pkt.extract<tcp_h>(_);
-
-		transition accept;
 	}
 
 	state parse_udp {
