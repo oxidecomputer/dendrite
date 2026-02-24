@@ -2152,7 +2152,8 @@ control Ingress(
 			if (!meta.dropped) {
 				l3_router.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			}
-			if (!meta.dropped && meta.nat_egress_hit && !meta.is_mcast) {
+			if (!meta.dropped && meta.nat_egress_hit &&
+			    !meta.is_mcast && !meta.service_routed) {
 				egress_filter.apply(meta, ig_tm_md);
 			}
 		}
