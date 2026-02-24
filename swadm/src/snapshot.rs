@@ -25,6 +25,7 @@ impl From<Direction> for types::SnapshotDirection {
     }
 }
 
+/// Tofino snapshot commands
 #[derive(Debug, Subcommand)]
 pub enum Snapshot {
     /// Capture a PHV snapshot
