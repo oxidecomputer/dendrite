@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 pub struct LinkHistory {
-    /// The timestamp in milliseconds at which this history was collected,
+    /// The timestamp in milliseconds at which this history was collected
     pub timestamp: i64,
     /// The set of historical events recorded
     pub events: Vec<dpd_types::views::LinkEvent>,
