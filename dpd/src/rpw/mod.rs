@@ -257,7 +257,9 @@ async fn nexus_client_with_resolver(
             } else {
                 let resolver =
                     Resolver::new_from_addrs(log.clone(), &dns_servers)?;
-                let client = reqwest::ClientBuilder::new()
+                // Use reqwest 0.12 to match the omicron nexus-client
+                // git dependency, which still expects a 0.12 client.
+                let client = reqwest012::ClientBuilder::new()
                     .dns_resolver(resolver.into())
                     .build()?;
                 let dns_name = ServiceName::Nexus.srv_name();
