@@ -42,7 +42,7 @@ use crate::integration_tests::common::prelude::*;
 // adjust the constant below to match the observed result.
 //
 #[cfg(feature = "multicast")]
-const IPV4_LPM_SIZE: usize = 8175; // ipv4 forwarding table
+const IPV4_LPM_SIZE: usize = 7164; // ipv4 forwarding table
 #[cfg(not(feature = "multicast"))]
 const IPV4_LPM_SIZE: usize = 8187; // ipv4 forwarding table
 

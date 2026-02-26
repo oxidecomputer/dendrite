@@ -50,6 +50,27 @@ impl ToIpAddr for types::UnderlayMulticastIpv6 {
     }
 }
 
+/// Count table entries matching a specific IP address in any key field.
+fn count_entries_for_ip(entries: &[types::TableEntry], ip: &str) -> usize {
+    entries.iter().filter(|e| e.keys.values().any(|v| v.contains(ip))).count()
+}
+
+/// Check if any table entry for the given IP has a `forward_vlan` action with
+/// the specified VLAN ID.
+fn has_vlan_action_for_ip(
+    entries: &[types::TableEntry],
+    ip: &str,
+    vlan: u16,
+) -> bool {
+    entries.iter().any(|e| {
+        e.keys.values().any(|v| v.contains(ip))
+            && e.action_args
+                .get("vlan_id")
+                .map(|v| v == &vlan.to_string())
+                .unwrap_or(false)
+    })
+}
+
 async fn check_counter_incremented(
     switch: &Switch,
     counter_name: &str,
@@ -536,6 +557,66 @@ async fn test_group_creation_with_validation() -> TestResult {
         _ => panic!("Expected ErrorResponse for invalid group ID"),
     }
 
+    // Test with reserved VLAN ID 0 (also invalid)
+    let external_vlan0 = types::MulticastGroupCreateExternalEntry {
+        group_ip: IpAddr::V4(MULTICAST_TEST_IPV4),
+        tag: Some(TEST_TAG.to_string()),
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding {
+            vlan_id: Some(0), // Invalid: VLAN 0 is reserved
+        },
+        sources: None,
+    };
+
+    let res = switch
+        .client
+        .multicast_group_create_external(&external_vlan0)
+        .await
+        .expect_err("Should fail with reserved VLAN ID 0");
+
+    match res {
+        Error::ErrorResponse(inner) => {
+            assert_eq!(
+                inner.status(),
+                400,
+                "Expected 400 Bad Request status code for VLAN 0"
+            );
+        }
+        _ => panic!("Expected ErrorResponse for reserved VLAN ID 0"),
+    }
+
+    // Test with reserved VLAN ID 1 (also invalid)
+    let external_vlan1 = types::MulticastGroupCreateExternalEntry {
+        group_ip: IpAddr::V4(MULTICAST_TEST_IPV4),
+        tag: Some(TEST_TAG.to_string()),
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding {
+            vlan_id: Some(1), // Invalid: VLAN 1 is reserved
+        },
+        sources: None,
+    };
+
+    let res = switch
+        .client
+        .multicast_group_create_external(&external_vlan1)
+        .await
+        .expect_err("Should fail with reserved VLAN ID 1");
+
+    match res {
+        Error::ErrorResponse(inner) => {
+            assert_eq!(
+                inner.status(),
+                400,
+                "Expected 400 Bad Request status code for VLAN 1"
+            );
+        }
+        _ => panic!("Expected ErrorResponse for reserved VLAN ID 1"),
+    }
+
     // Test with valid parameters
     // IPv4 groups are always external
     let external_valid = types::MulticastGroupCreateExternalEntry {
@@ -704,8 +785,52 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
         "ff04::200".parse::<std::net::Ipv6Addr>().unwrap()
     );
 
-    // Verify the admin-scoped group now has access to the VLAN via NAT target reference
-    // Check the bitmap table to see if VLAN 42 is properly set (this is where VLAN matters for P4)
+    // Verify IPv4 route table has one entry for the VLAN group.
+    // Route tables use simple dst_addr matching with forward_vlan(vid) action.
+    // VLAN isolation (preventing translation) is handled by NAT ingress tables.
+    let route_table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .await
+        .expect("Should dump IPv4 route table")
+        .into_inner();
+    let group_entries: Vec<_> = route_table
+        .entries
+        .iter()
+        .filter(|e| e.keys.values().any(|v| v.contains("224.1.2.3")))
+        .collect();
+    assert_eq!(
+        group_entries.len(),
+        1,
+        "Route table uses dst_addr only -> 1 entry per group"
+    );
+    // Verify the action is forward_vlan with VLAN 42
+    assert!(
+        group_entries[0]
+            .action_args
+            .get("vlan_id")
+            .map(|v| v == "42")
+            .unwrap_or(false),
+        "Route entry should have forward_vlan(42) action"
+    );
+
+    // Verify NAT ingress table has two entries for VLAN isolation:
+    // 1. Untagged match -> forward (for decapsulated Geneve)
+    // 2. Tagged match with VLAN 42 -> forward (for already-tagged)
+    let nat_table = switch
+        .client
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .await
+        .expect("Should dump NAT ingress table")
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&nat_table.entries, "224.1.2.3"),
+        2,
+        "NAT table should have 2 entries for VLAN isolation (untagged + tagged)"
+    );
+
+    // Verify the admin-scoped group now has access to the VLAN via NAT target
+    // reference
     let bitmap_table = switch
         .client
         .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports")
@@ -713,7 +838,8 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
         .expect("Should clean up internal group")
         .into_inner();
 
-    // Verify the admin-scoped group's bitmap entry has VLAN 42 from external group propagation
+    // Verify the admin-scoped group's bitmap entry has VLAN 42 from external
+    // group propagation
     assert!(
         bitmap_table
             .entries
@@ -722,7 +848,8 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
         "Admin-scoped group bitmap should have VLAN 42 from external group"
     );
 
-    // Delete external group first since it references the internal group via NAT target
+    // Delete external group first since it references the internal group via
+    // NAT target
     cleanup_test_group(switch, created_external.group_ip, TEST_TAG)
         .await
         .unwrap();
@@ -780,6 +907,42 @@ async fn test_group_api_lifecycle() {
         Some(nat_target.clone())
     );
     assert_eq!(created.external_forwarding.vlan_id, Some(vlan_id));
+
+    // Route table: 1 entry (dst_addr only, VLAN via action)
+    let route_table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .await
+        .expect("Should dump route table")
+        .into_inner();
+    let route_entries: Vec<_> = route_table
+        .entries
+        .iter()
+        .filter(|e| e.keys.values().any(|v| v.contains("224.0.1.0")))
+        .collect();
+    assert_eq!(
+        route_entries.len(),
+        1,
+        "Route table should have 1 entry per group (dst_addr only)"
+    );
+
+    // NAT table: 2 entries for VLAN groups (untagged + tagged match keys)
+    let nat_table = switch
+        .client
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .await
+        .expect("Should dump NAT table")
+        .into_inner();
+    let nat_entries: Vec<_> = nat_table
+        .entries
+        .iter()
+        .filter(|e| e.keys.values().any(|v| v.contains("224.0.1.0")))
+        .collect();
+    assert_eq!(
+        nat_entries.len(),
+        2,
+        "NAT table should have 2 entries for VLAN group (untagged + tagged)"
+    );
 
     // Get all groups and verify our group is included
     let groups = switch
@@ -3674,10 +3837,6 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     Ok(())
 }
 
-/*
- * Commented out untl https://github.com/oxidecomputer/dendrite/issues/107 is
- * fixed
- *
 #[tokio::test]
 #[ignore]
 async fn test_multicast_vlan_translation_not_possible() -> TestResult {
@@ -3712,9 +3871,7 @@ async fn test_multicast_vlan_translation_not_possible() -> TestResult {
         types::InternalForwarding {
             nat_target: Some(create_nat_target_ipv4()),
         }, // Create NAT target
-        types::ExternalForwarding {
-            vlan_id: output_vlan,
-        },
+        types::ExternalForwarding { vlan_id: output_vlan },
         None,
     )
     .await;
@@ -3732,16 +3889,10 @@ async fn test_multicast_vlan_translation_not_possible() -> TestResult {
     );
 
     // Add input VLAN tag
-    to_send.hdrs.eth_hdr.as_mut().unwrap().eth_8021q = Some(eth::EthQHdr {
-        eth_pcp: 0,
-        eth_dei: 0,
-        eth_vlan_tag: input_vlan,
-    });
+    to_send.hdrs.eth_hdr.as_mut().unwrap().eth_8021q =
+        Some(eth::EthQHdr { eth_pcp: 0, eth_dei: 0, eth_vlan_tag: input_vlan });
 
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     // Expect NO packets - this test demonstrates that VLAN translation
     // is not possible for multicast packets
@@ -3754,7 +3905,6 @@ async fn test_multicast_vlan_translation_not_possible() -> TestResult {
         .unwrap();
     cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
 }
-*/
 
 #[tokio::test]
 #[ignore]
@@ -3887,7 +4037,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
     // Define test ports
     let ingress = PhysPort(10);
 
-    // Use unique multicast IP addresses that we will NOT configure any group for
+    // Use unique multicast IP addresses that we will not configure any group for
     let unconfigured_multicast_ipv4 = IpAddr::V4(Ipv4Addr::new(224, 1, 255, 1)); // Unique IPv4 multicast
     let unconfigured_multicast_ipv6 =
         IpAddr::V6(Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 255, 1)); // Unique IPv6 multicast
@@ -6851,6 +7001,436 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
         .expect("Should fetch recreated group");
 
     assert_eq!(fetched.into_inner().members.len(), 2);
+
+    // Cleanup
+    switch
+        .client
+        .multicast_reset_by_tag(&make_tag(tag))
+        .await
+        .expect("Should cleanup by tag");
+
+    Ok(())
+}
+
+/// Tests the full VLAN lifecycle for multicast groups, verifying route table
+/// entries are correctly managed through all VLAN transitions.
+///
+/// Route tables match on dst_addr only with 1 entry per group, using either
+/// forward (no VLAN) or forward_vlan(vid) actions. NAT tables use VLAN-aware
+/// matching for isolation, with 2 entries for VLAN groups (untagged + tagged
+/// match keys).
+#[tokio::test]
+#[ignore]
+async fn test_vlan_lifecycle_route_entries() -> TestResult {
+    let switch = &*get_switch().await;
+    let tag = "vlan_lifecycle_test";
+
+    // Setup: create internal admin-scoped group for NAT target
+    let internal_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    let egress_port = PhysPort(28);
+    create_test_multicast_group(
+        switch,
+        internal_ip,
+        Some(tag),
+        &[(egress_port, types::Direction::Underlay)],
+        types::InternalForwarding { nat_target: None },
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
+    let group_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
+    let nat_target = create_nat_target_ipv4();
+    let test_ip = "224.0.1.0";
+
+    // Case: create without VLAN, should have 1 route entry
+    let create_no_vlan = types::MulticastGroupCreateExternalEntry {
+        group_ip,
+        tag: Some(tag.to_string()),
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: None },
+        sources: None,
+    };
+
+    switch
+        .client
+        .multicast_group_create_external(&create_no_vlan)
+        .await
+        .expect("Should create group without VLAN");
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&table.entries, test_ip),
+        1,
+        "Group without VLAN should have 1 route entry"
+    );
+
+    // Case: update to add VLAN 10
+    // Route: 1 entry with forward_vlan(10) action
+    // NAT: 2 entries (untagged + tagged) for VLAN isolation
+    let update_add_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_add_vlan,
+        )
+        .await
+        .expect("Should update group to add VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, Some(10));
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&table.entries, test_ip),
+        1,
+        "Route table uses dst_addr only -> 1 entry per group"
+    );
+    assert!(
+        has_vlan_action_for_ip(&table.entries, test_ip, 10),
+        "Route entry should have forward_vlan(10) action"
+    );
+
+    // Verify NAT table has 2 entries for VLAN isolation
+    let nat_table = switch
+        .client
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&nat_table.entries, test_ip),
+        2,
+        "NAT table should have 2 entries for VLAN group (untagged + tagged)"
+    );
+
+    // Case: update to change VLAN 10 -> 20
+    // Route: same 1 entry, action changes to forward_vlan(20)
+    // NAT: 2 entries with new VLAN, no stale entries
+    let update_change_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(20) },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_change_vlan,
+        )
+        .await
+        .expect("Should update group to change VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, Some(20));
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&table.entries, test_ip),
+        1,
+        "Route table uses dst_addr only -> 1 entry per group"
+    );
+    assert!(
+        has_vlan_action_for_ip(&table.entries, test_ip, 20),
+        "Route entry should have forward_vlan(20) action"
+    );
+    assert!(
+        !has_vlan_action_for_ip(&table.entries, test_ip, 10),
+        "Should not have stale forward_vlan(10) action"
+    );
+
+    // NAT table should still have 2 entries
+    let nat_table = switch
+        .client
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&nat_table.entries, test_ip),
+        2,
+        "NAT table should have 2 entries for VLAN group"
+    );
+
+    // Case: update to remove VLAN
+    // Route: 1 entry with forward action (no VLAN)
+    // NAT: 1 entry (untagged only)
+    let update_remove_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: None },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_remove_vlan,
+        )
+        .await
+        .expect("Should update group to remove VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, None);
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl")
+        .await?
+        .into_inner();
+
+    assert_eq!(
+        count_entries_for_ip(&table.entries, test_ip),
+        1,
+        "Route table uses dst_addr only -> 1 entry per group"
+    );
+
+    assert!(
+        !has_vlan_action_for_ip(&table.entries, test_ip, 20),
+        "Should not have forward_vlan action after VLAN removal"
+    );
+
+    // NAT table should have 1 entry now (no VLAN = untagged only)
+    let nat_table = switch
+        .client
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&nat_table.entries, test_ip),
+        1,
+        "NAT table should have 1 entry after VLAN removal"
+    );
+
+    // Cleanup
+    switch
+        .client
+        .multicast_reset_by_tag(&make_tag(tag))
+        .await
+        .expect("Should cleanup by tag");
+
+    Ok(())
+}
+
+/// IPv6 version of the VLAN lifecycle test. Exercises the same
+/// None -> Some(10) -> Some(20) -> None transitions on an IPv6
+/// external multicast group, verifying route and NAT table entries.
+#[tokio::test]
+#[ignore]
+async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
+    let switch = &*get_switch().await;
+    let tag = "vlan_lifecycle_v6_test";
+
+    // Setup: create internal admin-scoped group for NAT target
+    let internal_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    let egress_port = PhysPort(28);
+    create_test_multicast_group(
+        switch,
+        internal_ip,
+        Some(tag),
+        &[(egress_port, types::Direction::Underlay)],
+        types::InternalForwarding { nat_target: None },
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
+    // Use a distinct IPv6 multicast address (global scope, external group)
+    let group_ip: IpAddr = "ff0e::1:2020".parse().unwrap();
+    let nat_target = create_nat_target_ipv6();
+    let test_ip = "ff0e::1:2020";
+
+    // Case: create without VLAN, should have 1 route entry
+    let create_no_vlan = types::MulticastGroupCreateExternalEntry {
+        group_ip,
+        tag: Some(tag.to_string()),
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: None },
+        sources: None,
+    };
+
+    switch
+        .client
+        .multicast_group_create_external(&create_no_vlan)
+        .await
+        .expect("Should create IPv6 group without VLAN");
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&table.entries, test_ip),
+        1,
+        "IPv6 group without VLAN should have 1 route entry"
+    );
+
+    // Case: update to add VLAN 10
+    let update_add_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_add_vlan,
+        )
+        .await
+        .expect("Should update IPv6 group to add VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, Some(10));
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&table.entries, test_ip),
+        1,
+        "Route table uses dst_addr only -> 1 entry per group"
+    );
+    assert!(
+        has_vlan_action_for_ip(&table.entries, test_ip, 10),
+        "Route entry should have forward_vlan(10) action"
+    );
+
+    let nat_table = switch
+        .client
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv6_mcast")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&nat_table.entries, test_ip),
+        2,
+        "NAT table should have 2 entries for VLAN group (untagged + tagged)"
+    );
+
+    // Case: update to change VLAN 10 -> 20
+    let update_change_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(20) },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_change_vlan,
+        )
+        .await
+        .expect("Should update IPv6 group to change VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, Some(20));
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&table.entries, test_ip),
+        1,
+        "Route table uses dst_addr only -> 1 entry per group"
+    );
+    assert!(
+        has_vlan_action_for_ip(&table.entries, test_ip, 20),
+        "Route entry should have forward_vlan(20) action"
+    );
+    assert!(
+        !has_vlan_action_for_ip(&table.entries, test_ip, 10),
+        "Should not have stale forward_vlan(10) action"
+    );
+
+    let nat_table = switch
+        .client
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv6_mcast")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&nat_table.entries, test_ip),
+        2,
+        "NAT table should have 2 entries for VLAN group"
+    );
+
+    // Case: update to remove VLAN
+    let update_remove_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: None },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_remove_vlan,
+        )
+        .await
+        .expect("Should update IPv6 group to remove VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, None);
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&table.entries, test_ip),
+        1,
+        "Route table uses dst_addr only -> 1 entry per group"
+    );
+    assert!(
+        !has_vlan_action_for_ip(&table.entries, test_ip, 20),
+        "Should not have forward_vlan action after VLAN removal"
+    );
+
+    let nat_table = switch
+        .client
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv6_mcast")
+        .await?
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&nat_table.entries, test_ip),
+        1,
+        "NAT table should have 1 entry after VLAN removal"
+    );
 
     // Cleanup
     switch

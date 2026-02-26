@@ -57,7 +57,7 @@ trait RollbackOps {
     ) -> DpdResult<()> {
         self.log_rollback_error(
             "remove new source filters",
-            &format!("for group {}", self.group_ip()),
+            &format!("for group {group_ip}", group_ip = self.group_ip()),
             remove_source_filters(
                 self.switch(),
                 self.group_ip(),
@@ -66,7 +66,7 @@ trait RollbackOps {
         );
         self.log_rollback_error(
             "restore original source filters",
-            &format!("for group {}", self.group_ip()),
+            &format!("for group {group_ip}", group_ip = self.group_ip()),
             add_source_filters(
                 self.switch(),
                 self.group_ip(),
@@ -136,6 +136,7 @@ pub(crate) struct GroupCreateRollbackContext<'a> {
     underlay_id: MulticastGroupId,
     nat_target: Option<NatTarget>,
     sources: Option<&'a [IpSrc]>,
+    vlan_id: Option<u16>,
 }
 
 impl RollbackOps for GroupCreateRollbackContext<'_> {
@@ -261,6 +262,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
         underlay_id: MulticastGroupId,
         nat_target: NatTarget,
         sources: Option<&'a [IpSrc]>,
+        vlan_id: Option<u16>,
     ) -> Self {
         Self {
             switch,
@@ -269,6 +271,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
             underlay_id,
             nat_target: Some(nat_target),
             sources,
+            vlan_id,
         }
     }
 
@@ -286,6 +289,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
             underlay_id,
             nat_target: None,
             sources: None,
+            vlan_id: None,
         }
     }
 
@@ -351,16 +355,18 @@ impl<'a> GroupCreateRollbackContext<'a> {
             self.log_rollback_error(
                 "remove external multicast group",
                 &format!(
-                    "for IP {} with ID {}",
-                    self.group_ip, self.external_id
+                    "for IP {group_ip} with ID {external_id}",
+                    group_ip = self.group_ip,
+                    external_id = self.external_id
                 ),
                 self.switch.asic_hdl.mc_group_destroy(self.external_id),
             );
             self.log_rollback_error(
                 "remove underlay multicast group",
                 &format!(
-                    "for IP {} with ID {}",
-                    self.group_ip, self.underlay_id
+                    "for IP {group_ip} with ID {underlay_id}",
+                    group_ip = self.group_ip,
+                    underlay_id = self.underlay_id
                 ),
                 self.switch.asic_hdl.mc_group_destroy(self.underlay_id),
             );
@@ -425,6 +431,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
                         table::mcast::mcast_nat::del_ipv4_entry(
                             self.switch,
                             ipv4,
+                            self.vlan_id,
                         ),
                     );
                 }
@@ -442,7 +449,10 @@ impl<'a> GroupCreateRollbackContext<'a> {
                 // (bitmap entries are only created for internal groups with both group types)
                 self.log_rollback_error(
                     "delete IPv6 egress bitmap entry",
-                    &format!("for external group {}", self.external_id),
+                    &format!(
+                        "for external group {external_id}",
+                        external_id = self.external_id
+                    ),
                     table::mcast::mcast_egress::del_bitmap_entry(
                         self.switch,
                         self.external_id,
@@ -515,6 +525,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
                         table::mcast::mcast_nat::del_ipv6_entry(
                             self.switch,
                             ipv6,
+                            self.vlan_id,
                         ),
                     );
                 }
@@ -537,6 +548,10 @@ pub(crate) struct GroupUpdateRollbackContext<'a> {
     switch: &'a Switch,
     group_ip: IpAddr,
     original_group: &'a MulticastGroup,
+    /// The VLAN that the update is attempting to set. This may differ from
+    /// `original_group.ext_fwding.vlan_id` when a VLAN change is in progress.
+    /// Used during rollback to delete entries that may have been added.
+    attempted_vlan_id: Option<u16>,
 }
 
 impl RollbackOps for GroupUpdateRollbackContext<'_> {
@@ -567,7 +582,7 @@ impl RollbackOps for GroupUpdateRollbackContext<'_> {
             return Ok(());
         }
 
-        // Internal group - perform actual port rollback
+        // Internal group -> perform actual port rollback
         debug!(
             self.switch.log,
             "rolling back multicast group update";
@@ -715,12 +730,21 @@ impl RollbackOps for GroupUpdateRollbackContext<'_> {
 
 impl<'a> GroupUpdateRollbackContext<'a> {
     /// Create rollback context for group update operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `switch` - Switch instance for table operations.
+    /// * `group_ip` - IP address of the multicast group being updated.
+    /// * `original_group` - Reference to the group's state before the update.
+    /// * `attempted_vlan_id` - The VLAN that the update is attempting to set.
+    ///   Used during rollback to delete entries that may have been added.
     pub(crate) fn new(
         switch: &'a Switch,
         group_ip: IpAddr,
         original_group: &'a MulticastGroup,
+        attempted_vlan_id: Option<u16>,
     ) -> Self {
-        Self { switch, group_ip, original_group }
+        Self { switch, group_ip, original_group, attempted_vlan_id }
     }
 
     /// Restore tables and return error.
@@ -748,7 +772,7 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         if let Some(replication_info) = replication_info {
             self.log_rollback_error(
                 "restore replication settings",
-                &format!("for group {}", self.group_ip),
+                &format!("for group {group_ip}", group_ip = self.group_ip),
                 update_replication_tables(
                     self.switch,
                     self.group_ip,
@@ -759,54 +783,57 @@ impl<'a> GroupUpdateRollbackContext<'a> {
             );
         }
 
-        // Restore NAT settings
-        match (self.group_ip, nat_target) {
-            (IpAddr::V4(ipv4), Some(nat)) => {
-                self.log_rollback_error(
-                    "restore IPv4 NAT settings",
-                    &format!("for group {}", self.group_ip),
-                    table::mcast::mcast_nat::update_ipv4_entry(
-                        self.switch,
-                        ipv4,
-                        nat,
-                    ),
-                );
-            }
-            (IpAddr::V6(ipv6), Some(nat)) => {
-                self.log_rollback_error(
-                    "restore IPv6 NAT settings",
-                    &format!("for group {}", self.group_ip),
-                    table::mcast::mcast_nat::update_ipv6_entry(
-                        self.switch,
-                        ipv6,
-                        nat,
-                    ),
-                );
-            }
-            (IpAddr::V4(ipv4), None) => {
-                self.log_rollback_error(
-                    "remove IPv4 NAT settings",
-                    &format!("for group {}", self.group_ip),
-                    table::mcast::mcast_nat::del_ipv4_entry(self.switch, ipv4),
-                );
-            }
-            (IpAddr::V6(ipv6), None) => {
-                self.log_rollback_error(
-                    "remove IPv6 NAT settings",
-                    &format!("for group {}", self.group_ip),
-                    table::mcast::mcast_nat::del_ipv6_entry(self.switch, ipv6),
-                );
+        // Restore NAT settings for external groups (internal groups have no
+        // NAT entries). Both new_tgt and old_tgt are the same original NAT
+        // target since we're restoring to the original state.
+        if let Some(nat) = nat_target {
+            match self.group_ip {
+                IpAddr::V4(ipv4) => {
+                    self.log_rollback_error(
+                        "restore IPv4 NAT settings",
+                        &format!(
+                            "for group {group_ip}",
+                            group_ip = self.group_ip
+                        ),
+                        table::mcast::mcast_nat::update_ipv4_entry(
+                            self.switch,
+                            ipv4,
+                            nat,
+                            nat,
+                            self.attempted_vlan_id,
+                            vlan_id,
+                        ),
+                    );
+                }
+                IpAddr::V6(ipv6) => {
+                    self.log_rollback_error(
+                        "restore IPv6 NAT settings",
+                        &format!(
+                            "for group {group_ip}",
+                            group_ip = self.group_ip
+                        ),
+                        table::mcast::mcast_nat::update_ipv6_entry(
+                            self.switch,
+                            ipv6,
+                            nat,
+                            nat,
+                            self.attempted_vlan_id,
+                            vlan_id,
+                        ),
+                    );
+                }
             }
         }
 
         self.log_rollback_error(
             "restore VLAN settings",
-            &format!("for group {}", self.group_ip),
+            &format!("for group {group_ip}", group_ip = self.group_ip),
             update_fwding_tables(
                 self.switch,
                 self.group_ip,
                 external_group_id,
                 &prev_members,
+                self.attempted_vlan_id,
                 vlan_id,
             ),
         );
