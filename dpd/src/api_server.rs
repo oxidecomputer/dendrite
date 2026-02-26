@@ -2005,12 +2005,34 @@ impl DpdApi for DpdApiImpl {
     async fn multicast_group_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
+        query: Query<MulticastGroupTagQuery>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let ip = path.into_inner().group_ip;
+            let tag = query.into_inner().tag;
+
+            mcast::del_group(switch, ip, tag.as_ref())
+                .map(|_| HttpResponseDeleted())
+                .map_err(HttpError::from)
+        })
+    }
+
+    #[allow(unused_variables)]
+    async fn multicast_group_delete_v1(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         require_multicast!({
             let switch: &Switch = rqctx.context();
             let ip = path.into_inner().group_ip;
 
-            mcast::del_group(switch, ip)
+            let existing_tag = mcast::get_group(switch, ip)
+                .map_err(HttpError::from)?
+                .tag()
+                .to_string();
+
+            mcast::del_group(switch, ip, &existing_tag)
                 .map(|_| HttpResponseDeleted())
                 .map_err(HttpError::from)
         })
@@ -2049,19 +2071,58 @@ impl DpdApi for DpdApiImpl {
     async fn multicast_group_update_underlay(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastUnderlayGroupIpParam>,
+        query: Query<MulticastGroupTagQuery>,
         group: TypedBody<MulticastGroupUpdateUnderlayEntry>,
     ) -> Result<HttpResponseOk<MulticastGroupUnderlayResponse>, HttpError> {
         require_multicast!({
             let switch: &Switch = rqctx.context();
             let admin_scoped = path.into_inner().group_ip;
+            let tag = query.into_inner().tag;
 
             mcast::modify_group_internal(
                 switch,
                 admin_scoped,
+                tag.as_ref(),
                 group.into_inner(),
             )
             .map(HttpResponseOk)
             .map_err(HttpError::from)
+        })
+    }
+
+    #[allow(unused_variables)]
+    async fn multicast_group_update_underlay_v1(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<dpd_api::v1::MulticastUnderlayGroupIpParam>,
+        group: TypedBody<dpd_api::v1::MulticastGroupUpdateUnderlayEntry>,
+    ) -> Result<
+        HttpResponseOk<dpd_api::v1::MulticastGroupUnderlayResponse>,
+        HttpError,
+    > {
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let admin_scoped = path.into_inner().group_ip;
+            let underlay = UnderlayMulticastIpv6::try_from(admin_scoped)
+                .map_err(|e| {
+                    HttpError::for_bad_request(
+                        None,
+                        format!("invalid group_ip: {e}"),
+                    )
+                })?;
+            let mut entry = group.into_inner();
+
+            let tag = match entry.tag.take() {
+                Some(t) => t,
+                None => {
+                    mcast::get_group_internal(switch, underlay)
+                        .map_err(HttpError::from)?
+                        .tag
+                }
+            };
+
+            mcast::modify_group_internal(switch, underlay, &tag, entry.into())
+                .map(|resp| HttpResponseOk(resp.into()))
+                .map_err(HttpError::from)
         })
     }
 
@@ -2072,9 +2133,9 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseOk<MulticastGroupUnderlayResponse>, HttpError> {
         require_multicast!({
             let switch: &Switch = rqctx.context();
-            let admin_scoped = path.into_inner().group_ip;
+            let underlay = path.into_inner().group_ip;
 
-            mcast::get_group_internal(switch, admin_scoped)
+            mcast::get_group_internal(switch, underlay)
                 .map(HttpResponseOk)
                 .map_err(HttpError::from)
         })
@@ -2084,16 +2145,73 @@ impl DpdApi for DpdApiImpl {
     async fn multicast_group_update_external(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
+        query: Query<MulticastGroupTagQuery>,
         group: TypedBody<MulticastGroupUpdateExternalEntry>,
-    ) -> Result<HttpResponseCreated<MulticastGroupExternalResponse>, HttpError>
-    {
+    ) -> Result<HttpResponseOk<MulticastGroupExternalResponse>, HttpError> {
         require_multicast!({
             let switch: &Switch = rqctx.context();
             let entry = group.into_inner();
             let ip = path.into_inner().group_ip;
+            let tag = query.into_inner().tag;
 
-            mcast::modify_group_external(switch, ip, entry)
-                .map(HttpResponseCreated)
+            mcast::modify_group_external(switch, ip, tag.as_ref(), entry)
+                .map(HttpResponseOk)
+                .map_err(HttpError::from)
+        })
+    }
+
+    #[allow(unused_variables)]
+    async fn multicast_group_update_external_v7(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<MulticastGroupIpParam>,
+        group: TypedBody<dpd_api::v7::MulticastGroupUpdateExternalEntry>,
+    ) -> Result<
+        HttpResponseCreated<dpd_api::v7::MulticastGroupExternalResponse>,
+        HttpError,
+    > {
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let ip = path.into_inner().group_ip;
+            let mut entry = group.into_inner();
+
+            let tag = match entry.tag.take() {
+                Some(t) => t,
+                None => mcast::get_group(switch, ip)
+                    .map_err(HttpError::from)?
+                    .tag()
+                    .to_string(),
+            };
+
+            mcast::modify_group_external(switch, ip, &tag, entry.into())
+                .map(|resp| HttpResponseCreated(resp.into()))
+                .map_err(HttpError::from)
+        })
+    }
+
+    #[allow(unused_variables)]
+    async fn multicast_group_update_external_v1(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<MulticastGroupIpParam>,
+        group: TypedBody<dpd_api::v1::MulticastGroupUpdateExternalEntry>,
+    ) -> Result<
+        HttpResponseCreated<dpd_api::v1::MulticastGroupExternalResponse>,
+        HttpError,
+    > {
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let ip = path.into_inner().group_ip;
+            let mut entry = group.into_inner();
+
+            let tag = match entry.tag.take() {
+                Some(t) => t,
+                None => mcast::get_group(switch, ip)
+                    .map_err(HttpError::from)?
+                    .tag()
+                    .to_string(),
+            };
+
+            mcast::modify_group_external(switch, ip, &tag, entry.into())
+                .map(|resp| HttpResponseCreated(resp.into()))
                 .map_err(HttpError::from)
         })
     }
@@ -2141,7 +2259,7 @@ impl DpdApi for DpdApiImpl {
     #[allow(unused_variables)]
     async fn multicast_groups_list_by_tag(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<TagPath>,
+        path: Path<MulticastTagPath>,
         query_params: Query<
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
@@ -2149,7 +2267,7 @@ impl DpdApi for DpdApiImpl {
     {
         require_multicast!({
             let switch: &Switch = rqctx.context();
-            let tag = path.into_inner().tag;
+            let tag: String = path.into_inner().tag.into();
 
             let pag_params = query_params.into_inner();
             let Ok(limit) =
@@ -2183,11 +2301,11 @@ impl DpdApi for DpdApiImpl {
     #[allow(unused_variables)]
     async fn multicast_reset_by_tag(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<TagPath>,
+        path: Path<MulticastTagPath>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         require_multicast!({
             let switch: &Switch = rqctx.context();
-            let tag = path.into_inner().tag;
+            let tag: String = path.into_inner().tag.into();
 
             mcast::reset_tag(switch, &tag)
                 .map(|_| HttpResponseDeleted())
@@ -2197,6 +2315,23 @@ impl DpdApi for DpdApiImpl {
 
     #[allow(unused_variables)]
     async fn multicast_reset_untagged(
+        _rqctx: RequestContext<Arc<Switch>>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        // All groups now have default tags, making this endpoint obsolete.
+        // Groups are cleaned up via multicast_reset_by_tag using the tag
+        // returned from group creation.
+        Err(HttpError::for_client_error(
+            None,
+            ClientErrorStatusCode::GONE,
+            "multicast_reset_untagged is deprecated; all groups now have \
+             default tags. Use multicast_reset_by_tag with the tag returned \
+             from group creation."
+                .to_string(),
+        ))
+    }
+
+    #[allow(unused_variables)]
+    async fn multicast_reset_untagged_v1(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         require_multicast!({

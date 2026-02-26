@@ -1663,6 +1663,7 @@ dependencies = [
  "chrono",
  "common 0.1.0",
  "crc8",
+ "dpd-types",
  "futures",
  "http",
  "lazy_static",

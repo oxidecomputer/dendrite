@@ -36,6 +36,9 @@ use types::PortId;
 const SHOW_VERBOSE: u8 = 0x01;
 const SHOW_HEX: u8 = 0x02;
 
+/// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
+pub const ADMIN_LOCAL_MULTICAST_PREFIX: u16 = 0xFF04;
+
 // Timeout set on `Pcap` objects.
 //
 // This is used as the "buffer timeout", which is the duration libpcap buffers
@@ -1439,6 +1442,7 @@ pub fn gen_arp_reply(src: Endpoint, tgt: Endpoint) -> Packet {
 }
 
 pub mod prelude {
+    pub use super::ADMIN_LOCAL_MULTICAST_PREFIX;
     pub use super::NO_PORT;
     pub use super::PhysPort;
     pub use super::SERVICE_PORT;

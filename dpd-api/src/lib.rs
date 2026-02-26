@@ -6,9 +6,15 @@
 
 //! DPD endpoint definitions.
 
+pub mod v1;
+pub mod v2;
+pub mod v7;
+
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    str::FromStr,
 };
 
 use common::{
@@ -45,9 +51,6 @@ use transceiver_controller::{
     Datapath, Monitors, PowerState, message::LedState,
 };
 
-mod v1;
-mod v2;
-
 api_versions!([
     // WHEN CHANGING THE API (part 1 of 2):
     //
@@ -60,6 +63,8 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (8, MCAST_STRICT_UNDERLAY),
+    (7, MCAST_SOURCE_FILTER_ANY),
     (6, CONSOLIDATED_V4_ROUTES),
     (5, UPLINK_PORTS),
     (4, V4_OVER_V6_ROUTES),
@@ -380,7 +385,8 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/route/ipv4",
-        versions = ..VERSION_CONSOLIDATED_V4_ROUTES
+        versions = ..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_add",
     }]
     async fn route_ipv4_add_v1(
         rqctx: RequestContext<Self::Context>,
@@ -450,7 +456,8 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/route/ipv4",
-        versions = ..VERSION_CONSOLIDATED_V4_ROUTES
+        versions = ..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_set",
     }]
     async fn route_ipv4_set_v1(
         rqctx: RequestContext<Self::Context>,
@@ -529,7 +536,8 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}",
-        versions = ..VERSION_CONSOLIDATED_V4_ROUTES
+        versions = ..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_delete_target",
     }]
     async fn route_ipv4_delete_target_v1(
         rqctx: RequestContext<Self::Context>,
@@ -573,15 +581,33 @@ pub trait DpdApi {
     /// Get the set of available channels for all ports.
     ///
     /// This returns the unused MAC channels for each physical switch port. This can
+    /// be used to determine how many additional links can be created on a physical
+    /// switch port.
+    #[endpoint {
+        method = GET,
+        path = "/channels",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn channels_list(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<Vec<FreeChannels>>, HttpError>;
+
+    /// Get the set of available channels for all ports.
+    ///
+    /// This returns the unused MAC channels for each physical switch port. This can
     /// be used to determine how many additional links can be crated on a physical
     /// switch port.
     #[endpoint {
         method = GET,
         path = "/channels",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "channels_list",
     }]
-    async fn channels_list(
+    async fn channels_list_v1(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<FreeChannels>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<FreeChannels>>, HttpError> {
+        Self::channels_list(rqctx).await
+    }
 
     /// Return information about a single switch port.
     #[endpoint {
@@ -1457,15 +1483,14 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /**
-     * Clear all settings associated with a specific tag.
-     *
-     * This removes:
-     *
-     * - All ARP or NDP table entries.
-     * - All routes
-     * - All links on all switch ports
-     */
+    /// Clear all settings associated with a specific tag.
+    ///
+    /// This removes:
+    ///
+    /// - All ARP or NDP table entries.
+    /// - All routes
+    /// - All links on all switch ports
+    // Note: This endpoint does not clear multicast groups.
     // TODO-security: This endpoint should probably not exist.
     #[endpoint {
         method = DELETE,
@@ -1476,11 +1501,10 @@ pub trait DpdApi {
         path: Path<TagPath>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /**
-     * Clear all settings.
-     *
-     * This removes all data entirely.
-     */
+    /// Clear all settings.
+    ///
+    /// This removes all data entirely.
+    // Note: Unlike `reset_all_tagged`, this endpoint does clear multicast groups.
     // TODO-security: This endpoint should probably not exist.
     #[endpoint {
         method = DELETE,
@@ -1762,19 +1786,78 @@ pub trait DpdApi {
     /**
      * Create an external-only multicast group configuration.
      *
-     * External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast
+     * External-only groups are used for IPv4 and non-admin-local IPv6 multicast
      * traffic that doesn't require replication infrastructure. These groups use
      * simple forwarding tables and require a NAT target.
      */
     #[endpoint {
         method = POST,
         path = "/multicast/external-groups",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_group_create_external(
         rqctx: RequestContext<Self::Context>,
         group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
     ) -> Result<
         HttpResponseCreated<mcast::MulticastGroupExternalResponse>,
+        HttpError,
+    >;
+
+    /// Create an external-only multicast group configuration.
+    #[endpoint {
+        method = POST,
+        path = "/multicast/external-groups",
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_create_external",
+    }]
+    async fn multicast_group_create_external_v7(
+        rqctx: RequestContext<Self::Context>,
+        group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
+    ) -> Result<
+        HttpResponseCreated<v7::MulticastGroupExternalResponse>,
+        HttpError,
+    > {
+        Self::multicast_group_create_external(rqctx, group)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /**
+     * Create an external-only multicast group configuration.
+     *
+     * External-only groups are used for IPv4 and non-admin-scoped IPv6
+     * multicast traffic that doesn't require replication infrastructure.
+     * These groups use simple forwarding tables and require a NAT target.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/multicast/external-groups",
+        versions = ..VERSION_MCAST_SOURCE_FILTER_ANY,
+        operation_id = "multicast_group_create_external",
+    }]
+    async fn multicast_group_create_external_v1(
+        rqctx: RequestContext<Self::Context>,
+        group: TypedBody<v1::MulticastGroupCreateExternalEntry>,
+    ) -> Result<
+        HttpResponseCreated<v1::MulticastGroupExternalResponse>,
+        HttpError,
+    > {
+        Self::multicast_group_create_external(rqctx, group.map(Into::into))
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /// Create an underlay (internal) multicast group configuration.
+    #[endpoint {
+        method = POST,
+        path = "/multicast/underlay-groups",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn multicast_group_create_underlay(
+        rqctx: RequestContext<Self::Context>,
+        group: TypedBody<mcast::MulticastGroupCreateUnderlayEntry>,
+    ) -> Result<
+        HttpResponseCreated<mcast::MulticastGroupUnderlayResponse>,
         HttpError,
     >;
 
@@ -1788,14 +1871,48 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/multicast/underlay-groups",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_create_underlay",
     }]
-    async fn multicast_group_create_underlay(
+    async fn multicast_group_create_underlay_v1(
         rqctx: RequestContext<Self::Context>,
-        group: TypedBody<mcast::MulticastGroupCreateUnderlayEntry>,
+        group: TypedBody<v1::MulticastGroupCreateUnderlayEntry>,
     ) -> Result<
-        HttpResponseCreated<mcast::MulticastGroupUnderlayResponse>,
+        HttpResponseCreated<v1::MulticastGroupUnderlayResponse>,
         HttpError,
-    >;
+    > {
+        let v4_body = group
+            .try_map(|entry| {
+                let group_ip =
+                    mcast::UnderlayMulticastIpv6::try_from(entry.group_ip)?;
+                Ok(mcast::MulticastGroupCreateUnderlayEntry {
+                    group_ip,
+                    tag: entry.tag,
+                    members: entry.members,
+                })
+            })
+            .map_err(|e: String| HttpError::for_bad_request(None, e))?;
+        Self::multicast_group_create_underlay(rqctx, v4_body)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /**
+     * Delete a multicast group configuration by IP address (API version 4+).
+     *
+     * All groups have tags (auto-generated if not provided at creation).
+     * The tag query parameter must match the group's existing tag.
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/multicast/groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn multicast_group_delete(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastGroupIpParam>,
+        query: Query<MulticastGroupTagQuery>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
      * Delete a multicast group configuration by IP address.
@@ -1803,8 +1920,10 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/groups/{group_ip}",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_delete",
     }]
-    async fn multicast_group_delete(
+    async fn multicast_group_delete_v1(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseDeleted, HttpError>;
@@ -1826,11 +1945,57 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_group_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError>;
+
+    /// Get the multicast group configuration for a given group IP address.
+    #[endpoint {
+        method = GET,
+        path = "/multicast/groups/{group_ip}",
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_get",
+    }]
+    async fn multicast_group_get_v7(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastGroupIpParam>,
+    ) -> Result<HttpResponseOk<v7::MulticastGroupResponse>, HttpError> {
+        Self::multicast_group_get(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /**
+     * Get the multicast group configuration for a given group IP address.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/multicast/groups/{group_ip}",
+        versions = ..VERSION_MCAST_SOURCE_FILTER_ANY,
+        operation_id = "multicast_group_get",
+    }]
+    async fn multicast_group_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastGroupIpParam>,
+    ) -> Result<HttpResponseOk<v1::MulticastGroupResponse>, HttpError> {
+        Self::multicast_group_get(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /// Get an underlay (internal) multicast group configuration.
+    #[endpoint {
+        method = GET,
+        path = "/multicast/underlay-groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn multicast_group_get_underlay(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastUnderlayGroupIpParam>,
+    ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
 
     /**
      * Get an underlay (internal) multicast group configuration by admin-scoped
@@ -1842,10 +2007,43 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/underlay-groups/{group_ip}",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_get_underlay",
     }]
-    async fn multicast_group_get_underlay(
+    async fn multicast_group_get_underlay_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::MulticastUnderlayGroupIpParam>,
+    ) -> Result<HttpResponseOk<v1::MulticastGroupUnderlayResponse>, HttpError>
+    {
+        let v4_path = path.try_map(|p| {
+            mcast::UnderlayMulticastIpv6::try_from(p.group_ip)
+                .map(|group_ip| MulticastUnderlayGroupIpParam { group_ip })
+                .map_err(|e| {
+                    HttpError::for_bad_request(
+                        None,
+                        format!("invalid group_ip: {e}"),
+                    )
+                })
+        })?;
+
+        Self::multicast_group_get_underlay(rqctx, v4_path)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /// Update an underlay (internal) multicast group configuration.
+    ///
+    /// The `tag` query parameter must match the group's existing tag.
+    #[endpoint {
+        method = PUT,
+        path = "/multicast/underlay-groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn multicast_group_update_underlay(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastUnderlayGroupIpParam>,
+        query: Query<MulticastGroupTagQuery>,
+        group: TypedBody<mcast::MulticastGroupUpdateUnderlayEntry>,
     ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
 
     /**
@@ -1858,29 +2056,73 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/multicast/underlay-groups/{group_ip}",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_update_underlay",
     }]
-    async fn multicast_group_update_underlay(
+    async fn multicast_group_update_underlay_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastUnderlayGroupIpParam>,
-        group: TypedBody<mcast::MulticastGroupUpdateUnderlayEntry>,
-    ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
+        path: Path<v1::MulticastUnderlayGroupIpParam>,
+        group: TypedBody<v1::MulticastGroupUpdateUnderlayEntry>,
+    ) -> Result<HttpResponseOk<v1::MulticastGroupUnderlayResponse>, HttpError>;
 
     /**
      * Update an external-only multicast group configuration for a given group IP address.
      *
-     * External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast
+     * External-only groups are used for IPv4 and non-admin-local IPv6 multicast
      * traffic that doesn't require replication infrastructure.
+     *
+     * The `tag` query parameter must match the group's existing tag.
      */
     #[endpoint {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_group_update_external(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
+        query: Query<MulticastGroupTagQuery>,
         group: TypedBody<mcast::MulticastGroupUpdateExternalEntry>,
+    ) -> Result<HttpResponseOk<mcast::MulticastGroupExternalResponse>, HttpError>;
+
+    /**
+     * Update an external-only multicast group configuration.
+     *
+     * Tags are optional for backward compatibility.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/multicast/external-groups/{group_ip}",
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_update_external",
+    }]
+    async fn multicast_group_update_external_v7(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastGroupIpParam>,
+        group: TypedBody<v7::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<mcast::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v7::MulticastGroupExternalResponse>,
+        HttpError,
+    >;
+
+    /**
+     * Update an external-only multicast group configuration for a given group IP address.
+     *
+     * External-only groups are used for IPv4 and non-admin-scoped IPv6
+     * multicast traffic that doesn't require replication infrastructure.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/multicast/external-groups/{group_ip}",
+        versions = ..VERSION_MCAST_SOURCE_FILTER_ANY,
+        operation_id = "multicast_group_update_external",
+    }]
+    async fn multicast_group_update_external_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastGroupIpParam>,
+        group: TypedBody<v1::MulticastGroupUpdateExternalEntry>,
+    ) -> Result<
+        HttpResponseCreated<v1::MulticastGroupExternalResponse>,
         HttpError,
     >;
 
@@ -1890,6 +2132,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_groups_list(
         rqctx: RequestContext<Self::Context>,
@@ -1901,16 +2144,71 @@ pub trait DpdApi {
         HttpError,
     >;
 
+    /// List all multicast groups.
+    #[endpoint {
+        method = GET,
+        path = "/multicast/groups",
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_groups_list",
+    }]
+    async fn multicast_groups_list_v7(
+        rqctx: RequestContext<Self::Context>,
+        query_params: Query<
+            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+        >,
+    ) -> Result<
+        HttpResponseOk<ResultsPage<v7::MulticastGroupResponse>>,
+        HttpError,
+    > {
+        let HttpResponseOk(page) =
+            Self::multicast_groups_list(rqctx, query_params).await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
+    }
+
+    /**
+     * List all multicast groups.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/multicast/groups",
+        versions = ..VERSION_MCAST_SOURCE_FILTER_ANY,
+        operation_id = "multicast_groups_list",
+    }]
+    async fn multicast_groups_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        query_params: Query<
+            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+        >,
+    ) -> Result<
+        HttpResponseOk<ResultsPage<v1::MulticastGroupResponse>>,
+        HttpError,
+    > {
+        let HttpResponseOk(page) =
+            Self::multicast_groups_list(rqctx, query_params).await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
+    }
+
     /**
      * List all multicast groups with a given tag.
+     *
+     * Returns paginated multicast groups matching the specified tag. Tags are
+     * assigned at group creation and are immutable. Use this endpoint to find
+     * all groups associated with a specific client or component.
      */
     #[endpoint {
         method = GET,
         path = "/multicast/tags/{tag}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_groups_list_by_tag(
         rqctx: RequestContext<Self::Context>,
-        path: Path<TagPath>,
+        path: Path<MulticastTagPath>,
         query_params: Query<
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
@@ -1919,16 +2217,114 @@ pub trait DpdApi {
         HttpError,
     >;
 
+    /// List all multicast groups with a given tag.
+    #[endpoint {
+        method = GET,
+        path = "/multicast/tags/{tag}",
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_groups_list_by_tag",
+    }]
+    async fn multicast_groups_list_by_tag_v7(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<TagPath>,
+        query_params: Query<
+            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+        >,
+    ) -> Result<
+        HttpResponseOk<ResultsPage<v7::MulticastGroupResponse>>,
+        HttpError,
+    > {
+        let HttpResponseOk(page) = Self::multicast_groups_list_by_tag(
+            rqctx,
+            path.map(Into::into),
+            query_params,
+        )
+        .await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
+    }
+
+    /**
+     * List all multicast groups with a given tag.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/multicast/tags/{tag}",
+        versions = ..VERSION_MCAST_SOURCE_FILTER_ANY,
+        operation_id = "multicast_groups_list_by_tag",
+    }]
+    async fn multicast_groups_list_by_tag_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<TagPath>,
+        query_params: Query<
+            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+        >,
+    ) -> Result<
+        HttpResponseOk<ResultsPage<v1::MulticastGroupResponse>>,
+        HttpError,
+    > {
+        let HttpResponseOk(page) = Self::multicast_groups_list_by_tag(
+            rqctx,
+            path.map(Into::into),
+            query_params,
+        )
+        .await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
+    }
+
+    /**
+     * Delete all multicast groups (and associated routes) with a given tag.
+     *
+     * This is idempotent: if no groups exist with the given tag, the operation
+     * returns success (the desired end state of "no groups with this tag" is
+     * achieved). Use this endpoint for bulk cleanup of all groups associated
+     * with a specific client or component.
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/multicast/tags/{tag}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn multicast_reset_by_tag(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastTagPath>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
     /**
      * Delete all multicast groups (and associated routes) with a given tag.
      */
     #[endpoint {
         method = DELETE,
         path = "/multicast/tags/{tag}",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_reset_by_tag",
     }]
-    async fn multicast_reset_by_tag(
+    async fn multicast_reset_by_tag_v1(
         rqctx: RequestContext<Self::Context>,
         path: Path<TagPath>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Self::multicast_reset_by_tag(rqctx, path.map(Into::into)).await
+    }
+
+    /**
+     * Delete all multicast groups (and associated routes) without a tag.
+     *
+     * DEPRECATED: All groups have default tags generated at creation time.
+     * This endpoint returns HTTP 410 Gone. Use `multicast_reset_by_tag`
+     * with the tag returned from group creation instead.
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/multicast/untagged",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn multicast_reset_untagged(
+        rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -1937,8 +2333,10 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/untagged",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_reset_untagged",
     }]
-    async fn multicast_reset_untagged(
+    async fn multicast_reset_untagged_v1(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
@@ -2547,6 +2945,7 @@ pub struct LinkFilter {
     pub filter: Option<String>,
 }
 
+/// Path parameter for tag-based operations.
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct TagPath {
     pub tag: String,
@@ -2628,11 +3027,109 @@ pub struct MulticastGroupIpParam {
     pub group_ip: IpAddr,
 }
 
-/// Used to identify an underlay (internal) multicast group by admin-scoped IPv6
-/// address.
+/// Tag for identifying and authorizing multicast group operations.
+///
+/// Tag format: 1 to 80 ASCII bytes containing alphanumeric characters,
+/// hyphens, underscores, colons, or periods. Default format is
+/// `{uuid}:{group_ip}`.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
+)]
+pub struct MulticastTag(
+    #[schemars(
+        length(min = 1, max = 80),
+        regex(pattern = r"^[a-zA-Z0-9_.:-]+$")
+    )]
+    pub String,
+);
+
+impl AsRef<str> for MulticastTag {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<MulticastTag> for String {
+    fn from(tag: MulticastTag) -> Self {
+        tag.0
+    }
+}
+
+impl From<String> for MulticastTag {
+    fn from(tag: String) -> Self {
+        MulticastTag(tag)
+    }
+}
+
+/// Maximum length for multicast tags.
+pub const MAX_TAG_LENGTH: usize = 80;
+
+/// Error parsing a multicast tag from a string.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MulticastTagParseError(String);
+
+impl fmt::Display for MulticastTagParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for MulticastTagParseError {}
+
+impl FromStr for MulticastTag {
+    type Err = MulticastTagParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Err(MulticastTagParseError(
+                "tag cannot be empty".to_string(),
+            ));
+        }
+        if s.len() > MAX_TAG_LENGTH {
+            return Err(MulticastTagParseError(format!(
+                "tag cannot exceed {MAX_TAG_LENGTH} bytes"
+            )));
+        }
+        if !s.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'.')
+        }) {
+            return Err(MulticastTagParseError(
+                "tag must contain only ASCII alphanumeric characters, hyphens, \
+                 underscores, colons, or periods"
+                    .to_string(),
+            ));
+        }
+        Ok(MulticastTag(s.to_string()))
+    }
+}
+
+/// Path parameter for multicast tag-based operations.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MulticastTagPath {
+    pub tag: MulticastTag,
+}
+
+impl From<TagPath> for MulticastTagPath {
+    fn from(path: TagPath) -> Self {
+        Self { tag: path.tag.into() }
+    }
+}
+
+/// Tag for multicast group validation.
+///
+/// All groups have tags (auto-generated at creation if not provided).
+/// The provided tag must match the group's existing tag.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MulticastGroupTagQuery {
+    /// Tag that must match the group's existing tag.
+    pub tag: MulticastTag,
+}
+
+/// Used to identify an underlay multicast group by IPv6 address within
+/// the underlay multicast subnet (ff04::/64).
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct MulticastUnderlayGroupIpParam {
-    pub group_ip: mcast::AdminScopedIpv6,
+    pub group_ip: mcast::UnderlayMulticastIpv6,
 }
 
 /// Used to identify a multicast group by ID.
