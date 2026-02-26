@@ -99,8 +99,11 @@ pub struct LinkEvent {
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 pub struct LinkHistory {
-    /// The timestamp in milliseconds at which this history was collected.
+    /// The wallclock time in milliseconds at which this history was collected.
     pub timestamp: i64,
+    /// The timestamp in milliseconds at which this history was collected,
+    /// relative to the time the switch management daemon started.
+    pub relative: i64,
     /// The set of historical events recorded
     pub events: Vec<LinkEvent>,
 }

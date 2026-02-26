@@ -112,12 +112,18 @@ fn timestamp() -> Duration {
         Instant::now().duration_since(START_OF_DAY.unwrap())
     }
 }
-/// Return a timestamp in nanoseconds
+/// Return a START_OF_DAY-relative timestamp in nanoseconds
 pub fn timestamp_ns() -> i64 {
     i64::try_from(timestamp().as_nanos()).unwrap()
 }
 
-/// Return a timestamp in milliseconds
+/// Return a START_OF_DAY-relative timestamp in milliseconds
 pub fn timestamp_ms() -> i64 {
     i64::try_from(timestamp().as_millis()).unwrap()
+}
+
+/// Return a time-of-day timestamp in milliseconds
+pub fn wallclock_ms() -> i64 {
+    let now = chrono::Utc::now();
+    now.timestamp_millis()
 }

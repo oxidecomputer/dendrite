@@ -47,6 +47,7 @@ use transceiver_controller::{
 
 mod v1;
 mod v2;
+mod v3;
 
 api_versions!([
     // WHEN CHANGING THE API (part 1 of 2):
@@ -60,6 +61,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (7, WALLCLOCK_HISTORY),
     (6, CONSOLIDATED_V4_ROUTES),
     (5, UPLINK_PORTS),
     (4, V4_OVER_V6_ROUTES),
@@ -1145,6 +1147,24 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/history",
+        versions = ..VERSION_WALLCLOCK_HISTORY
+    }]
+    async fn link_history_get_v3(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<v3::LinkHistory>, HttpError> {
+        let history = Self::link_history_get(rqctx, path).await?.0;
+        Ok(HttpResponseOk(v3::LinkHistory {
+            timestamp: history.relative,
+            events: history.events,
+        }))
+    }
+
+    /// Get the event history for the given link.
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/history",
+        versions = VERSION_WALLCLOCK_HISTORY..
     }]
     async fn link_history_get(
         rqctx: RequestContext<Self::Context>,
