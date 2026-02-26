@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Data link metrics for tfports.
 
@@ -240,9 +240,7 @@ impl LinkData for SwitchPortControlDataLink {
                 .into(),
             asic_lot: config
                 .switch_identifiers
-                .lot
-                .clone()
-                .map(|c| c.to_string())
+                .full_lot_id()
                 .unwrap_or_else(|| {
                     config.switch_identifiers.asic_backend.to_string()
                 })

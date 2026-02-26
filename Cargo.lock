@@ -1651,6 +1651,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "transceiver-controller",
+ "uuid",
 ]
 
 [[package]]

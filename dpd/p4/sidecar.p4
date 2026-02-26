@@ -1564,7 +1564,7 @@ control EgressFilter(
 		egress_filter.apply();
 	}
 }
-	
+
 control MacRewrite(
 	inout sidecar_headers_t hdr,
 	in PortId_t port

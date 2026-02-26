@@ -2,11 +2,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use schemars::JsonSchema;
 use serde::Serialize;
 use uuid::Uuid;
+
+// Re-export fuse types from aal.
+pub use aal::{
+    ChipRevision, DisabledFeatures, FrequencySettings, FuseData,
+    ManufacturingData, PartInfo,
+};
 
 /// Identifiers for a switch.
 #[derive(Clone, Debug, JsonSchema, Serialize)]
@@ -19,6 +25,8 @@ pub struct SwitchIdentifiers {
     pub fab: Option<char>,
     /// Lot identifier.
     pub lot: Option<char>,
+    /// Lot number (4-character identifier within the lot).
+    pub lotnum: Option<[char; 4]>,
     /// Wafer number within the lot.
     pub wafer: Option<u8>,
     /// The wafer location as (x, y) coordinates on the wafer, represented as
@@ -34,4 +42,6 @@ pub struct SwitchIdentifiers {
     ///
     /// MGS uses u16 for this internally.
     pub slot: u16,
+    /// Fuse data from the ASIC, if available.
+    pub fuse: Option<FuseData>,
 }

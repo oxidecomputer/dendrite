@@ -60,6 +60,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (7, ASIC_DETAILS),
     (6, CONSOLIDATED_V4_ROUTES),
     (5, UPLINK_PORTS),
     (4, V4_OVER_V6_ROUTES),
@@ -380,7 +381,8 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/route/ipv4",
-        versions = ..VERSION_CONSOLIDATED_V4_ROUTES
+        versions = ..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_add",
     }]
     async fn route_ipv4_add_v1(
         rqctx: RequestContext<Self::Context>,
@@ -450,7 +452,8 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/route/ipv4",
-        versions = ..VERSION_CONSOLIDATED_V4_ROUTES
+        versions = ..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_set",
     }]
     async fn route_ipv4_set_v1(
         rqctx: RequestContext<Self::Context>,
@@ -529,7 +532,8 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}",
-        versions = ..VERSION_CONSOLIDATED_V4_ROUTES
+        versions = ..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_delete_target",
     }]
     async fn route_ipv4_delete_target_v1(
         rqctx: RequestContext<Self::Context>,
@@ -1614,10 +1618,28 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/switch/identifiers",
+        versions = VERSION_ASIC_DETAILS..,
     }]
     async fn switch_identifiers(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseOk<SwitchIdentifiers>, HttpError>;
+
+    /// Get switch identifiers.
+    ///
+    /// This endpoint returns the switch identifiers, which can be used for
+    /// consistent field definitions across oximeter time series schemas.
+    #[endpoint {
+        method = GET,
+        path = "/switch/identifiers",
+        operation_id = "switch_identifiers",
+        versions = ..VERSION_ASIC_DETAILS,
+    }]
+    async fn switch_identifiers_v1(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<v1::SwitchIdentifiers>, HttpError> {
+        let result = Self::switch_identifiers(rqctx).await?.0;
+        Ok(HttpResponseOk(result.into()))
+    }
 
     /// Collect the link data consumed by `tfportd`.  This app-specific convenience
     /// routine is meant to reduce the time and traffic expended on this once-per-

@@ -22,6 +22,44 @@ use uuid::Uuid;
 #[cfg(not(feature = "tofino_asic"))]
 mod faux_fsm;
 
+/// Returns faux fuse data for non-hardware backends.
+#[cfg(not(feature = "tofino_asic"))]
+pub(crate) fn faux_fuse_data() -> aal::FuseData {
+    aal::FuseData {
+        chip_rev: aal::ChipRevision::from_fuse(0x0110, 2), // B1
+        part: aal::PartInfo { part_num: 0x1234, pkg_id: 1, version: 2 },
+        disabled: aal::DisabledFeatures {
+            pipes: 0,
+            ports: 0,
+            speeds: 0,
+            mau: [0; 4],
+            tm_mem: 0,
+            bsync: false,
+            pgen: false,
+            resub: false,
+        },
+        frequency: aal::FrequencySettings {
+            disabled: false,
+            bps: 3,
+            pps: 3,
+            bps_ext: 0,
+            pps_ext: 0,
+            pcie_dis: 0,
+            cpu_speed_dis: 0,
+        },
+        manufacturing: aal::ManufacturingData {
+            voltage_scaling: 0,
+            pmro_and_skew: 0,
+            die_rotation: false,
+            silent_spin: 0,
+            wf_core_repair: false,
+            core_repair: false,
+            tile_repair: false,
+            soft_pipe_dis: 0,
+        },
+    }
+}
+
 /// Identifiers are used to uniquely identify an ASIC.
 ///
 /// This includes identifiers the sidecar idfor the fab, lot, wafer, and
@@ -36,11 +74,19 @@ pub struct Identifiers {
     fab: Option<char>,
     /// Lot identifier.
     lot: Option<char>,
+    /// Lot number (4-character identifier within the lot).
+    ///
+    /// The 4-character size comes from the Tofino ASIC fuse layout, which
+    /// stores lotnum as four separate character fields (lotnum0-3) in
+    /// `tofino::fuse::ChipId`.
+    lotnum: Option<[char; 4]>,
     /// Wafer number within the lot.
     wafer: Option<u8>,
     /// The wafer location as (x, y) coordinates on the wafer, represented as
     /// an array due to the lack of tuple support in OpenAPI.
     wafer_loc: Option<(i16, i16)>,
+    /// Organized fuse data from the ASIC.
+    fuse: Option<aal::FuseData>,
 }
 
 impl Default for Identifiers {
@@ -50,8 +96,10 @@ impl Default for Identifiers {
             asic_backend: "chaos".to_string(),
             fab: None,
             lot: None,
+            lotnum: None,
             wafer: None,
             wafer_loc: None,
+            fuse: None,
         }
     }
 }
@@ -73,12 +121,20 @@ impl aal::SidecarIdentifiers for Identifiers {
         self.lot
     }
 
+    fn lotnum(&self) -> Option<[char; 4]> {
+        self.lotnum
+    }
+
     fn wafer(&self) -> Option<u8> {
         self.wafer
     }
 
     fn wafer_loc(&self) -> Option<(i16, i16)> {
         self.wafer_loc
+    }
+
+    fn fuse_info(&self) -> Option<aal::FuseData> {
+        self.fuse.clone()
     }
 }
 
