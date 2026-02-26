@@ -40,7 +40,7 @@ fn wait_for_unlock(log: &Logger) {
             sleep(INTERVAL);
             continue;
         }
-        info!(log, "asic is unlocked starting interrupt monitor");
+        info!(log, "asic is unlocked - starting interrupt monitor");
         break;
     }
 }

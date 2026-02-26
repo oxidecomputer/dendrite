@@ -5170,7 +5170,7 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
         .expect("Should be able to dump bitmap table");
     let initial_src_filter_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV4_TABLE)
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
         .await
         .expect("Should be able to dump source filter table");
 
@@ -5273,7 +5273,7 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
 
     let post_src_filter_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV4_TABLE)
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
         .await
         .expect("Should be able to dump source filter table");
 
@@ -6151,7 +6151,7 @@ async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
     // Get baseline source filter table state
     let baseline_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV4_TABLE)
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
         .await
         .expect("Should dump source filter table");
     let baseline_count = baseline_table.entries.len();
@@ -6190,7 +6190,7 @@ async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
     // Check source filter table - should only have 1 new entry (the /0)
     let after_create_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV4_TABLE)
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
         .await
         .expect("Should dump source filter table after create");
 
@@ -6271,7 +6271,7 @@ async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
 
     let baseline_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV6_TABLE)
+        .table_dump(SOURCE_FILTER_IPV6_TABLE, false)
         .await
         .expect("Should dump IPv6 source filter table");
     let baseline_count = baseline_table.entries.len();
@@ -6307,7 +6307,7 @@ async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
     // Should only have 1 new entry (the ::/0)
     let after_create_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV6_TABLE)
+        .table_dump(SOURCE_FILTER_IPV6_TABLE, false)
         .await
         .expect("Should dump IPv6 source filter table after create");
 
@@ -6389,7 +6389,7 @@ async fn test_source_filter_update_to_any() -> TestResult {
 
     let baseline_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV4_TABLE)
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
         .await
         .expect("Should dump source filter table");
     let baseline_count = baseline_table.entries.len();
@@ -6417,7 +6417,7 @@ async fn test_source_filter_update_to_any() -> TestResult {
     // Should have 2 specific entries
     let after_create_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV4_TABLE)
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
         .await
         .expect("Should dump table after create");
 
@@ -6460,7 +6460,7 @@ async fn test_source_filter_update_to_any() -> TestResult {
     // Should now have only 1 entry (the /0), replacing the 2 specific ones
     let after_update_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV4_TABLE)
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
         .await
         .expect("Should dump table after update");
 
@@ -6516,7 +6516,7 @@ async fn test_source_filter_cleanup_on_delete() -> TestResult {
 
     let baseline_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV4_TABLE)
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
         .await
         .expect("Should dump source filter table");
     let baseline_count = baseline_table.entries.len();
@@ -6544,7 +6544,7 @@ async fn test_source_filter_cleanup_on_delete() -> TestResult {
     // Verify entries were added
     let after_create_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV4_TABLE)
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
         .await
         .expect("Should dump table after create");
 
@@ -6562,7 +6562,7 @@ async fn test_source_filter_cleanup_on_delete() -> TestResult {
     // Verify source filter entries were cleaned up
     let after_delete_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV4_TABLE)
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
         .await
         .expect("Should dump table after delete");
 
@@ -6616,7 +6616,7 @@ async fn test_source_filter_empty_vec_normalizes_to_any() -> TestResult {
 
     let baseline_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV4_TABLE)
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
         .await
         .expect("Should dump source filter table");
     let baseline_count = baseline_table.entries.len();
@@ -6649,7 +6649,7 @@ async fn test_source_filter_empty_vec_normalizes_to_any() -> TestResult {
     // Should have exactly 1 new entry (the /0 for any source)
     let after_create_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV4_TABLE)
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
         .await
         .expect("Should dump source filter table after create");
 
@@ -6665,7 +6665,7 @@ async fn test_source_filter_empty_vec_normalizes_to_any() -> TestResult {
     // Verify the /0 entry was removed
     let after_delete_table = switch
         .client
-        .table_dump(SOURCE_FILTER_IPV4_TABLE)
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
         .await
         .expect("Should dump table after delete");
 

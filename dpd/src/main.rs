@@ -71,6 +71,8 @@ mod port_settings;
 mod ports;
 mod route;
 mod rpw;
+#[cfg(feature = "tofino_asic")]
+mod snapshot;
 mod switch_identifiers;
 mod switch_port;
 mod table;
