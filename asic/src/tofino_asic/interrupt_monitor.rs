@@ -21,6 +21,23 @@ const DEV_ID: bf_dev_id_t = 0;
 const SUBDEV_ID: bf_subdev_id_t = 0;
 const INTERVAL: Duration = Duration::from_secs(5);
 
+/// Monitoring interrupts requires a number of precursory steps to set things up
+/// in the SDE and on the ASIC. The `monitor_interrupts` function is designed as
+/// a state machine that will drive forward toward the termial state of actively
+/// running the monitoring loop.
+///
+/// There are a number of errors that can happen in the SDE in the precursory
+/// states. The code in the SDE is pretty twisty and the error model is not
+/// totally clear, but it does appear to me that some of the errors that can
+/// happen are transient in nature. In particular errors associated with timer
+/// initialization and locking. With that in mind, each precursory state is
+/// a loop that will go forever until the required SDE functions have been
+/// called successfully. The loops have a 5 second interval to avoid excessive
+/// iteration.
+///
+/// The idea here is to get to the terminal state as soon as possible. Because
+/// the terminal state is an infinite loop, it affords us the opportunity to
+/// make each precursory loop run until success.
 pub fn monitor_interrupts(log: Logger) -> ! {
     let log = log.new(slog::o!("unit" => "interrupt monitor"));
     info!(log, "starring interrupt monitor");
