@@ -32,9 +32,7 @@ pub enum TableType {
     RouteFwdIpv4,
     RouteIdxIpv6,
     RouteFwdIpv6,
-    #[cfg(feature = "multicast")]
     RouteIpv4Mcast,
-    #[cfg(feature = "multicast")]
     RouteIpv6Mcast,
     ArpIpv4,
     NeighborIpv6,
@@ -47,21 +45,13 @@ pub enum TableType {
     UplinkEgress,
     AttachedSubnetIpv4,
     AttachedSubnetIpv6,
-    #[cfg(feature = "multicast")]
     McastIpv6,
-    #[cfg(feature = "multicast")]
     McastIpv4SrcFilter,
-    #[cfg(feature = "multicast")]
     McastIpv6SrcFilter,
-    #[cfg(feature = "multicast")]
     NatIngressIpv4Mcast,
-    #[cfg(feature = "multicast")]
     NatIngressIpv6Mcast,
-    #[cfg(feature = "multicast")]
     PortMacAddressMcast,
-    #[cfg(feature = "multicast")]
     McastEgressDecapPorts,
-    #[cfg(feature = "multicast")]
     McastEgressPortMapping,
     Counter(crate::counters::CounterId),
 }
@@ -69,7 +59,7 @@ pub enum TableType {
 /// Returns a vec of all the normal table types.  This will not include the
 /// tables used to collect counter data, which are managed separately.
 pub fn get_table_types() -> Vec<TableType> {
-    let mut base_tables = vec![
+    vec![
         TableType::RouteIdxIpv4,
         TableType::RouteFwdIpv4,
         TableType::RouteIdxIpv6,
@@ -85,30 +75,17 @@ pub fn get_table_types() -> Vec<TableType> {
         TableType::UplinkEgress,
         TableType::AttachedSubnetIpv4,
         TableType::AttachedSubnetIpv6,
-    ];
-
-    let mut multicast_tables;
-    #[cfg(feature = "multicast")]
-    {
-        multicast_tables = vec![
-            TableType::RouteIpv4Mcast,
-            TableType::RouteIpv6Mcast,
-            TableType::McastIpv6,
-            TableType::McastIpv4SrcFilter,
-            TableType::McastIpv6SrcFilter,
-            TableType::NatIngressIpv4Mcast,
-            TableType::NatIngressIpv6Mcast,
-            TableType::PortMacAddressMcast,
-            TableType::McastEgressDecapPorts,
-            TableType::McastEgressPortMapping,
-        ];
-    }
-    #[cfg(not(feature = "multicast"))]
-    {
-        multicast_tables = Vec::new();
-    }
-    base_tables.append(&mut multicast_tables);
-    base_tables
+        TableType::RouteIpv4Mcast,
+        TableType::RouteIpv6Mcast,
+        TableType::McastIpv6,
+        TableType::McastIpv4SrcFilter,
+        TableType::McastIpv6SrcFilter,
+        TableType::NatIngressIpv4Mcast,
+        TableType::NatIngressIpv6Mcast,
+        TableType::PortMacAddressMcast,
+        TableType::McastEgressDecapPorts,
+        TableType::McastEgressPortMapping,
+    ]
 }
 
 // This is the name that will be displayed in the log and presented to the user.
@@ -132,11 +109,9 @@ impl fmt::Display for TableType {
                 TableType::RouteFwdIpv6 => {
                     "Ingress.l3_router.Router6.lookup_idx.route".to_string()
                 }
-                #[cfg(feature = "multicast")]
                 TableType::RouteIpv4Mcast => {
                     "Ingress.l3_router.MulticastRouter4.tbl".to_string()
                 }
-                #[cfg(feature = "multicast")]
                 TableType::RouteIpv6Mcast => {
                     "Ingress.l3_router.MulticastRouter6.tbl".to_string()
                 }
@@ -165,34 +140,26 @@ impl fmt::Display for TableType {
                     "Ingress.attached_subnet_ingress.attached_subnets_v6"
                         .to_string()
                 }
-                #[cfg(feature = "multicast")]
                 TableType::McastIpv6 => {
                     "Ingress.mcast_ingress.mcast_replication_ipv6".to_string()
                 }
-                #[cfg(feature = "multicast")]
                 TableType::McastIpv4SrcFilter => {
                     "Ingress.mcast_ingress.mcast_source_filter_ipv4".to_string()
                 }
-                #[cfg(feature = "multicast")]
                 TableType::McastIpv6SrcFilter => {
                     "Ingress.mcast_ingress.mcast_source_filter_ipv6".to_string()
                 }
-                #[cfg(feature = "multicast")]
                 TableType::NatIngressIpv4Mcast => {
                     "Ingress.nat_ingress.ingress_ipv4_mcast".to_string()
                 }
-                #[cfg(feature = "multicast")]
                 TableType::NatIngressIpv6Mcast => {
                     "Ingress.nat_ingress.ingress_ipv6_mcast".to_string()
                 }
-                #[cfg(feature = "multicast")]
                 TableType::PortMacAddressMcast =>
                     "Egress.mac_rewrite.mac_rewrite".to_string(),
-                #[cfg(feature = "multicast")]
                 TableType::McastEgressDecapPorts => {
                     "Egress.mcast_egress.tbl_decap_ports".to_string()
                 }
-                #[cfg(feature = "multicast")]
                 TableType::McastEgressPortMapping => {
                     "Egress.mcast_egress.asic_id_to_port".to_string()
                 }
@@ -223,12 +190,10 @@ impl TryFrom<&str> for TableType {
             "ingress.l3_router.router6.lookup_idx.route" => {
                 Ok(TableType::RouteFwdIpv6)
             }
-            #[cfg(feature = "multicast")]
             "ingress.l3_router.multicastrouter4.tbl" => {
                 Ok(TableType::RouteIpv4Mcast)
             }
 
-            #[cfg(feature = "multicast")]
             "ingress.l3_router.multicastrouter6.tbl" => {
                 Ok(TableType::RouteIpv6Mcast)
             }
@@ -251,41 +216,33 @@ impl TryFrom<&str> for TableType {
                 Ok(TableType::AttachedSubnetIpv6)
             }
 
-            #[cfg(feature = "multicast")]
             "ingress.mcast_ingress.mcast_replication_ipv6" => {
                 Ok(TableType::McastIpv6)
             }
 
-            #[cfg(feature = "multicast")]
             "ingress.mcast_ingress.mcast_source_filter_ipv4" => {
                 Ok(TableType::McastIpv4SrcFilter)
             }
 
-            #[cfg(feature = "multicast")]
             "ingress.mcast_ingress.mcast_source_filter_ipv6" => {
                 Ok(TableType::McastIpv6SrcFilter)
             }
 
-            #[cfg(feature = "multicast")]
             "ingress.nat_ingress.ingress_ipv4_mcast" => {
                 Ok(TableType::NatIngressIpv4Mcast)
             }
 
-            #[cfg(feature = "multicast")]
             "ingress.nat_ingress.ingress_ipv6_mcast" => {
                 Ok(TableType::NatIngressIpv6Mcast)
             }
 
-            #[cfg(feature = "multicast")]
             "egress.mac_rewrite.mac_rewrite" => {
                 Ok(TableType::PortMacAddressMcast)
             }
-            #[cfg(feature = "multicast")]
             "egress.mcast_egress.tbl_decap_ports" => {
                 Ok(TableType::McastEgressDecapPorts)
             }
 
-            #[cfg(feature = "multicast")]
             "egress.mcast_egress.asic_id_to_port" => {
                 Ok(TableType::McastEgressPortMapping)
             }

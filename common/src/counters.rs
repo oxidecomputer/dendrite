@@ -33,7 +33,6 @@ pub enum CounterId {
     Packet,
     DropPort,
     DropReason,
-    #[cfg(feature = "multicast")]
     Multicast(MulticastCounterId),
 }
 
@@ -49,7 +48,6 @@ pub enum CounterId {
     Serialize,
     Deserialize,
 )]
-#[cfg(feature = "multicast")]
 pub enum MulticastCounterId {
     EgressDropPort,
     EgressDropReason,
@@ -73,7 +71,6 @@ impl fmt::Display for CounterId {
                 CounterId::Packet => "Packet".to_string(),
                 CounterId::DropPort => "Ingress_Drop_Port".to_string(),
                 CounterId::DropReason => "Ingress_Drop_Reason".to_string(),
-                #[cfg(feature = "multicast")]
                 CounterId::Multicast(id) => id.to_string(),
             }
         )
@@ -91,40 +88,32 @@ impl std::str::FromStr for CounterId {
             "packet" => Ok(CounterId::Packet),
             "ingressdropport" => Ok(CounterId::DropPort),
             "ingressdropreason" => Ok(CounterId::DropReason),
-            #[cfg(feature = "multicast")]
-            x => match x {
-                "egressdropport" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::EgressDropPort))
-                }
-                "egressdropreason" => Ok(CounterId::Multicast(
-                    MulticastCounterId::EgressDropReason,
-                )),
-                "unicast" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::Unicast))
-                }
-                "multicast" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::Multicast))
-                }
-                "multicastext" | "multicastexternal" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::MulticastExt))
-                }
-                "multicastll" | "multicastlinklocal" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::MulticastLL))
-                }
-                "multicastul" | "multicastunderlay" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::MulticastUL))
-                }
-                "multicastdrop" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::MulticastDrop))
-                }
-                x => Err(format!("No such counter: {x}")),
-            },
-            #[cfg(not(feature = "multicast"))]
+            "egressdropport" => {
+                Ok(CounterId::Multicast(MulticastCounterId::EgressDropPort))
+            }
+            "egressdropreason" => {
+                Ok(CounterId::Multicast(MulticastCounterId::EgressDropReason))
+            }
+            "unicast" => Ok(CounterId::Multicast(MulticastCounterId::Unicast)),
+            "multicast" => {
+                Ok(CounterId::Multicast(MulticastCounterId::Multicast))
+            }
+            "multicastext" | "multicastexternal" => {
+                Ok(CounterId::Multicast(MulticastCounterId::MulticastExt))
+            }
+            "multicastll" | "multicastlinklocal" => {
+                Ok(CounterId::Multicast(MulticastCounterId::MulticastLL))
+            }
+            "multicastul" | "multicastunderlay" => {
+                Ok(CounterId::Multicast(MulticastCounterId::MulticastUL))
+            }
+            "multicastdrop" => {
+                Ok(CounterId::Multicast(MulticastCounterId::MulticastDrop))
+            }
             x => Err(format!("No such counter: {x}")),
         }
     }
 }
-#[cfg(feature = "multicast")]
 impl fmt::Display for MulticastCounterId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(

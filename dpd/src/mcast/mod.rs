@@ -2393,15 +2393,16 @@ mod tests {
             None
         );
 
-        // Vec with only Exact sources stays as-is
+        // Vec with only Exact sources is deduplicated and sorted
         let exact_sources = vec![
             IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
             IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
         ];
-        assert_eq!(
-            canonicalize_sources(Some(exact_sources.clone())),
-            Some(exact_sources)
-        );
+        let expected = vec![
+            IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
+            IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
+        ];
+        assert_eq!(canonicalize_sources(Some(exact_sources)), Some(expected));
 
         // Single Exact source stays as-is
         let single_exact = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(

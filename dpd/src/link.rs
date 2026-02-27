@@ -14,7 +14,6 @@ use crate::fault::LinkUpTracker;
 use crate::ports::AdminEvent;
 use crate::ports::Event;
 use crate::table::mac;
-#[cfg(feature = "multicast")]
 use crate::table::mcast;
 use crate::table::port_ip;
 use crate::table::uplink;
@@ -1629,7 +1628,6 @@ fn set_mac_config(
 ) -> DpdResult<()> {
     mac::mac_set(switch, asic_id, mac)?;
 
-    #[cfg(feature = "multicast")]
     {
         mac::mcast_mac_set(switch, asic_id, mac)?;
         mcast::mcast_egress::add_port_mapping_entry(switch, asic_id)?;
@@ -1640,7 +1638,6 @@ fn set_mac_config(
 fn clear_mac_config(switch: &Switch, asic_id: AsicId) -> DpdResult<()> {
     mac::mac_clear(switch, asic_id)?;
 
-    #[cfg(feature = "multicast")]
     {
         mac::mcast_mac_clear(switch, asic_id)?;
         mcast::mcast_egress::del_port_mapping_entry(switch, asic_id)?;

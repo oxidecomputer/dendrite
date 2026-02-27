@@ -15,7 +15,6 @@ use aal::AsicError;
 use aal::AsicResult;
 use aal::MatchType;
 use common::counters::CounterId;
-#[cfg(feature = "multicast")]
 use common::counters::MulticastCounterId;
 use common::table::TableType;
 
@@ -35,11 +34,9 @@ fn table_name(type_: TableType) -> &'static str {
         TableType::RouteFwdIpv6 => {
             "pipe.Ingress.l3_router.Router6.lookup_idx.route"
         }
-        #[cfg(feature = "multicast")]
         TableType::RouteIpv4Mcast => {
             "pipe.Ingress.l3_router.MulticastRouter4.tbl"
         }
-        #[cfg(feature = "multicast")]
         TableType::RouteIpv6Mcast => {
             "pipe.Ingress.l3_router.MulticastRouter6.tbl"
         }
@@ -58,33 +55,25 @@ fn table_name(type_: TableType) -> &'static str {
         TableType::AttachedSubnetIpv6 => {
             "pipe.Ingress.attached_subnet_ingress.attached_subnets_v6"
         }
-        #[cfg(feature = "multicast")]
         TableType::McastIpv6 => {
             "pipe.Ingress.mcast_ingress.mcast_replication_ipv6"
         }
-        #[cfg(feature = "multicast")]
         TableType::McastIpv4SrcFilter => {
             "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4"
         }
-        #[cfg(feature = "multicast")]
         TableType::McastIpv6SrcFilter => {
             "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv6"
         }
-        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv4Mcast => {
             "pipe.Ingress.nat_ingress.ingress_ipv4_mcast"
         }
-        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv6Mcast => {
             "pipe.Ingress.nat_ingress.ingress_ipv6_mcast"
         }
-        #[cfg(feature = "multicast")]
         TableType::PortMacAddressMcast => "pipe.Egress.mac_rewrite.mac_rewrite",
-        #[cfg(feature = "multicast")]
         TableType::McastEgressDecapPorts => {
             "pipe.Egress.mcast_egress.tbl_decap_ports"
         }
-        #[cfg(feature = "multicast")]
         TableType::McastEgressPortMapping => {
             "pipe.Egress.mcast_egress.asic_id_to_port"
         }
@@ -100,12 +89,10 @@ fn counter_table_name(id: CounterId) -> &'static str {
         CounterId::Egress => "pipe.Ingress.egress_ctr",
         CounterId::DropPort => "pipe.Ingress.drop_port_ctr",
         CounterId::DropReason => "pipe.Ingress.drop_reason_ctr",
-        #[cfg(feature = "multicast")]
         CounterId::Multicast(id) => mulitcast_counter_table_name(id),
     }
 }
 
-#[cfg(feature = "multicast")]
 fn mulitcast_counter_table_name(id: MulticastCounterId) -> &'static str {
     match id {
         MulticastCounterId::EgressDropPort => "pipe.Egress.drop_port_ctr",
