@@ -6,6 +6,7 @@ authors = ["nils <nils@oxide.computer>"]
 edition = "2024"
 
 [features]
+default = ["multicast"]
 multicast = []
 
 [dependencies]

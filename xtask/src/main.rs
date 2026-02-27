@@ -80,9 +80,9 @@ enum XtaskCommands {
         #[clap(long)]
         stages: Option<u8>,
 
-        /// Include support for multicast
+        /// exclude multicast support from the P4 build
         #[clap(long)]
-        multicast: bool,
+        no_multicast: bool,
     },
     /// build an installable dataplane controller package
     Dist {
@@ -251,8 +251,8 @@ async fn main() {
     if let Err(e) = match task.subcommand {
         XtaskCommands::Openapi(external) => external
             .exec_bin("dendrite-dropshot-apis", "dendrite-dropshot-apis"),
-        XtaskCommands::Codegen { name, sde, stages, multicast } => {
-            codegen::build(name, sde, stages, multicast)
+        XtaskCommands::Codegen { name, sde, stages, no_multicast } => {
+            codegen::build(name, sde, stages, !no_multicast)
         }
         XtaskCommands::Dist { features, names, release, format } => {
             plat::dist(features, names, release, format).await
