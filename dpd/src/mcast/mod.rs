@@ -57,7 +57,7 @@
 //! [RFC 4291]: https://www.rfc-editor.org/rfc/rfc4291.html
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     ops::Bound,
     sync::{Arc, Mutex, Weak},
@@ -1206,7 +1206,7 @@ fn canonicalize_sources(sources: Option<Vec<IpSrc>>) -> Option<Vec<IpSrc>> {
         Some(srcs) if srcs.is_empty() || sources_contain_any(&srcs) => None,
         Some(srcs) => {
             let deduped: Vec<IpSrc> =
-                srcs.into_iter().collect::<HashSet<_>>().into_iter().collect();
+                srcs.into_iter().collect::<BTreeSet<_>>().into_iter().collect();
             Some(deduped)
         }
     }
@@ -2321,14 +2321,17 @@ mod tests {
             None
         );
 
-        // Vec with only Exact sources stays as-is
+        // Vec with only Exact sources is deduplicated and sorted
         let exact_sources = vec![
             IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
             IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
         ];
         assert_eq!(
-            canonicalize_sources(Some(exact_sources.clone())),
-            Some(exact_sources)
+            canonicalize_sources(Some(exact_sources)),
+            Some(vec![
+                IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
+                IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
+            ])
         );
 
         // Single Exact source stays as-is
