@@ -111,7 +111,7 @@ impl FromStr for SidecarRevision {
 /// A mapping between a physical switch port and a Tofino `Connector`.
 ///
 /// These objects cannot be constructed externally. A reference to the static
-/// maps can be returned via the [`port_map`] function.
+/// maps can be returned via the `port_map` function.
 #[derive(Clone, Debug)]
 pub struct PortMap {
     _revision: SidecarRevision,

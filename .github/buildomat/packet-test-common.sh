@@ -8,16 +8,11 @@ export WS=$wd
 MODEL_STARTUP_TIMEOUT=${MODEL_STARTUP_TIMEOUT:=5}
 STARTUP_TIMEOUT=${STARTUP_TIMEOUT:=120}
 
-if [ x$MULTICAST == x ]; then
-        BUILD_FEATURES=tofino_asic
-	CODEGEN_FEATURES=
-        SWADM_FEATURES=
-    else
-        BUILD_FEATURES=tofino_asic,multicast
-	CODEGEN_FEATURES=--multicast
-        SWADM_FEATURES=--features=multicast
-fi
-    
+BUILD_FEATURES=tofino_asic
+
+CODEGEN_FEATURES=--multicast
+SWADM_FEATURES="--features=multicast"
+
 function cleanup {
     set +o errexit
     set +o pipefail

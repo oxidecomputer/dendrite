@@ -5,6 +5,7 @@ authors = ["nils <nils@oxide.computer>"]
 edition = "2024"
 
 [features]
+default = ["multicast"]
 multicast = ["aal/multicast", "asic/multicast"]
 tofino_asic = ["asic/tofino_asic"]
 tofino_stub = ["asic/tofino_stub"]
@@ -55,6 +56,7 @@ toml.workspace = true
 usdt.workspace = true
 uuid.workspace = true
 reqwest.workspace = true
+reqwest012.workspace = true
 
 dropshot = { workspace = true, features = [ "usdt-probes" ] }
 gateway-client.workspace = true

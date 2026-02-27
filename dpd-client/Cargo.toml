@@ -5,6 +5,7 @@ edition = "2024"
 description = "Client library for the Dendrite data plane daemon"
 
 [features]
+default = ["multicast"]
 multicast = ["asic/multicast"]
 chaos = ["asic/chaos"]
 tofino_asic = ["asic/tofino_asic"]
@@ -34,6 +35,7 @@ packet = { path = "../packet" }
 pcap = { path = "../pcap" }
 asic = { path = "../asic" }
 anyhow.workspace = true
+dpd-types.workspace = true
 lazy_static.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
