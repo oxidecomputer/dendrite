@@ -285,6 +285,7 @@ pub trait TableOps<H: AsicOps> {
     fn get_entries<M: MatchParse, A: ActionParse>(
         &self,
         hdl: &H,
+        from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>>;
     fn get_counters<M: MatchParse>(
         &self,

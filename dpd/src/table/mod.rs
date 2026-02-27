@@ -229,12 +229,15 @@ impl Table {
     pub fn get_entries<M, A>(
         &self,
         hdl: &asic::Handle,
+        from_hardware: bool,
     ) -> DpdResult<Vec<(M, A)>>
     where
         M: MatchParse,
         A: ActionParse,
     {
-        self.asic_data.get_entries::<M, A>(hdl).map_err(|e| e.into())
+        self.asic_data
+            .get_entries::<M, A>(hdl, from_hardware)
+            .map_err(|e| e.into())
     }
 
     /// Ask the ASIC-level code to fetch the counter data from the ASIC's
@@ -257,64 +260,93 @@ pub fn list(switch: &Switch) -> Vec<String> {
 
 /// Given the name of a table, call into the table-specific code to get the
 /// entries stored in the ASIC.
-pub fn get_entries(switch: &Switch, name: String) -> DpdResult<views::Table> {
+pub fn get_entries(
+    switch: &Switch,
+    name: String,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
     match TableType::try_from(name.as_str())? {
-        TableType::RouteIdxIpv4 => route_ipv4::index_dump(switch),
-        TableType::RouteFwdIpv4 => route_ipv4::forward_dump(switch),
-        TableType::RouteIdxIpv6 => route_ipv6::index_dump(switch),
-        TableType::RouteFwdIpv6 => route_ipv6::forward_dump(switch),
-        TableType::NeighborIpv6 => neighbor_ipv6::table_dump(switch),
-        TableType::ArpIpv4 => arp_ipv4::table_dump(switch),
-        TableType::NatIngressIpv4 => nat::ipv4_table_dump(switch),
-        TableType::NatIngressIpv6 => nat::ipv6_table_dump(switch),
-        TableType::AttachedSubnetIpv4 => attached_subnet_v4::table_dump(switch),
-        TableType::AttachedSubnetIpv6 => attached_subnet_v6::table_dump(switch),
-        TableType::PortIpv4 => port_ip::ipv4_table_dump(switch),
-        TableType::PortIpv6 => port_ip::ipv6_table_dump(switch),
-        TableType::PortMac => {
-            MacOps::<port_mac::PortMacTable>::table_dump(switch)
+        TableType::RouteIdxIpv4 => {
+            route_ipv4::index_dump(switch, from_hardware)
         }
-        TableType::UplinkEgress => uplink::egress_table_dump(switch),
-        TableType::UplinkIngress => uplink::ingress_table_dump(switch),
+        TableType::RouteFwdIpv4 => {
+            route_ipv4::forward_dump(switch, from_hardware)
+        }
+        TableType::RouteIdxIpv6 => {
+            route_ipv6::index_dump(switch, from_hardware)
+        }
+        TableType::RouteFwdIpv6 => {
+            route_ipv6::forward_dump(switch, from_hardware)
+        }
+        TableType::NeighborIpv6 => {
+            neighbor_ipv6::table_dump(switch, from_hardware)
+        }
+        TableType::ArpIpv4 => arp_ipv4::table_dump(switch, from_hardware),
+        TableType::NatIngressIpv4 => {
+            nat::ipv4_table_dump(switch, from_hardware)
+        }
+        TableType::NatIngressIpv6 => {
+            nat::ipv6_table_dump(switch, from_hardware)
+        }
+        TableType::AttachedSubnetIpv4 => {
+            attached_subnet_v4::table_dump(switch, from_hardware)
+        }
+        TableType::AttachedSubnetIpv6 => {
+            attached_subnet_v6::table_dump(switch, from_hardware)
+        }
+        TableType::PortIpv4 => port_ip::ipv4_table_dump(switch, from_hardware),
+        TableType::PortIpv6 => port_ip::ipv6_table_dump(switch, from_hardware),
+        TableType::PortMac => {
+            MacOps::<port_mac::PortMacTable>::table_dump(switch, from_hardware)
+        }
+        TableType::UplinkEgress => {
+            uplink::egress_table_dump(switch, from_hardware)
+        }
+        TableType::UplinkIngress => {
+            uplink::ingress_table_dump(switch, from_hardware)
+        }
         #[cfg(feature = "multicast")]
         TableType::McastIpv6 => {
-            mcast::mcast_replication::ipv6_table_dump(switch)
+            mcast::mcast_replication::ipv6_table_dump(switch, from_hardware)
         }
         #[cfg(feature = "multicast")]
         TableType::McastIpv4SrcFilter => {
-            mcast::mcast_src_filter::ipv4_table_dump(switch)
+            mcast::mcast_src_filter::ipv4_table_dump(switch, from_hardware)
         }
         #[cfg(feature = "multicast")]
         TableType::McastIpv6SrcFilter => {
-            mcast::mcast_src_filter::ipv6_table_dump(switch)
+            mcast::mcast_src_filter::ipv6_table_dump(switch, from_hardware)
         }
         #[cfg(feature = "multicast")]
         TableType::NatIngressIpv4Mcast => {
-            mcast::mcast_nat::ipv4_table_dump(switch)
+            mcast::mcast_nat::ipv4_table_dump(switch, from_hardware)
         }
         #[cfg(feature = "multicast")]
         TableType::NatIngressIpv6Mcast => {
-            mcast::mcast_nat::ipv6_table_dump(switch)
+            mcast::mcast_nat::ipv6_table_dump(switch, from_hardware)
         }
         #[cfg(feature = "multicast")]
         TableType::RouteIpv4Mcast => {
-            mcast::mcast_route::ipv4_table_dump(switch)
+            mcast::mcast_route::ipv4_table_dump(switch, from_hardware)
         }
         #[cfg(feature = "multicast")]
         TableType::RouteIpv6Mcast => {
-            mcast::mcast_route::ipv6_table_dump(switch)
+            mcast::mcast_route::ipv6_table_dump(switch, from_hardware)
         }
         #[cfg(feature = "multicast")]
         TableType::PortMacMcast => {
-            MacOps::<mcast::mcast_port_mac::PortMacTable>::table_dump(switch)
+            MacOps::<mcast::mcast_port_mac::PortMacTable>::table_dump(
+                switch,
+                from_hardware,
+            )
         }
         #[cfg(feature = "multicast")]
         TableType::McastEgressDecapPorts => {
-            mcast::mcast_egress::bitmap_table_dump(switch)
+            mcast::mcast_egress::bitmap_table_dump(switch, from_hardware)
         }
         #[cfg(feature = "multicast")]
         TableType::McastEgressPortMapping => {
-            mcast::mcast_egress::port_mapping_table_dump(switch)
+            mcast::mcast_egress::port_mapping_table_dump(switch, from_hardware)
         }
     }
 }
@@ -596,8 +628,11 @@ impl<T: MacTable> MacOps<T> {
         }
     }
 
-    pub fn table_dump(s: &Switch) -> DpdResult<views::Table> {
-        s.table_dump::<MacMatchKey, MacAction>(T::table_type())
+    pub fn table_dump(
+        s: &Switch,
+        from_hardware: bool,
+    ) -> DpdResult<views::Table> {
+        s.table_dump::<MacMatchKey, MacAction>(T::table_type(), from_hardware)
     }
 
     pub fn counter_fetch(

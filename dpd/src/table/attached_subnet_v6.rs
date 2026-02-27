@@ -58,9 +58,10 @@ pub fn delete_entry(s: &Switch, subnet: Ipv6Net) -> DpdResult<()> {
     s.table_entry_del(TableType::AttachedSubnetIpv6, &match_key)
 }
 
-pub fn table_dump(s: &Switch) -> DpdResult<views::Table> {
+pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
     s.table_dump::<AttachedSubnetV6MatchKey, AttachedSubnetV6Action>(
         TableType::AttachedSubnetIpv6,
+        from_hardware,
     )
 }
 

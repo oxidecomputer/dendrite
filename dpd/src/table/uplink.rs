@@ -116,12 +116,24 @@ pub fn uplink_clear(s: &Switch, port: u16) -> DpdResult<()> {
     }
 }
 
-pub fn egress_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<EgressMatchKey, EgressAction>(TableType::UplinkEgress)
+pub fn egress_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<EgressMatchKey, EgressAction>(
+        TableType::UplinkEgress,
+        from_hardware,
+    )
 }
 
-pub fn ingress_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<IngressMatchKey, IngressAction>(TableType::UplinkIngress)
+pub fn ingress_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<IngressMatchKey, IngressAction>(
+        TableType::UplinkIngress,
+        from_hardware,
+    )
 }
 
 pub fn egress_counter_fetch(
