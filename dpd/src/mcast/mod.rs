@@ -826,10 +826,27 @@ pub(crate) fn modify_group_internal(
         group_entry.replication_info.is_some(),
     ) {
         (true, true) => {
-            // Transition from members to empty - cleanup tables
+            // Transition from members to empty.
+            //
+            // First, remove ports from ASIC groups before cleaning up
+            // replication table entries, otherwise stale ports cause subsequent
+            // re-adds to fail with "already contains port".
+            let repl_info = group_entry.replication_info.clone().unwrap();
+            process_membership_changes(
+                s,
+                group_ip.into(),
+                &new_group_info.members,
+                &mut group_entry,
+                &repl_info,
+            )
+            .inspect_err(|_e| {
+                mcast.groups.insert(group_ip.into(), group_entry.clone());
+            })
+            .map_err(|e| rollback_ctx.rollback_and_restore(e))?;
+
             cleanup_empty_group_replication(s, group_ip.into(), &group_entry)
                 .map_err(|e| rollback_ctx.rollback_and_restore(e))?;
-            // Immediately clear replication_info to maintain consistency
+
             group_entry.replication_info = None;
             None
         }
