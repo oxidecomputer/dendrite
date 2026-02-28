@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use common::ports::PortId;
+use common::table::TableType;
 use dpd_types::link::{LinkId, LinkState};
 use dpd_types::oxstats::{OximeterConfig, OximeterMetadata};
 use dpd_types::switch_identifiers::SwitchIdentifiers;
@@ -29,7 +30,6 @@ use oximeter::{MetricsError, Producer};
 
 use crate::DpdResult;
 use crate::Switch;
-use crate::table;
 use aal::PortHdl;
 use asic::AsicLinkStats;
 use asic::FsmStats;
@@ -177,7 +177,7 @@ impl TableStats {
     }
 
     // Update this link's metrics using the latest observations
-    pub fn update_stats(&mut self, switch: &Switch, id: table::TableType) {
+    pub fn update_stats(&mut self, switch: &Switch, id: TableType) {
         let table = switch.table_get(id).expect("table population is fixed");
         let usage = &table.usage.clone();
         self.capacity.datum = u64::from(usage.size);
@@ -264,7 +264,7 @@ struct Oxstats {
     /// Stats for each link
     link_stats: Mutex<BTreeMap<PortHdl, LinkStats>>,
     /// Statistics for each table
-    table_stats: BTreeMap<table::TableType, TableStats>,
+    table_stats: BTreeMap<TableType, TableStats>,
 }
 
 impl std::fmt::Debug for Oxstats {
@@ -292,7 +292,7 @@ impl Oxstats {
         // The population of tables doesn't change over time, so we can safely
         // allocate the TableStats structures at init.
         let mut table_stats = BTreeMap::new();
-        for (id, table) in switch.tables.iter() {
+        for id in switch.tables.keys() {
             let table = SwitchTable {
                 rack_id: sled_identifiers.rack_id,
                 sled_id: sled_identifiers.sled_id,
@@ -320,7 +320,7 @@ impl Oxstats {
                     .wafer_loc
                     .map(|[_, y]| y)
                     .unwrap_or(0),
-                table: table.lock().unwrap().name.clone().into(),
+                table: id.to_string().into(),
             };
             table_stats.insert(*id, TableStats::new(table));
         }

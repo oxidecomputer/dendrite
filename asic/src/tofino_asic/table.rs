@@ -17,21 +17,8 @@ use std::sync::{Condvar, Mutex};
 use super::bf_wrapper::*;
 use super::*;
 use crate::tofino_asic::genpd::*;
-use aal::ActionArg;
-use aal::ActionData;
-use aal::ActionParse;
-use aal::AsicError;
-use aal::AsicResult;
-use aal::CounterData;
-use aal::MatchData;
-use aal::MatchEntryField;
-use aal::MatchEntryValue;
-use aal::MatchLpm;
-use aal::MatchMask;
-use aal::MatchParse;
-use aal::MatchRange;
-use aal::MatchType;
-use aal::ValueTypes;
+use aal::*;
+use common::table::TableType;
 
 // Refreshing the counters is a relatively expensive operation, so we try not
 // to do it too frequently.  This defines how many milliseconds we wait between
@@ -694,23 +681,26 @@ impl TofinoTableOps for Table {
 }
 
 impl aal::TableOps<Handle> for Table {
-    fn new(hdl: &Handle, name: &str) -> AsicResult<Table> {
-        let mut info = tofino_common::TableInfo::new(&hdl.rt, name)?;
-        slog::debug!(hdl.log, "table {name}\n{info:#?}");
+    fn new(hdl: &Handle, type_: TableType) -> AsicResult<Table> {
+        let mut info = tofino_common::TableInfo::new(&hdl.rt, type_)?;
+        slog::debug!(hdl.log, "initted {info:#?}");
 
         let bf = hdl.bf_get();
         let mut rt_hdl: *const bf_rt_table_hdl = ptr::null_mut();
         unsafe {
-            let tmp = CString::new(name).unwrap();
+            let tmp = CString::new(info.name.clone()).unwrap();
             bf_rt_table_from_name_get(bf.rt_info, tmp.as_ptr(), &mut rt_hdl)
         }
-        .check_error(&format!("fetching handle for table {name}"))
+        .check_error(&format!("fetching handle for table {}", info.name))
         .log_error(hdl)?;
 
         info.size = unsafe {
             let mut size = 0;
             bf_rt_table_size_get(rt_hdl, bf.rt_sess, &TGT, &mut size)
-                .check_error(&format!("fetching actual size of table {name}"))
+                .check_error(&format!(
+                    "fetching actual size of table {}",
+                    info.name
+                ))
                 .log_error(hdl)?;
             size
         };
