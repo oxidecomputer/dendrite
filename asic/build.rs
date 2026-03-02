@@ -37,6 +37,7 @@ fn gen_bindings(sde_dir: &str) -> Result<()> {
         format!("{sde_includes}/bf_rt/bf_rt_session.h"),
         format!("{sde_includes}/lld/lld_sku.h"),
         format!("{sde_includes}/tofino/bf_pal/bf_pal_port_intf.h"),
+        format!("{sde_includes}/pipe_mgr/pipe_mgr_intf.h"),
     ];
 
     // There are several headers we only use (and _can_ only use) when running

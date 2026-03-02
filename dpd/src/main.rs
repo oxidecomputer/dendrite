@@ -71,6 +71,8 @@ mod port_settings;
 mod ports;
 mod route;
 mod rpw;
+#[cfg(feature = "tofino_asic")]
+mod snapshot;
 mod switch_identifiers;
 mod switch_port;
 mod table;
@@ -284,6 +286,9 @@ impl Switch {
         let route_data = route::init(&log);
         let mac_mgmt = Mutex::new(macaddrs::MacManagement::new(&log));
 
+        #[cfg(feature = "tofino_asic")]
+        run_interrupt_monitor(log.clone());
+
         let ws_log = log.new(slog::o!("unit" => "workflow_server"));
         let workflow_server = rpw::WorkflowServer::new(ws_log);
 
@@ -398,6 +403,7 @@ impl Switch {
     pub fn table_dump<M: MatchParse, A: ActionParse>(
         &self,
         t: table::TableType,
+        from_hardware: bool,
     ) -> DpdResult<dpd_types::views::Table> {
         let t = self.table_get(t)?;
 
@@ -405,7 +411,7 @@ impl Switch {
             name: t.name.to_string(),
             size: t.usage.size as usize,
             entries: t
-                .get_entries::<M, A>(&self.asic_hdl)
+                .get_entries::<M, A>(&self.asic_hdl, from_hardware)
                 .map_err(|e| {
                     error!(self.log, "failed to get table contents";
 	            "table" => t.name.to_string(),
@@ -809,4 +815,11 @@ async fn run_dpd(opt: Opt) -> anyhow::Result<()> {
         info!(switch.log, "running as stub to support p4 program: {p4_name}");
         stub_main(switch).await
     }
+}
+
+#[cfg(feature = "tofino_asic")]
+fn run_interrupt_monitor(log: slog::Logger) {
+    std::thread::spawn(move || {
+        asic::tofino_asic::interrupt_monitor::monitor_interrupts(log);
+    });
 }

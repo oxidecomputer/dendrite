@@ -96,8 +96,14 @@ pub(crate) fn del_ipv4_entry(s: &Switch, route: Ipv4Addr) -> DpdResult<()> {
 }
 
 /// Dump the IPv4 multicast routing table's contents.
-pub(crate) fn ipv4_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv4MatchKey, Ipv4Action>(TableType::RouteIpv4Mcast)
+pub(crate) fn ipv4_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv4MatchKey, Ipv4Action>(
+        TableType::RouteIpv4Mcast,
+        from_hardware,
+    )
 }
 
 /// Fetch the IPv4 multicast routing table's counters.
@@ -186,8 +192,14 @@ pub(crate) fn del_ipv6_entry(s: &Switch, route: Ipv6Addr) -> DpdResult<()> {
 }
 
 /// Dump the IPv6 multicast routing table's contents.
-pub(crate) fn ipv6_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv6MatchKey, Ipv6Action>(TableType::RouteIpv6Mcast)
+pub(crate) fn ipv6_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv6MatchKey, Ipv6Action>(
+        TableType::RouteIpv6Mcast,
+        from_hardware,
+    )
 }
 
 /// Fetch the IPv6 multicast routing table's counters.

@@ -40,6 +40,10 @@ pub enum Table {
         parseable: bool,
         /// The name of the table to display.
         name: String,
+
+        #[clap(long)]
+        /// Dump table directly from hardware instead of software cache
+        from_hardware: bool,
     },
     /// Fetch any counter data associated with the specified table.
     #[clap(visible_alias = "ctrs")]
@@ -89,8 +93,9 @@ async fn table_dump(
     dump_schema: bool,
     parseable: bool,
     action_filter: Option<String>,
+    from_hardware: bool,
 ) -> anyhow::Result<()> {
-    let t = client.table_dump(&table).await?.into_inner();
+    let t = client.table_dump(&table, from_hardware).await?.into_inner();
     if t.entries.is_empty() {
         return Ok(());
     }
@@ -235,8 +240,9 @@ pub async fn table_cmd(
             }
             Ok(())
         }
-        Table::Dump { schema, parseable, action, name } => {
-            table_dump(client, name, schema, parseable, action).await
+        Table::Dump { schema, parseable, action, name, from_hardware } => {
+            table_dump(client, name, schema, parseable, action, from_hardware)
+                .await
         }
         Table::Counters { force_sync, parseable, name } => {
             table_counters(client, name, force_sync, parseable).await

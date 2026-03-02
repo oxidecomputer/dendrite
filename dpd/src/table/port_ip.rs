@@ -309,12 +309,18 @@ pub fn ipv6_delete(s: &Switch, port: u16, ipv6: Ipv6Addr) -> DpdResult<()> {
         })
 }
 
-pub fn ipv4_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv4MatchKey, ActionV4>(TableType::PortIpv4)
+pub fn ipv4_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv4MatchKey, ActionV4>(TableType::PortIpv4, from_hardware)
 }
 
-pub fn ipv6_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv6MatchKey, ActionV6>(TableType::PortIpv6)
+pub fn ipv6_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv6MatchKey, ActionV6>(TableType::PortIpv6, from_hardware)
 }
 
 pub fn ipv4_table_clear(s: &Switch) -> DpdResult<()> {

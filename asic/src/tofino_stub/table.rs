@@ -99,6 +99,7 @@ impl TableOps<StubHandle> for Table {
     fn get_entries<M: MatchParse, A: ActionParse>(
         &self,
         _s: &StubHandle,
+        _from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>> {
         Err(AsicError::OperationUnsupported)
     }
