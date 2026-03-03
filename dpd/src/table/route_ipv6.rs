@@ -146,12 +146,21 @@ pub fn delete_route_target(s: &Switch, idx: u16) -> DpdResult<()> {
         })
 }
 
-pub fn forward_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<IndexKey, RouteAction>(TableType::RouteFwdIpv6)
+pub fn forward_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<IndexKey, RouteAction>(
+        TableType::RouteFwdIpv6,
+        from_hardware,
+    )
 }
 
-pub fn index_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<RouteKey, IndexAction>(TableType::RouteIdxIpv6)
+pub fn index_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
+    s.table_dump::<RouteKey, IndexAction>(
+        TableType::RouteIdxIpv6,
+        from_hardware,
+    )
 }
 
 pub fn forward_counter_fetch(

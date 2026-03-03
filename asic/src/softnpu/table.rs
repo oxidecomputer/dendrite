@@ -616,9 +616,11 @@ impl TableOps<Handle> for Table {
     fn get_entries<M: MatchParse, A: ActionParse>(
         &self,
         _hdl: &Handle,
+        _from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>> {
         Err(aal::AsicError::OperationUnsupported)
     }
+
     fn get_counters<M: MatchParse>(
         &self,
         _hdl: &Handle,

@@ -120,8 +120,14 @@ pub(crate) fn del_ipv6_entry(s: &Switch, dst_addr: Ipv6Addr) -> DpdResult<()> {
 }
 
 /// Dump the IPv6 multicast table's contents.
-pub(crate) fn ipv6_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv6MatchKey, Ipv6Action>(TableType::McastIpv6)
+pub(crate) fn ipv6_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv6MatchKey, Ipv6Action>(
+        TableType::McastIpv6,
+        from_hardware,
+    )
 }
 
 /// Fetch the IPv6 multicast table's counters.

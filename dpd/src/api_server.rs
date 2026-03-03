@@ -1910,13 +1910,18 @@ impl DpdApi for DpdApiImpl {
 
     async fn table_dump(
         rqctx: RequestContext<Arc<Switch>>,
+        query: Query<TableDumpOptions>,
         path: Path<TableParam>,
     ) -> Result<HttpResponseOk<views::Table>, HttpError> {
         let switch: &Switch = rqctx.context();
         let table = path.into_inner().table;
-        crate::table::get_entries(switch, table)
-            .map(HttpResponseOk)
-            .map_err(HttpError::from)
+        crate::table::get_entries(
+            switch,
+            table,
+            query.into_inner().from_hardware,
+        )
+        .map(HttpResponseOk)
+        .map_err(HttpError::from)
     }
 
     async fn table_counters(
@@ -2808,6 +2813,56 @@ impl DpdApi for DpdApiImpl {
         _rqctx: RequestContext<Self::Context>,
         _path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<Ber>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn snapshot_capture(
+        rqctx: RequestContext<Self::Context>,
+        body: TypedBody<SnapshotCreate>,
+    ) -> Result<HttpResponseOk<SnapshotResult>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let req = body.into_inner();
+        Ok(HttpResponseOk(
+            crate::snapshot::capture(switch, req)
+                .await
+                .map_err(HttpError::from)?,
+        ))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn snapshot_capture(
+        _rqctx: RequestContext<Self::Context>,
+        _body: TypedBody<SnapshotCreate>,
+    ) -> Result<HttpResponseOk<SnapshotResult>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn snapshot_scope(
+        rqctx: RequestContext<Self::Context>,
+        body: TypedBody<SnapshotScopeRequest>,
+    ) -> Result<HttpResponseOk<Vec<SnapshotFieldScope>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let req = body.into_inner();
+        Ok(HttpResponseOk(
+            crate::snapshot::scope(switch, req)
+                .await
+                .map_err(HttpError::from)?,
+        ))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn snapshot_scope(
+        _rqctx: RequestContext<Self::Context>,
+        _body: TypedBody<SnapshotScopeRequest>,
+    ) -> Result<HttpResponseOk<Vec<SnapshotFieldScope>>, HttpError> {
         Err(HttpError::for_unavail(
             None,
             "not implemented for this asic".to_string(),

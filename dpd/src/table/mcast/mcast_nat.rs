@@ -273,8 +273,14 @@ pub(crate) fn del_ipv4_entry_with_tgt(
 }
 
 /// Dump the IPv4 NAT table's contents.
-pub(crate) fn ipv4_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv4VlanMatchKey, Ipv4Action>(TableType::NatIngressIpv4Mcast)
+pub(crate) fn ipv4_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv4VlanMatchKey, Ipv4Action>(
+        TableType::NatIngressIpv4Mcast,
+        from_hardware,
+    )
 }
 
 /// Fetch the IPv4 NAT table's counters.
@@ -531,8 +537,14 @@ pub(crate) fn del_ipv6_entry_with_tgt(
 }
 
 /// Dump the IPv6 NAT table's contents.
-pub(crate) fn ipv6_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv6VlanMatchKey, Ipv6Action>(TableType::NatIngressIpv6Mcast)
+pub(crate) fn ipv6_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv6VlanMatchKey, Ipv6Action>(
+        TableType::NatIngressIpv6Mcast,
+        from_hardware,
+    )
 }
 
 /// Fetch the IPv6 NAT table's counters.

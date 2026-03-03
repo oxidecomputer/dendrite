@@ -96,7 +96,16 @@ impl FromStr for UnderlayMulticastIpv6 {
 /// For SSM groups, use `Exact` with specific source addresses.
 /// For ASM groups with any-source filtering, use `Any`.
 #[derive(
-    Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Deserialize,
+    Serialize,
+    JsonSchema,
 )]
 pub enum IpSrc {
     /// Exact match for the source IP address.

@@ -762,7 +762,11 @@ control NatIngress (
 				hdr.inner_eth.ether_type = hdr.vlan.ether_type;
 				hdr.vlan.setInvalid();
 			}
-		} else if (meta.uplink_ingress && !meta.is_switch_address) {
+		} else if (
+			meta.uplink_ingress &&
+			!meta.is_switch_address &&
+			!meta.is_link_local_mcastv6
+		) {
 			// If this packet arrived on an Uplink port and it
 			// wasn't addressed to the switch or to an established
 			// NAT range, then drop it. This lets us forward traffic
@@ -2178,7 +2182,8 @@ control Ingress(
 			if (!meta.dropped) {
 				l3_router.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			}
-			if (!meta.dropped && meta.nat_egress_hit && !meta.is_mcast) {
+			if (!meta.dropped && meta.nat_egress_hit &&
+			    !meta.is_mcast && !meta.service_routed) {
 				egress_filter.apply(meta, ig_tm_md);
 			}
 		}

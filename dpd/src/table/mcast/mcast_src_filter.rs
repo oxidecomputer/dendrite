@@ -105,8 +105,14 @@ pub(crate) fn del_ipv4_entry(
 }
 
 /// Dump the IPv4 multicast source filter table's contents.
-pub(crate) fn ipv4_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv4MatchKey, Ipv4Action>(TableType::McastIpv4SrcFilter)
+pub(crate) fn ipv4_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv4MatchKey, Ipv4Action>(
+        TableType::McastIpv4SrcFilter,
+        from_hardware,
+    )
 }
 
 /// Fetch the IPv4 multicast source filter table's counters.
@@ -152,8 +158,14 @@ pub(crate) fn del_ipv6_entry(
 }
 
 /// Dump the IPv6 multicast source filter table's contents.
-pub(crate) fn ipv6_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv6MatchKey, Ipv6Action>(TableType::McastIpv6SrcFilter)
+pub(crate) fn ipv6_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv6MatchKey, Ipv6Action>(
+        TableType::McastIpv6SrcFilter,
+        from_hardware,
+    )
 }
 
 /// Fetch the IPv6 multicast source filter table's counters.

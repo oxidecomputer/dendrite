@@ -315,6 +315,7 @@ impl convert::From<common::network::VlanError> for DpdError {
     }
 }
 
+#[cfg(feature = "multicast")]
 impl convert::From<dpd_types::mcast::Error> for DpdError {
     fn from(err: dpd_types::mcast::Error) -> Self {
         DpdError::Invalid(err.to_string())

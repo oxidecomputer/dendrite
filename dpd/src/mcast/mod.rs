@@ -57,7 +57,7 @@
 //! [RFC 4291]: https://www.rfc-editor.org/rfc/rfc4291.html
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     ops::Bound,
     sync::{Arc, Mutex, Weak},
@@ -1212,7 +1212,7 @@ fn canonicalize_sources(sources: Option<Vec<IpSrc>>) -> Option<Vec<IpSrc>> {
         Some(srcs) if srcs.is_empty() || sources_contain_any(&srcs) => None,
         Some(srcs) => {
             let deduped: Vec<IpSrc> =
-                srcs.into_iter().collect::<HashSet<_>>().into_iter().collect();
+                srcs.into_iter().collect::<BTreeSet<_>>().into_iter().collect();
             Some(deduped)
         }
     }

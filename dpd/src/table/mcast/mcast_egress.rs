@@ -174,9 +174,13 @@ pub(crate) fn del_bitmap_entry(
 }
 
 /// Dump the multicast decap table.
-pub(crate) fn bitmap_table_dump(s: &Switch) -> DpdResult<views::Table> {
+pub(crate) fn bitmap_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
     s.table_dump::<MatchKeyDecapPorts, DecapPortsAction>(
         TableType::McastEgressDecapPorts,
+        from_hardware,
     )
 }
 
@@ -253,9 +257,13 @@ pub(crate) fn del_port_mapping_entry(
 }
 
 /// Dump the multicast port mapping table.
-pub(crate) fn port_mapping_table_dump(s: &Switch) -> DpdResult<views::Table> {
+pub(crate) fn port_mapping_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
     s.table_dump::<MatchKeyPortId, PortIdAction>(
         TableType::McastEgressPortMapping,
+        from_hardware,
     )
 }
 
