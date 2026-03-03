@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr};
@@ -126,26 +126,15 @@ fn parse_arp(line: &str) -> anyhow::Result<Arp> {
     let ip = fields[1]
         .parse()
         .map_err(|_| anyhow!("bad IP address: {}:", fields[1]))?;
-    let mask = fields[2]
-        .parse()
-        .map_err(|_| anyhow!("bad mask: {}:", fields[2]))?;
+    let mask =
+        fields[2].parse().map_err(|_| anyhow!("bad mask: {}:", fields[2]))?;
     let mac = match fields[last].parse() {
         Ok(m) => m,
         _ => MacAddr::new(0, 0, 0, 0, 0, 0),
     };
-    let flags = if last > 3 {
-        fields[last].to_string()
-    } else {
-        String::new()
-    };
+    let flags = if last > 3 { fields[last].to_string() } else { String::new() };
 
-    Ok(Arp {
-        iface,
-        ip,
-        _mask: mask,
-        _flags: flags,
-        mac,
-    })
+    Ok(Arp { iface, ip, _mask: mask, _flags: flags, mac })
 }
 
 // arp doesn't have a "parseable" output option, so we have to do it by hand.  We

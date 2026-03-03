@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -24,10 +24,7 @@ async fn simnet_tfport_get() -> anyhow::Result<Vec<String>> {
         .await
         .map_err(|e| e.into())
         .map(|lines| {
-            lines
-                .into_iter()
-                .filter(|s| s.starts_with("tfport"))
-                .collect()
+            lines.into_iter().filter(|s| s.starts_with("tfport")).collect()
         })
 }
 
@@ -80,16 +77,13 @@ async fn simnet_process(g: &Global) -> anyhow::Result<()> {
             warn!(g.log, "{e}");
             continue;
         }
-        let p_addrs = addrs
-            .iter()
-            .filter_map(|(name, addr)| {
-                if name.starts_with(p) {
-                    Some(*addr)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<IpAddr>>();
+        let p_addrs =
+            addrs
+                .iter()
+                .filter_map(|(name, addr)| {
+                    if name.starts_with(p) { Some(*addr) } else { None }
+                })
+                .collect::<Vec<IpAddr>>();
 
         if p_addrs.is_empty() {
             warn!(g.log, "{p} has no addrs");

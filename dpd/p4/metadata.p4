@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 /* Flexible bridge header for passing metadata between ingress and egress
  * pipelines.
@@ -22,7 +22,9 @@ struct sidecar_ingress_meta_t {
 	bool service_routed;		// routed to or from a service routine
 	bool nat_egress_hit;		// NATed packet from guest -> uplink
 	bool nat_ingress_hit;		// NATed packet from uplink -> guest
-	bool nat_ingress_port;		// This port accepts only NAT traffic
+	bool uplink_ingress;		// Packet arrived on an uplink port
+	bool encap_needed;
+	bool resolve_nexthop;		// signals nexthop needs to be resolved
 	ipv4_addr_t nexthop_ipv4;	// ip address of next router
 	ipv6_addr_t nexthop_ipv6;	// ip address of next router
 	bit<10> pkt_type;
@@ -56,7 +58,7 @@ struct sidecar_egress_meta_t {
 	bit<8> drop_reason;	// reason a packet was dropped
 	bridge_h bridge_hdr;	// bridge header
 
-	// 256-bit port bitmap separated across 8 x 32-bit values
+	// 256-bit port bitmap for decap filtering, split across 8 x 32-bit fields.
 	bit<32> decap_ports_0;	// Ports 0-31
 	bit<32> decap_ports_1;	// Ports 32-63
 	bit<32> decap_ports_2;	// Ports 64-95
@@ -78,10 +80,12 @@ struct route4_result_t {
 	 * port and a nexthop address
 	 */
 	ipv4_addr_t nexthop;
+	ipv6_addr_t nexthop6;
 	PortId_t port;
 
 	/* Did we successfully look up the route in the table? */
 	bool is_hit;
+	bool is_v6;
 
 	/*
 	 * A hash of the (address,port) fields, which is used to choose between

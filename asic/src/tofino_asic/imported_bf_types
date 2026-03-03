@@ -5,3 +5,7 @@ pm_intf_fsm_states_t
 bf_port_ber_t
 qsfp_fsm_state_t
 qsfp_fsm_ch_en_state_t
+bf_snapshot_capture_ctrl_info_t
+bf_snapshot_tables_info_t
+bf_snapshot_capture_ctrl_info_arr_t
+bf_snapshot_trigger_field_t

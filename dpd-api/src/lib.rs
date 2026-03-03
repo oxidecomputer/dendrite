@@ -2,19 +2,26 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! DPD endpoint definitions.
 
+pub mod v1;
+pub mod v2;
+pub mod v7;
+
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    str::FromStr,
 };
 
 use common::{
+    attached_subnet::AttachedSubnetEntry,
     counters::{FecRSCounters, PcsCounters, RMonCounters, RMonCountersAll},
-    nat::{Ipv4Nat, Ipv6Nat, NatTarget},
-    network::MacAddr,
+    nat::{Ipv4Nat, Ipv6Nat},
+    network::{InstanceTarget, MacAddr, NatTarget},
     ports::{
         Ipv4Entry, Ipv6Entry, PortFec, PortId, PortPrbsMode, PortSpeed, TxEq,
         TxEqSwHw,
@@ -25,7 +32,7 @@ use dpd_types::{
     link::{LinkFsmCounters, LinkId, LinkUpCounter},
     mcast, oxstats,
     port_map::BackplaneLink,
-    route::{Ipv4Route, Ipv6Route},
+    route::{Ipv4Route, Ipv6Route, Route},
     switch_identifiers::SwitchIdentifiers,
     switch_port::{Led, ManagementMode},
     transceivers::Transceiver,
@@ -37,7 +44,7 @@ use dropshot::{
     Query, RequestContext, ResultsPage, TypedBody,
 };
 use dropshot_api_manager_types::api_versions;
-use oxnet::{Ipv4Net, Ipv6Net};
+use oxnet::{IpNet, Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use transceiver_controller::{
@@ -56,6 +63,14 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (9, SNAPSHOT),
+    (8, MCAST_STRICT_UNDERLAY),
+    (7, MCAST_SOURCE_FILTER_ANY),
+    (6, CONSOLIDATED_V4_ROUTES),
+    (5, UPLINK_PORTS),
+    (4, V4_OVER_V6_ROUTES),
+    (3, ATTACHED_SUBNETS),
+    (2, DUAL_STACK_NAT_WORKFLOW),
     (1, INITIAL),
 ]);
 
@@ -282,6 +297,46 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/route/ipv4",
+        versions = ..VERSION_V4_OVER_V6_ROUTES
+    }]
+    async fn route_ipv4_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<v1::Ipv4Routes>>, HttpError> {
+        let result = Self::route_ipv4_list(rqctx, query).await?.0;
+
+        let mut v2_result = Vec::default();
+        for x in result.items {
+            let mut v2_routes =
+                v1::Ipv4Routes { cidr: x.cidr, targets: Vec::default() };
+            for t in x.targets {
+                if let Route::V4(r) = &t {
+                    v2_routes.targets.push(Ipv4Route {
+                        tag: r.tag.clone(),
+                        port_id: r.port_id,
+                        link_id: r.link_id,
+                        tgt_ip: r.tgt_ip,
+                        vlan_id: r.vlan_id,
+                    });
+                }
+            }
+            v2_result.push(v2_routes);
+        }
+
+        Ok(HttpResponseOk(ResultsPage {
+            next_page: result.next_page,
+            items: v2_result,
+        }))
+    }
+
+    /**
+     * Fetch the configured IPv4 routes, mapping IPv4 CIDR blocks to the switch port
+     * used for sending out that traffic, and optionally a gateway.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/route/ipv4",
+        versions = VERSION_V4_OVER_V6_ROUTES..
     }]
     async fn route_ipv4_list(
         rqctx: RequestContext<Self::Context>,
@@ -294,11 +349,33 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/route/ipv4/{cidr}",
+        versions = VERSION_V4_OVER_V6_ROUTES..
     }]
     async fn route_ipv4_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<RoutePathV4>,
-    ) -> Result<HttpResponseOk<Vec<Ipv4Route>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<Route>>, HttpError>;
+
+    #[endpoint {
+        method = GET,
+        path = "/route/ipv4/{cidr}",
+        versions = ..VERSION_V4_OVER_V6_ROUTES
+    }]
+    async fn route_ipv4_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<RoutePathV4>,
+    ) -> Result<HttpResponseOk<Vec<Ipv4Route>>, HttpError> {
+        let result = Self::route_ipv4_get(rqctx, path).await?.0;
+        Ok(HttpResponseOk(
+            result
+                .into_iter()
+                .flat_map(|r| match r {
+                    Route::V4(r) => Some(r),
+                    _ => None,
+                })
+                .collect(),
+        ))
+    }
 
     /**
      * Route an IPv4 subnet to a link and a nexthop gateway.
@@ -309,11 +386,67 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/route/ipv4",
+        versions = ..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_add",
+    }]
+    async fn route_ipv4_add_v1(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<v2::Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let route = update.into_inner();
+        Self::route_ipv4_add(
+            rqctx,
+            TypedBody::from(Ipv4RouteUpdate {
+                cidr: route.cidr,
+                target: RouteTarget::V4(route.target),
+                replace: route.replace,
+            }),
+        )
+        .await
+    }
+
+    /**
+     * Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).
+     *
+     * This call can be used to create a new single-path route or to add new targets
+     * to a multipath route.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/route/ipv4",
+        versions = VERSION_CONSOLIDATED_V4_ROUTES..
     }]
     async fn route_ipv4_add(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Route an IPv4 subnet to a link and an IPv6 nexthop gateway.
+     *
+     * This call can be used to create a new single-path route or to add new targets
+     * to a multipath route.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/route/ipv4-over-ipv6",
+        versions = VERSION_V4_OVER_V6_ROUTES..VERSION_CONSOLIDATED_V4_ROUTES,
+    }]
+    async fn route_ipv4_over_ipv6_add(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let route = update.into_inner();
+        Self::route_ipv4_add(
+            rqctx,
+            TypedBody::from(Ipv4RouteUpdate {
+                cidr: route.cidr,
+                target: RouteTarget::V6(route.target),
+                replace: route.replace,
+            }),
+        )
+        .await
+    }
 
     /**
      * Route an IPv4 subnet to a link and a nexthop gateway.
@@ -324,11 +457,67 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/route/ipv4",
+        versions = ..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_set",
+    }]
+    async fn route_ipv4_set_v1(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<v2::Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let route = update.into_inner();
+        Self::route_ipv4_set(
+            rqctx,
+            TypedBody::from(Ipv4RouteUpdate {
+                cidr: route.cidr,
+                target: RouteTarget::V4(route.target),
+                replace: route.replace,
+            }),
+        )
+        .await
+    }
+
+    /**
+     * Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).
+     *
+     * This call can be used to create a new single-path route or to replace any
+     * existing routes with a new single-path route.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/route/ipv4",
+        versions = VERSION_CONSOLIDATED_V4_ROUTES..
     }]
     async fn route_ipv4_set(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Route an IPv4 subnet to a link and an IPv6 nexthop gateway.
+     *
+     * This call can be used to create a new single-path route or to replace any
+     * existing routes with a new single-path route.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/route/ipv4-over-ipv6",
+        versions = VERSION_V4_OVER_V6_ROUTES..VERSION_CONSOLIDATED_V4_ROUTES,
+    }]
+    async fn route_ipv4_over_ipv6_set(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let route = update.into_inner();
+        Self::route_ipv4_set(
+            rqctx,
+            TypedBody::from(Ipv4RouteUpdate {
+                cidr: route.cidr,
+                target: RouteTarget::V6(route.target),
+                replace: route.replace,
+            }),
+        )
+        .await
+    }
 
     /**
      * Remove all targets for the given subnet
@@ -348,6 +537,33 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}",
+        versions = ..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_delete_target",
+    }]
+    async fn route_ipv4_delete_target_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v2::RouteTargetIpv4Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let p = path.into_inner();
+        Self::route_ipv4_delete_target(
+            rqctx,
+            Path::from(RouteTargetIpv4Path {
+                cidr: p.cidr,
+                port_id: p.port_id,
+                link_id: p.link_id,
+                tgt_ip: IpAddr::V4(p.tgt_ip),
+            }),
+        )
+        .await
+    }
+
+    /**
+     * Remove a single target for the given IPv4 subnet (IPv4 or IPv6 next hop)
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}",
+        versions = VERSION_CONSOLIDATED_V4_ROUTES..
     }]
     async fn route_ipv4_delete_target(
         rqctx: RequestContext<Self::Context>,
@@ -366,15 +582,33 @@ pub trait DpdApi {
     /// Get the set of available channels for all ports.
     ///
     /// This returns the unused MAC channels for each physical switch port. This can
+    /// be used to determine how many additional links can be created on a physical
+    /// switch port.
+    #[endpoint {
+        method = GET,
+        path = "/channels",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn channels_list(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<Vec<FreeChannels>>, HttpError>;
+
+    /// Get the set of available channels for all ports.
+    ///
+    /// This returns the unused MAC channels for each physical switch port. This can
     /// be used to determine how many additional links can be crated on a physical
     /// switch port.
     #[endpoint {
         method = GET,
         path = "/channels",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "channels_list",
     }]
-    async fn channels_list(
+    async fn channels_list_v1(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<FreeChannels>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<FreeChannels>>, HttpError> {
+        Self::channels_list(rqctx).await
+    }
 
     /// Return information about a single switch port.
     #[endpoint {
@@ -888,8 +1122,22 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/nat_only",
+	versions = ..VERSION_UPLINK_PORTS
     }]
     async fn link_nat_only_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<bool>, HttpError> {
+        Self::link_uplink_get(rqctx, path).await
+    }
+
+    /// Return whether a port is intended to carry uplink traffic
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/uplink",
+	versions = VERSION_UPLINK_PORTS..
+    }]
+    async fn link_uplink_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError>;
@@ -898,8 +1146,23 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/ports/{port_id}/links/{link_id}/nat_only",
+	versions = ..VERSION_UPLINK_PORTS
     }]
     async fn link_nat_only_set(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+        body: TypedBody<bool>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::link_uplink_set(rqctx, path, body).await
+    }
+
+    /// Set whether a port is intended to carry uplink traffic
+    #[endpoint {
+        method = PUT,
+        path = "/ports/{port_id}/links/{link_id}/uplink",
+	versions = VERSION_UPLINK_PORTS..
+    }]
+    async fn link_uplink_set(
         rqctx: RequestContext<Self::Context>,
         path: Path<LinkPath>,
         body: TypedBody<bool>,
@@ -1153,14 +1416,82 @@ pub trait DpdApi {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
-     * Clear all settings associated with a specific tag.
-     *
-     * This removes:
-     *
-     * - All ARP or NDP table entries.
-     * - All routes
-     * - All links on all switch ports
+     * Get all of the external subnets with internal mappings
      */
+    #[endpoint {
+        method = GET,
+        path = "/attached_subnet",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_list(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<PaginationParams<EmptyScanParams, AttachedSubnetToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<AttachedSubnetEntry>>, HttpError>;
+
+    /**
+     * Get the mapping for the given external subnet.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/attached_subnet/{subnet}",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPath>,
+    ) -> Result<HttpResponseOk<InstanceTarget>, HttpError>;
+
+    /**
+     * Add a mapping to an internal target for an external subnet address.
+     *
+     * These identify the gimlet on which a guest is running, and gives OPTE the
+     * information it needs to  identify the guest VM that uses the external
+     * subnet.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/attached_subnet/{subnet}",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_create(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPath>,
+        target: TypedBody<InstanceTarget>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Delete the mapping for an external subnet
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/attached_subnet/{subnet}",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_delete(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<SubnetPath>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /**
+     * Clear all external subnet mappings
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/attached_subnet",
+	versions = VERSION_ATTACHED_SUBNETS..,
+    }]
+    async fn attached_subnet_reset(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /// Clear all settings associated with a specific tag.
+    ///
+    /// This removes:
+    ///
+    /// - All ARP or NDP table entries.
+    /// - All routes
+    /// - All links on all switch ports
+    // Note: This endpoint does not clear multicast groups.
     // TODO-security: This endpoint should probably not exist.
     #[endpoint {
         method = DELETE,
@@ -1171,11 +1502,10 @@ pub trait DpdApi {
         path: Path<TagPath>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /**
-     * Clear all settings.
-     *
-     * This removes all data entirely.
-     */
+    /// Clear all settings.
+    ///
+    /// This removes all data entirely.
+    // Note: Unlike `reset_all_tagged`, this endpoint does clear multicast groups.
     // TODO-security: This endpoint should probably not exist.
     #[endpoint {
         method = DELETE,
@@ -1331,9 +1661,22 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
-        path = "/rpw/nat/ipv4/gen"
+        path = "/rpw/nat/ipv4/gen",
+        versions = ..VERSION_DUAL_STACK_NAT_WORKFLOW
     }]
     async fn ipv4_nat_generation(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<i64>, HttpError>;
+
+    /**
+     * Get NAT generation number
+     */
+    #[endpoint {
+        method = GET,
+        path = "/rpw/nat/gen",
+        versions = VERSION_DUAL_STACK_NAT_WORKFLOW..
+    }]
+    async fn nat_generation(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseOk<i64>, HttpError>;
 
@@ -1342,9 +1685,22 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = POST,
-        path = "/rpw/nat/ipv4/trigger"
+        path = "/rpw/nat/ipv4/trigger",
+        versions = ..VERSION_DUAL_STACK_NAT_WORKFLOW
     }]
     async fn ipv4_nat_trigger_update(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<()>, HttpError>;
+
+    /**
+     * Trigger NAT Reconciliation
+     */
+    #[endpoint {
+        method = POST,
+        path = "/rpw/nat/trigger",
+        versions = VERSION_DUAL_STACK_NAT_WORKFLOW..
+    }]
+    async fn nat_trigger_update(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseOk<()>, HttpError>;
 
@@ -1366,12 +1722,31 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
-        path = "/table/{table}/dump"
+        path = "/table/{table}/dump",
+        versions = VERSION_SNAPSHOT..
     }]
     async fn table_dump(
         rqctx: RequestContext<Self::Context>,
+        query: Query<TableDumpOptions>,
         path: Path<TableParam>,
     ) -> Result<HttpResponseOk<views::Table>, HttpError>;
+
+    #[endpoint {
+        method = GET,
+        path = "/table/{table}/dump",
+        versions = ..VERSION_SNAPSHOT
+    }]
+    async fn table_dump_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<TableParam>,
+    ) -> Result<HttpResponseOk<views::Table>, HttpError> {
+        Self::table_dump(
+            rqctx,
+            Query::from(TableDumpOptions { from_hardware: false }),
+            path,
+        )
+        .await
+    }
 
     /**
      * Get any counter data from a single P4 match-action table.
@@ -1431,19 +1806,78 @@ pub trait DpdApi {
     /**
      * Create an external-only multicast group configuration.
      *
-     * External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast
+     * External-only groups are used for IPv4 and non-admin-local IPv6 multicast
      * traffic that doesn't require replication infrastructure. These groups use
      * simple forwarding tables and require a NAT target.
      */
     #[endpoint {
         method = POST,
         path = "/multicast/external-groups",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_group_create_external(
         rqctx: RequestContext<Self::Context>,
         group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
     ) -> Result<
         HttpResponseCreated<mcast::MulticastGroupExternalResponse>,
+        HttpError,
+    >;
+
+    /// Create an external-only multicast group configuration.
+    #[endpoint {
+        method = POST,
+        path = "/multicast/external-groups",
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_create_external",
+    }]
+    async fn multicast_group_create_external_v7(
+        rqctx: RequestContext<Self::Context>,
+        group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
+    ) -> Result<
+        HttpResponseCreated<v7::MulticastGroupExternalResponse>,
+        HttpError,
+    > {
+        Self::multicast_group_create_external(rqctx, group)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /**
+     * Create an external-only multicast group configuration.
+     *
+     * External-only groups are used for IPv4 and non-admin-scoped IPv6
+     * multicast traffic that doesn't require replication infrastructure.
+     * These groups use simple forwarding tables and require a NAT target.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/multicast/external-groups",
+        versions = ..VERSION_MCAST_SOURCE_FILTER_ANY,
+        operation_id = "multicast_group_create_external",
+    }]
+    async fn multicast_group_create_external_v1(
+        rqctx: RequestContext<Self::Context>,
+        group: TypedBody<v1::MulticastGroupCreateExternalEntry>,
+    ) -> Result<
+        HttpResponseCreated<v1::MulticastGroupExternalResponse>,
+        HttpError,
+    > {
+        Self::multicast_group_create_external(rqctx, group.map(Into::into))
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /// Create an underlay (internal) multicast group configuration.
+    #[endpoint {
+        method = POST,
+        path = "/multicast/underlay-groups",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn multicast_group_create_underlay(
+        rqctx: RequestContext<Self::Context>,
+        group: TypedBody<mcast::MulticastGroupCreateUnderlayEntry>,
+    ) -> Result<
+        HttpResponseCreated<mcast::MulticastGroupUnderlayResponse>,
         HttpError,
     >;
 
@@ -1457,14 +1891,48 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/multicast/underlay-groups",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_create_underlay",
     }]
-    async fn multicast_group_create_underlay(
+    async fn multicast_group_create_underlay_v1(
         rqctx: RequestContext<Self::Context>,
-        group: TypedBody<mcast::MulticastGroupCreateUnderlayEntry>,
+        group: TypedBody<v1::MulticastGroupCreateUnderlayEntry>,
     ) -> Result<
-        HttpResponseCreated<mcast::MulticastGroupUnderlayResponse>,
+        HttpResponseCreated<v1::MulticastGroupUnderlayResponse>,
         HttpError,
-    >;
+    > {
+        let v4_body = group
+            .try_map(|entry| {
+                let group_ip =
+                    mcast::UnderlayMulticastIpv6::try_from(entry.group_ip)?;
+                Ok(mcast::MulticastGroupCreateUnderlayEntry {
+                    group_ip,
+                    tag: entry.tag,
+                    members: entry.members,
+                })
+            })
+            .map_err(|e: String| HttpError::for_bad_request(None, e))?;
+        Self::multicast_group_create_underlay(rqctx, v4_body)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /**
+     * Delete a multicast group configuration by IP address (API version 4+).
+     *
+     * All groups have tags (auto-generated if not provided at creation).
+     * The tag query parameter must match the group's existing tag.
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/multicast/groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn multicast_group_delete(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastGroupIpParam>,
+        query: Query<MulticastGroupTagQuery>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
      * Delete a multicast group configuration by IP address.
@@ -1472,8 +1940,10 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/groups/{group_ip}",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_delete",
     }]
-    async fn multicast_group_delete(
+    async fn multicast_group_delete_v1(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseDeleted, HttpError>;
@@ -1495,11 +1965,57 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_group_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError>;
+
+    /// Get the multicast group configuration for a given group IP address.
+    #[endpoint {
+        method = GET,
+        path = "/multicast/groups/{group_ip}",
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_get",
+    }]
+    async fn multicast_group_get_v7(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastGroupIpParam>,
+    ) -> Result<HttpResponseOk<v7::MulticastGroupResponse>, HttpError> {
+        Self::multicast_group_get(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /**
+     * Get the multicast group configuration for a given group IP address.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/multicast/groups/{group_ip}",
+        versions = ..VERSION_MCAST_SOURCE_FILTER_ANY,
+        operation_id = "multicast_group_get",
+    }]
+    async fn multicast_group_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastGroupIpParam>,
+    ) -> Result<HttpResponseOk<v1::MulticastGroupResponse>, HttpError> {
+        Self::multicast_group_get(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /// Get an underlay (internal) multicast group configuration.
+    #[endpoint {
+        method = GET,
+        path = "/multicast/underlay-groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn multicast_group_get_underlay(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastUnderlayGroupIpParam>,
+    ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
 
     /**
      * Get an underlay (internal) multicast group configuration by admin-scoped
@@ -1511,10 +2027,43 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/underlay-groups/{group_ip}",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_get_underlay",
     }]
-    async fn multicast_group_get_underlay(
+    async fn multicast_group_get_underlay_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::MulticastUnderlayGroupIpParam>,
+    ) -> Result<HttpResponseOk<v1::MulticastGroupUnderlayResponse>, HttpError>
+    {
+        let v4_path = path.try_map(|p| {
+            mcast::UnderlayMulticastIpv6::try_from(p.group_ip)
+                .map(|group_ip| MulticastUnderlayGroupIpParam { group_ip })
+                .map_err(|e| {
+                    HttpError::for_bad_request(
+                        None,
+                        format!("invalid group_ip: {e}"),
+                    )
+                })
+        })?;
+
+        Self::multicast_group_get_underlay(rqctx, v4_path)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /// Update an underlay (internal) multicast group configuration.
+    ///
+    /// The `tag` query parameter must match the group's existing tag.
+    #[endpoint {
+        method = PUT,
+        path = "/multicast/underlay-groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn multicast_group_update_underlay(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastUnderlayGroupIpParam>,
+        query: Query<MulticastGroupTagQuery>,
+        group: TypedBody<mcast::MulticastGroupUpdateUnderlayEntry>,
     ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
 
     /**
@@ -1527,29 +2076,73 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/multicast/underlay-groups/{group_ip}",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_update_underlay",
     }]
-    async fn multicast_group_update_underlay(
+    async fn multicast_group_update_underlay_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastUnderlayGroupIpParam>,
-        group: TypedBody<mcast::MulticastGroupUpdateUnderlayEntry>,
-    ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
+        path: Path<v1::MulticastUnderlayGroupIpParam>,
+        group: TypedBody<v1::MulticastGroupUpdateUnderlayEntry>,
+    ) -> Result<HttpResponseOk<v1::MulticastGroupUnderlayResponse>, HttpError>;
 
     /**
      * Update an external-only multicast group configuration for a given group IP address.
      *
-     * External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast
+     * External-only groups are used for IPv4 and non-admin-local IPv6 multicast
      * traffic that doesn't require replication infrastructure.
+     *
+     * The `tag` query parameter must match the group's existing tag.
      */
     #[endpoint {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_group_update_external(
         rqctx: RequestContext<Self::Context>,
         path: Path<MulticastGroupIpParam>,
+        query: Query<MulticastGroupTagQuery>,
         group: TypedBody<mcast::MulticastGroupUpdateExternalEntry>,
+    ) -> Result<HttpResponseOk<mcast::MulticastGroupExternalResponse>, HttpError>;
+
+    /**
+     * Update an external-only multicast group configuration.
+     *
+     * Tags are optional for backward compatibility.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/multicast/external-groups/{group_ip}",
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_group_update_external",
+    }]
+    async fn multicast_group_update_external_v7(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastGroupIpParam>,
+        group: TypedBody<v7::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<mcast::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v7::MulticastGroupExternalResponse>,
+        HttpError,
+    >;
+
+    /**
+     * Update an external-only multicast group configuration for a given group IP address.
+     *
+     * External-only groups are used for IPv4 and non-admin-scoped IPv6
+     * multicast traffic that doesn't require replication infrastructure.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/multicast/external-groups/{group_ip}",
+        versions = ..VERSION_MCAST_SOURCE_FILTER_ANY,
+        operation_id = "multicast_group_update_external",
+    }]
+    async fn multicast_group_update_external_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastGroupIpParam>,
+        group: TypedBody<v1::MulticastGroupUpdateExternalEntry>,
+    ) -> Result<
+        HttpResponseCreated<v1::MulticastGroupExternalResponse>,
         HttpError,
     >;
 
@@ -1559,6 +2152,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_groups_list(
         rqctx: RequestContext<Self::Context>,
@@ -1570,16 +2164,71 @@ pub trait DpdApi {
         HttpError,
     >;
 
+    /// List all multicast groups.
+    #[endpoint {
+        method = GET,
+        path = "/multicast/groups",
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_groups_list",
+    }]
+    async fn multicast_groups_list_v7(
+        rqctx: RequestContext<Self::Context>,
+        query_params: Query<
+            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+        >,
+    ) -> Result<
+        HttpResponseOk<ResultsPage<v7::MulticastGroupResponse>>,
+        HttpError,
+    > {
+        let HttpResponseOk(page) =
+            Self::multicast_groups_list(rqctx, query_params).await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
+    }
+
+    /**
+     * List all multicast groups.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/multicast/groups",
+        versions = ..VERSION_MCAST_SOURCE_FILTER_ANY,
+        operation_id = "multicast_groups_list",
+    }]
+    async fn multicast_groups_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        query_params: Query<
+            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+        >,
+    ) -> Result<
+        HttpResponseOk<ResultsPage<v1::MulticastGroupResponse>>,
+        HttpError,
+    > {
+        let HttpResponseOk(page) =
+            Self::multicast_groups_list(rqctx, query_params).await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
+    }
+
     /**
      * List all multicast groups with a given tag.
+     *
+     * Returns paginated multicast groups matching the specified tag. Tags are
+     * assigned at group creation and are immutable. Use this endpoint to find
+     * all groups associated with a specific client or component.
      */
     #[endpoint {
         method = GET,
         path = "/multicast/tags/{tag}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn multicast_groups_list_by_tag(
         rqctx: RequestContext<Self::Context>,
-        path: Path<TagPath>,
+        path: Path<MulticastTagPath>,
         query_params: Query<
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
@@ -1588,16 +2237,114 @@ pub trait DpdApi {
         HttpError,
     >;
 
+    /// List all multicast groups with a given tag.
+    #[endpoint {
+        method = GET,
+        path = "/multicast/tags/{tag}",
+        versions = VERSION_MCAST_SOURCE_FILTER_ANY..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_groups_list_by_tag",
+    }]
+    async fn multicast_groups_list_by_tag_v7(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<TagPath>,
+        query_params: Query<
+            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+        >,
+    ) -> Result<
+        HttpResponseOk<ResultsPage<v7::MulticastGroupResponse>>,
+        HttpError,
+    > {
+        let HttpResponseOk(page) = Self::multicast_groups_list_by_tag(
+            rqctx,
+            path.map(Into::into),
+            query_params,
+        )
+        .await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
+    }
+
+    /**
+     * List all multicast groups with a given tag.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/multicast/tags/{tag}",
+        versions = ..VERSION_MCAST_SOURCE_FILTER_ANY,
+        operation_id = "multicast_groups_list_by_tag",
+    }]
+    async fn multicast_groups_list_by_tag_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<TagPath>,
+        query_params: Query<
+            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+        >,
+    ) -> Result<
+        HttpResponseOk<ResultsPage<v1::MulticastGroupResponse>>,
+        HttpError,
+    > {
+        let HttpResponseOk(page) = Self::multicast_groups_list_by_tag(
+            rqctx,
+            path.map(Into::into),
+            query_params,
+        )
+        .await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
+    }
+
+    /**
+     * Delete all multicast groups (and associated routes) with a given tag.
+     *
+     * This is idempotent: if no groups exist with the given tag, the operation
+     * returns success (the desired end state of "no groups with this tag" is
+     * achieved). Use this endpoint for bulk cleanup of all groups associated
+     * with a specific client or component.
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/multicast/tags/{tag}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn multicast_reset_by_tag(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<MulticastTagPath>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
     /**
      * Delete all multicast groups (and associated routes) with a given tag.
      */
     #[endpoint {
         method = DELETE,
         path = "/multicast/tags/{tag}",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_reset_by_tag",
     }]
-    async fn multicast_reset_by_tag(
+    async fn multicast_reset_by_tag_v1(
         rqctx: RequestContext<Self::Context>,
         path: Path<TagPath>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Self::multicast_reset_by_tag(rqctx, path.map(Into::into)).await
+    }
+
+    /**
+     * Delete all multicast groups (and associated routes) without a tag.
+     *
+     * DEPRECATED: All groups have default tags generated at creation time.
+     * This endpoint returns HTTP 410 Gone. Use `multicast_reset_by_tag`
+     * with the tag returned from group creation instead.
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/multicast/untagged",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+    }]
+    async fn multicast_reset_untagged(
+        rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -1606,8 +2353,10 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/multicast/untagged",
+        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
+        operation_id = "multicast_reset_untagged",
     }]
-    async fn multicast_reset_untagged(
+    async fn multicast_reset_untagged_v1(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
@@ -1789,6 +2538,29 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<Ber>, HttpError>;
+
+    /// Capture a PHV snapshot: create snapshot, set triggers, arm, wait
+    /// for trigger, read capture, decode fields, and clean up.
+    #[endpoint {
+        method = POST,
+        path = "/snapshot/capture",
+        versions = VERSION_SNAPSHOT..
+    }]
+    async fn snapshot_capture(
+        rqctx: RequestContext<Self::Context>,
+        body: TypedBody<SnapshotCreate>,
+    ) -> Result<HttpResponseOk<SnapshotResult>, HttpError>;
+
+    /// Check which fields are in scope at a given stage.
+    #[endpoint {
+        method = POST,
+        path = "/snapshot/scope",
+        versions = VERSION_SNAPSHOT..
+    }]
+    async fn snapshot_scope(
+        rqctx: RequestContext<Self::Context>,
+        body: TypedBody<SnapshotScopeRequest>,
+    ) -> Result<HttpResponseOk<Vec<SnapshotFieldScope>>, HttpError>;
 }
 
 /// Parameter used to create a port.
@@ -1888,15 +2660,27 @@ impl TryFrom<RouteTarget> for Ipv6Route {
     }
 }
 
-/// Represents a new or replacement mapping of a subnet to a single IPv4
-/// RouteTarget nexthop target.
+/// Represents a new or replacement mapping of an IPv4 subnet to a single
+/// RouteTarget nexthop target, which may be either IPv4 or IPv6.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct Ipv4RouteUpdate {
     /// Traffic destined for any address within the CIDR block is routed using
     /// this information.
     pub cidr: Ipv4Net,
     /// A single Route associated with this CIDR
-    pub target: Ipv4Route,
+    pub target: RouteTarget,
+    /// Should this route replace any existing route?  If a route exists and
+    /// this parameter is false, then the call will fail.
+    pub replace: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct Ipv4OverIpv6RouteUpdate {
+    /// Traffic destined for any address within the CIDR block is routed using
+    /// this information.
+    pub cidr: Ipv4Net,
+    /// A single Route associated with this CIDR
+    pub target: Ipv6Route,
     /// Should this route replace any existing route?  If a route exists and
     /// this parameter is false, then the call will fail.
     pub replace: bool,
@@ -1916,14 +2700,13 @@ pub struct Ipv6RouteUpdate {
     pub replace: bool,
 }
 
-/// Represents all mappings of an IPv4 subnet to a its nexthop target(s).
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct Ipv4Routes {
     /// Traffic destined for any address within the CIDR block is routed using
     /// this information.
     pub cidr: Ipv4Net,
     /// All RouteTargets associated with this CIDR
-    pub targets: Vec<Ipv4Route>,
+    pub targets: Vec<Route>,
 }
 
 /// Represents all mappings of an IPv6 subnet to a its nexthop target(s).
@@ -1986,7 +2769,14 @@ pub struct RoutePathV4 {
     pub cidr: Ipv4Net,
 }
 
-/// Represents a single subnet->target route entry
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct SubnetPath {
+    /// The external subnet in CIDR notation being managed
+    pub subnet: IpNet,
+}
+
+/// Represents a single subnet->target route entry with an IPv4 or IPv6
+/// next hop.
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct RouteTargetIpv4Path {
     /// The subnet being routed
@@ -1995,8 +2785,8 @@ pub struct RouteTargetIpv4Path {
     pub port_id: PortId,
     /// The link to which packets should be sent
     pub link_id: LinkId,
-    /// The next hop in the IPv4 route
-    pub tgt_ip: Ipv4Addr,
+    /// The next hop in the route (IPv4 or IPv6)
+    pub tgt_ip: IpAddr,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -2031,6 +2821,15 @@ pub struct Ipv4RouteToken {
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct Ipv6RouteToken {
     pub cidr: Ipv6Net,
+}
+
+/**
+ * Represents a cursor into a paginated request for the contents of the
+ * external subnets table.
+ */
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct AttachedSubnetToken {
+    pub cidr: IpNet,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -2189,6 +2988,7 @@ pub struct LinkFilter {
     pub filter: Option<String>,
 }
 
+/// Path parameter for tag-based operations.
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct TagPath {
     pub tag: String,
@@ -2259,6 +3059,11 @@ pub struct TableParam {
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
+pub struct TableDumpOptions {
+    pub from_hardware: bool,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct CounterPath {
     pub counter: String,
 }
@@ -2270,11 +3075,109 @@ pub struct MulticastGroupIpParam {
     pub group_ip: IpAddr,
 }
 
-/// Used to identify an underlay (internal) multicast group by admin-scoped IPv6
-/// address.
+/// Tag for identifying and authorizing multicast group operations.
+///
+/// Tag format: 1 to 80 ASCII bytes containing alphanumeric characters,
+/// hyphens, underscores, colons, or periods. Default format is
+/// `{uuid}:{group_ip}`.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
+)]
+pub struct MulticastTag(
+    #[schemars(
+        length(min = 1, max = 80),
+        regex(pattern = r"^[a-zA-Z0-9_.:-]+$")
+    )]
+    pub String,
+);
+
+impl AsRef<str> for MulticastTag {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<MulticastTag> for String {
+    fn from(tag: MulticastTag) -> Self {
+        tag.0
+    }
+}
+
+impl From<String> for MulticastTag {
+    fn from(tag: String) -> Self {
+        MulticastTag(tag)
+    }
+}
+
+/// Maximum length for multicast tags.
+pub const MAX_TAG_LENGTH: usize = 80;
+
+/// Error parsing a multicast tag from a string.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MulticastTagParseError(String);
+
+impl fmt::Display for MulticastTagParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for MulticastTagParseError {}
+
+impl FromStr for MulticastTag {
+    type Err = MulticastTagParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Err(MulticastTagParseError(
+                "tag cannot be empty".to_string(),
+            ));
+        }
+        if s.len() > MAX_TAG_LENGTH {
+            return Err(MulticastTagParseError(format!(
+                "tag cannot exceed {MAX_TAG_LENGTH} bytes"
+            )));
+        }
+        if !s.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'.')
+        }) {
+            return Err(MulticastTagParseError(
+                "tag must contain only ASCII alphanumeric characters, hyphens, \
+                 underscores, colons, or periods"
+                    .to_string(),
+            ));
+        }
+        Ok(MulticastTag(s.to_string()))
+    }
+}
+
+/// Path parameter for multicast tag-based operations.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MulticastTagPath {
+    pub tag: MulticastTag,
+}
+
+impl From<TagPath> for MulticastTagPath {
+    fn from(path: TagPath) -> Self {
+        Self { tag: path.tag.into() }
+    }
+}
+
+/// Tag for multicast group validation.
+///
+/// All groups have tags (auto-generated at creation if not provided).
+/// The provided tag must match the group's existing tag.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MulticastGroupTagQuery {
+    /// Tag that must match the group's existing tag.
+    pub tag: MulticastTag,
+}
+
+/// Used to identify an underlay multicast group by IPv6 address within
+/// the underlay multicast subnet (ff04::/64).
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct MulticastUnderlayGroupIpParam {
-    pub group_ip: mcast::AdminScopedIpv6,
+    pub group_ip: mcast::UnderlayMulticastIpv6,
 }
 
 /// Used to identify a multicast group by ID.
@@ -2498,4 +3401,199 @@ pub struct Ber {
     pub ber: Vec<f32>,
     /// Aggregate BER on the link.
     pub total_ber: f32,
+}
+
+// --- Snapshot types ---
+
+/// Direction of a PHV snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub enum SnapshotDirection {
+    /// Take snapshot of ingress pipeline
+    Ingress,
+    /// Take snapshot of egress pipeline
+    Egress,
+}
+
+/// A trigger field for a snapshot, with hex-encoded value and mask.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotTrigger {
+    /// Name of the field to capture.
+    ///
+    /// Must match what's in the phv ingress or phv egress section of
+    /// /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa.
+    pub field: String,
+    /// Hex-encoded value (e.g. "0x112233445566")
+    pub value: String,
+    /// Hex-encoded mask (e.g. "0xffffffffffff")
+    pub mask: String,
+}
+
+/// Request body for creating and capturing a PHV snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotCreate {
+    /// Index of the pipeline to capture. Typically this will be 0 through 3.
+    /// Different ports map to different pipelines.
+    pub pipe: u32,
+    /// Tofino hardware stage to start capturing at.
+    ///
+    /// See /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa to get a sense of
+    /// stage layout.
+    pub start_stage: u8,
+    /// Tofino hardware stage to stop capturing at.
+    ///
+    /// See /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa to get a sense of
+    /// stage layout.
+    pub end_stage: u8,
+    /// Whether to capture on the ingress or egress pipeline.
+    pub dir: SnapshotDirection,
+    /// Fields and masks to use as snapshot trigger. Triggers are combined as
+    /// a logical `and`.
+    pub triggers: Vec<SnapshotTrigger>,
+    /// Field names to decode from the capture.
+    pub fields: Vec<String>,
+    /// Timeout in seconds to wait for trigger.
+    pub timeout_secs: u64,
+}
+
+/// Table hit/miss result from a snapshot capture.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotTableResult {
+    /// Name of the table
+    pub name: String,
+    /// Whether the match lookup found a matching entry.
+    ///
+    /// Only meaningful when `executed` is true and `inhibited` is false.
+    /// The absence of `hit` does not necessarily mean that a lookup was
+    /// attempted. It simply means there was no hit, which could mean no lookup
+    /// was attempted or that the table's gateway inhibited it.
+    pub hit: bool,
+    /// Whether the table's gateway inhibited the match lookup from
+    /// proceeding. Gateways are conditional guards attached to tables that
+    /// can skip the lookup entirely. When inhibited, `hit` and
+    /// `match_hit_address` will be 0. Only applicable to tables that have
+    /// an attached gateway.
+    pub inhibited: bool,
+    /// Whether the table was active in this stage. This is the primary
+    /// gate: if a table was not executed, `hit`, `inhibited`, and
+    /// `match_hit_address` are all meaningless (zeroed by the SDE).
+    pub executed: bool,
+    /// The physical address of the entry that matched, sourced from the
+    /// exact-match or TCAM hit-address register depending on table type.
+    /// Zero when the table was not executed or was inhibited.
+    pub match_hit_address: u32,
+}
+
+/// Per-stage result from a snapshot capture.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotStageResult {
+    /// The index of the stage this result came from.
+    pub stage_id: u8,
+    /// Whether this stage's own PHV match criteria fired the snapshot.
+    /// This is the primary trigger: the PHV contents at this stage matched
+    /// the key/mask programmed via the snapshot trigger configuration.
+    pub local_stage_trigger: bool,
+    /// Whether the snapshot was triggered because the previous stage was
+    /// already triggered and propagated its trigger signal forward. A
+    /// `prev_stage_trigger` with no `local_stage_trigger` means this stage
+    /// did not match the trigger criteria itself -- it was captured solely
+    /// because an adjacent stage matched.
+    pub prev_stage_trigger: bool,
+    /// Whether the snapshot was triggered by the timer mechanism rather
+    /// than a PHV field match. Useful for capturing pipeline state at a
+    /// specific time regardless of packet contents.
+    pub timer_trigger: bool,
+    /// The P4 table name that the MAU pipeline selected for execution in
+    /// the following stage after processing this one.
+    pub next_table: String,
+    /// Datapath error detected in the ingress pipeline at capture time.
+    /// Only reported on Tofino 2+; always false on Tofino 1.
+    pub ingress_dp_error: bool,
+    /// Datapath error detected in the egress pipeline at capture time.
+    /// Only reported on Tofino 2+; always false on Tofino 1.
+    pub egress_dp_error: bool,
+    /// Tables captured in the result.
+    pub tables: Vec<SnapshotTableResult>,
+    /// Fields captured in the result.
+    pub fields: Vec<SnapshotFieldValue>,
+}
+
+/// A decoded field value from a snapshot capture.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotFieldValue {
+    /// Name of the field.
+    pub name: String,
+    /// None if the field is not valid at this stage.
+    pub value: Option<String>,
+}
+
+/// Result of a snapshot capture operation.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotResult {
+    /// Stages captured in the result.
+    pub stages: Vec<SnapshotStageResult>,
+}
+
+/// Request body for checking field scope at a given stage.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotScopeRequest {
+    /// Pipeline index to check.
+    pub pipe: u32,
+    /// Stage index.
+    pub stage: u8,
+    /// Whether to check the ingress or egress pipeline.
+    pub dir: SnapshotDirection,
+    /// Fields to check.
+    pub fields: Vec<String>,
+    /// If true, check trigger scope; otherwise check capture scope.
+    pub trigger: bool,
+}
+
+/// Whether a field is in scope at a given stage.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotFieldScope {
+    /// Field name
+    pub field: String,
+    /// Whether or not the field is in scope.
+    pub in_scope: bool,
+}
+
+/// Request body for dumping table entries.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TableDumpRequest {
+    /// Fully-qualified P4 table name (e.g. "Ingress.services.service").
+    pub table_name: String,
+    /// If true, read entries from ASIC hardware via indirect register
+    /// reads instead of the SDE's software shadow.
+    pub from_hw: bool,
+}
+
+/// A key field from a table entry dump.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TableDumpKeyField {
+    /// Name of the field
+    pub name: String,
+    /// Key value
+    pub value: String,
+    /// For ternary fields: the mask.  For LPM: the prefix length.
+    pub mask: Option<String>,
+}
+
+/// A single entry from a table dump.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TableDumpEntry {
+    /// Action associated with an entry.
+    pub action: String,
+    /// Match fields for an entry.
+    pub match_fields: Vec<TableDumpKeyField>,
+}
+
+/// Result of a table dump operation.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TableDumpResult {
+    /// Name of the table.
+    pub table_name: String,
+    /// Number of entries in the table.
+    pub num_entries: usize,
+    /// Table entries.
+    pub entries: Vec<TableDumpEntry>,
 }

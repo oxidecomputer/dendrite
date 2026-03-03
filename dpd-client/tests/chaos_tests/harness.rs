@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use asic::chaos::AsicConfig;
 use dpd_client::{Client, ClientState};
@@ -117,9 +117,6 @@ pub(crate) fn new_dpd_client(port: u16) -> Client {
 
     Client::new(
         &format!("http://localhost:{}", port),
-        ClientState {
-            tag: "tenagra".into(),
-            log,
-        },
+        ClientState { tag: "tenagra".into(), log },
     )
 }

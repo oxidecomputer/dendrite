@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::collections::HashMap;
 
@@ -240,10 +240,7 @@ pub fn domain_add_port(
     rid: u16,
     level_1_excl_id: u16,
 ) -> AsicResult<()> {
-    debug!(
-        hdl.log,
-        "adding port {} to multicast domain {}", port, group_id
-    );
+    debug!(hdl.log, "adding port {} to multicast domain {}", port, group_id);
 
     let mut domains = hdl.domains.lock().unwrap();
     let domain = match domains.get_mut(&group_id) {
@@ -303,10 +300,7 @@ pub fn domain_remove_port(
     group_id: u16,
     port: u16,
 ) -> AsicResult<()> {
-    debug!(
-        hdl.log,
-        "removing {} from multicast domain {}", port, group_id
-    );
+    debug!(hdl.log, "removing {} from multicast domain {}", port, group_id);
     let mut domains = hdl.domains.lock().unwrap();
     let domain = match domains.get_mut(&group_id) {
         Some(d) => Ok(d),
@@ -341,11 +335,7 @@ pub fn domain_create(hdl: &Handle, group_id: u16) -> AsicResult<()> {
     let mgrp_hdl = mgrp_create(bf.mcast_hdl, bf.dev_id, group_id)?;
     domains.insert(
         group_id,
-        DomainState {
-            id: group_id,
-            mgrp_hdl,
-            ports: HashMap::new(),
-        },
+        DomainState { id: group_id, mgrp_hdl, ports: HashMap::new() },
     );
     Ok(())
 }

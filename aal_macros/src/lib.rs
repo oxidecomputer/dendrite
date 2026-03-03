@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::collections::HashMap;
 
@@ -380,11 +380,7 @@ fn get_fields<'a>(
             None => name.to_string(),
         };
 
-        fields.push(FieldInfo {
-            name,
-            field_name,
-            match_type,
-        });
+        fields.push(FieldInfo { name, field_name, match_type });
     }
 
     Ok(fields)
@@ -436,11 +432,7 @@ fn get_actions<'a>(
         };
 
         let action_args = get_action_args(v)?;
-        actions.push(Action {
-            name,
-            action_name,
-            action_args,
-        });
+        actions.push(Action { name, action_name, action_args });
     }
 
     Ok(actions)

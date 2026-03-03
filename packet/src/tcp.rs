@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::fmt::{self, Write};
 
@@ -158,11 +158,7 @@ fn parse_options(
             return Err(crate::parse_error(&pb, "tcp packet too short"));
         }
         let opt_data = pb.get_bytes(opt_len as usize)?;
-        opts.push(TcpOption {
-            opt_kind,
-            opt_len,
-            opt_data,
-        });
+        opts.push(TcpOption { opt_kind, opt_len, opt_data });
     }
     Ok(opts)
 }

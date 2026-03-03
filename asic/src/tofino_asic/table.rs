@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 // We really need a Mutex rather than the clippy-suggested AtomicBool, because
 // we are using the Mutex in conjunction with a CondVar.
@@ -61,6 +61,7 @@ pub trait TofinoTableOps {
         hdl: &Handle,
         last_key: Option<KeyHdl>,
         max: usize,
+        from_hardware: bool,
     ) -> AsicResult<(Vec<KeyHdl>, Vec<DataHdl>)>;
 }
 
@@ -160,10 +161,7 @@ impl FieldOps for MatchLpm {
             bf_rt_key_field_get_value_lpm(k.key_hdl, id, &mut prefix, &mut len)
         }
         .check_error("getting short lpm")?;
-        Ok(MatchLpm {
-            prefix: prefix.into(),
-            len,
-        })
+        Ok(MatchLpm { prefix: prefix.into(), len })
     }
 
     fn get_long(k: &KeyHdl, id: u32, size: usize) -> AsicResult<Self> {
@@ -179,10 +177,7 @@ impl FieldOps for MatchLpm {
             )
         }
         .check_error("getting ptr value")?;
-        Ok(MatchLpm {
-            prefix: prefix.into(),
-            len,
-        })
+        Ok(MatchLpm { prefix: prefix.into(), len })
     }
 
     fn add_field(k: &KeyHdl, id: u32, x: &Self) -> AsicResult<()> {
@@ -219,9 +214,7 @@ impl FieldOps for MatchMask {
     }
 
     fn get_long(_k: &KeyHdl, _id: u32, _size: usize) -> AsicResult<Self> {
-        Err(AsicError::InvalidArg(
-            "long masks aren't supported".to_string(),
-        ))
+        Err(AsicError::InvalidArg("long masks aren't supported".to_string()))
     }
 
     fn add_field(k: &KeyHdl, id: u32, x: &Self) -> AsicResult<()> {
@@ -244,9 +237,7 @@ impl FieldOps for MatchRange {
     }
 
     fn get_long(_k: &KeyHdl, _id: u32, _size: usize) -> AsicResult<Self> {
-        Err(AsicError::InvalidArg(
-            "long ranges aren't supported".to_string(),
-        ))
+        Err(AsicError::InvalidArg("long ranges aren't supported".to_string()))
     }
 
     fn add_field(k: &KeyHdl, id: u32, x: &Self) -> AsicResult<()> {
@@ -304,10 +295,7 @@ impl KeyHdl {
                 ),
             };
 
-            fields.push(MatchEntryField {
-                name: name.to_string(),
-                value,
-            });
+            fields.push(MatchEntryField { name: name.to_string(), value });
         }
         Ok(MatchData { fields })
     }
@@ -399,12 +387,10 @@ impl DataHdl {
     fn to_actiondata(&self, table: &Table) -> AsicResult<ActionData> {
         let action_id = self.get_action_id()?;
 
-        let (action_name, action) = &table
-            .info
-            .actions
-            .iter()
-            .find(|(_, a)| a.id == action_id)
-            .ok_or(AsicError::Internal("No matching action found".into()))?;
+        let (action_name, action) =
+            &table.info.actions.iter().find(|(_, a)| a.id == action_id).ok_or(
+                AsicError::Internal("No matching action found".into()),
+            )?;
 
         let mut args = Vec::new();
         for (name, field) in &action.args {
@@ -412,10 +398,7 @@ impl DataHdl {
             let name = name.clone();
             args.push(ActionArg { name, value });
         }
-        Ok(ActionData {
-            action: action_name.to_string(),
-            args,
-        })
+        Ok(ActionData { action: action_name.to_string(), args })
     }
 
     fn to_counterdata(&self, table: &Table) -> AsicResult<CounterData> {
@@ -446,10 +429,7 @@ struct Trigger {
 
 impl Trigger {
     pub fn new() -> Trigger {
-        Trigger {
-            done: Mutex::new(false),
-            cv: Condvar::new(),
-        }
+        Trigger { done: Mutex::new(false), cv: Condvar::new() }
     }
 }
 
@@ -634,6 +614,7 @@ impl TofinoTableOps for Table {
         hdl: &Handle,
         last_key: Option<KeyHdl>,
         mut max: usize,
+        from_hardware: bool,
     ) -> AsicResult<(Vec<KeyHdl>, Vec<DataHdl>)> {
         if last_key.is_none() {
             max = 1;
@@ -675,7 +656,7 @@ impl TofinoTableOps for Table {
                     data_hdls.as_mut_ptr(),
                     max as u32,
                     &mut n,
-                    0, // read from cache
+                    if from_hardware { 1 } else { 0 },
                 )
             } {
                 // If the table isn't full, we can get an BF_OBJECT_NOT_FOUND error
@@ -829,12 +810,14 @@ impl aal::TableOps<Handle> for Table {
     fn get_entries<M: MatchParse, A: ActionParse>(
         &self,
         hdl: &Handle,
+        from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>> {
         let mut last_key: Option<KeyHdl> = None;
         let mut rval = Vec::new();
 
         loop {
-            let (mut keys, data) = self.entries_get(hdl, last_key, 256)?;
+            let (mut keys, data) =
+                self.entries_get(hdl, last_key, 256, from_hardware)?;
             assert_eq!(keys.len(), data.len());
 
             if keys.is_empty() {
@@ -884,7 +867,8 @@ impl aal::TableOps<Handle> for Table {
         let mut values: Vec<(M, CounterData)> = Vec::new();
         let mut last_key: Option<KeyHdl> = None;
         loop {
-            let (mut keys, data) = self.entries_get(hdl, last_key, 256)?;
+            let (mut keys, data) =
+                self.entries_get(hdl, last_key, 256, false)?;
             assert_eq!(keys.len(), data.len());
             if keys.is_empty() {
                 break;

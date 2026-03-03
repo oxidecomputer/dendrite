@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::{
     fmt,
@@ -14,6 +14,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::link::LinkId;
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub enum Route {
+    V4(Ipv4Route),
+    V6(Ipv6Route),
+}
 
 /// A route for an IPv4 subnet.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::convert::TryInto;
 use std::net::Ipv4Addr;
@@ -14,7 +14,7 @@ use common::network::MacAddr;
 
 use aal::{ActionParse, MatchParse};
 
-pub const TABLE_NAME: &str = "pipe.Ingress.l3_router.Router4.Arp.tbl";
+pub const TABLE_NAME: &str = "pipe.Ingress.l3_router.Arp.tbl";
 
 #[derive(MatchParse, Hash)]
 struct MatchKey {
@@ -65,8 +65,8 @@ pub fn delete_entry(s: &Switch, tgt_ip: Ipv4Addr) -> DpdResult<()> {
     s.table_entry_del(TableType::ArpIpv4, &match_key)
 }
 
-pub fn table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<MatchKey, Action>(TableType::ArpIpv4)
+pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
+    s.table_dump::<MatchKey, Action>(TableType::ArpIpv4, from_hardware)
 }
 
 pub fn counter_fetch(

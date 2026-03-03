@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::fs::OpenOptions;
 use std::io::Read;
@@ -88,11 +88,8 @@ fn write_uds(msg: ManagementRequest, socket_path: &str) {
 }
 
 fn read_uart(msg: ManagementRequest) -> String {
-    let mut f = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(SOFTNPU_TTY)
-        .unwrap();
+    let mut f =
+        OpenOptions::new().read(true).write(true).open(SOFTNPU_TTY).unwrap();
 
     let mut buf = Vec::new();
     buf.push(MANAGEMENT_MESSAGE_PREAMBLE);

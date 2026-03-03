@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Configuration for the tfport daemon.
 
@@ -145,10 +145,7 @@ pub(crate) fn update_from_smf(config: &mut Config) -> SmfResult<()> {
 
     if config.listen_addresses.is_empty() {
         eprintln!("No IPv6 addresses found in provided listen_addresses");
-    } else if config
-        .listen_addresses
-        .iter()
-        .all(|addr| addr.ip().is_loopback())
+    } else if config.listen_addresses.iter().all(|addr| addr.ip().is_loopback())
     {
         eprintln!("No non-localhost IPv6 addresses found in SMF properties");
     }

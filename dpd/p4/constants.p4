@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 const bit<16> L2_ISOLATED_FLAG = 0x8000;
 
@@ -18,6 +18,8 @@ const int SWITCH_IPV4_ADDRS_SIZE    = 512;  // ipv4 addrs assigned to our ports
 const int SWITCH_IPV6_ADDRS_SIZE    = 512;  // ipv6 addrs assigned to our ports
 const int IPV4_MULTICAST_TABLE_SIZE = 1024; // multicast routing table(s) for IPv4
 const int IPV6_MULTICAST_TABLE_SIZE = 1024; // multicast routing table(s) for IPv6
+const int ATTACHED_SUBNETS_V4_SIZE  = 512;  // external subnets mapped to instances
+const int ATTACHED_SUBNETS_V6_SIZE  = 512;  // external subnets mapped to instances
 
 const bit<8> SC_FWD_FROM_USERSPACE  = 0x00;
 const bit<8> SC_FWD_TO_USERSPACE    = 0x01;
@@ -54,15 +56,12 @@ const bit<2> MULTICAST_TAG_EXTERNAL = 0;
 const bit<2> MULTICAST_TAG_UNDERLAY = 1;
 const bit<2> MULTICAST_TAG_UNDERLAY_EXTERNAL = 2;
 
-/* IPv6 Address Mask Constants */
-const bit<128> IPV6_SCOPE_MASK = 0xffff0000000000000000000000000000;  // Match ff00::/16
-const bit<128> IPV6_ULA_MASK = 0xff000000000000000000000000000000;     // Match fd00::/8
-
-/* IPv6 Address Pattern Constants */
-const bit<128> IPV6_ADMIN_LOCAL_PATTERN = 0xff040000000000000000000000000000;  // ff04::/16
-const bit<128> IPV6_SITE_LOCAL_PATTERN = 0xff050000000000000000000000000000;   // ff05::/16
-const bit<128> IPV6_ORG_SCOPE_PATTERN = 0xff080000000000000000000000000000;    // ff08::/16
-const bit<128> IPV6_ULA_PATTERN = 0xfd000000000000000000000000000000;          // fd00::/8
+/* IPv6 Address Mask and Pattern Constants */
+// Reserved underlay multicast subnet (ff04::/64). This /64 within admin-local
+// scope is reserved for internal underlay multicast allocation. Customer
+// external groups may use other admin-local /64s (e.g., ff04:0:0:1::/64).
+const bit<128> IPV6_UNDERLAY_MASK = 0xffffffffffffffff0000000000000000;  // /64 prefix mask
+const bit<128> IPV6_UNDERLAY_MULTICAST_PATTERN = 0xff040000000000000000000000000000;  // ff04::/64
 
 /* Reasons a packet may be dropped by the p4 pipeline */
 const bit<8> DROP_IPV4_SWITCH_ADDR_MISS         = 0x01;
@@ -82,14 +81,15 @@ const bit<8> DROP_IPV6_TTL_EXCEEDED             = 0x0E;
 const bit<8> DROP_IPV4_UNROUTEABLE              = 0x0F;
 const bit<8> DROP_IPV6_UNROUTEABLE              = 0x10;
 const bit<8> DROP_NAT_INGRESS_MISS              = 0x11;
-const bit<8> DROP_MULTICAST_NO_GROUP            = 0x12;
-const bit<8> DROP_MULTICAST_INVALID_MAC         = 0x13;
-const bit<8> DROP_MULTICAST_CPU_COPY            = 0x14;
-const bit<8> DROP_MULTICAST_SOURCE_FILTERED     = 0x15;
-const bit<8> DROP_MULTICAST_PATH_FILTERED       = 0x16;
-const bit<8> DROP_GENEVE_OPTIONS_TOO_LONG       = 0x17;
-const bit<8> DROP_GENEVE_OPTION_MALFORMED       = 0x18;
-const bit<8> DROP_GENEVE_OPTION_UNKNOWN         = 0x19;
+const bit<8> DROP_NAT_EGRESS_BLOCKED            = 0x12;
+const bit<8> DROP_MULTICAST_NO_GROUP            = 0x13;
+const bit<8> DROP_MULTICAST_INVALID_MAC         = 0x14;
+const bit<8> DROP_MULTICAST_CPU_COPY            = 0x15;
+const bit<8> DROP_MULTICAST_SOURCE_FILTERED     = 0x16;
+const bit<8> DROP_MULTICAST_PATH_FILTERED       = 0x17;
+const bit<8> DROP_GENEVE_OPTIONS_TOO_LONG       = 0x18;
+const bit<8> DROP_GENEVE_OPTION_MALFORMED       = 0x19;
+const bit<8> DROP_GENEVE_OPTION_UNKNOWN         = 0x1A;
 // MAX(DROP_xxx) + 1
-const bit<32> DROP_REASON_MAX                   = 0x1A;
+const bit<32> DROP_REASON_MAX                   = 0x1B;
 

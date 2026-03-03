@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::convert::TryFrom;
 use std::hash::Hash;
@@ -18,16 +18,19 @@ use common::network::MacAddr;
 use dpd_types::views;
 
 pub mod arp_ipv4;
+pub mod attached_subnet_v4;
+pub mod attached_subnet_v6;
+#[cfg(feature = "multicast")]
 pub mod mcast;
 pub mod nat;
 pub mod neighbor_ipv6;
 pub mod port_ip;
 pub mod port_mac;
-pub mod port_nat;
 pub mod route_ipv4;
 pub mod route_ipv6;
+pub mod uplink;
 
-const NAME_TO_TYPE: [(&str, TableType); 22] = [
+const BASE_TABLES: [(&str, TableType); 15] = [
     (route_ipv4::INDEX_TABLE_NAME, TableType::RouteIdxIpv4),
     (route_ipv4::FORWARD_TABLE_NAME, TableType::RouteFwdIpv4),
     (route_ipv6::INDEX_TABLE_NAME, TableType::RouteIdxIpv6),
@@ -39,35 +42,27 @@ const NAME_TO_TYPE: [(&str, TableType); 22] = [
     (port_ip::IPV6_TABLE_NAME, TableType::PortIpv6),
     (nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4),
     (nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6),
-    (port_nat::TABLE_NAME, TableType::NatOnly),
+    (uplink::INGRESS_TABLE_NAME, TableType::UplinkIngress),
+    (uplink::EGRESS_TABLE_NAME, TableType::UplinkEgress),
     (
-        mcast::mcast_replication::IPV6_TABLE_NAME,
-        TableType::McastIpv6,
+        attached_subnet_v4::EXT_SUBNET_IPV4_TABLE_NAME,
+        TableType::AttachedSubnetIpv4,
     ),
     (
-        mcast::mcast_src_filter::IPV4_TABLE_NAME,
-        TableType::McastIpv4SrcFilter,
+        attached_subnet_v6::EXT_SUBNET_IPV6_TABLE_NAME,
+        TableType::AttachedSubnetIpv6,
     ),
-    (
-        mcast::mcast_src_filter::IPV6_TABLE_NAME,
-        TableType::McastIpv6SrcFilter,
-    ),
-    (
-        mcast::mcast_nat::IPV4_TABLE_NAME,
-        TableType::NatIngressIpv4Mcast,
-    ),
-    (
-        mcast::mcast_nat::IPV6_TABLE_NAME,
-        TableType::NatIngressIpv6Mcast,
-    ),
-    (
-        mcast::mcast_route::IPV4_TABLE_NAME,
-        TableType::RouteIpv4Mcast,
-    ),
-    (
-        mcast::mcast_route::IPV6_TABLE_NAME,
-        TableType::RouteIpv6Mcast,
-    ),
+];
+
+#[cfg(feature = "multicast")]
+const MCAST_TABLES: [(&str, TableType); 10] = [
+    (mcast::mcast_replication::IPV6_TABLE_NAME, TableType::McastIpv6),
+    (mcast::mcast_src_filter::IPV4_TABLE_NAME, TableType::McastIpv4SrcFilter),
+    (mcast::mcast_src_filter::IPV6_TABLE_NAME, TableType::McastIpv6SrcFilter),
+    (mcast::mcast_nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4Mcast),
+    (mcast::mcast_nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6Mcast),
+    (mcast::mcast_route::IPV4_TABLE_NAME, TableType::RouteIpv4Mcast),
+    (mcast::mcast_route::IPV6_TABLE_NAME, TableType::RouteIpv6Mcast),
     (mcast::mcast_port_mac::TABLE_NAME, TableType::PortMacMcast),
     (
         mcast::mcast_egress::DECAP_PORTS_TABLE_NAME,
@@ -78,6 +73,9 @@ const NAME_TO_TYPE: [(&str, TableType); 22] = [
         TableType::McastEgressPortMapping,
     ),
 ];
+
+#[cfg(not(feature = "multicast"))]
+const MCAST_TABLES: [(&str, TableType); 0] = [];
 
 /// Basic statistics about p4 table usage
 #[derive(Clone, Debug, Default)]
@@ -231,13 +229,14 @@ impl Table {
     pub fn get_entries<M, A>(
         &self,
         hdl: &asic::Handle,
+        from_hardware: bool,
     ) -> DpdResult<Vec<(M, A)>>
     where
         M: MatchParse,
         A: ActionParse,
     {
         self.asic_data
-            .get_entries::<M, A>(hdl)
+            .get_entries::<M, A>(hdl, from_hardware)
             .map_err(|e| e.into())
     }
 
@@ -251,67 +250,103 @@ impl Table {
     where
         M: MatchParse,
     {
-        self.asic_data
-            .get_counters::<M>(hdl, force_sync)
-            .map_err(|e| e.into())
+        self.asic_data.get_counters::<M>(hdl, force_sync).map_err(|e| e.into())
     }
 }
 
 pub fn list(switch: &Switch) -> Vec<String> {
-    switch
-        .tables
-        .values()
-        .map(|t| t.lock().unwrap().name.to_string())
-        .collect()
+    switch.tables.values().map(|t| t.lock().unwrap().name.to_string()).collect()
 }
 
 /// Given the name of a table, call into the table-specific code to get the
 /// entries stored in the ASIC.
-pub fn get_entries(switch: &Switch, name: String) -> DpdResult<views::Table> {
+pub fn get_entries(
+    switch: &Switch,
+    name: String,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
     match TableType::try_from(name.as_str())? {
-        TableType::RouteIdxIpv4 => route_ipv4::index_dump(switch),
-        TableType::RouteFwdIpv4 => route_ipv4::forward_dump(switch),
-        TableType::RouteIdxIpv6 => route_ipv6::index_dump(switch),
-        TableType::RouteFwdIpv6 => route_ipv6::forward_dump(switch),
-        TableType::NeighborIpv6 => neighbor_ipv6::table_dump(switch),
-        TableType::ArpIpv4 => arp_ipv4::table_dump(switch),
-        TableType::NatIngressIpv4 => nat::ipv4_table_dump(switch),
-        TableType::NatIngressIpv6 => nat::ipv6_table_dump(switch),
-        TableType::PortIpv4 => port_ip::ipv4_table_dump(switch),
-        TableType::PortIpv6 => port_ip::ipv6_table_dump(switch),
+        TableType::RouteIdxIpv4 => {
+            route_ipv4::index_dump(switch, from_hardware)
+        }
+        TableType::RouteFwdIpv4 => {
+            route_ipv4::forward_dump(switch, from_hardware)
+        }
+        TableType::RouteIdxIpv6 => {
+            route_ipv6::index_dump(switch, from_hardware)
+        }
+        TableType::RouteFwdIpv6 => {
+            route_ipv6::forward_dump(switch, from_hardware)
+        }
+        TableType::NeighborIpv6 => {
+            neighbor_ipv6::table_dump(switch, from_hardware)
+        }
+        TableType::ArpIpv4 => arp_ipv4::table_dump(switch, from_hardware),
+        TableType::NatIngressIpv4 => {
+            nat::ipv4_table_dump(switch, from_hardware)
+        }
+        TableType::NatIngressIpv6 => {
+            nat::ipv6_table_dump(switch, from_hardware)
+        }
+        TableType::AttachedSubnetIpv4 => {
+            attached_subnet_v4::table_dump(switch, from_hardware)
+        }
+        TableType::AttachedSubnetIpv6 => {
+            attached_subnet_v6::table_dump(switch, from_hardware)
+        }
+        TableType::PortIpv4 => port_ip::ipv4_table_dump(switch, from_hardware),
+        TableType::PortIpv6 => port_ip::ipv6_table_dump(switch, from_hardware),
         TableType::PortMac => {
-            MacOps::<port_mac::PortMacTable>::table_dump(switch)
+            MacOps::<port_mac::PortMacTable>::table_dump(switch, from_hardware)
         }
-        TableType::NatOnly => port_nat::table_dump(switch),
+        TableType::UplinkEgress => {
+            uplink::egress_table_dump(switch, from_hardware)
+        }
+        TableType::UplinkIngress => {
+            uplink::ingress_table_dump(switch, from_hardware)
+        }
+        #[cfg(feature = "multicast")]
         TableType::McastIpv6 => {
-            mcast::mcast_replication::ipv6_table_dump(switch)
+            mcast::mcast_replication::ipv6_table_dump(switch, from_hardware)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastIpv4SrcFilter => {
-            mcast::mcast_src_filter::ipv4_table_dump(switch)
+            mcast::mcast_src_filter::ipv4_table_dump(switch, from_hardware)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastIpv6SrcFilter => {
-            mcast::mcast_src_filter::ipv6_table_dump(switch)
+            mcast::mcast_src_filter::ipv6_table_dump(switch, from_hardware)
         }
+        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv4Mcast => {
-            mcast::mcast_nat::ipv4_table_dump(switch)
+            mcast::mcast_nat::ipv4_table_dump(switch, from_hardware)
         }
+        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv6Mcast => {
-            mcast::mcast_nat::ipv6_table_dump(switch)
+            mcast::mcast_nat::ipv6_table_dump(switch, from_hardware)
         }
+        #[cfg(feature = "multicast")]
         TableType::RouteIpv4Mcast => {
-            mcast::mcast_route::ipv4_table_dump(switch)
+            mcast::mcast_route::ipv4_table_dump(switch, from_hardware)
         }
+        #[cfg(feature = "multicast")]
         TableType::RouteIpv6Mcast => {
-            mcast::mcast_route::ipv6_table_dump(switch)
+            mcast::mcast_route::ipv6_table_dump(switch, from_hardware)
         }
+        #[cfg(feature = "multicast")]
         TableType::PortMacMcast => {
-            MacOps::<mcast::mcast_port_mac::PortMacTable>::table_dump(switch)
+            MacOps::<mcast::mcast_port_mac::PortMacTable>::table_dump(
+                switch,
+                from_hardware,
+            )
         }
+        #[cfg(feature = "multicast")]
         TableType::McastEgressDecapPorts => {
-            mcast::mcast_egress::bitmap_table_dump(switch)
+            mcast::mcast_egress::bitmap_table_dump(switch, from_hardware)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastEgressPortMapping => {
-            mcast::mcast_egress::port_mapping_table_dump(switch)
+            mcast::mcast_egress::port_mapping_table_dump(switch, from_hardware)
         }
     }
 }
@@ -351,34 +386,55 @@ pub fn get_counters(
         }
         TableType::PortIpv4 => port_ip::ipv4_counter_fetch(switch, force_sync),
         TableType::PortIpv6 => port_ip::ipv6_counter_fetch(switch, force_sync),
-        TableType::NatOnly => port_nat::counter_fetch(switch, force_sync),
+        TableType::AttachedSubnetIpv4 => {
+            attached_subnet_v4::counter_fetch(switch, force_sync)
+        }
+        TableType::AttachedSubnetIpv6 => {
+            attached_subnet_v6::counter_fetch(switch, force_sync)
+        }
+        TableType::UplinkEgress => {
+            uplink::egress_counter_fetch(switch, force_sync)
+        }
+        TableType::UplinkIngress => {
+            uplink::ingress_counter_fetch(switch, force_sync)
+        }
+        #[cfg(feature = "multicast")]
         TableType::McastIpv6 => {
             mcast::mcast_replication::ipv6_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastIpv4SrcFilter => {
             mcast::mcast_src_filter::ipv4_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastIpv6SrcFilter => {
             mcast::mcast_src_filter::ipv6_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv4Mcast => {
             mcast::mcast_nat::ipv4_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv6Mcast => {
             mcast::mcast_nat::ipv6_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::RouteIpv4Mcast => {
             mcast::mcast_route::ipv4_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::RouteIpv6Mcast => {
             mcast::mcast_route::ipv6_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastEgressDecapPorts => {
             mcast::mcast_egress::bitmap_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::McastEgressPortMapping => {
             mcast::mcast_egress::port_mapping_counter_fetch(switch, force_sync)
         }
+        #[cfg(feature = "multicast")]
         TableType::PortMacMcast => {
             MacOps::<mcast::mcast_port_mac::PortMacTable>::counter_fetch(
                 switch, force_sync,
@@ -393,7 +449,9 @@ pub enum TableType {
     RouteFwdIpv4,
     RouteIdxIpv6,
     RouteFwdIpv6,
+    #[cfg(feature = "multicast")]
     RouteIpv4Mcast,
+    #[cfg(feature = "multicast")]
     RouteIpv6Mcast,
     ArpIpv4,
     NeighborIpv6,
@@ -402,15 +460,30 @@ pub enum TableType {
     PortIpv6,
     NatIngressIpv4,
     NatIngressIpv6,
-    NatOnly,
+    UplinkIngress,
+    UplinkEgress,
+    AttachedSubnetIpv4,
+    AttachedSubnetIpv6,
+    #[cfg(feature = "multicast")]
     McastIpv6,
+    #[cfg(feature = "multicast")]
     McastIpv4SrcFilter,
+    #[cfg(feature = "multicast")]
     McastIpv6SrcFilter,
+    #[cfg(feature = "multicast")]
     NatIngressIpv4Mcast,
+    #[cfg(feature = "multicast")]
     NatIngressIpv6Mcast,
+    #[cfg(feature = "multicast")]
     PortMacMcast,
+    #[cfg(feature = "multicast")]
     McastEgressDecapPorts,
+    #[cfg(feature = "multicast")]
     McastEgressPortMapping,
+}
+
+fn name_to_type() -> impl Iterator<Item = &'static (&'static str, TableType)> {
+    BASE_TABLES.iter().chain(MCAST_TABLES.iter())
 }
 
 impl TryFrom<&str> for TableType {
@@ -418,21 +491,20 @@ impl TryFrom<&str> for TableType {
 
     fn try_from(name: &str) -> Result<Self, Self::Error> {
         let name = name.to_lowercase();
-        for (table_name, table_type) in NAME_TO_TYPE {
+        for (table_name, table_type) in name_to_type() {
             if table_name.to_lowercase() == name {
-                return Ok(table_type);
+                return Ok(*table_type);
             }
         }
-
-        Err(DpdError::NoSuchTable(name.to_string()))
+        Err(DpdError::NoSuchTable(name))
     }
 }
 
 pub fn init(switch: &mut Switch) -> anyhow::Result<()> {
     debug!(switch.log, "initializing tables");
 
-    for (name, table_type) in NAME_TO_TYPE {
-        switch.table_add(name, table_type)?;
+    for (name, table_type) in name_to_type() {
+        switch.table_add(name, *table_type)?;
     }
 
     Ok(())
@@ -556,8 +628,11 @@ impl<T: MacTable> MacOps<T> {
         }
     }
 
-    pub fn table_dump(s: &Switch) -> DpdResult<views::Table> {
-        s.table_dump::<MacMatchKey, MacAction>(T::table_type())
+    pub fn table_dump(
+        s: &Switch,
+        from_hardware: bool,
+    ) -> DpdResult<views::Table> {
+        s.table_dump::<MacMatchKey, MacAction>(T::table_type(), from_hardware)
     }
 
     pub fn counter_fetch(

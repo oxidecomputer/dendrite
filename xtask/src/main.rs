@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::collections::HashMap;
 use std::fs;
@@ -79,6 +79,10 @@ enum XtaskCommands {
         /// pipeline stages to build for
         #[clap(long)]
         stages: Option<u8>,
+
+        /// Include support for multicast
+        #[clap(long)]
+        multicast: bool,
     },
     /// build an installable dataplane controller package
     Dist {
@@ -221,11 +225,8 @@ fn collect_binaries<T: ToString>(
         false => "./target/debug",
     };
 
-    let mut binaries = vec![
-        "tfportd".to_string(),
-        "swadm".to_string(),
-        "uplinkd".to_string(),
-    ];
+    let mut binaries =
+        vec!["tfportd".to_string(), "swadm".to_string(), "uplinkd".to_string()];
     for name in names {
         if name.to_string() == "sidecar" {
             binaries.push("dpd".to_string());
@@ -250,15 +251,12 @@ async fn main() {
     if let Err(e) = match task.subcommand {
         XtaskCommands::Openapi(external) => external
             .exec_bin("dendrite-dropshot-apis", "dendrite-dropshot-apis"),
-        XtaskCommands::Codegen { name, sde, stages } => {
-            codegen::build(name, sde, stages)
+        XtaskCommands::Codegen { name, sde, stages, multicast } => {
+            codegen::build(name, sde, stages, multicast)
         }
-        XtaskCommands::Dist {
-            features,
-            names,
-            release,
-            format,
-        } => plat::dist(features, names, release, format).await,
+        XtaskCommands::Dist { features, names, release, format } => {
+            plat::dist(features, names, release, format).await
+        }
     } {
         eprintln!("failed: {e}");
         std::process::exit(-1);

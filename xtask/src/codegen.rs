@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::fs;
 use std::path::Path;
@@ -116,10 +116,7 @@ impl P4Config {
             agent0: "lib/libpltfm_mgr.so".to_string(),
         };
 
-        P4Config {
-            chip_list: vec![chip],
-            p4_devices: vec![device],
-        }
+        P4Config { chip_list: vec![chip], p4_devices: vec![device] }
     }
 }
 
@@ -129,6 +126,7 @@ pub fn build(
     app_name: String,
     sde_location: String,
     stages: Option<u8>,
+    multicast: bool,
 ) -> Result<()> {
     let root = super::project_root()?;
     let src_dir = match app_name.as_str() {
@@ -161,7 +159,6 @@ pub fn build(
         "tofino2".to_string(),
         "--arch".to_string(),
         "default".to_string(),
-        "--enable-bf-asm".to_string(),
         "--create-graphs".to_string(),
         "-I".to_string(),
         src_dir.clone(),
@@ -171,11 +168,18 @@ pub fn build(
     if let Some(s) = stages {
         args.push(format!("--num-stages-override={s}"));
     }
+    if multicast {
+        args.push("-D".to_string());
+        args.push("MULTICAST".to_string());
+    }
     args.push(app_path);
     println!("op: {args:?}");
 
-    if !Command::new(&p4c_path).args(&args).status()?.success() {
-        return Err(anyhow!("p4 build failed"));
+    let out = Command::new(&p4c_path).args(&args).output()?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() {
+        return Err(anyhow!("p4 build failed: {stdout} {stderr}"));
     }
 
     let config = P4Config::new(&app_name, "tofino2");

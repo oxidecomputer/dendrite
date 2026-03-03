@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Main application entry point for `dpd`, the Dendrite switch management API
 //! server.
@@ -54,6 +54,7 @@ cfg_if::cfg_if! {
 
 mod api_server;
 mod arp;
+mod attached_subnet;
 mod config;
 mod counters;
 mod fault;
@@ -61,6 +62,7 @@ mod freemap;
 mod link;
 mod loopback;
 mod macaddrs;
+#[cfg(feature = "multicast")]
 mod mcast;
 mod nat;
 mod oxstats;
@@ -69,6 +71,8 @@ mod port_settings;
 mod ports;
 mod route;
 mod rpw;
+#[cfg(feature = "tofino_asic")]
+mod snapshot;
 mod switch_identifiers;
 mod switch_port;
 mod table;
@@ -187,11 +191,13 @@ pub struct Switch {
     pub routes: TokioMutex<route::RouteData>,
     pub arp: Mutex<arp::ArpData>,
     pub nat: Mutex<nat::NatData>,
+    pub attached_subnet: Mutex<attached_subnet::AttachedSubnetData>,
     pub loopback: Mutex<loopback::LoopbackData>,
     pub identifiers: Mutex<Option<SwitchIdentifiers>>,
     pub oximeter_producer: Mutex<Option<oximeter_producer::Server>>,
     pub oximeter_meta: Mutex<Option<OximeterMetadata>>,
     pub reconciler: link::LinkReconciler,
+    #[cfg(feature = "multicast")]
     pub mcast: Mutex<mcast::MulticastGroupData>,
 
     mac_mgmt: Mutex<macaddrs::MacManagement>,
@@ -280,6 +286,9 @@ impl Switch {
         let route_data = route::init(&log);
         let mac_mgmt = Mutex::new(macaddrs::MacManagement::new(&log));
 
+        #[cfg(feature = "tofino_asic")]
+        run_interrupt_monitor(log.clone());
+
         let ws_log = log.new(slog::o!("unit" => "workflow_server"));
         let workflow_server = rpw::WorkflowServer::new(ws_log);
 
@@ -294,12 +303,14 @@ impl Switch {
             routes: TokioMutex::new(route_data),
             arp: Mutex::new(arp::init()),
             nat: Mutex::new(nat::init()),
+            attached_subnet: Mutex::new(attached_subnet::init()),
             loopback: Mutex::new(loopback::init()),
             switch_ports,
             identifiers: Mutex::new(None),
             oximeter_producer: Mutex::new(None),
             oximeter_meta: Mutex::new(None),
             reconciler: link::LinkReconciler::default(),
+            #[cfg(feature = "multicast")]
             mcast: Mutex::new(mcast::MulticastGroupData::new()),
             mac_mgmt,
             port_history: Mutex::new(BTreeMap::new()),
@@ -392,6 +403,7 @@ impl Switch {
     pub fn table_dump<M: MatchParse, A: ActionParse>(
         &self,
         t: table::TableType,
+        from_hardware: bool,
     ) -> DpdResult<dpd_types::views::Table> {
         let t = self.table_get(t)?;
 
@@ -399,7 +411,7 @@ impl Switch {
             name: t.name.to_string(),
             size: t.usage.size as usize,
             entries: t
-                .get_entries::<M, A>(&self.asic_hdl)
+                .get_entries::<M, A>(&self.asic_hdl, from_hardware)
                 .map_err(|e| {
                     error!(self.log, "failed to get table contents";
 	            "table" => t.name.to_string(),
@@ -484,10 +496,7 @@ fn handle_smf_refresh(
             // property.
             let mut curr_config = switch.config.lock().unwrap();
             let mac_base = curr_config.mac_base.or(new_config.mac_base);
-            *curr_config = config::Config {
-                mac_base,
-                ..new_config
-            };
+            *curr_config = config::Config { mac_base, ..new_config };
             info!(switch.log, "refreshed config: {:#?}", curr_config);
         }
         Err(e) => {
@@ -664,10 +673,7 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
         api_server::api_server_manager(switch.clone(), smf_rx.clone()),
     );
 
-    info!(
-        switch.log,
-        "spawning fetching of switch identifiers from MGS"
-    );
+    info!(switch.log, "spawning fetching of switch identifiers from MGS");
 
     tokio::task::spawn(update_switch_identifiers(switch.clone()));
 
@@ -806,10 +812,14 @@ async fn run_dpd(opt: Opt) -> anyhow::Result<()> {
     if p4_name == "sidecar" {
         sidecar_main(switch).await
     } else {
-        info!(
-            switch.log,
-            "running as stub to support p4 program: {p4_name}"
-        );
+        info!(switch.log, "running as stub to support p4 program: {p4_name}");
         stub_main(switch).await
     }
+}
+
+#[cfg(feature = "tofino_asic")]
+fn run_interrupt_monitor(log: slog::Logger) {
+    std::thread::spawn(move || {
+        asic::tofino_asic::interrupt_monitor::monitor_interrupts(log);
+    });
 }

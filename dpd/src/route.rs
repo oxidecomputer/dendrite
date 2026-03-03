@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 // IPv4 route lookup and target selection happens in two steps.  Each route may
 // have multiple targets, with the intention of distributing outgoing packets
@@ -107,7 +107,7 @@
 
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv6Addr};
 use std::ops::Bound;
 
 use dpd_types::link::LinkId;
@@ -133,6 +133,27 @@ struct Route {
     link_id: LinkId,
     tgt_ip: IpAddr,
     vlan_id: Option<u16>,
+}
+
+impl From<&Route> for dpd_types::route::Route {
+    fn from(r: &Route) -> Self {
+        match r.tgt_ip {
+            IpAddr::V4(tgt_ip) => dpd_types::route::Route::V4(Ipv4Route {
+                tag: r.tag.clone(),
+                port_id: r.port_id,
+                link_id: r.link_id,
+                tgt_ip,
+                vlan_id: r.vlan_id,
+            }),
+            IpAddr::V6(tgt_ip) => dpd_types::route::Route::V6(Ipv6Route {
+                tag: r.tag.clone(),
+                port_id: r.port_id,
+                link_id: r.link_id,
+                tgt_ip,
+                vlan_id: r.vlan_id,
+            }),
+        }
+    }
 }
 
 impl From<&Route> for Ipv4Route {
@@ -229,10 +250,7 @@ pub struct RouteEntry {
 
 impl RouteEntry {
     fn targets(&self) -> Vec<Route> {
-        self.targets
-            .iter()
-            .map(|target| target.route.clone())
-            .collect()
+        self.targets.iter().map(|target| target.route.clone()).collect()
     }
 }
 
@@ -377,10 +395,7 @@ fn replace_route_targets(
 ) -> DpdResult<()> {
     // Remove the old entry from our in-core and on-chip indexes, but don't free
     // the data yet.
-    debug!(
-        switch.log,
-        "replacing targets for {subnet} with: {targets:?}"
-    );
+    debug!(switch.log, "replacing targets for {subnet} with: {targets:?}");
     let old_entry = route_data.remove(subnet);
     if let Some(ref old) = old_entry
         && let Err(e) = match subnet {
@@ -440,13 +455,25 @@ fn replace_route_targets(
                 tgt_ip,
                 target.route.vlan_id,
             ),
-            IpAddr::V6(tgt_ip) => table::route_ipv6::add_route_target(
-                switch,
-                idx,
-                target.asic_port_id,
-                tgt_ip,
-                target.route.vlan_id,
-            ),
+            IpAddr::V6(tgt_ip) => {
+                if subnet.is_ipv4() {
+                    table::route_ipv4::add_route_target_v6(
+                        switch,
+                        idx,
+                        target.asic_port_id,
+                        tgt_ip,
+                        target.route.vlan_id,
+                    )
+                } else {
+                    table::route_ipv6::add_route_target(
+                        switch,
+                        idx,
+                        target.asic_port_id,
+                        tgt_ip,
+                        target.route.vlan_id,
+                    )
+                }
+            }
         } {
             debug!(switch.log, "failed to insert {target:?} into route table");
             let _ = cleanup_route(switch, route_data, None, new_entry);
@@ -503,14 +530,10 @@ fn add_route_locked(
     }
 
     // Get the old set of targets that we'll be adding to
-    let mut targets = route_data
-        .get(subnet)
-        .map_or(Vec::new(), |e| e.targets.clone());
+    let mut targets =
+        route_data.get(subnet).map_or(Vec::new(), |e| e.targets.clone());
     // Add the new target
-    targets.push(NextHop {
-        asic_port_id,
-        route,
-    });
+    targets.push(NextHop { asic_port_id, route });
 
     if targets.len() > max_targets {
         Err(DpdError::InvalidRoute(format!(
@@ -566,10 +589,7 @@ async fn set_route(
             Err(DpdError::Exists("route {cidr} already exists".into()))
         } else {
             info!(switch.log, "replacing subnet {subnet}");
-            let target = vec![NextHop {
-                asic_port_id,
-                route,
-            }];
+            let target = vec![NextHop { asic_port_id, route }];
             replace_route_targets(switch, &mut route_data, subnet, target)
         }
     } else {
@@ -617,6 +637,14 @@ pub async fn add_route_ipv4(
     add_route(switch, IpNet::V4(subnet), route.into()).await
 }
 
+pub async fn add_route_ipv4_over_ipv6(
+    switch: &Switch,
+    subnet: Ipv4Net,
+    route: Ipv6Route,
+) -> DpdResult<()> {
+    add_route(switch, IpNet::V4(subnet), route.into()).await
+}
+
 pub async fn add_route_ipv6(
     switch: &Switch,
     subnet: Ipv6Net,
@@ -634,6 +662,15 @@ pub async fn set_route_ipv4(
     set_route(switch, IpNet::V4(subnet), route.into(), replace).await
 }
 
+pub async fn set_route_ipv4_over_ipv6(
+    switch: &Switch,
+    subnet: Ipv4Net,
+    route: Ipv6Route,
+    replace: bool,
+) -> DpdResult<()> {
+    set_route(switch, IpNet::V4(subnet), route.into(), replace).await
+}
+
 pub async fn set_route_ipv6(
     switch: &Switch,
     subnet: Ipv6Net,
@@ -646,7 +683,7 @@ pub async fn set_route_ipv6(
 pub async fn get_route_ipv4(
     switch: &Switch,
     subnet: Ipv4Net,
-) -> DpdResult<Vec<Ipv4Route>> {
+) -> DpdResult<Vec<dpd_types::route::Route>> {
     let route_data = switch.routes.lock().await;
     match route_data.get(IpNet::V4(subnet)) {
         None => Err(DpdError::Missing("no such route".into())),
@@ -709,15 +746,10 @@ pub async fn delete_route_target_ipv4(
     subnet: Ipv4Net,
     port_id: PortId,
     link_id: LinkId,
-    tgt_ip: Ipv4Addr,
+    tgt_ip: IpAddr,
 ) -> DpdResult<()> {
-    let route = Route {
-        tag: String::new(),
-        port_id,
-        link_id,
-        tgt_ip: IpAddr::V4(tgt_ip),
-        vlan_id: None,
-    };
+    let route =
+        Route { tag: String::new(), port_id, link_id, tgt_ip, vlan_id: None };
 
     let mut route_data = switch.routes.lock().await;
     delete_route_target_locked(

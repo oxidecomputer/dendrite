@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::sync::Arc;
 
@@ -59,14 +59,8 @@ async fn test_geneve() -> TestResult {
     );
     eth::EthHdr::rewrite_dmac(&mut to_send, router_mac);
     let to_recv = common::gen_packet_routed(switch, uplink_port, &to_send);
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress_port,
-    };
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: uplink_port,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress_port };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: uplink_port };
 
     // These tests are a bit slower, for non-obvious reasons.
     switch.packet_test(vec![send], vec![expected])
@@ -125,15 +119,10 @@ async fn test_geneve_multiopt() -> TestResult {
     );
     eth::EthHdr::rewrite_dmac(&mut to_send, router_mac);
     let to_recv = common::gen_packet_routed(switch, uplink_port, &to_send);
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress_port,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress_port };
     let to_recv = Arc::new(to_recv);
-    let expected = TestPacket {
-        packet: Arc::clone(&to_recv),
-        port: uplink_port,
-    };
+    let expected =
+        TestPacket { packet: Arc::clone(&to_recv), port: uplink_port };
 
     switch.packet_test(vec![send], vec![expected])?;
 
@@ -158,14 +147,8 @@ async fn test_geneve_multiopt() -> TestResult {
         &payload,
     );
     eth::EthHdr::rewrite_dmac(&mut to_send, router_mac);
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress_port,
-    };
-    let expected = TestPacket {
-        packet: to_recv,
-        port: uplink_port,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress_port };
+    let expected = TestPacket { packet: to_recv, port: uplink_port };
 
     // Sidecar, at least for today, orders options by ID.
     switch.packet_test(vec![send], vec![expected])

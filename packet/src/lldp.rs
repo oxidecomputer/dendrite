@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::fmt::{self};
 
@@ -40,11 +40,7 @@ impl LldpTlv {
         }
         let lldp_tlv_octets = pb.get_bytes(lldp_tlv_size as usize)?;
 
-        Ok(LldpTlv {
-            lldp_tlv_type,
-            lldp_tlv_size,
-            lldp_tlv_octets,
-        })
+        Ok(LldpTlv { lldp_tlv_type, lldp_tlv_size, lldp_tlv_octets })
     }
 }
 

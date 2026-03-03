@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 #[cfg(not(any(
     feature = "tofino_asic",
@@ -100,10 +100,7 @@ impl FsmStats {
 
     /// Increases the counter for a single state by 1.
     pub fn bump(&mut self, state: PortFsmState) {
-        self.0
-            .entry(state)
-            .and_modify(|count| *count += 1)
-            .or_insert(1);
+        self.0.entry(state).and_modify(|count| *count += 1).or_insert(1);
     }
 
     /// Returns the full set of possible states, giving the caller an easy way

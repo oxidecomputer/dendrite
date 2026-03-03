@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::fmt;
 use std::net::Ipv6Addr;
@@ -56,15 +56,11 @@ impl From<[u8; 6]> for MacAddr {
 impl MacAddr {
     /// Oxide's Organizationally Unique Identifier.
     pub const OXIDE_OUI: [u8; 3] = [0xa8, 0x40, 0x25];
-    pub const ZERO: Self = MacAddr {
-        a: [0, 0, 0, 0, 0, 0],
-    };
+    pub const ZERO: Self = MacAddr { a: [0, 0, 0, 0, 0, 0] };
 
     /// Create a new MAC address from octets in network byte order.
     pub fn new(o0: u8, o1: u8, o2: u8, o3: u8, o4: u8, o5: u8) -> MacAddr {
-        MacAddr {
-            a: [o0, o1, o2, o3, o4, o5],
-        }
+        MacAddr { a: [o0, o1, o2, o3, o4, o5] }
     }
 
     /// Create a new MAC address from a slice of bytes in network byte order.
@@ -80,16 +76,12 @@ impl MacAddr {
 
     /// Convert `self` to an array of bytes in network byte order.
     pub fn to_vec(self) -> Vec<u8> {
-        vec![
-            self.a[0], self.a[1], self.a[2], self.a[3], self.a[4], self.a[5],
-        ]
+        vec![self.a[0], self.a[1], self.a[2], self.a[3], self.a[4], self.a[5]]
     }
 
     /// Return `true` if `self` is the null MAC address, all zeros.
     pub fn is_null(self) -> bool {
-        const EMPTY: MacAddr = MacAddr {
-            a: [0, 0, 0, 0, 0, 0],
-        };
+        const EMPTY: MacAddr = MacAddr { a: [0, 0, 0, 0, 0, 0] };
 
         self == EMPTY
     }
@@ -241,13 +233,124 @@ pub enum VlanError {
 pub fn validate_vlan(id: impl Into<u16>) -> Result<(), VlanError> {
     let id: u16 = id.into();
     #[allow(clippy::manual_range_contains)]
-    if id < 2 || id > 4095 {
-        Err(VlanError::InvalidVlan(id))
-    } else {
-        Ok(())
+    if id < 2 || id > 4095 { Err(VlanError::InvalidVlan(id)) } else { Ok(()) }
+}
+
+/// A Geneve Virtual Network Identifier.
+///
+/// A Geneve VNI is a 24-bit value used to identify virtual networks
+/// encapsulated using the Generic Network Virtualization Encapsulation (Geneve)
+/// protocol (RFC 8926).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    JsonSchema,
+    PartialEq,
+    PartialOrd,
+    Ord,
+    Serialize,
+)]
+#[serde(try_from = "u32")]
+pub struct Vni(u32);
+
+impl Vni {
+    pub const MAX_VNI: u32 = 0x00FF_FFFF;
+    const ERR_MSG: &'static str = "VNI out of 24-bit range";
+
+    /// Construct a new VNI, validating that it's a valid 24-bit value.
+    pub const fn new(vni: u32) -> Option<Self> {
+        // bool.then_some is not const, unforunately
+        if vni <= Self::MAX_VNI { Some(Self(vni)) } else { None }
+    }
+
+    /// Return the VNI as a u32.
+    pub const fn as_u32(&self) -> u32 {
+        self.0
     }
 }
 
+impl core::convert::TryFrom<u32> for Vni {
+    type Error = &'static str;
+
+    fn try_from(vni: u32) -> Result<Self, Self::Error> {
+        Self::new(vni).ok_or(Self::ERR_MSG)
+    }
+}
+
+impl core::str::FromStr for Vni {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.parse::<u32>().map(Vni::new) {
+            Err(_) | Ok(None) => Err(Self::ERR_MSG),
+            Ok(Some(vni)) => Ok(vni),
+        }
+    }
+}
+
+impl fmt::Display for Vni {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/** represents an internal target for either NAT or an external subnet mapping */
+#[derive(
+    Debug, Copy, Clone, Deserialize, Serialize, JsonSchema, Eq, PartialEq,
+)]
+pub struct InstanceTarget {
+    pub internal_ip: Ipv6Addr,
+    pub inner_mac: MacAddr,
+    pub vni: Vni,
+}
+
+impl fmt::Display for InstanceTarget {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}/{}/{}", self.internal_ip, self.inner_mac, self.vni)
+    }
+}
+
+/// represents an internal NAT target
+// This is identical to the more generically named InstanceTarget, which should
+// be used for new APIs.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema, Serialize,
+)]
+pub struct NatTarget {
+    pub internal_ip: Ipv6Addr,
+    pub inner_mac: MacAddr,
+    pub vni: Vni,
+}
+
+impl fmt::Display for NatTarget {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}/{}/{}", self.internal_ip, self.inner_mac, self.vni)
+    }
+}
+
+impl From<NatTarget> for InstanceTarget {
+    fn from(value: NatTarget) -> Self {
+        InstanceTarget {
+            internal_ip: value.internal_ip,
+            inner_mac: value.inner_mac,
+            vni: value.vni,
+        }
+    }
+}
+
+impl From<InstanceTarget> for NatTarget {
+    fn from(value: InstanceTarget) -> Self {
+        NatTarget {
+            internal_ip: value.internal_ip,
+            inner_mac: value.inner_mac,
+            vni: value.vni,
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::Ipv6Addr;

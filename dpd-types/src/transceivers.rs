@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::time::Instant;
 
@@ -33,10 +33,7 @@ pub struct QsfpDevice {
 
 impl Default for QsfpDevice {
     fn default() -> Self {
-        Self {
-            transceiver: None,
-            management_mode: ManagementMode::Automatic,
-        }
+        Self { transceiver: None, management_mode: ManagementMode::Automatic }
     }
 }
 

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::io::{Write, stdout};
 
@@ -145,14 +145,7 @@ pub async fn compliance_cmd(
                 compliance_ports_enable(client, pattern.as_deref(), false, all)
                     .await
             }
-            PortAction::Setup {
-                pattern,
-                speed,
-                fec,
-                autoneg,
-                kr,
-                all,
-            } => {
+            PortAction::Setup { pattern, speed, fec, autoneg, kr, all } => {
                 compliance_ports_setup(
                     client,
                     pattern.as_deref(),
@@ -167,11 +160,7 @@ pub async fn compliance_cmd(
             PortAction::Teardown { pattern, all } => {
                 compliance_ports_teardown(client, pattern.as_deref(), all).await
             }
-            PortAction::Power {
-                state,
-                pattern,
-                force,
-            } => {
+            PortAction::Power { state, pattern, force } => {
                 compliance_ports_power(client, pattern.as_deref(), state, force)
                     .await
             }

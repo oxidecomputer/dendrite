@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use super::harness::{
     expect_chaos, expect_not_found, expect_random_chaos, init_harness,
@@ -115,9 +115,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
 
     let (_guard, client) = init_harness("addr-fail-1", &config);
 
-    let mut settings = PortSettings {
-        links: HashMap::new(),
-    };
+    let mut settings = PortSettings { links: HashMap::new() };
 
     settings.links.insert(
         "0".into(),
@@ -154,16 +152,11 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
 // Test a simple successful port settings transaction.
 #[tokio::test]
 async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
-    let config = AsicConfig {
-        radix: TESTING_RADIX,
-        ..Default::default()
-    };
+    let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
 
     let (_guard, client) = init_harness("addr-success", &config);
 
-    let mut settings = PortSettings {
-        links: HashMap::new(),
-    };
+    let mut settings = PortSettings { links: HashMap::new() };
 
     settings.links.insert(
         "0".into(),
@@ -198,17 +191,12 @@ async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
 // Test multiple port settings transactions in sequence.
 #[tokio::test]
 async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
-    let config = AsicConfig {
-        radix: TESTING_RADIX,
-        ..Default::default()
-    };
+    let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
     let (_guard, client) = init_harness("addr-success-multi", &config);
 
     // Start with a link that has one IPv4 address.
 
-    let mut settings = PortSettings {
-        links: HashMap::new(),
-    };
+    let mut settings = PortSettings { links: HashMap::new() };
     settings.links.insert(
         "0".into(),
         LinkSettings {
@@ -237,9 +225,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
 
     // Update the link to have 2 IPv4 addresses and 4 IPv6 addresses.
 
-    let mut settings = PortSettings {
-        links: HashMap::new(),
-    };
+    let mut settings = PortSettings { links: HashMap::new() };
     settings.links.insert(
         "0".into(),
         LinkSettings {
@@ -279,9 +265,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     // Reduce the addresses back down to 1 IPv4 and 1 IPv6. Add 1 IPv4 route and
     // two IPv6 routes.
 
-    let mut settings = PortSettings {
-        links: HashMap::new(),
-    };
+    let mut settings = PortSettings { links: HashMap::new() };
     settings.links.insert(
         "0".into(),
         LinkSettings {
@@ -379,10 +363,7 @@ async fn test_port_settings_txn_sweep() -> anyhow::Result<()> {
         let target = random_port_settings();
         print!("current/target: {}", Comparison::new(&current, &target));
 
-        match client
-            .port_settings_apply(&port, Some("chaos"), &target)
-            .await
-        {
+        match client.port_settings_apply(&port, Some("chaos"), &target).await {
             Ok(mut returned) => {
                 sort_addrs(&mut returned);
                 // Verify that what the server attempted to configure matches
@@ -510,10 +491,8 @@ async fn current_port_settings(
     client: &Client,
     port: &PortId,
 ) -> anyhow::Result<PortSettings> {
-    let mut settings = client
-        .port_settings_get(port, Some("chaos"))
-        .await?
-        .into_inner();
+    let mut settings =
+        client.port_settings_get(port, Some("chaos")).await?.into_inner();
     sort_addrs(&mut settings);
     Ok(settings)
 }
@@ -528,9 +507,7 @@ fn random_port_settings() -> PortSettings {
     let mut rng = rand::rng();
 
     if rng.random::<f64>() < 0.15 {
-        return PortSettings {
-            links: HashMap::new(),
-        };
+        return PortSettings { links: HashMap::new() };
     }
 
     // Create a link spec with random auto negotiation and kr settings.

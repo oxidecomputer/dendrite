@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Table operations for multicast egress entries.
 
@@ -174,9 +174,13 @@ pub(crate) fn del_bitmap_entry(
 }
 
 /// Dump the multicast decap table.
-pub(crate) fn bitmap_table_dump(s: &Switch) -> DpdResult<views::Table> {
+pub(crate) fn bitmap_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
     s.table_dump::<MatchKeyDecapPorts, DecapPortsAction>(
         TableType::McastEgressDecapPorts,
+        from_hardware,
     )
 }
 
@@ -206,14 +210,9 @@ pub(crate) fn add_port_mapping_entry(
 
     let (port, _) = s.asic_id_to_port_link(asic_port_id)?;
 
-    let action_data = PortIdAction::SetPortNumber {
-        port_number: port.as_u8(),
-    };
+    let action_data = PortIdAction::SetPortNumber { port_number: port.as_u8() };
 
-    debug!(
-        s.log,
-        "add port id entry {} -> {:?}", match_key, action_data
-    );
+    debug!(s.log, "add port id entry {} -> {:?}", match_key, action_data);
 
     s.table_entry_add(
         TableType::McastEgressPortMapping,
@@ -233,14 +232,9 @@ pub(crate) fn update_port_mapping_entry(
 
     let (port, _) = s.asic_id_to_port_link(asic_port_id)?;
 
-    let action_data = PortIdAction::SetPortNumber {
-        port_number: port.as_u8(),
-    };
+    let action_data = PortIdAction::SetPortNumber { port_number: port.as_u8() };
 
-    debug!(
-        s.log,
-        "update port id entry {} -> {:?}", match_key, action_data
-    );
+    debug!(s.log, "update port id entry {} -> {:?}", match_key, action_data);
 
     s.table_entry_update(
         TableType::McastEgressPortMapping,
@@ -257,18 +251,19 @@ pub(crate) fn del_port_mapping_entry(
 ) -> DpdResult<()> {
     let match_key = MatchKeyPortId::new(asic_port_id);
 
-    debug!(
-        s.log,
-        "delete port id entry {} -> {}", match_key, asic_port_id
-    );
+    debug!(s.log, "delete port id entry {} -> {}", match_key, asic_port_id);
 
     s.table_entry_del(TableType::McastEgressPortMapping, &match_key)
 }
 
 /// Dump the multicast port mapping table.
-pub(crate) fn port_mapping_table_dump(s: &Switch) -> DpdResult<views::Table> {
+pub(crate) fn port_mapping_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
     s.table_dump::<MatchKeyPortId, PortIdAction>(
         TableType::McastEgressPortMapping,
+        from_hardware,
     )
 }
 
@@ -283,10 +278,9 @@ pub(crate) fn port_mapping_counter_fetch(
     )
 }
 
-/// Structure to hold and manipulate the 256-bit port bitmap.
+/// 256-port bitmap (8 × 32-bit) for multicast egress decapsulation filtering.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PortBitmap {
-    // 8 x 32-bit values representing all 256 ports
     ports: [u32; 8],
 }
 
@@ -304,27 +298,21 @@ impl PortBitmap {
         self.ports[array_idx] |= mask; // Set the bit
     }
 
-    /// Remove a port from the bitmap
+    /// Remove a port from the bitmap.
     #[allow(dead_code)]
-    pub(crate) fn remove_port(&mut self, port: u16) {
+    pub(crate) fn remove_port(&mut self, port: u8) {
         let array_idx = (port >> 5) as usize;
         let bit_pos = port & 0x1F;
         let mask = 1u32 << bit_pos;
-
-        self.ports[array_idx] &= !mask; // Clear the bit
+        self.ports[array_idx] &= !mask;
     }
 
-    /// Check if a port is in the bitmap
+    /// Check if a port is in the bitmap.
     #[allow(dead_code)]
-    fn contains_port(&self, port: u16) -> bool {
-        if port >= 256 {
-            return false;
-        }
-
+    pub(crate) fn contains_port(&self, port: u8) -> bool {
         let array_idx = (port >> 5) as usize;
         let bit_pos = port & 0x1F;
         let mask = 1u32 << bit_pos;
-
         (self.ports[array_idx] & mask) != 0
     }
 
@@ -378,9 +366,20 @@ mod tests {
         assert!(bitmap.contains_port(5));
         assert!(bitmap.contains_port(10));
         assert!(bitmap.contains_port(255));
-        assert!(!bitmap.contains_port(256));
 
         bitmap.remove_port(10);
         assert!(!bitmap.contains_port(10));
+
+        // Test boundary conditions
+        bitmap.add_port(0);
+        assert!(bitmap.contains_port(0));
+        bitmap.remove_port(0);
+        assert!(!bitmap.contains_port(0));
+
+        // Test port at 32-bit boundary
+        bitmap.add_port(32);
+        assert!(bitmap.contains_port(32));
+        bitmap.add_port(64);
+        assert!(bitmap.contains_port(64));
     }
 }

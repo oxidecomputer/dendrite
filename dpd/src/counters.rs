@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 /// This module contains the support for reading the indirect counters defined
 /// by the p4 program.  While direct counters are attached to an existing table,
@@ -55,13 +55,21 @@ enum CounterId {
     Packet,
     DropPort,
     DropReason,
+    #[cfg(feature = "multicast")]
     EgressDropPort,
+    #[cfg(feature = "multicast")]
     EgressDropReason,
+    #[cfg(feature = "multicast")]
     Unicast,
+    #[cfg(feature = "multicast")]
     Multicast,
+    #[cfg(feature = "multicast")]
     MulticastExt,
+    #[cfg(feature = "multicast")]
     MulticastLL,
+    #[cfg(feature = "multicast")]
     MulticastUL,
+    #[cfg(feature = "multicast")]
     MulticastDrop,
 }
 
@@ -85,7 +93,7 @@ struct CounterDescription {
     p4_name: &'static str,
 }
 
-const COUNTERS: [CounterDescription; 14] = [
+const BASE_COUNTERS: [CounterDescription; 6] = [
     CounterDescription {
         id: CounterId::Service,
         client_name: "Service",
@@ -116,6 +124,12 @@ const COUNTERS: [CounterDescription; 14] = [
         client_name: "Ingress_Drop_Reason",
         p4_name: "pipe.Ingress.drop_reason_ctr",
     },
+];
+
+#[cfg(not(feature = "multicast"))]
+const MULTICAST_COUNTERS: [CounterDescription; 0] = [];
+#[cfg(feature = "multicast")]
+const MULTICAST_COUNTERS: [CounterDescription; 8] = [
     CounterDescription {
         id: CounterId::EgressDropPort,
         client_name: "Egress_Drop_Port",
@@ -160,7 +174,11 @@ const COUNTERS: [CounterDescription; 14] = [
 
 /// Get the list of names by which end users can refer to a counter.
 pub fn get_counter_names() -> DpdResult<Vec<String>> {
-    Ok(COUNTERS.iter().map(|c| c.client_name.to_string()).collect())
+    Ok(BASE_COUNTERS
+        .iter()
+        .chain(MULTICAST_COUNTERS.iter())
+        .map(|c| c.client_name.to_string())
+        .collect())
 }
 
 /// Fetch a counter by name from the switch's list of counters.  This call
@@ -276,6 +294,7 @@ enum DropReason {
     Ipv4Unrouteable,
     Ipv6Unrouteable,
     NatIngressMiss,
+    NatEgressBlocked,
     MulticastNoGroup,
     MulticastInvalidMac,
     MulticastCpuCopy,
@@ -309,14 +328,15 @@ impl TryFrom<u8> for DropReason {
             15 => Ok(DropReason::Ipv4Unrouteable),
             16 => Ok(DropReason::Ipv6Unrouteable),
             17 => Ok(DropReason::NatIngressMiss),
-            18 => Ok(DropReason::MulticastNoGroup),
-            19 => Ok(DropReason::MulticastInvalidMac),
-            20 => Ok(DropReason::MulticastCpuCopy),
-            21 => Ok(DropReason::MulticastSrcFiltered),
-            22 => Ok(DropReason::MulticastPathFiltered),
-            23 => Ok(DropReason::GeneveOptionsTooLong),
-            24 => Ok(DropReason::GeneveOptionMalformed),
-            25 => Ok(DropReason::GeneveOptionUnknown),
+            18 => Ok(DropReason::NatEgressBlocked),
+            19 => Ok(DropReason::MulticastNoGroup),
+            20 => Ok(DropReason::MulticastInvalidMac),
+            21 => Ok(DropReason::MulticastCpuCopy),
+            22 => Ok(DropReason::MulticastSrcFiltered),
+            23 => Ok(DropReason::MulticastPathFiltered),
+            24 => Ok(DropReason::GeneveOptionsTooLong),
+            25 => Ok(DropReason::GeneveOptionMalformed),
+            26 => Ok(DropReason::GeneveOptionUnknown),
             x => Err(format!("Unrecognized drop reason: {x}")),
         }
     }
@@ -340,12 +360,13 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
         }
         DropReason::Ipv4ChecksumErr => "ipv4_checksum_err".to_string(),
         DropReason::Ipv4TtlInvalid => "ipv4_ttl_invalid".to_string(),
-        DropReason::Ipv4TtlExceeded => "ipv4_ttl_exceeded".to_string(),
         DropReason::Ipv6TtlInvalid => "ipv6_ttl_invalid".to_string(),
+        DropReason::Ipv4TtlExceeded => "ipv4_ttl_exceeded".to_string(),
         DropReason::Ipv6TtlExceeded => "ipv6_ttl_exceeded".to_string(),
-        DropReason::Ipv4Unrouteable => "ipv6_unrouteable".to_string(),
-        DropReason::Ipv6Unrouteable => "ipv4_unrouteable".to_string(),
+        DropReason::Ipv4Unrouteable => "ipv4_unrouteable".to_string(),
+        DropReason::Ipv6Unrouteable => "ipv6_unrouteable".to_string(),
         DropReason::NatIngressMiss => "nat_ingress_miss".to_string(),
+        DropReason::NatEgressBlocked => "nat_engress_blocked".to_string(),
         DropReason::MulticastNoGroup => "multicast_no_group".to_string(),
         DropReason::MulticastInvalidMac => "multicast_invalid_mac".to_string(),
         DropReason::MulticastCpuCopy => "multicast_cpu_copy".to_string(),
@@ -414,19 +435,20 @@ pub async fn get_values(
         let key = match counter_id {
             CounterId::Packet => packet_label(idx.idx),
             CounterId::Service => service_label(idx.idx as u8),
-            CounterId::Ingress
-            | CounterId::Egress
-            | CounterId::EgressDropPort
-            | CounterId::DropPort
+            CounterId::Ingress | CounterId::Egress | CounterId::DropPort => {
+                port_label(switch, idx.idx).await
+            }
+            CounterId::DropReason => reason_label(idx.idx as u8)?,
+            #[cfg(feature = "multicast")]
+            CounterId::EgressDropPort
             | CounterId::Unicast
             | CounterId::Multicast
             | CounterId::MulticastExt
             | CounterId::MulticastLL
             | CounterId::MulticastUL
             | CounterId::MulticastDrop => port_label(switch, idx.idx).await,
-            CounterId::DropReason | CounterId::EgressDropReason => {
-                reason_label(idx.idx as u8)?
-            }
+            #[cfg(feature = "multicast")]
+            CounterId::EgressDropReason => reason_label(idx.idx as u8)?,
         };
 
         if let Some(key) = key {
@@ -458,7 +480,8 @@ pub fn reset(switch: &Switch, counter_name: String) -> DpdResult<()> {
 /// Create internal structures for managing the counters built into sidecar.p4
 pub fn init(hdl: &Handle) -> anyhow::Result<BTreeMap<String, Mutex<Counter>>> {
     let mut counters = BTreeMap::new();
-    for c in COUNTERS {
+
+    for c in BASE_COUNTERS.iter().chain(MULTICAST_COUNTERS.iter()) {
         counters.insert(
             c.client_name.to_string().to_lowercase(),
             Mutex::new(Counter {

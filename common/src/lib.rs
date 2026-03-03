@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::collections::BTreeSet;
 use std::convert::TryFrom;
@@ -11,6 +11,7 @@ use std::sync::Once;
 use std::time::Duration;
 use std::time::Instant;
 
+pub mod attached_subnet;
 pub mod counters;
 pub mod logging;
 pub mod nat;

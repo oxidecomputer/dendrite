@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
@@ -14,10 +14,11 @@ use oxnet::Ipv4Net;
 use oxnet::Ipv6Net;
 use reqwest::StatusCode;
 
-use crate::integration_tests::common::prelude::*;
 use dpd_client::ClientInfo;
 use dpd_client::ResponseValue;
 use dpd_client::types;
+
+use crate::integration_tests::common::prelude::*;
 
 // The expected sizes of each table.  The values are copied from constants.p4.
 //
@@ -31,14 +32,25 @@ use dpd_client::types;
 // oximeter, which will let this test query dpd for the table size rather than
 // hardcoding it below.
 //
-// NOTE for this entry, we expect the size to be 4095, but there are 4 entries
-// that are unaccounted for. This is being tracked in issue #1013.
-// This table has further shrunk to 4022 entries with the open source
-// compiler.  That is being tracked as issue #1092, which will presumably
-// subsume #1013.
-// update: with the move to 8192 entries we're now at 8190 entries.
-const IPV4_LPM_SIZE: usize = 8190; // ipv4 forwarding table
+// The LPM tables are packed using a cuckoo hash algorithm. The conflict
+// resolution approach can result in some slots not being available for some
+// patterns of entries. Exactly which tables and which entries are unavailable
+// can change depending on table layout on the ASIC. All of this means that it
+// is normal for these table sizes to change slightly after updating the P4
+// code. If the table size appears to change dramatically, that's worth
+// investigating. If it only changes by an entry or two, it's fine to just
+// adjust the constant below to match the observed result.
+//
+#[cfg(feature = "multicast")]
+const IPV4_LPM_SIZE: usize = 8175; // ipv4 forwarding table
+#[cfg(not(feature = "multicast"))]
+const IPV4_LPM_SIZE: usize = 8187; // ipv4 forwarding table
+
+#[cfg(feature = "multicast")]
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
+#[cfg(not(feature = "multicast"))]
+const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
+
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports
 const IPV4_NAT_TABLE_SIZE: usize = 1024; // nat routing table
@@ -46,8 +58,10 @@ const IPV6_NAT_TABLE_SIZE: usize = 1024; // nat routing table
 const IPV4_ARP_SIZE: usize = 512; // arp cache
 const IPV6_NEIGHBOR_SIZE: usize = 512; // ipv6 neighbor cache
 /// The size of the multicast table related to replication on
-/// admin-scoped (internal) multicast groups.
+/// admin-local (internal) multicast groups.
+#[cfg(feature = "multicast")]
 const MULTICAST_TABLE_SIZE: usize = 1024;
+#[cfg(feature = "multicast")]
 const MCAST_TAG: &str = "mcast_table_test"; // multicast group tag
 
 // The result of a table insert or delete API operation.
@@ -60,9 +74,7 @@ fn gen_ipv4_addr(idx: usize) -> Ipv4Addr {
 }
 
 fn gen_ipv6_addr(idx: usize) -> Ipv6Addr {
-    Ipv6Addr::new(
-        0xfc00, 0xaabb, 0xccdd, 0x18, 0x8, 0x20ff, 0xfe1d, idx as u16,
-    )
+    Ipv6Addr::new(0xfc00, 0xaabb, 0xccdd, 0x18, 0x8, 0x20ff, 0xfe1d, idx as u16)
 }
 
 fn gen_ipv4_cidr(idx: usize) -> Ipv4Net {
@@ -73,16 +85,21 @@ fn gen_ipv6_cidr(idx: usize) -> Ipv6Net {
     Ipv6Net::new(gen_ipv6_addr(idx), 128).unwrap()
 }
 
-// Generates valid IPv6 multicast addresses that are admin-scoped.
+// Generates valid IPv6 multicast addresses that are admin-local (scope 4).
+#[cfg(feature = "multicast")]
 fn gen_ipv6_multicast_addr(idx: usize) -> Ipv6Addr {
-    // Use admin-scoped multicast addresses (ff04::/16, ff05::/16, ff08::/16)
+    // Use admin-local multicast addresses (ff04::/16)
     // This ensures they will be created as internal groups
-    let scope = match idx % 3 {
-        0 => 0xFF04, // admin-scoped
-        1 => 0xFF05, // admin-scoped
-        _ => 0xFF08, // admin-scoped
-    };
-    Ipv6Addr::new(scope, 0, 0, 0, 0, 0, 0, (1000 + idx) as u16)
+    Ipv6Addr::new(
+        ADMIN_LOCAL_MULTICAST_PREFIX,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        (1000 + idx) as u16,
+    )
 }
 
 // For each table we want to test, we define functions to insert, delete, and
@@ -295,7 +312,16 @@ impl TableTest for types::Ipv4Nat {
         let external_ip = Ipv4Addr::new(192, 168, 0, 1);
 
         let tgt = types::NatTarget {
-            internal_ip: Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 1),
+            internal_ip: Ipv6Addr::new(
+                ADMIN_LOCAL_MULTICAST_PREFIX,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+            ),
             inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
             vni: 0.into(),
         };
@@ -307,10 +333,7 @@ impl TableTest for types::Ipv4Nat {
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let external_ip = Ipv4Addr::new(192, 168, 0, 1);
-        switch
-            .client
-            .nat_ipv4_delete(&external_ip, idx as u16)
-            .await
+        switch.client.nat_ipv4_delete(&external_ip, idx as u16).await
     }
 
     async fn count_entries(switch: &Switch) -> usize {
@@ -348,10 +371,7 @@ impl TableTest for types::Ipv6Nat {
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let external_ip = "fd00:1122:1122:0101::4".parse::<Ipv6Addr>().unwrap();
-        switch
-            .client
-            .nat_ipv6_delete(&external_ip, idx as u16)
-            .await
+        switch.client.nat_ipv6_delete(&external_ip, idx as u16).await
     }
 
     async fn count_entries(switch: &Switch) -> usize {
@@ -379,13 +399,13 @@ impl TableTest for RouteV4 {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
         let route = types::Ipv4RouteUpdate {
             cidr: gen_ipv4_cidr(idx),
-            target: types::Ipv4Route {
+            target: types::RouteTarget::V4(types::Ipv4Route {
                 tag: switch.client.inner().tag.clone(),
                 port_id,
                 link_id,
                 tgt_ip: "10.10.10.1".parse::<Ipv4Addr>().unwrap().into(),
                 vlan_id: None,
-            },
+            }),
             replace: false,
         };
         switch.client.route_ipv4_set(&route).await
@@ -456,9 +476,9 @@ impl TableTest for RouteV6 {
 async fn test_routev6_full() -> TestResult {
     test_table_capacity::<RouteV6, (), ()>(IPV6_LPM_SIZE).await
 }
-
+#[cfg(feature = "multicast")]
 struct MulticastReplicationTableTest {}
-
+#[cfg(feature = "multicast")]
 impl TableTest<types::MulticastGroupUnderlayResponse, ()>
     for MulticastReplicationTableTest
 {
@@ -469,12 +489,12 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
         let (port_id1, link_id1) = switch.link_id(PhysPort(11)).unwrap();
         let (port_id2, link_id2) = switch.link_id(PhysPort(12)).unwrap();
 
-        // Only IPv6 admin-scoped multicast addresses for replication table testing
+        // Only IPv6 admin-local multicast addresses for replication table testing
         let group_ip = gen_ipv6_multicast_addr(idx);
 
-        // Admin-scoped IPv6 groups are internal with replication info and members
+        // Admin-local IPv6 groups are internal with replication info and members
         let internal_entry = types::MulticastGroupCreateUnderlayEntry {
-            group_ip: types::AdminScopedIpv6(group_ip),
+            group_ip: types::UnderlayMulticastIpv6(group_ip),
             tag: Some(MCAST_TAG.to_string()),
             members: vec![
                 types::MulticastGroupMember {
@@ -489,22 +509,24 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
                 },
             ],
         };
-        switch
-            .client
-            .multicast_group_create_underlay(&internal_entry)
-            .await
+        switch.client.multicast_group_create_underlay(&internal_entry).await
     }
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let ip = IpAddr::V6(gen_ipv6_multicast_addr(idx));
-        switch.client.multicast_group_delete(&ip).await
+        let del_tag: types::MulticastTag =
+            MCAST_TAG.parse().expect("tag should parse");
+        switch.client.multicast_group_delete(&ip, &del_tag).await
     }
 
     async fn count_entries(switch: &Switch) -> usize {
         // Count only underlay groups with our test tag (since this tests replication table capacity)
         switch
             .client
-            .multicast_groups_list_by_tag_stream(MCAST_TAG, None)
+            .multicast_groups_list_by_tag_stream(
+                &MCAST_TAG.parse::<types::MulticastTag>().unwrap(),
+                None,
+            )
             .try_collect::<Vec<_>>()
             .await
             .expect("Should be able to list groups by tag paginated")
@@ -512,6 +534,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
     }
 }
 
+#[cfg(feature = "multicast")]
 #[tokio::test]
 #[ignore]
 async fn test_multicast_replication_table_full() -> TestResult {

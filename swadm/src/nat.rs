@@ -2,11 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::convert::TryFrom;
 use std::io::{Write, stdout};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv6Addr};
 
 use anyhow::Context;
 use clap::Subcommand;
@@ -14,8 +14,7 @@ use colored::*;
 use futures::stream::TryStreamExt;
 use tabwriter::TabWriter;
 
-use common::nat;
-use common::network::MacAddr;
+use common::network::{MacAddr, Vni};
 use dpd_client::Client;
 use dpd_client::types;
 
@@ -27,7 +26,7 @@ pub enum Nat {
     List {
         /// limit to the given external IP address",
         #[clap(short = 'e')]
-        external: Option<Ipv4Addr>,
+        external: Option<IpAddr>,
     },
     /// get a single NAT reservation
     Get {
@@ -57,7 +56,7 @@ pub enum Nat {
         inner: MacAddr,
         /// Geneve VNI
         #[clap(short = 'v')]
-        vni: nat::Vni,
+        vni: Vni,
     },
     /// delete a single NAT reservation
     Del {
@@ -70,16 +69,26 @@ pub enum Nat {
 
 async fn nat_list(
     client: &Client,
-    external: Option<Ipv4Addr>,
+    external: Option<IpAddr>,
 ) -> anyhow::Result<()> {
     // Collect all addresses we're listing mappings for.
-    let addrs = match external {
-        Some(a) => vec![a],
-        None => client
-            .nat_ipv4_addresses_list_stream(None)
-            .try_collect()
-            .await
-            .context("failed to list IPv4 addresses for NAT")?,
+    let (v4_addrs, v6_addrs) = match external {
+        Some(external) => match external {
+            IpAddr::V4(v4) => (vec![v4], vec![]),
+            IpAddr::V6(v6) => (vec![], vec![v6]),
+        },
+        None => (
+            client
+                .nat_ipv4_addresses_list_stream(None)
+                .try_collect()
+                .await
+                .context("failed to list IPv4 addresses for NAT")?,
+            client
+                .nat_ipv6_addresses_list_stream(None)
+                .try_collect()
+                .await
+                .context("failed to list IPv6 addresses for NAT")?,
+        ),
     };
 
     let mut tw = TabWriter::new(stdout());
@@ -94,10 +103,28 @@ async fn nat_list(
         "VNI".underline()
     )?;
 
-    for addr in addrs {
+    for addr in v4_addrs {
         let mut entries = client.nat_ipv4_list_stream(&addr, None);
         while let Some(entry) = entries.try_next().await.context(format!(
             "failed to get IPv4 mappings for address {addr}"
+        ))? {
+            writeln!(
+                &mut tw,
+                "{}\t{}\t{}\t{}\t{}\t{}",
+                entry.external,
+                entry.low,
+                entry.high,
+                entry.target.internal_ip,
+                MacAddr::from(entry.target.inner_mac),
+                entry.target.vni.0,
+            )?;
+        }
+    }
+
+    for addr in v6_addrs {
+        let mut entries = client.nat_ipv6_list_stream(&addr, None);
+        while let Some(entry) = entries.try_next().await.context(format!(
+            "failed to get IPv6 mappings for address {addr}"
         ))? {
             writeln!(
                 &mut tw,
@@ -127,7 +154,7 @@ async fn nat_get(
                 .nat_ipv4_get(&ipv4, port)
                 .await
                 .map(|r| {
-                    nat::NatTarget::try_from(r.into_inner())
+                    common::network::NatTarget::try_from(r.into_inner())
                         .expect("Invalid NAT target from server")
                 })
                 .context("failed to get IPv4 NAT mapping")?;
@@ -138,7 +165,7 @@ async fn nat_get(
                 .nat_ipv6_get(&ipv6, port)
                 .await
                 .map(|r| {
-                    nat::NatTarget::try_from(r.into_inner())
+                    common::network::NatTarget::try_from(r.into_inner())
                         .expect("Invalid NAT target from server")
                 })
                 .context("failed to get IPv6 NAT mapping")?;
@@ -155,7 +182,7 @@ async fn nat_add(
     high_port: u16,
     internal_ip: Ipv6Addr,
     inner_mac: MacAddr,
-    vni: nat::Vni,
+    vni: Vni,
 ) -> anyhow::Result<()> {
     let tgt = types::NatTarget {
         internal_ip,
@@ -199,14 +226,9 @@ pub async fn nat_cmd(client: &Client, n: Nat) -> anyhow::Result<()> {
     match n {
         Nat::List { external } => nat_list(client, external).await,
         Nat::Get { external, port } => nat_get(client, external, port).await,
-        Nat::Add {
-            external,
-            low,
-            high,
-            internal,
-            inner,
-            vni,
-        } => nat_add(client, external, low, high, internal, inner, vni).await,
+        Nat::Add { external, low, high, internal, inner, vni } => {
+            nat_add(client, external, low, high, internal, inner, vni).await
+        }
         Nat::Del { external, port } => nat_del(client, external, port).await,
     }
 }

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Public API view types, exposing the internal Dendrite data in a manner
 //! suitable for API clients.
@@ -176,9 +176,6 @@ pub struct TableCounterEntry {
 
 impl TableCounterEntry {
     pub fn new(key: impl aal::MatchParse, data: aal::CounterData) -> Self {
-        TableCounterEntry {
-            keys: key.key_values(),
-            data,
-        }
+        TableCounterEntry { keys: key.key_values(), data }
     }
 }

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
@@ -21,19 +21,13 @@ async fn test_api() -> TestResult {
 
     switch
         .client
-        .loopback_ipv4_create(&Ipv4Entry {
-            tag: "test".into(),
-            addr: lo4,
-        })
+        .loopback_ipv4_create(&Ipv4Entry { tag: "test".into(), addr: lo4 })
         .await
         .expect("Should be able to create IPv4 loopback addr");
 
     switch
         .client
-        .loopback_ipv6_create(&Ipv6Entry {
-            tag: "test".into(),
-            addr: lo6,
-        })
+        .loopback_ipv6_create(&Ipv6Entry { tag: "test".into(), addr: lo6 })
         .await
         .expect("Should be able to create IPv6 loopback addr");
 
@@ -53,19 +47,13 @@ async fn test_api() -> TestResult {
 
     switch
         .client
-        .loopback_ipv4_create(&Ipv4Entry {
-            tag: "test".into(),
-            addr: lo4,
-        })
+        .loopback_ipv4_create(&Ipv4Entry { tag: "test".into(), addr: lo4 })
         .await
         .expect("IPv4 loopback add should be idempotent");
 
     switch
         .client
-        .loopback_ipv6_create(&Ipv6Entry {
-            tag: "test".into(),
-            addr: lo6,
-        })
+        .loopback_ipv6_create(&Ipv6Entry { tag: "test".into(), addr: lo6 })
         .await
         .expect("IPv6 loopback add should be idempotent");
 

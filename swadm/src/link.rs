@@ -2,9 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::collections::HashMap;
+use std::convert::From;
 use std::io::{Write, stdout};
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -503,7 +504,7 @@ pub enum LinkProp {
     #[clap(visible_alias = "an")]
     Autoneg,
     /// Fetch whether nat-only restrictions are enabled for the link.
-    NatOnly,
+    Uplink,
     /// Fetch whether the link is enabled.
     #[clap(visible_alias = "ena")]
     Enabled,
@@ -521,25 +522,54 @@ pub enum LinkProp {
     Prbs,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum OnOff {
+    On,
+    Off,
+}
+
+impl FromStr for OnOff {
+    type Err = anyhow::Error;
+
+    // Allow on/true or off/false to be friendly to users with the original
+    // syntax stuck in their fingers.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
+            "true" | "on" => OnOff::On,
+            "false" | "off" => OnOff::Off,
+            _ => bail!("must be Off or On"),
+        })
+    }
+}
+
+impl From<OnOff> for bool {
+    fn from(value: OnOff) -> Self {
+        match value {
+            OnOff::On => true,
+            OnOff::Off => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Subcommand)]
 pub enum SetLinkProp {
     /// Set the MAC address of the link.
     Mac { mac: MacAddr },
     /// Set the KR mode for the link.
-    Kr { kr: bool },
+    Kr { kr: OnOff },
     /// Set whether autonegotiation is enabled for the link.
     #[clap(visible_alias = "an")]
-    Autoneg { autoneg: bool },
+    Autoneg { autoneg: OnOff },
     /// Set whether nat-only restrictions are enabled for the link.
-    NatOnly { nat_only: bool },
+    Uplink { uplink: OnOff },
     /// Set whether the link is enabled.
     #[clap(visible_alias = "ena")]
-    Enabled { enabled: bool },
+    Enabled { enabled: OnOff },
     /// Assign an IP address to the link.
     Ip { ip: IpAddr },
     /// Set  whether the link is configured for IPv6
     #[clap(visible_alias = "ipv6")]
-    Ipv6Enabled { enabled: bool },
+    Ipv6Enabled { enabled: OnOff },
     /// Set the PRBS mode for the link. (7, 9, 11, 15, 23, 31, or mission/off)
     Prbs { prbs: PortPrbsMode },
 }
@@ -639,9 +669,7 @@ async fn link_fec_rs_counters(
             .map(|r| r.into_inner())
             .context("failed to get FEC counters")?;
         counters.sort_by(|a, b| {
-            a.port_id
-                .cmp(&b.port_id)
-                .then_with(|| a.link_id.cmp(&b.link_id))
+            a.port_id.cmp(&b.port_id).then_with(|| a.link_id.cmp(&b.link_id))
         });
         counters
     };
@@ -790,11 +818,7 @@ fn port_rmon_counters_brief(old: &RMonCounters, new: &RMonCounters) {
 
 macro_rules! print_one {
     ($field:ident, $old:ident, $new:ident) => {
-        println!(
-            "{:35} {:>10}",
-            stringify!($field),
-            $new.$field - $old.$field
-        )
+        println!("{:35} {:>10}", stringify!($field), $new.$field - $old.$field)
     };
 }
 
@@ -1037,9 +1061,7 @@ async fn link_serdes_eye(
         print_eye_fields!("eye3", eye3_data);
         Ok(())
     } else {
-        Err(anyhow::anyhow!(
-            "link_eye_get() returned mixed NRZ and PAM4 data"
-        ))
+        Err(anyhow::anyhow!("link_eye_get() returned mixed NRZ and PAM4 data"))
     }
 }
 
@@ -1123,13 +1145,7 @@ async fn link_serdes_tx_eq_set(
     post1: Option<i32>,
     post2: Option<i32>,
 ) -> anyhow::Result<()> {
-    let settings = types::TxEq {
-        pre2,
-        pre1,
-        main,
-        post1,
-        post2,
-    };
+    let settings = types::TxEq { pre2, pre1, main, post1, post2 };
     let port = link.port_id;
     let link = link.link_id;
     client
@@ -1515,14 +1531,7 @@ fn display_link_history(
 
 pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
     match link {
-        Link::Create(LinkCreate {
-            port_id,
-            speed,
-            lane,
-            fec,
-            autoneg,
-            kr,
-        }) => {
+        Link::Create(LinkCreate { port_id, speed, lane, fec, autoneg, kr }) => {
             let params = types::LinkCreate {
                 lane,
                 speed: speed.into(),
@@ -1572,13 +1581,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 tw.flush()?;
             }
         }
-        Link::List {
-            port_id,
-            parseable,
-            fields,
-            sep,
-            list_fields,
-        } => {
+        Link::List { port_id, parseable, fields, sep, list_fields } => {
             if list_fields {
                 print_link_fields();
                 return Ok(());
@@ -1605,21 +1608,13 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 tw.flush()?;
             }
         }
-        Link::Delete {
-            link_path: LinkPath { port_id, link_id },
-        } => {
+        Link::Delete { link_path: LinkPath { port_id, link_id } } => {
             client
                 .link_delete(&port_id, &link_id)
                 .await
                 .context("failed to delete link")?;
         }
-        Link::ListAll {
-            parseable,
-            fields,
-            sep,
-            list_fields,
-            filter,
-        } => {
+        Link::ListAll { parseable, fields, sep, list_fields, filter } => {
             if list_fields {
                 print_link_fields();
                 return Ok(());
@@ -1672,9 +1667,9 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                         .into_inner();
                     println!("{an}");
                 }
-                LinkProp::NatOnly => {
+                LinkProp::Uplink => {
                     let no = client
-                        .link_nat_only_get(&link.port_id, &link.link_id)
+                        .link_uplink_get(&link.port_id, &link.link_id)
                         .await
                         .context("failed to fetch nat-onlt mode")?
                         .into_inner();
@@ -1781,29 +1776,44 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
             }
             SetLinkProp::Kr { kr } => {
                 client
-                    .link_kr_set(&link.port_id, &link.link_id, kr)
+                    .link_kr_set(&link.port_id, &link.link_id, kr.into())
                     .await
                     .context("failed to set KR mode")?;
             }
             SetLinkProp::Autoneg { autoneg } => {
                 client
-                    .link_autoneg_set(&link.port_id, &link.link_id, autoneg)
+                    .link_autoneg_set(
+                        &link.port_id,
+                        &link.link_id,
+                        autoneg.into(),
+                    )
                     .await
                     .context("failed to set autonegotiation mode")?;
             }
-            SetLinkProp::NatOnly { nat_only } => {
+            SetLinkProp::Uplink { uplink } => {
                 client
-                    .link_nat_only_set(&link.port_id, &link.link_id, nat_only)
+                    .link_uplink_set(
+                        &link.port_id,
+                        &link.link_id,
+                        uplink.into(),
+                    )
                     .await
-                    .context("failed to set nat_only mode")?;
+                    .context("failed to set uplink mode")?;
             }
             SetLinkProp::Enabled { enabled } => {
                 client
-                    .link_enabled_set(&link.port_id, &link.link_id, enabled)
+                    .link_enabled_set(
+                        &link.port_id,
+                        &link.link_id,
+                        enabled.into(),
+                    )
                     .await
                     .context(format!(
                         "failed to {} link",
-                        if enabled { "enable" } else { "disable" }
+                        match enabled {
+                            OnOff::On => "enable",
+                            OnOff::Off => "disable",
+                        }
                     ))?;
             }
             SetLinkProp::Ip { ip } => match ip {
@@ -1827,7 +1837,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                     .link_ipv6_enabled_set(
                         &link.port_id,
                         &link.link_id,
-                        enabled,
+                        enabled.into(),
                     )
                     .await
                     .context("failed to set ipv6-enabled flag")?;
@@ -1851,12 +1861,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 .await
                 .with_context(|| "failed to disable link")?;
         }
-        Link::History {
-            link,
-            raw,
-            reverse,
-            n,
-        } => {
+        Link::History { link, raw, reverse, n } => {
             let history = client
                 .link_history_get(&link.port_id, &link.link_id)
                 .await
@@ -1892,11 +1897,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
             }
         },
         Link::Counters { cmd: counters } => match counters {
-            LinkCounters::Rmon {
-                link,
-                level,
-                interval,
-            } => {
+            LinkCounters::Rmon { link, level, interval } => {
                 link_rmon_counters(client, &link, level, interval)
                     .await
                     .context("failed to fetch link RMON counters")?;
@@ -1997,9 +1998,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
             post2,
         } => {
             let port_id = &link.port_id;
-            let mut body = types::PortSettings {
-                links: HashMap::default(),
-            };
+            let mut body = types::PortSettings { links: HashMap::default() };
 
             let txeq = if pre1.is_none()
                 && pre2.is_none()
@@ -2015,13 +2014,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                     post2: Some(x),
                 })
             } else {
-                Some(types::TxEq {
-                    pre1,
-                    pre2,
-                    main,
-                    post1,
-                    post2,
-                })
+                Some(types::TxEq { pre1, pre2, main, post1, post2 })
             };
             body.links.insert(
                 String::from("0"),

@@ -2,19 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::{
     collections::BTreeMap,
-    net::Ipv4Addr,
     sync::{Arc, RwLock},
 };
 
 use anyhow::{Result, anyhow};
-use common::{
-    nat::{NatTarget, Vni},
-    network::MacAddr,
-};
+use common::network::{MacAddr, NatTarget, Vni};
 use internal_dns_resolver::Resolver;
 use internal_dns_types::names::ServiceName;
 use slog::{Logger, debug, error, info, o};
@@ -27,12 +23,12 @@ use crate::{Switch, nat, types::DpdError::Exists};
 use nexus_client::Client as NexusClient;
 use nexus_client::types::NatEntryView;
 
-static IPV4_NAT_INTERVAL: Duration = Duration::from_secs(30);
+static NAT_INTERVAL: Duration = Duration::from_secs(30);
 pub const NEXUS_INTERNAL_PORT: u16 = 12221;
 
 #[derive(Ord, Eq, PartialEq, PartialOrd)]
 pub enum Task {
-    Ipv4Nat,
+    Nat,
 }
 
 pub struct WorkflowServer {
@@ -43,7 +39,7 @@ pub struct WorkflowServer {
 impl WorkflowServer {
     pub fn new(log: Logger) -> Self {
         let timers = BTreeMap::from([(
-            Task::Ipv4Nat,
+            Task::Nat,
             Arc::new(RwLock::new(Instant::now())),
         )]);
         Self { log, timers }
@@ -55,11 +51,11 @@ impl WorkflowServer {
         smf_rx: tokio::sync::watch::Receiver<()>,
     ) -> Result<()> {
         info!(self.log, "starting workflow server");
-        let ipv4_nat_log = self.log.new(o!("task" => "ipv4_nat"));
-        let ipv4_nat_timer = self
+        let nat_log = self.log.new(o!("task" => "nat"));
+        let nat_timer = self
             .timers
-            .get(&Task::Ipv4Nat)
-            .ok_or(anyhow!("task timer not found for Ipv4Nat"))?
+            .get(&Task::Nat)
+            .ok_or(anyhow!("task timer not found for Nat"))?
             .clone();
         let nexus_address = switch
             .config
@@ -76,12 +72,7 @@ impl WorkflowServer {
                     .await?
             }
         };
-        spawn(ipv4_nat_workflow(
-            ipv4_nat_log,
-            switch.clone(),
-            ipv4_nat_timer,
-            client,
-        ));
+        spawn(nat_workflow(nat_log, switch.clone(), nat_timer, client));
         Ok(())
     }
 
@@ -99,28 +90,25 @@ impl WorkflowServer {
     }
 }
 
-pub async fn ipv4_nat_workflow(
+pub async fn nat_workflow(
     log: Logger,
     switch: Arc<Switch>,
     timer: Arc<RwLock<Instant>>,
     client: NexusClient,
 ) {
-    debug!(log, "starting ipv4 nat reconciliation loop");
+    debug!(log, "starting nat reconciliation loop");
     loop {
         wait(timer.clone()).await;
-        debug!(log, "starting ipv4 nat reconciliation");
+        debug!(log, "starting nat reconciliation");
 
-        let generation = nat::get_ipv4_nat_generation(&switch);
-        debug!(
-            log,
-            "we are currently at ipv4 nat generation: {}", generation
-        );
+        let generation = nat::get_nat_generation(&switch);
+        debug!(log, "we are currently at nat generation: {}", generation);
 
         let mut updates =
             match fetch_nat_updates(&client, generation, &log).await {
                 Some(value) => value,
                 None => {
-                    update_timer(timer.clone(), IPV4_NAT_INTERVAL);
+                    update_timer(timer.clone(), NAT_INTERVAL);
                     continue;
                 }
             };
@@ -138,7 +126,7 @@ pub async fn ipv4_nat_workflow(
         }
         debug!(log, "no further updates found");
 
-        update_timer(timer.clone(), IPV4_NAT_INTERVAL);
+        update_timer(timer.clone(), NAT_INTERVAL);
     }
 }
 
@@ -148,6 +136,11 @@ async fn fetch_nat_updates(
     log: &Logger,
 ) -> Option<nexus_client::ResponseValue<Vec<NatEntryView>>> {
     debug!(log, "checking Nexus for updates");
+    // TODO note that this is no longer specific to IPv4 in nexus, but right
+    // now nexus internal API names are unchangable until client side
+    // versioning gets going.
+    //
+    // https://github.com/oxidecomputer/omicron/issues/9290
     let updates = match client.ipv4_nat_changeset(generation, 100).await {
         Ok(response) => response,
         Err(e) => {
@@ -166,13 +159,7 @@ fn apply_updates(
     updates: Vec<NatEntryView>,
 ) -> i64 {
     for entry in &updates {
-        let nat_ip: Ipv4Addr = match entry.external_address {
-            std::net::IpAddr::V4(x) => x,
-            std::net::IpAddr::V6(x) => {
-                error!(switch.log, "unexpected IPv6 address: {x}");
-                continue;
-            }
-        };
+        let nat_ip = entry.external_address;
 
         let vni = match Vni::new(*entry.vni).ok_or(anyhow!("invalid vni")) {
             Ok(vni) => vni,
@@ -189,7 +176,7 @@ fn apply_updates(
         };
 
         if entry.deleted {
-            if let Err(e) = nat::clear_ipv4_mapping(
+            if let Err(e) = nat::clear_mapping(
                 switch,
                 nat_ip,
                 entry.first_port,
@@ -199,7 +186,7 @@ fn apply_updates(
                 continue;
             };
         } else {
-            while let Err(e) = nat::set_ipv4_mapping(
+            while let Err(e) = nat::set_mapping(
                 switch,
                 nat_ip,
                 entry.first_port,
@@ -208,7 +195,7 @@ fn apply_updates(
             ) {
                 let final_error = match e {
                     Exists(_) => {
-                        match nat::clear_overlapping_ipv4_mappings(
+                        match nat::clear_overlapping_mappings(
                             switch,
                             nat_ip,
                             entry.first_port,
@@ -229,7 +216,7 @@ fn apply_updates(
         }
         // update gen if nat entry update was successful
         generation = entry.r#gen;
-        nat::set_ipv4_nat_generation(switch, generation);
+        nat::set_nat_generation(switch, generation);
     }
     generation
 }
@@ -270,7 +257,9 @@ async fn nexus_client_with_resolver(
             } else {
                 let resolver =
                     Resolver::new_from_addrs(log.clone(), &dns_servers)?;
-                let client = reqwest::ClientBuilder::new()
+                // Use reqwest 0.12 to match the omicron nexus-client
+                // git dependency, which still expects a 0.12 client.
+                let client = reqwest012::ClientBuilder::new()
                     .dns_resolver(resolver.into())
                     .build()?;
                 let dns_name = ServiceName::Nexus.srv_name();

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::net::IpAddr;
 use std::sync::Mutex;
@@ -49,12 +49,7 @@ pub struct PacketQueue {
 impl PacketQueue {
     /// Create a new, empty packet queue
     pub fn new(name: impl ToString, max: usize) -> Self {
-        PacketQueue {
-            name: name.to_string(),
-            max,
-            cnt: 0,
-            queue: Vec::new(),
-        }
+        PacketQueue { name: name.to_string(), max, cnt: 0, queue: Vec::new() }
     }
 
     /// Pull all of the packets from the queue that were waiting on the given IP
@@ -80,10 +75,7 @@ impl PacketQueue {
                 "iface" => &self.name,
                 "idx" => qp.idx);
 
-                pkts.push(Packet {
-                    hdrs: qp.hdrs,
-                    body: qp.body,
-                });
+                pkts.push(Packet { hdrs: qp.hdrs, body: qp.body });
             }
         }
         pkts

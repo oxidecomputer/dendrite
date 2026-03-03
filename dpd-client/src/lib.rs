@@ -2,13 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Client library for the Dendrite data plane daemon.
 
 pub use common::ROLLBACK_FAILURE_ERROR_CODE;
 use common::counters;
-use common::nat;
 use common::network;
 use common::ports;
 use slog::Logger;
@@ -56,18 +55,12 @@ progenitor::generate_api!(
 impl Client {
     /// Helper to create an `Ipv4Entry` from an address, using the client's tag.
     pub fn ipv4_entry(&self, addr: Ipv4Addr) -> types::Ipv4Entry {
-        types::Ipv4Entry {
-            tag: self.inner().tag.clone(),
-            addr,
-        }
+        types::Ipv4Entry { tag: self.inner().tag.clone(), addr }
     }
 
     /// Helper to create an `Ipv6Entry` from an address, using the client's tag.
     pub fn ipv6_entry(&self, addr: Ipv6Addr) -> types::Ipv6Entry {
-        types::Ipv6Entry {
-            tag: self.inner().tag.clone(),
-            addr,
-        }
+        types::Ipv6Entry { tag: self.inner().tag.clone(), addr }
     }
 }
 
@@ -247,19 +240,13 @@ impl From<network::MacAddr> for types::MacAddr {
 
 impl From<types::Ipv6Entry> for ports::Ipv6Entry {
     fn from(e: types::Ipv6Entry) -> Self {
-        ports::Ipv6Entry {
-            tag: e.tag,
-            addr: e.addr,
-        }
+        ports::Ipv6Entry { tag: e.tag, addr: e.addr }
     }
 }
 
 impl From<types::Ipv4Entry> for ports::Ipv4Entry {
     fn from(e: types::Ipv4Entry) -> Self {
-        ports::Ipv4Entry {
-            tag: e.tag,
-            addr: e.addr,
-        }
+        ports::Ipv4Entry { tag: e.tag, addr: e.addr }
     }
 }
 
@@ -307,25 +294,41 @@ impl From<counters::RMonCounters> for types::RMonCounters {
     }
 }
 
-impl TryFrom<types::Vni> for nat::Vni {
+impl TryFrom<types::Vni> for network::Vni {
     type Error = String;
 
-    fn try_from(t: types::Vni) -> Result<nat::Vni, String> {
-        nat::Vni::new(t.0)
+    fn try_from(t: types::Vni) -> Result<network::Vni, String> {
+        network::Vni::new(t.0)
             .ok_or_else(|| String::from("VNI is out of valid range"))
     }
 }
 
-impl From<nat::Vni> for types::Vni {
-    fn from(t: nat::Vni) -> types::Vni {
+impl From<network::Vni> for types::Vni {
+    fn from(t: network::Vni) -> types::Vni {
         types::Vni(t.as_u32())
     }
 }
 
-impl TryFrom<types::NatTarget> for nat::NatTarget {
+impl TryFrom<types::InstanceTarget> for network::InstanceTarget {
     type Error = String;
 
-    fn try_from(t: types::NatTarget) -> Result<nat::NatTarget, Self::Error> {
+    fn try_from(
+        t: types::InstanceTarget,
+    ) -> Result<network::InstanceTarget, Self::Error> {
+        Ok(Self {
+            internal_ip: t.internal_ip,
+            inner_mac: t.inner_mac.into(),
+            vni: t.vni.try_into()?,
+        })
+    }
+}
+
+impl TryFrom<types::NatTarget> for network::NatTarget {
+    type Error = String;
+
+    fn try_from(
+        t: types::NatTarget,
+    ) -> Result<network::NatTarget, Self::Error> {
         Ok(Self {
             internal_ip: t.internal_ip,
             inner_mac: t.inner_mac.into(),

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Dendrite HTTP API types and endpoint functions.
 
@@ -17,17 +17,11 @@ use dpd_types::fault::Fault;
 use dpd_types::link::LinkFsmCounters;
 use dpd_types::link::LinkId;
 use dpd_types::link::LinkUpCounter;
-use dpd_types::mcast::MulticastGroupCreateExternalEntry;
-use dpd_types::mcast::MulticastGroupCreateUnderlayEntry;
-use dpd_types::mcast::MulticastGroupExternalResponse;
-use dpd_types::mcast::MulticastGroupResponse;
-use dpd_types::mcast::MulticastGroupUnderlayResponse;
-use dpd_types::mcast::MulticastGroupUpdateExternalEntry;
-use dpd_types::mcast::MulticastGroupUpdateUnderlayEntry;
+use dpd_types::mcast::*;
 use dpd_types::oxstats::OximeterMetadata;
 use dpd_types::port_map::BackplaneLink;
-use dpd_types::route::Ipv4Route;
 use dpd_types::route::Ipv6Route;
+use dpd_types::route::Route;
 use dpd_types::switch_identifiers::SwitchIdentifiers;
 use dpd_types::switch_port::Led;
 use dpd_types::switch_port::ManagementMode;
@@ -65,7 +59,9 @@ use common::ports::TxEq;
 #[cfg(any(feature = "softnpu", feature = "tofino_asic"))]
 use common::ports::TxEqSwHw;
 
+use crate::attached_subnet;
 use crate::counters;
+#[cfg(feature = "multicast")]
 use crate::mcast;
 use crate::oxstats;
 use crate::rpw::Task;
@@ -74,8 +70,9 @@ use crate::switch_port::LedState;
 use crate::transceivers::PowerState;
 use crate::types::DpdError;
 use crate::{Switch, arp, loopback, nat, ports, route};
-use common::nat::{Ipv4Nat, Ipv6Nat, NatTarget};
-use common::network::MacAddr;
+use common::attached_subnet::AttachedSubnetEntry;
+use common::nat::{Ipv4Nat, Ipv6Nat};
+use common::network::{InstanceTarget, MacAddr, NatTarget};
 use common::ports::PortId;
 use common::ports::QsfpPort;
 use common::ports::{Ipv4Entry, Ipv6Entry, PortPrbsMode};
@@ -91,6 +88,33 @@ fn client_error(message: impl ToString) -> HttpError {
         ClientErrorStatusCode::BAD_REQUEST,
         message.to_string(),
     )
+}
+
+// Generate a 501 client error with the provided message.
+#[cfg(not(feature = "multicast"))]
+fn not_implemented(message: impl ToString) -> HttpError {
+    HttpError {
+        status_code: dropshot::ErrorStatusCode::NOT_IMPLEMENTED,
+        error_code: None,
+        external_message: message.to_string(),
+        internal_message: message.to_string(),
+        headers: None,
+    }
+}
+
+// When the multicast feature is enabled, run the provided code.  If
+// multicast is no enabled, return 501 Not Implemented to the caller.
+macro_rules! require_multicast {
+    ($body:expr) => {{
+        #[cfg(feature = "multicast")]
+        {
+            $body
+        }
+        #[cfg(not(feature = "multicast"))]
+        {
+            Err(not_implemented("multicast feature disabled"))
+        }
+    }};
 }
 
 pub enum DpdApiImpl {}
@@ -389,7 +413,7 @@ impl DpdApi for DpdApiImpl {
     async fn route_ipv4_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<RoutePathV4>,
-    ) -> Result<HttpResponseOk<Vec<Ipv4Route>>, HttpError> {
+    ) -> Result<HttpResponseOk<Vec<Route>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let cidr = path.into_inner().cidr;
         route::get_route_ipv4(switch, cidr)
@@ -404,11 +428,17 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let route = update.into_inner();
-
-        route::add_route_ipv4(switch, route.cidr, route.target)
-            .await
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(HttpError::from)
+        match route.target {
+            RouteTarget::V4(target) => {
+                route::add_route_ipv4(switch, route.cidr, target).await
+            }
+            RouteTarget::V6(target) => {
+                route::add_route_ipv4_over_ipv6(switch, route.cidr, target)
+                    .await
+            }
+        }
+        .map(|_| HttpResponseUpdatedNoContent())
+        .map_err(HttpError::from)
     }
 
     async fn route_ipv4_set(
@@ -417,10 +447,23 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let route = update.into_inner();
-        route::set_route_ipv4(switch, route.cidr, route.target, route.replace)
-            .await
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(HttpError::from)
+        match route.target {
+            RouteTarget::V4(target) => {
+                route::set_route_ipv4(switch, route.cidr, target, route.replace)
+                    .await
+            }
+            RouteTarget::V6(target) => {
+                route::set_route_ipv4_over_ipv6(
+                    switch,
+                    route.cidr,
+                    target,
+                    route.replace,
+                )
+                .await
+            }
+        }
+        .map(|_| HttpResponseUpdatedNoContent())
+        .map_err(HttpError::from)
     }
 
     async fn route_ipv4_delete(
@@ -441,12 +484,12 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
-        let subnet = path.cidr;
-        let port_id = path.port_id;
-        let link_id = path.link_id;
-        let tgt_ip = path.tgt_ip;
         route::delete_route_target_ipv4(
-            switch, subnet, port_id, link_id, tgt_ip,
+            switch,
+            path.cidr,
+            path.port_id,
+            path.link_id,
+            path.tgt_ip,
         )
         .await
         .map(|_| HttpResponseDeleted())
@@ -457,13 +500,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<PortId>>, HttpError> {
         Ok(HttpResponseOk(
-            rqctx
-                .context()
-                .switch_ports
-                .port_map
-                .port_ids()
-                .copied()
-                .collect(),
+            rqctx.context().switch_ports.port_map.port_ids().copied().collect(),
         ))
     }
 
@@ -633,11 +670,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<BTreeMap<PortId, Led>>, HttpError> {
         let switch = rqctx.context();
-        switch
-            .all_leds()
-            .await
-            .map(HttpResponseOk)
-            .map_err(HttpError::from)
+        switch.all_leds().await.map(HttpResponseOk).map_err(HttpError::from)
     }
 
     async fn led_set_auto(
@@ -814,10 +847,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseOk<Vec<views::Link>>, HttpError> {
         let switch = &rqctx.context();
         let port_id = path.into_inner().port_id;
-        switch
-            .list_links(port_id)
-            .map(HttpResponseOk)
-            .map_err(HttpError::from)
+        switch.list_links(port_id).map(HttpResponseOk).map_err(HttpError::from)
     }
 
     async fn link_list_all(
@@ -1221,7 +1251,7 @@ impl DpdApi for DpdApiImpl {
             .map_err(|e| e.into())
     }
 
-    async fn link_nat_only_get(
+    async fn link_uplink_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError> {
@@ -1230,12 +1260,12 @@ impl DpdApi for DpdApiImpl {
         let port_id = path.port_id;
         let link_id = path.link_id;
         switch
-            .link_nat_only(port_id, link_id)
+            .link_uplink(port_id, link_id)
             .map(HttpResponseOk)
             .map_err(|e| e.into())
     }
 
-    async fn link_nat_only_set(
+    async fn link_uplink_set(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         body: TypedBody<bool>,
@@ -1244,9 +1274,10 @@ impl DpdApi for DpdApiImpl {
         let path = path.into_inner();
         let port_id = path.port_id;
         let link_id = path.link_id;
-        let nat_only = body.into_inner();
+        let uplink = body.into_inner();
+        debug!(switch.log, "api setting uplink to {uplink}");
         switch
-            .set_link_nat_only(port_id, link_id, nat_only)
+            .set_link_uplink(port_id, link_id, uplink)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
@@ -1554,6 +1585,82 @@ impl DpdApi for DpdApiImpl {
         }
     }
 
+    async fn attached_subnet_list(
+        rqctx: RequestContext<Arc<Switch>>,
+        query: Query<PaginationParams<EmptyScanParams, AttachedSubnetToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<AttachedSubnetEntry>>, HttpError>
+    {
+        let switch: &Switch = rqctx.context();
+        let pag_params = query.into_inner();
+        let max = rqctx.page_limit(&pag_params)?.get();
+        let subnet = match &pag_params.page {
+            WhichPage::First(..) => None,
+            WhichPage::Next(AttachedSubnetToken { cidr }) => Some(*cidr),
+        };
+
+        let entries = attached_subnet::get_mappings(
+            switch,
+            subnet,
+            usize::try_from(max).expect("invalid usize"),
+        );
+        Ok(HttpResponseOk(ResultsPage::new(
+            entries,
+            &EmptyScanParams {},
+            |e: &AttachedSubnetEntry, _| AttachedSubnetToken { cidr: e.subnet },
+        )?))
+    }
+
+    async fn attached_subnet_get(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<SubnetPath>,
+    ) -> Result<HttpResponseOk<InstanceTarget>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        match attached_subnet::get_mapping(switch, params.subnet) {
+            Ok(tgt) => Ok(HttpResponseOk(tgt)),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn attached_subnet_create(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<SubnetPath>,
+        target: TypedBody<InstanceTarget>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        match attached_subnet::set_mapping(
+            switch,
+            params.subnet,
+            target.into_inner(),
+        ) {
+            Ok(_) => Ok(HttpResponseUpdatedNoContent()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn attached_subnet_delete(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<SubnetPath>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let params = path.into_inner();
+        attached_subnet::clear_mapping(switch, params.subnet)
+            .map(|_| HttpResponseDeleted())
+            .map_err(HttpError::from)
+    }
+
+    async fn attached_subnet_reset(
+        rqctx: RequestContext<Arc<Switch>>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+
+        match attached_subnet::reset(switch) {
+            Ok(_) => Ok(HttpResponseUpdatedNoContent()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     async fn reset_all_tagged(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<TagPath>,
@@ -1604,8 +1711,16 @@ impl DpdApi for DpdApiImpl {
             error!(switch.log, "failed to reset ipv6 nat table: {:?}", e);
             err = Some(e);
         }
+        #[cfg(feature = "multicast")]
         if let Err(e) = mcast::reset(switch) {
             error!(switch.log, "failed to reset multicast state: {:?}", e);
+            err = Some(e);
+        }
+        if let Err(e) = attached_subnet::reset(switch) {
+            error!(
+                switch.log,
+                "failed to reset external subnet state: {:?}", e
+            );
             err = Some(e);
         }
 
@@ -1755,17 +1870,29 @@ impl DpdApi for DpdApiImpl {
     async fn ipv4_nat_generation(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<i64>, HttpError> {
+        Self::nat_generation(rqctx).await
+    }
+
+    async fn nat_generation(
+        rqctx: RequestContext<Arc<Switch>>,
+    ) -> Result<HttpResponseOk<i64>, HttpError> {
         let switch = rqctx.context();
 
-        Ok(HttpResponseOk(nat::get_ipv4_nat_generation(switch)))
+        Ok(HttpResponseOk(nat::get_nat_generation(switch)))
     }
 
     async fn ipv4_nat_trigger_update(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<()>, HttpError> {
+        Self::nat_trigger_update(rqctx).await
+    }
+
+    async fn nat_trigger_update(
+        rqctx: RequestContext<Arc<Switch>>,
+    ) -> Result<HttpResponseOk<()>, HttpError> {
         let switch = rqctx.context();
 
-        match switch.workflow_server.trigger(Task::Ipv4Nat) {
+        match switch.workflow_server.trigger(Task::Nat) {
             Ok(_) => Ok(HttpResponseOk(())),
             Err(e) => {
                 error!(rqctx.log, "unable to trigger rpw"; "error" => ?e);
@@ -1783,13 +1910,18 @@ impl DpdApi for DpdApiImpl {
 
     async fn table_dump(
         rqctx: RequestContext<Arc<Switch>>,
+        query: Query<TableDumpOptions>,
         path: Path<TableParam>,
     ) -> Result<HttpResponseOk<views::Table>, HttpError> {
         let switch: &Switch = rqctx.context();
         let table = path.into_inner().table;
-        crate::table::get_entries(switch, table)
-            .map(HttpResponseOk)
-            .map_err(HttpError::from)
+        crate::table::get_entries(
+            switch,
+            table,
+            query.into_inner().from_hardware,
+        )
+        .map(HttpResponseOk)
+        .map_err(HttpError::from)
     }
 
     async fn table_counters(
@@ -1842,107 +1974,254 @@ impl DpdApi for DpdApiImpl {
             .map_err(HttpError::from)
     }
 
+    #[allow(unused_variables)]
     async fn multicast_group_create_external(
         rqctx: RequestContext<Arc<Switch>>,
         group: TypedBody<MulticastGroupCreateExternalEntry>,
     ) -> Result<HttpResponseCreated<MulticastGroupExternalResponse>, HttpError>
     {
-        let switch: &Switch = rqctx.context();
-        let entry = group.into_inner();
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let entry = group.into_inner();
 
-        mcast::add_group_external(switch, entry)
-            .map(HttpResponseCreated)
-            .map_err(HttpError::from)
+            mcast::add_group_external(switch, entry)
+                .map(HttpResponseCreated)
+                .map_err(HttpError::from)
+        })
     }
 
+    #[allow(unused_variables)]
     async fn multicast_group_create_underlay(
         rqctx: RequestContext<Arc<Switch>>,
         group: TypedBody<MulticastGroupCreateUnderlayEntry>,
     ) -> Result<HttpResponseCreated<MulticastGroupUnderlayResponse>, HttpError>
     {
-        let switch: &Switch = rqctx.context();
-        let entry = group.into_inner();
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let entry = group.into_inner();
 
-        mcast::add_group_internal(switch, entry)
-            .map(HttpResponseCreated)
-            .map_err(HttpError::from)
+            mcast::add_group_internal(switch, entry)
+                .map(HttpResponseCreated)
+                .map_err(HttpError::from)
+        })
     }
 
+    #[allow(unused_variables)]
     async fn multicast_group_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
+        query: Query<MulticastGroupTagQuery>,
     ) -> Result<HttpResponseDeleted, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let ip = path.into_inner().group_ip;
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let ip = path.into_inner().group_ip;
+            let tag = query.into_inner().tag;
 
-        mcast::del_group(switch, ip)
-            .map(|_| HttpResponseDeleted())
-            .map_err(HttpError::from)
+            mcast::del_group(switch, ip, tag.as_ref())
+                .map(|_| HttpResponseDeleted())
+                .map_err(HttpError::from)
+        })
     }
 
+    #[allow(unused_variables)]
+    async fn multicast_group_delete_v1(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<MulticastGroupIpParam>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let ip = path.into_inner().group_ip;
+
+            let existing_tag = mcast::get_group(switch, ip)
+                .map_err(HttpError::from)?
+                .tag()
+                .to_string();
+
+            mcast::del_group(switch, ip, &existing_tag)
+                .map(|_| HttpResponseDeleted())
+                .map_err(HttpError::from)
+        })
+    }
+
+    #[allow(unused_variables)]
     async fn multicast_reset(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
-        let switch: &Switch = rqctx.context();
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
 
-        mcast::reset(switch)
-            .map(|_| HttpResponseDeleted())
-            .map_err(HttpError::from)
+            mcast::reset(switch)
+                .map(|_| HttpResponseDeleted())
+                .map_err(HttpError::from)
+        })
     }
 
+    #[allow(unused_variables)]
     async fn multicast_group_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
     ) -> Result<HttpResponseOk<MulticastGroupResponse>, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let ip = path.into_inner().group_ip;
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let ip = path.into_inner().group_ip;
 
-        // Get the multicast group
-        mcast::get_group(switch, ip)
-            .map(HttpResponseOk)
-            .map_err(HttpError::from)
+            // Get the multicast group
+            mcast::get_group(switch, ip)
+                .map(HttpResponseOk)
+                .map_err(HttpError::from)
+        })
     }
 
+    #[allow(unused_variables)]
     async fn multicast_group_update_underlay(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastUnderlayGroupIpParam>,
+        query: Query<MulticastGroupTagQuery>,
         group: TypedBody<MulticastGroupUpdateUnderlayEntry>,
     ) -> Result<HttpResponseOk<MulticastGroupUnderlayResponse>, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let admin_scoped = path.into_inner().group_ip;
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let admin_scoped = path.into_inner().group_ip;
+            let tag = query.into_inner().tag;
 
-        mcast::modify_group_internal(switch, admin_scoped, group.into_inner())
+            mcast::modify_group_internal(
+                switch,
+                admin_scoped,
+                tag.as_ref(),
+                group.into_inner(),
+            )
             .map(HttpResponseOk)
             .map_err(HttpError::from)
+        })
     }
 
+    #[allow(unused_variables)]
+    async fn multicast_group_update_underlay_v1(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<dpd_api::v1::MulticastUnderlayGroupIpParam>,
+        group: TypedBody<dpd_api::v1::MulticastGroupUpdateUnderlayEntry>,
+    ) -> Result<
+        HttpResponseOk<dpd_api::v1::MulticastGroupUnderlayResponse>,
+        HttpError,
+    > {
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let admin_scoped = path.into_inner().group_ip;
+            let underlay = UnderlayMulticastIpv6::try_from(admin_scoped)
+                .map_err(|e| {
+                    HttpError::for_bad_request(
+                        None,
+                        format!("invalid group_ip: {e}"),
+                    )
+                })?;
+            let mut entry = group.into_inner();
+
+            let tag = match entry.tag.take() {
+                Some(t) => t,
+                None => {
+                    mcast::get_group_internal(switch, underlay)
+                        .map_err(HttpError::from)?
+                        .tag
+                }
+            };
+
+            mcast::modify_group_internal(switch, underlay, &tag, entry.into())
+                .map(|resp| HttpResponseOk(resp.into()))
+                .map_err(HttpError::from)
+        })
+    }
+
+    #[allow(unused_variables)]
     async fn multicast_group_get_underlay(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastUnderlayGroupIpParam>,
     ) -> Result<HttpResponseOk<MulticastGroupUnderlayResponse>, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let admin_scoped = path.into_inner().group_ip;
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let underlay = path.into_inner().group_ip;
 
-        mcast::get_group_internal(switch, admin_scoped)
-            .map(HttpResponseOk)
-            .map_err(HttpError::from)
+            mcast::get_group_internal(switch, underlay)
+                .map(HttpResponseOk)
+                .map_err(HttpError::from)
+        })
     }
 
+    #[allow(unused_variables)]
     async fn multicast_group_update_external(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<MulticastGroupIpParam>,
+        query: Query<MulticastGroupTagQuery>,
         group: TypedBody<MulticastGroupUpdateExternalEntry>,
-    ) -> Result<HttpResponseCreated<MulticastGroupExternalResponse>, HttpError>
-    {
-        let switch: &Switch = rqctx.context();
-        let entry = group.into_inner();
-        let ip = path.into_inner().group_ip;
+    ) -> Result<HttpResponseOk<MulticastGroupExternalResponse>, HttpError> {
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let entry = group.into_inner();
+            let ip = path.into_inner().group_ip;
+            let tag = query.into_inner().tag;
 
-        mcast::modify_group_external(switch, ip, entry)
-            .map(HttpResponseCreated)
-            .map_err(HttpError::from)
+            mcast::modify_group_external(switch, ip, tag.as_ref(), entry)
+                .map(HttpResponseOk)
+                .map_err(HttpError::from)
+        })
     }
 
+    #[allow(unused_variables)]
+    async fn multicast_group_update_external_v7(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<MulticastGroupIpParam>,
+        group: TypedBody<dpd_api::v7::MulticastGroupUpdateExternalEntry>,
+    ) -> Result<
+        HttpResponseCreated<dpd_api::v7::MulticastGroupExternalResponse>,
+        HttpError,
+    > {
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let ip = path.into_inner().group_ip;
+            let mut entry = group.into_inner();
+
+            let tag = match entry.tag.take() {
+                Some(t) => t,
+                None => mcast::get_group(switch, ip)
+                    .map_err(HttpError::from)?
+                    .tag()
+                    .to_string(),
+            };
+
+            mcast::modify_group_external(switch, ip, &tag, entry.into())
+                .map(|resp| HttpResponseCreated(resp.into()))
+                .map_err(HttpError::from)
+        })
+    }
+
+    #[allow(unused_variables)]
+    async fn multicast_group_update_external_v1(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<MulticastGroupIpParam>,
+        group: TypedBody<dpd_api::v1::MulticastGroupUpdateExternalEntry>,
+    ) -> Result<
+        HttpResponseCreated<dpd_api::v1::MulticastGroupExternalResponse>,
+        HttpError,
+    > {
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let ip = path.into_inner().group_ip;
+            let mut entry = group.into_inner();
+
+            let tag = match entry.tag.take() {
+                Some(t) => t,
+                None => mcast::get_group(switch, ip)
+                    .map_err(HttpError::from)?
+                    .tag()
+                    .to_string(),
+            };
+
+            mcast::modify_group_external(switch, ip, &tag, entry.into())
+                .map(|resp| HttpResponseCreated(resp.into()))
+                .map_err(HttpError::from)
+        })
+    }
+
+    #[allow(unused_variables)]
     async fn multicast_groups_list(
         rqctx: RequestContext<Arc<Switch>>,
         query_params: Query<
@@ -1950,90 +2229,123 @@ impl DpdApi for DpdApiImpl {
         >,
     ) -> Result<HttpResponseOk<ResultsPage<MulticastGroupResponse>>, HttpError>
     {
-        let switch: &Switch = rqctx.context();
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
 
-        let pag_params = query_params.into_inner();
-        let Ok(limit) = usize::try_from(rqctx.page_limit(&pag_params)?.get())
-        else {
-            return Err(
-                DpdError::Invalid("Invalid page limit".to_string()).into()
-            );
-        };
+            let pag_params = query_params.into_inner();
+            let Ok(limit) =
+                usize::try_from(rqctx.page_limit(&pag_params)?.get())
+            else {
+                return Err(DpdError::Invalid(
+                    "Invalid page limit".to_string(),
+                )
+                .into());
+            };
 
-        let last_addr = match &pag_params.page {
-            WhichPage::First(..) => None,
-            WhichPage::Next(MulticastGroupIpParam { group_ip }) => {
-                Some(*group_ip)
-            }
-        };
+            let last_addr = match &pag_params.page {
+                WhichPage::First(..) => None,
+                WhichPage::Next(MulticastGroupIpParam { group_ip }) => {
+                    Some(*group_ip)
+                }
+            };
 
-        let entries = mcast::get_range(switch, last_addr, limit, None);
+            let entries = mcast::get_range(switch, last_addr, limit, None);
 
-        Ok(HttpResponseOk(ResultsPage::new(
-            entries,
-            &EmptyScanParams {},
-            |e: &MulticastGroupResponse, _| MulticastGroupIpParam {
-                group_ip: e.ip(),
-            },
-        )?))
+            Ok(HttpResponseOk(ResultsPage::new(
+                entries,
+                &EmptyScanParams {},
+                |e: &MulticastGroupResponse, _| MulticastGroupIpParam {
+                    group_ip: e.ip(),
+                },
+            )?))
+        })
     }
 
+    #[allow(unused_variables)]
     async fn multicast_groups_list_by_tag(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<TagPath>,
+        path: Path<MulticastTagPath>,
         query_params: Query<
             PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
         >,
     ) -> Result<HttpResponseOk<ResultsPage<MulticastGroupResponse>>, HttpError>
     {
-        let switch: &Switch = rqctx.context();
-        let tag = path.into_inner().tag;
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let tag: String = path.into_inner().tag.into();
 
-        let pag_params = query_params.into_inner();
-        let Ok(limit) = usize::try_from(rqctx.page_limit(&pag_params)?.get())
-        else {
-            return Err(
-                DpdError::Invalid("Invalid page limit".to_string()).into()
-            );
-        };
+            let pag_params = query_params.into_inner();
+            let Ok(limit) =
+                usize::try_from(rqctx.page_limit(&pag_params)?.get())
+            else {
+                return Err(DpdError::Invalid(
+                    "Invalid page limit".to_string(),
+                )
+                .into());
+            };
 
-        let last_addr = match &pag_params.page {
-            WhichPage::First(..) => None,
-            WhichPage::Next(MulticastGroupIpParam { group_ip }) => {
-                Some(*group_ip)
-            }
-        };
+            let last_addr = match &pag_params.page {
+                WhichPage::First(..) => None,
+                WhichPage::Next(MulticastGroupIpParam { group_ip }) => {
+                    Some(*group_ip)
+                }
+            };
 
-        let entries = mcast::get_range(switch, last_addr, limit, Some(&tag));
-        Ok(HttpResponseOk(ResultsPage::new(
-            entries,
-            &EmptyScanParams {},
-            |e: &MulticastGroupResponse, _| MulticastGroupIpParam {
-                group_ip: e.ip(),
-            },
-        )?))
+            let entries =
+                mcast::get_range(switch, last_addr, limit, Some(&tag));
+            Ok(HttpResponseOk(ResultsPage::new(
+                entries,
+                &EmptyScanParams {},
+                |e: &MulticastGroupResponse, _| MulticastGroupIpParam {
+                    group_ip: e.ip(),
+                },
+            )?))
+        })
     }
 
+    #[allow(unused_variables)]
     async fn multicast_reset_by_tag(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<TagPath>,
+        path: Path<MulticastTagPath>,
     ) -> Result<HttpResponseDeleted, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let tag = path.into_inner().tag;
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
+            let tag: String = path.into_inner().tag.into();
 
-        mcast::reset_tag(switch, &tag)
-            .map(|_| HttpResponseDeleted())
-            .map_err(HttpError::from)
+            mcast::reset_tag(switch, &tag)
+                .map(|_| HttpResponseDeleted())
+                .map_err(HttpError::from)
+        })
     }
 
+    #[allow(unused_variables)]
     async fn multicast_reset_untagged(
+        _rqctx: RequestContext<Arc<Switch>>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        // All groups now have default tags, making this endpoint obsolete.
+        // Groups are cleaned up via multicast_reset_by_tag using the tag
+        // returned from group creation.
+        Err(HttpError::for_client_error(
+            None,
+            ClientErrorStatusCode::GONE,
+            "multicast_reset_untagged is deprecated; all groups now have \
+             default tags. Use multicast_reset_by_tag with the tag returned \
+             from group creation."
+                .to_string(),
+        ))
+    }
+
+    #[allow(unused_variables)]
+    async fn multicast_reset_untagged_v1(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
-        let switch: &Switch = rqctx.context();
+        require_multicast!({
+            let switch: &Switch = rqctx.context();
 
-        mcast::reset_untagged(switch)
-            .map(|_| HttpResponseDeleted())
-            .map_err(HttpError::from)
+            mcast::reset_untagged(switch)
+                .map(|_| HttpResponseDeleted())
+                .map_err(HttpError::from)
+        })
     }
 
     #[cfg(feature = "tofino_asic")]
@@ -2058,11 +2370,7 @@ impl DpdApi for DpdApiImpl {
                     "failed to lookup port and link ID from \
                 an existing port handle: {port_hdl}"
                 )))?;
-            out.push(LinkPcsCounters {
-                port_id,
-                link_id,
-                counters,
-            });
+            out.push(LinkPcsCounters { port_id, link_id, counters });
         }
         Ok(HttpResponseOk(out))
     }
@@ -2089,11 +2397,7 @@ impl DpdApi for DpdApiImpl {
         let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
         stats::port_get_pcs_counters(&switch.asic_hdl, port_handle)
             .map(|counters| {
-                HttpResponseOk(LinkPcsCounters {
-                    port_id,
-                    link_id,
-                    counters,
-                })
+                HttpResponseOk(LinkPcsCounters { port_id, link_id, counters })
             })
             .map_err(|e| HttpError::from(DpdError::from(e)))
     }
@@ -2126,11 +2430,7 @@ impl DpdApi for DpdApiImpl {
                     "failed to lookup port and link ID from \
                 an existing port handle: {port_hdl}"
                 )))?;
-            out.push(LinkFecRSCounters {
-                port_id,
-                link_id,
-                counters,
-            });
+            out.push(LinkFecRSCounters { port_id, link_id, counters });
         }
         Ok(HttpResponseOk(out))
     }
@@ -2157,11 +2457,7 @@ impl DpdApi for DpdApiImpl {
         let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
         stats::port_get_fec_rs_counters(&switch.asic_hdl, port_handle)
             .map(|counters| {
-                HttpResponseOk(LinkFecRSCounters {
-                    port_id,
-                    link_id,
-                    counters,
-                })
+                HttpResponseOk(LinkFecRSCounters { port_id, link_id, counters })
             })
             .map_err(|e| HttpError::from(DpdError::from(e)))
     }
@@ -2189,11 +2485,7 @@ impl DpdApi for DpdApiImpl {
         let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
         stats::port_get_rmon_counters(&switch.asic_hdl, port_handle)
             .map(|counters| {
-                HttpResponseOk(LinkRMonCounters {
-                    port_id,
-                    link_id,
-                    counters,
-                })
+                HttpResponseOk(LinkRMonCounters { port_id, link_id, counters })
             })
             .map_err(|e| HttpError::from(DpdError::from(e)))
     }
@@ -2281,10 +2573,7 @@ impl DpdApi for DpdApiImpl {
             serdes::port_tx_eq_get(&switch.asic_hdl, port_handle)
                 .map_err(|e| HttpError::from(DpdError::from(e)))?
                 .into_iter()
-                .map(|t| TxEqSwHw {
-                    sw: t.sw.into(),
-                    hw: t.hw.into(),
-                })
+                .map(|t| TxEqSwHw { sw: t.sw.into(), hw: t.hw.into() })
                 .collect(),
         ))
     }
@@ -2308,16 +2597,10 @@ impl DpdApi for DpdApiImpl {
             .asic_hdl
             .port_tx_eq_get(port_handle)
             .map_err(|e| HttpError::from(DpdError::from(e)))?;
-        let softnpu_tx_eq = TxEq {
-            main: Some(tx_eq),
-            ..Default::default()
-        };
+        let softnpu_tx_eq = TxEq { main: Some(tx_eq), ..Default::default() };
         Ok(HttpResponseOk(
             (0..lane_cnt)
-                .map(|_| TxEqSwHw {
-                    sw: softnpu_tx_eq,
-                    hw: softnpu_tx_eq,
-                })
+                .map(|_| TxEqSwHw { sw: softnpu_tx_eq, hw: softnpu_tx_eq })
                 .collect(),
         ))
     }
@@ -2535,6 +2818,56 @@ impl DpdApi for DpdApiImpl {
             "not implemented for this asic".to_string(),
         ))
     }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn snapshot_capture(
+        rqctx: RequestContext<Self::Context>,
+        body: TypedBody<SnapshotCreate>,
+    ) -> Result<HttpResponseOk<SnapshotResult>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let req = body.into_inner();
+        Ok(HttpResponseOk(
+            crate::snapshot::capture(switch, req)
+                .await
+                .map_err(HttpError::from)?,
+        ))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn snapshot_capture(
+        _rqctx: RequestContext<Self::Context>,
+        _body: TypedBody<SnapshotCreate>,
+    ) -> Result<HttpResponseOk<SnapshotResult>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "tofino_asic")]
+    async fn snapshot_scope(
+        rqctx: RequestContext<Self::Context>,
+        body: TypedBody<SnapshotScopeRequest>,
+    ) -> Result<HttpResponseOk<Vec<SnapshotFieldScope>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let req = body.into_inner();
+        Ok(HttpResponseOk(
+            crate::snapshot::scope(switch, req)
+                .await
+                .map_err(HttpError::from)?,
+        ))
+    }
+
+    #[cfg(not(feature = "tofino_asic"))]
+    async fn snapshot_scope(
+        _rqctx: RequestContext<Self::Context>,
+        _body: TypedBody<SnapshotScopeRequest>,
+    ) -> Result<HttpResponseOk<Vec<SnapshotFieldScope>>, HttpError> {
+        Err(HttpError::for_unavail(
+            None,
+            "not implemented for this asic".to_string(),
+        ))
+    }
 }
 
 // Convert a port ID path into a `QsfpPort` if possible. This is generally used
@@ -2701,11 +3034,8 @@ mod tests {
     fn test_build_info() {
         let info = build_info();
         println!("{info:#?}");
-        let out = Command::new("git")
-            .arg("rev-parse")
-            .arg("HEAD")
-            .output()
-            .unwrap();
+        let out =
+            Command::new("git").arg("rev-parse").arg("HEAD").output().unwrap();
         assert!(out.status.success());
         let ours = std::str::from_utf8(&out.stdout).unwrap().trim();
         assert_eq!(info.git_sha, ours);

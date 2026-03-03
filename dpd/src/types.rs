@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! General types used throughout Dendrite.
 
@@ -49,11 +49,7 @@ pub enum DpdError {
     #[error(
         "Address {address} is not associated with port \"{port_id}\" link \"{link_id}\""
     )]
-    NoSuchAddress {
-        port_id: PortId,
-        link_id: LinkId,
-        address: IpAddr,
-    },
+    NoSuchAddress { port_id: PortId, link_id: LinkId, address: IpAddr },
     #[error("no matching route found")]
     NoSuchRoute,
     #[error("No such table: {0}")]
@@ -69,10 +65,7 @@ pub enum DpdError {
     #[error("Port \"{port_id}\" is not a QSFP port")]
     NotAQsfpPort { port_id: PortId },
     #[error("Unwind: initial: {initial}, unwind: {unwind}")]
-    Unwind {
-        initial: Box<DpdError>,
-        unwind: Box<DpdError>,
-    },
+    Unwind { initial: Box<DpdError>, unwind: Box<DpdError> },
     #[error("No transceiver controller initialized")]
     NoTransceiverController,
     #[error("Failed to operate on transceivers")]
@@ -93,6 +86,8 @@ pub enum DpdError {
     McastGroupFailure(String),
     #[error("Resource exhausted: {}", .0)]
     ResourceExhausted(String),
+    #[error("Tag is required for idempotent validation")]
+    MissingTag,
 }
 
 impl From<smf::ScfError> for DpdError {
@@ -176,6 +171,14 @@ impl convert::From<DpdError> for dropshot::HttpError {
                     Some("Synthetic ASIC error".into()),
                     dropshot::ClientErrorStatusCode::IM_A_TEAPOT,
                     message,
+                )
+            }
+            DpdError::Switch(AsicError::Missing(ref msg)) => {
+                // ASIC entry not found - return 404 so caller can handle
+                // (e.g., omicron delete+recreate pattern)
+                dropshot::HttpError::for_not_found(
+                    None,
+                    format!("ASIC entry not found: {msg}"),
                 )
             }
             DpdError::TableFull(e) => dropshot::HttpError {
@@ -281,6 +284,9 @@ impl convert::From<DpdError> for dropshot::HttpError {
             DpdError::ResourceExhausted(e) => {
                 dropshot::HttpError::for_unavail(None, e)
             }
+            e @ DpdError::MissingTag => {
+                dropshot::HttpError::for_bad_request(None, format!("{e}"))
+            }
         }
     }
 }
@@ -309,6 +315,7 @@ impl convert::From<common::network::VlanError> for DpdError {
     }
 }
 
+#[cfg(feature = "multicast")]
 impl convert::From<dpd_types::mcast::Error> for DpdError {
     fn from(err: dpd_types::mcast::Error) -> Self {
         DpdError::Invalid(err.to_string())

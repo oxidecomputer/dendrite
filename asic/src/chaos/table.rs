@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
@@ -56,10 +56,7 @@ pub struct Table {
 impl TableOps<Handle> for Table {
     fn new(hdl: &Handle, name: &str) -> AsicResult<Table> {
         table_unfurl!(hdl, name, table_new);
-        Ok(Table {
-            name: name.into(),
-            keys: Mutex::new(HashSet::new()),
-        })
+        Ok(Table { name: name.into(), keys: Mutex::new(HashSet::new()) })
     }
 
     fn size(&self) -> usize {
@@ -140,6 +137,7 @@ impl TableOps<Handle> for Table {
     fn get_entries<M: MatchParse, A: ActionParse>(
         &self,
         _hdl: &Handle,
+        _from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>> {
         Err(AsicError::OperationUnsupported)
     }

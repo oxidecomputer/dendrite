@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
@@ -40,16 +40,10 @@ async fn test_ping_ipv4_deadend() -> TestResult {
 
     let to_send = common::gen_ipv4_ping(icmp::ICMP_ECHO, 0, from, to);
     let mut to_recv = to_send.clone();
-    let send = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     common::set_icmp_unreachable(switch, &mut to_recv, ingress);
-    let expected = TestPacket {
-        packet: Arc::new(to_recv),
-        port: egress,
-    };
+    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     switch.packet_test(vec![send], vec![expected])
 }
 
@@ -75,54 +69,33 @@ async fn execute_ping_reply_test(
         addr: to.get_ipv4("tgt")?,
         tag: switch.client.inner().tag.clone(),
     };
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &entry)
-        .await
-        .unwrap();
+    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
 
     let mut send_pkt = common::gen_ipv4_ping(icmp::ICMP_ECHO, 0, from, to);
     let mut recv_pkt = common::gen_ipv4_ping(icmp::ICMP_ECHOREPLY, 0, to, from);
     if add_vlan {
-        let vlan_hdr = eth::EthQHdr {
-            eth_pcp: 0,
-            eth_dei: 0,
-            eth_vlan_tag: 200,
-        };
+        let vlan_hdr =
+            eth::EthQHdr { eth_pcp: 0, eth_dei: 0, eth_vlan_tag: 200 };
         send_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_8021q =
             Some(vlan_hdr.clone());
         recv_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_8021q =
             Some(vlan_hdr.clone());
     }
 
-    let send = TestPacket {
-        packet: Arc::new(send_pkt),
-        port,
-    };
+    let send = TestPacket { packet: Arc::new(send_pkt), port };
 
-    let recv = TestPacket {
-        packet: Arc::new(recv_pkt),
-        port,
-    };
+    let recv = TestPacket { packet: Arc::new(recv_pkt), port };
 
     if enable_nat_filtering {
         // Mark the port as NAT-only
-        switch
-            .client
-            .link_nat_only_set(&port_id, &link_id, true)
-            .await
-            .unwrap();
+        switch.client.link_uplink_set(&port_id, &link_id, true).await.unwrap();
     }
 
     let result = switch.packet_test(vec![send], vec![recv]);
 
     if enable_nat_filtering {
         // Mark the port as NAT-only
-        switch
-            .client
-            .link_nat_only_set(&port_id, &link_id, false)
-            .await
-            .unwrap();
+        switch.client.link_uplink_set(&port_id, &link_id, false).await.unwrap();
     }
     result
 }
@@ -135,7 +108,7 @@ async fn test_ping_ipv4_reply() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_ping_ipv4_reply_nat_only() -> TestResult {
+async fn test_ping_ipv4_reply_uplink() -> TestResult {
     execute_ping_reply_test(true, false).await
 }
 
@@ -147,7 +120,7 @@ async fn test_ping_ipv4_vlan_reply() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_ping_ipv4_vlan_reply_nat_only() -> TestResult {
+async fn test_ping_ipv4_vlan_reply_uplink() -> TestResult {
     execute_ping_reply_test(true, true).await
 }
 
@@ -187,37 +160,23 @@ async fn execute_ping_ipv4_forward_test(
     let send_pkt = common::gen_ipv4_ping(icmp::ICMP_ECHO, 0, from, to);
     let mut recv_pkt = send_pkt.clone();
 
-    let send = TestPacket {
-        packet: Arc::new(send_pkt),
-        port: ingress,
-    };
+    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress };
 
     eth::EthHdr::rewrite_smac(&mut recv_pkt, switch_mac);
     eth::EthHdr::rewrite_dmac(&mut recv_pkt, router_mac);
     ipv4::Ipv4Hdr::adjust_ttl(&mut recv_pkt, -1);
-    let recv = TestPacket {
-        packet: Arc::new(recv_pkt),
-        port: egress,
-    };
+    let recv = TestPacket { packet: Arc::new(recv_pkt), port: egress };
 
     if enable_nat_filtering {
         // Mark the port as NAT-only
-        switch
-            .client
-            .link_nat_only_set(&port_id, &link_id, true)
-            .await
-            .unwrap();
+        switch.client.link_uplink_set(&port_id, &link_id, true).await.unwrap();
     }
 
     let result = switch.packet_test(vec![send], vec![recv]);
 
     if enable_nat_filtering {
         // Mark the port as NAT-only
-        switch
-            .client
-            .link_nat_only_set(&port_id, &link_id, false)
-            .await
-            .unwrap();
+        switch.client.link_uplink_set(&port_id, &link_id, false).await.unwrap();
     }
     result
 }
@@ -230,6 +189,6 @@ async fn test_ping_ipv4_forward() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_ping_ipv4_forward_nat_only() -> TestResult {
+async fn test_ping_ipv4_forward_uplink() -> TestResult {
     execute_ping_ipv4_forward_test(true).await
 }

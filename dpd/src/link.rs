@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Manage logical Ethernet links on the Sidecar switch.
 
@@ -14,10 +14,11 @@ use crate::fault::LinkUpTracker;
 use crate::ports::AdminEvent;
 use crate::ports::Event;
 use crate::table::MacOps;
+#[cfg(feature = "multicast")]
 use crate::table::mcast;
 use crate::table::port_ip;
 use crate::table::port_mac;
-use crate::table::port_nat;
+use crate::table::uplink;
 use crate::transceivers::qsfp_xcvr_mpn;
 use crate::types::DpdError;
 use crate::types::DpdResult;
@@ -333,7 +334,7 @@ pub struct LinkConfig {
     pub prbs: PortPrbsMode,
     /// This link is expected to be connected to the outside world, and
     /// should only accept inbound traffic that matches a NAT mapping.
-    pub nat_only: bool,
+    pub uplink: bool,
 }
 
 // This struct represents the state of the link as it actually exists in the
@@ -359,7 +360,7 @@ pub(crate) struct LinkPlumbed {
     prbs: PortPrbsMode,
     // Has the table entry been set indicating that this port should only
     // accept inbound traffic that matches a NAT mapping.
-    nat_only: bool,
+    uplink: bool,
     // The number of lanes within its port used for this link
     lane_cnt: u8,
     // The tx_eq settings have been pushed to this transceiver.  This operation
@@ -415,9 +416,9 @@ impl Link {
         // disable it for external-facing qsfp links.  This allows the site
         // admin to determine the kinds of traffic we send to their network.
         let ipv6_enabled = !matches!(port_id, PortId::Qsfp(_));
-        // By default we expect external-facing links to be used only for NAT
-        // traffic.
-        let nat_only = matches!(port_id, PortId::Qsfp(_));
+        // By default we expect external-facing links to be used as uplinks and
+        // internal-facing links for backplane traffic.
+        let uplink = matches!(port_id, PortId::Qsfp(_));
 
         let config = LinkConfig {
             delete_me: false,
@@ -427,7 +428,7 @@ impl Link {
             fec: params.fec,
             prbs: PortPrbsMode::Mission,
             speed: params.speed,
-            nat_only,
+            uplink,
             mac,
         };
         let plumbed = LinkPlumbed {
@@ -440,7 +441,7 @@ impl Link {
             lane_cnt: 0,
             fec: PortFec::None,
             mac: None,
-            nat_only: false,
+            uplink: false,
             tx_eq_pushed: false,
         };
 
@@ -1064,10 +1065,7 @@ impl Switch {
                 // Equality only considers the address, so create an entry
                 // with an empty tag.
                 use std::ops::Bound;
-                let entry = Ipv4Entry {
-                    tag: String::new(),
-                    addr,
-                };
+                let entry = Ipv4Entry { tag: String::new(), addr };
                 link.ipv4
                     .range((Bound::Excluded(entry), Bound::Unbounded))
                     .take(limit)
@@ -1085,10 +1083,7 @@ impl Switch {
         link: &mut Link,
         address: Ipv4Addr,
     ) -> DpdResult<()> {
-        let entry = Ipv4Entry {
-            tag: String::new(),
-            addr: address,
-        };
+        let entry = Ipv4Entry { tag: String::new(), addr: address };
 
         if link.ipv4.contains(&entry) {
             port_ip::ipv4_delete(self, link.asic_port_id, address)?;
@@ -1172,10 +1167,7 @@ impl Switch {
                 // Equality only considers the address, so create an entry
                 // with an empty tag.
                 use std::ops::Bound;
-                let entry = Ipv6Entry {
-                    tag: String::new(),
-                    addr,
-                };
+                let entry = Ipv6Entry { tag: String::new(), addr };
                 link.ipv6
                     .range((Bound::Excluded(entry), Bound::Unbounded))
                     .take(limit)
@@ -1193,10 +1185,7 @@ impl Switch {
         link: &mut Link,
         address: Ipv6Addr,
     ) -> DpdResult<()> {
-        let entry = Ipv6Entry {
-            tag: String::new(),
-            addr: address,
-        };
+        let entry = Ipv6Entry { tag: String::new(), addr: address };
 
         if link.ipv6.contains(&entry) {
             port_ip::ipv6_delete(self, link.asic_port_id, address)?;
@@ -1404,24 +1393,25 @@ impl Switch {
     }
 
     /// Return whether a link is configured to drop non-nat traffic
-    pub fn link_nat_only(
+    pub fn link_uplink(
         &self,
         port_id: PortId,
         link_id: LinkId,
     ) -> DpdResult<bool> {
-        self.link_fetch(port_id, link_id, |link| link.config.nat_only)
+        self.link_fetch(port_id, link_id, |link| link.config.uplink)
     }
 
     /// Set whether a link is configured to drop non-nat traffic
-    pub fn set_link_nat_only(
+    pub fn set_link_uplink(
         &self,
         port_id: PortId,
         link_id: LinkId,
-        nat_only: bool,
+        uplink: bool,
     ) -> DpdResult<()> {
+        debug!(self.log, "ask to update uplink to {uplink}");
         self.link_update(port_id, link_id, |link| {
-            if link.config.nat_only != nat_only {
-                link.config.nat_only = nat_only;
+            if link.config.uplink != uplink {
+                link.config.uplink = uplink;
                 self.reconciler.trigger(port_id, link_id);
             }
             Ok(())
@@ -1459,11 +1449,7 @@ impl Switch {
             let link = link_lock.lock().unwrap();
             let link_path = (*link).to_string();
             let (current, total) = link.linkup_tracker.get_counters();
-            all.push(LinkUpCounter {
-                link_path,
-                current,
-                total,
-            });
+            all.push(LinkUpCounter { link_path, current, total });
         }
         all
     }
@@ -1574,46 +1560,59 @@ pub async fn init_update_handler(switch: &Arc<Switch>) -> AsicResult<()> {
     Ok(())
 }
 
+fn set_mac_config(
+    switch: &Switch,
+    asic_id: AsicId,
+    mac: MacAddr,
+) -> DpdResult<()> {
+    MacOps::<port_mac::PortMacTable>::mac_set(switch, asic_id, mac)?;
+
+    #[cfg(feature = "multicast")]
+    {
+        MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_set(
+            switch, asic_id, mac,
+        )?;
+        mcast::mcast_egress::add_port_mapping_entry(switch, asic_id)?;
+    }
+    Ok(())
+}
+
+fn clear_mac_config(switch: &Switch, asic_id: AsicId) -> DpdResult<()> {
+    MacOps::<port_mac::PortMacTable>::mac_clear(switch, asic_id)?;
+
+    #[cfg(feature = "multicast")]
+    {
+        MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_clear(
+            switch, asic_id,
+        )?;
+        mcast::mcast_egress::del_port_mapping_entry(switch, asic_id)?;
+    }
+    Ok(())
+}
+
 fn unplumb_link(
     switch: &Switch,
     log: &slog::Logger,
     link: &mut Link,
 ) -> DpdResult<()> {
-    if link.plumbed.nat_only {
-        match port_nat::nat_only_clear(switch, link.asic_port_id) {
+    if link.plumbed.uplink {
+        match uplink::uplink_clear(switch, link.asic_port_id) {
             Err(e) => {
-                error!(log, "Failed to clear nat_only: {e:?}");
+                error!(log, "Failed to clear uplink: {e:?}");
                 return Err(e);
             }
             Ok(_) => {
-                link.plumbed.nat_only = false;
+                link.plumbed.uplink = false;
             }
         }
     }
 
     if link.plumbed.mac.is_some() {
-        if let Err(e) = MacOps::<port_mac::PortMacTable>::mac_clear(
-            switch,
-            link.asic_port_id,
-        )
-        .and_then(|_| {
-            MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_clear(
-                switch,
-                link.asic_port_id,
-            )
-        })
-        .and_then(|_| {
-            // We tie this in here as ports and macs are 1:1
-            mcast::mcast_egress::del_port_mapping_entry(
-                switch,
-                link.asic_port_id,
-            )
-        }) {
+        if let Err(e) = clear_mac_config(switch, link.asic_port_id) {
             error!(log, "Failed to clear mac address and port mapping: {e:?}");
             return Err(e);
-        } else {
-            link.plumbed.mac = None;
         }
+        link.plumbed.mac = None;
     }
 
     if link.plumbed.link_created {
@@ -1639,11 +1638,10 @@ fn plumb_link(
     mpn: &Option<String>,
 ) -> DpdResult<()> {
     debug!(log, "plumbing link");
-    let connector = switch
-        .switch_ports
-        .port_map
-        .id_to_connector(&link.port_id)
-        .ok_or(DpdError::Invalid("PortId has no matching Connector".into()))?;
+    let connector =
+        switch.switch_ports.port_map.id_to_connector(&link.port_id).ok_or(
+            DpdError::Invalid("PortId has no matching Connector".into()),
+        )?;
 
     // If the admin hasn't configured the FEC setting for this link, try to find
     // a default value for this transceiver.
@@ -1696,9 +1694,7 @@ fn plumb_link(
         log,
         "setting autonegotiation to {} at link creation", link.config.autoneg
     );
-    switch
-        .asic_hdl
-        .port_autoneg_set(link.port_hdl, link.config.autoneg)?;
+    switch.asic_hdl.port_autoneg_set(link.port_hdl, link.config.autoneg)?;
     link.plumbed.autoneg = link.config.autoneg;
 
     // Set the kr value
@@ -1839,34 +1835,34 @@ async fn reconcile_link(
     }
 
     let asic_id = link.asic_port_id;
-    if link.config.nat_only != link.plumbed.nat_only {
-        if link.config.nat_only {
-            debug!(log, "setting nat_only");
-            if let Err(e) = port_nat::nat_only_set(switch, asic_id) {
+    if link.config.uplink != link.plumbed.uplink {
+        if link.config.uplink {
+            debug!(log, "setting uplink");
+            if let Err(e) = uplink::uplink_set(switch, asic_id) {
                 record_plumb_failure(
                     switch,
                     &mut link,
-                    "setting the NAT-only property",
+                    "setting the uplink property",
                     &e,
                 );
-                error!(log, "Failed to set nat_only: {e:?}");
+                error!(log, "Failed to set uplink: {e:?}");
                 return;
             } else {
-                link.plumbed.nat_only = true;
+                link.plumbed.uplink = true;
             }
         } else {
-            debug!(log, "clearing nat_only");
-            if let Err(e) = port_nat::nat_only_clear(switch, asic_id) {
+            debug!(log, "clearing uplink");
+            if let Err(e) = uplink::uplink_clear(switch, asic_id) {
                 record_plumb_failure(
                     switch,
                     &mut link,
-                    "clearing the NAT-only property",
+                    "clearing the uplink property",
                     &e,
                 );
-                error!(log, "Failed to clear nat_only: {e:?}");
+                error!(log, "Failed to clear uplink: {e:?}");
                 return;
             } else {
-                link.plumbed.nat_only = false;
+                link.plumbed.uplink = false;
             }
         }
     }
@@ -1878,18 +1874,7 @@ async fn reconcile_link(
             link.config.mac,
             link.plumbed.mac.unwrap()
         );
-        if let Err(e) =
-            MacOps::<port_mac::PortMacTable>::mac_clear(switch, asic_id)
-                .and_then(|_| {
-                    MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_clear(
-                        switch, asic_id,
-                    )
-                })
-                .and_then(|_| {
-                    // We tie this in here as ports and macs are 1:1
-                    mcast::mcast_egress::del_port_mapping_entry(switch, asic_id)
-                })
-        {
+        if let Err(e) = clear_mac_config(switch, asic_id) {
             record_plumb_failure(
                 switch,
                 &mut link,
@@ -1905,22 +1890,7 @@ async fn reconcile_link(
 
     if link.plumbed.mac.is_none() {
         debug!(log, "Programming mac {}", link.config.mac);
-        if let Err(e) = MacOps::<port_mac::PortMacTable>::mac_set(
-            switch,
-            asic_id,
-            link.config.mac,
-        )
-        .and_then(|_| {
-            MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_set(
-                switch,
-                asic_id,
-                link.config.mac,
-            )
-        })
-        .and_then(|_| {
-            // We tie this in here as ports and macs are 1:1
-            mcast::mcast_egress::add_port_mapping_entry(switch, asic_id)
-        }) {
+        if let Err(e) = set_mac_config(switch, asic_id, link.config.mac) {
             record_plumb_failure(
                 switch,
                 &mut link,
@@ -1971,9 +1941,8 @@ async fn reconcile_link(
                 false => "disabled",
             }
         );
-        if let Err(e) = switch
-            .asic_hdl
-            .port_enable_set(link.port_hdl, link.config.enabled)
+        if let Err(e) =
+            switch.asic_hdl.port_enable_set(link.port_hdl, link.config.enabled)
         {
             let action = match link.config.enabled {
                 true => "enabling the link",
@@ -2003,10 +1972,7 @@ pub struct LinkReconciler {
 impl LinkReconciler {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
-        LinkReconciler {
-            tx,
-            rx: Mutex::new(Some(rx)),
-        }
+        LinkReconciler { tx, rx: Mutex::new(Some(rx)) }
     }
 
     pub fn run(&self, switch: Arc<Switch>) {

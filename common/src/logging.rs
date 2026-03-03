@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::str::FromStr;
 
@@ -57,19 +57,13 @@ pub fn init(
                 let drain = slog_bunyan::with_name(name, std::io::stdout())
                     .build()
                     .fuse();
-                slog_async::Async::new(drain)
-                    .chan_size(32768)
-                    .build()
-                    .fuse()
+                slog_async::Async::new(drain).chan_size(32768).build().fuse()
             }
             LogFormat::Human => {
                 let decorator = slog_term::TermDecorator::new().build();
                 let drain =
                     slog_term::FullFormat::new(decorator).build().fuse();
-                slog_async::Async::new(drain)
-                    .chan_size(32768)
-                    .build()
-                    .fuse()
+                slog_async::Async::new(drain).chan_size(32768).build().fuse()
             }
         },
     };

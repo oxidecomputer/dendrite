@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -64,12 +64,7 @@ impl TableInfo {
     pub fn new(bfrt: &BfRt, name: &str) -> AsicResult<Self> {
         let (keys, actions, data, size) = bfrt.get_table(name)?;
 
-        Ok(TableInfo {
-            keys,
-            actions,
-            data,
-            size: size as usize,
-        })
+        Ok(TableInfo { keys, actions, data, size: size as usize })
     }
 
     #[cfg(feature = "tofino_asic")]

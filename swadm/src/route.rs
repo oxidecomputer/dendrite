@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::io::{Write, stdout};
 use std::net::IpAddr;
@@ -86,19 +86,34 @@ fn print_route_header(
 fn print_ipv4_route(
     tw: &mut TabWriter<std::io::Stdout>,
     cidr: Ipv4Net,
-    targets: &Vec<types::Ipv4Route>,
+    targets: &Vec<types::Route>,
 ) -> anyhow::Result<()> {
     let mut cidr = cidr.to_string();
     for t in targets {
-        writeln!(
-            tw,
-            "{}\t{}\t{:<}\t{}\t{}",
-            cidr,
-            t.port_id,
-            t.link_id,
-            t.tgt_ip,
-            t.vlan_id.map_or(String::new(), |id| id.to_string()),
-        )?;
+        match t {
+            types::Route::V4(t) => {
+                writeln!(
+                    tw,
+                    "{}\t{}\t{:<}\t{}\t{}",
+                    cidr,
+                    t.port_id,
+                    t.link_id,
+                    t.tgt_ip,
+                    t.vlan_id.map_or(String::new(), |id| id.to_string()),
+                )?;
+            }
+            types::Route::V6(t) => {
+                writeln!(
+                    tw,
+                    "{}\t{}\t{:<}\t{}\t{}",
+                    cidr,
+                    t.port_id,
+                    t.link_id,
+                    t.tgt_ip,
+                    t.vlan_id.map_or(String::new(), |id| id.to_string()),
+                )?;
+            }
+        }
         cidr = String::new();
     }
     Ok(())
@@ -194,21 +209,37 @@ async fn route_add(
     vlan_id: Option<u16>,
 ) -> anyhow::Result<()> {
     match (gw, cidr) {
-        (IpAddr::V4(tgt_ip), IpNet::V4(cidr)) => client
-            .route_ipv4_add(&types::Ipv4RouteUpdate {
-                cidr,
-                target: types::Ipv4Route {
-                    tag: client.inner().tag.clone(),
-                    port_id: link_path.port_id,
-                    link_id: link_path.link_id,
-                    tgt_ip,
-                    vlan_id,
-                },
-                replace: false,
-            })
-            .await
-            .context("adding IPv4 route")
-            .map(|_| ()),
+        (gw, IpNet::V4(cidr)) => {
+            let target = match gw {
+                IpAddr::V4(tgt_ip) => {
+                    types::RouteTarget::V4(types::Ipv4Route {
+                        tag: client.inner().tag.clone(),
+                        port_id: link_path.port_id,
+                        link_id: link_path.link_id,
+                        tgt_ip,
+                        vlan_id,
+                    })
+                }
+                IpAddr::V6(tgt_ip) => {
+                    types::RouteTarget::V6(types::Ipv6Route {
+                        tag: client.inner().tag.clone(),
+                        port_id: link_path.port_id,
+                        link_id: link_path.link_id,
+                        tgt_ip,
+                        vlan_id,
+                    })
+                }
+            };
+            client
+                .route_ipv4_add(&types::Ipv4RouteUpdate {
+                    cidr,
+                    target,
+                    replace: false,
+                })
+                .await
+                .context("adding IPv4 route")
+                .map(|_| ())
+        }
         (IpAddr::V6(tgt_ip), IpNet::V6(cidr)) => client
             .route_ipv6_add(&types::Ipv6RouteUpdate {
                 cidr,
@@ -224,9 +255,6 @@ async fn route_add(
             .await
             .context("adding IPv6 route")
             .map(|_| ()),
-        (IpAddr::V6(_), IpNet::V4(_)) => {
-            Err(anyhow!("cannot have an IPv4 route to an IPv6 address"))
-        }
         (IpAddr::V4(_), IpNet::V6(_)) => {
             Err(anyhow!("cannot have an IPv6 route to an IPv4 address"))
         }
@@ -246,18 +274,15 @@ async fn route_del(
     }
     match cidr {
         IpNet::V4(c) => match gw {
-            Some(IpAddr::V4(gw)) => {
+            Some(gw) => {
                 let link_path = link_path.unwrap();
                 let port = link_path.port_id;
                 let link = link_path.link_id;
                 client
                     .route_ipv4_delete_target(&c, &port, &link, &gw)
                     .await
-                    .context("deleting IPv4 route")
+                    .context("deleting IPv4 route target")
                     .map(|_| ())
-            }
-            Some(IpAddr::V6(_)) => {
-                Err(anyhow!("ipv4 route must have ipv4 gateway"))
             }
             None => client
                 .route_ipv4_delete(&c)
@@ -280,16 +305,11 @@ pub async fn route_cmd(client: &Client, cmd: Route) -> anyhow::Result<()> {
     match cmd {
         Route::List { family } => route_list(client, family).await,
         Route::Get { cidr } => route_get(client, cidr).await,
-        Route::Add {
-            cidr,
-            link_path,
-            gw,
-            vlan_id,
-        } => route_add(client, cidr, link_path, gw, vlan_id).await,
-        Route::Del {
-            cidr,
-            link_path,
-            gw,
-        } => route_del(client, cidr, link_path, gw).await,
+        Route::Add { cidr, link_path, gw, vlan_id } => {
+            route_add(client, cidr, link_path, gw, vlan_id).await
+        }
+        Route::Del { cidr, link_path, gw } => {
+            route_del(client, cidr, link_path, gw).await
+        }
     }
 }

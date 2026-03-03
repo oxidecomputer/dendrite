@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Table operations for multicast NAT entries.
 
@@ -14,7 +14,7 @@ use super::{Ipv4MatchKey, Ipv6MatchKey};
 
 use aal::ActionParse;
 use aal_macros::*;
-use common::{nat::NatTarget, network::MacAddr};
+use common::network::{MacAddr, NatTarget};
 use slog::debug;
 
 /// IPv4 Table for multicast NAT entries.
@@ -27,21 +27,13 @@ pub(crate) const IPV6_TABLE_NAME: &str =
 #[derive(ActionParse, Debug)]
 enum Ipv4Action {
     #[action_xlate(name = "mcast_forward_ipv4_to")]
-    Forward {
-        target: Ipv6Addr,
-        inner_mac: MacAddr,
-        vni: u32,
-    },
+    Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
 
 #[derive(ActionParse, Debug)]
 enum Ipv6Action {
     #[action_xlate(name = "mcast_forward_ipv6_to")]
-    Forward {
-        target: Ipv6Addr,
-        inner_mac: MacAddr,
-        vni: u32,
-    },
+    Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
 
 /// Add a NAT entry for IPv4 multicast traffic, keyed on `ip`.
@@ -57,10 +49,7 @@ pub(crate) fn add_ipv4_entry(
         vni: tgt.vni.as_u32(),
     };
 
-    debug!(
-        s.log,
-        "add ingress mcast entry {} -> {:?}", match_key, action_key
-    );
+    debug!(s.log, "add ingress mcast entry {} -> {:?}", match_key, action_key);
 
     s.table_entry_add(TableType::NatIngressIpv4Mcast, &match_key, &action_key)
 }
@@ -100,8 +89,14 @@ pub(crate) fn del_ipv4_entry(s: &Switch, ip: Ipv4Addr) -> DpdResult<()> {
 }
 
 /// Dump the IPv4 NAT table's contents.
-pub(crate) fn ipv4_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv4MatchKey, Ipv4Action>(TableType::NatIngressIpv4Mcast)
+pub(crate) fn ipv4_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv4MatchKey, Ipv4Action>(
+        TableType::NatIngressIpv4Mcast,
+        from_hardware,
+    )
 }
 
 /// Fetch the IPv4 NAT table's counters.
@@ -130,10 +125,7 @@ pub(crate) fn add_ipv6_entry(
         vni: tgt.vni.as_u32(),
     };
 
-    debug!(
-        s.log,
-        "add ingress mcast entry {} -> {:?}", match_key, action_key
-    );
+    debug!(s.log, "add ingress mcast entry {} -> {:?}", match_key, action_key);
 
     s.table_entry_add(TableType::NatIngressIpv6Mcast, &match_key, &action_key)
 }
@@ -173,8 +165,14 @@ pub(crate) fn del_ipv6_entry(s: &Switch, ip: Ipv6Addr) -> DpdResult<()> {
 }
 
 /// Dump the IPv6 NAT table's contents.
-pub(crate) fn ipv6_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv6MatchKey, Ipv6Action>(TableType::NatIngressIpv6Mcast)
+pub(crate) fn ipv6_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv6MatchKey, Ipv6Action>(
+        TableType::NatIngressIpv6Mcast,
+        from_hardware,
+    )
 }
 
 /// Fetch the IPv6 NAT table's counters.

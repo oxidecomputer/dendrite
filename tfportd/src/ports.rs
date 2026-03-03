@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Create `tfport`s on the host that represent `dpd` links.
 //!
@@ -124,9 +124,8 @@ async fn dpd_port_update(g: &Global, links: &mut LinkMap) -> Result<()> {
     for entry in dpd_data {
         let expected_tfport = tfport_name(&entry);
         let _ = current_links.remove(&expected_tfport);
-        let link = links
-            .entry(expected_tfport.clone())
-            .or_insert((&entry).into());
+        let link =
+            links.entry(expected_tfport.clone()).or_insert((&entry).into());
         let entry_mac = entry.mac.into();
         link.dpd_link_local = entry.link_local;
 
@@ -253,10 +252,7 @@ async fn ensure_address_match(g: &Global, link: &LinkInfo) -> Result<()> {
             .link_ipv6_create(
                 &link.port_id,
                 &link.link_id,
-                &types::Ipv6Entry {
-                    tag: g.client.inner().tag.clone(),
-                    addr,
-                },
+                &types::Ipv6Entry { tag: g.client.inner().tag.clone(), addr },
             )
             .await
             .context("sending new link-local address")?;

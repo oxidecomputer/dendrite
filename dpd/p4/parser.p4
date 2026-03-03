@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 parser IngressParser(
 	packet_in pkt,
@@ -32,10 +32,11 @@ parser IngressParser(
 		meta.service_routed = false;
 		meta.nat_egress_hit = false;
 		meta.nat_ingress_hit = false;
-		meta.nat_ingress_port = false;
+		meta.uplink_ingress = false;
 		meta.nat_ingress_tgt = 0;
 		meta.nat_inner_mac = 0;
 		meta.nat_geneve_vni = 0;
+		meta.encap_needed = false;
 		meta.icmp_recalc = false;
 		meta.icmp_csum = 0;
 		meta.l4_src_port = 0;
@@ -50,6 +51,7 @@ parser IngressParser(
 		meta.pkt_type = 0;
 		meta.drop_reason = 0;
 		meta.nat_ingress_csum = 0;
+		meta.resolve_nexthop = false;
 
 		meta.bridge_hdr.setValid();
 		meta.bridge_hdr.ingress_port = ig_intr_md.ingress_port;

@@ -20,4 +20,3 @@ smf.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
-oximeter.workspace = true

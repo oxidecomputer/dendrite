@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Table operations for multicast replication information.
 
@@ -69,10 +69,7 @@ pub(crate) fn add_ipv6_entry(
         level2_excl_id,
     };
 
-    debug!(
-        s.log,
-        "add mcast_ipv6 entry {} -> {:?}", dst_addr, action_data
-    );
+    debug!(s.log, "add mcast_ipv6 entry {} -> {:?}", dst_addr, action_data);
 
     s.table_entry_add(TableType::McastIpv6, &match_key, &action_data)
 }
@@ -107,10 +104,7 @@ pub(crate) fn update_ipv6_entry(
         level2_excl_id,
     };
 
-    debug!(
-        s.log,
-        "update mcast_ipv6 entry {} -> {:?}", dst_addr, action_data
-    );
+    debug!(s.log, "update mcast_ipv6 entry {} -> {:?}", dst_addr, action_data);
 
     s.table_entry_update(TableType::McastIpv6, &match_key, &action_data)
 }
@@ -126,8 +120,14 @@ pub(crate) fn del_ipv6_entry(s: &Switch, dst_addr: Ipv6Addr) -> DpdResult<()> {
 }
 
 /// Dump the IPv6 multicast table's contents.
-pub(crate) fn ipv6_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv6MatchKey, Ipv6Action>(TableType::McastIpv6)
+pub(crate) fn ipv6_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv6MatchKey, Ipv6Action>(
+        TableType::McastIpv6,
+        from_hardware,
+    )
 }
 
 /// Fetch the IPv6 multicast table's counters.

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::convert::TryFrom;
 use std::io;
@@ -19,11 +19,13 @@ use dpd_client::types;
 
 mod addr;
 mod arp;
+mod attached;
 mod compliance;
 mod counters;
 mod link;
 mod nat;
 mod route;
+mod snapshot;
 mod switchport;
 mod table;
 
@@ -64,6 +66,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: nat::Nat,
     },
+    #[clap(visible_alias = "attsub")]
+    AttachedSubnet {
+        #[command(subcommand)]
+        cmd: attached::AttachedSubnet,
+    },
     Counters {
         #[command(subcommand)]
         cmd: counters::P4Counters,
@@ -84,6 +91,10 @@ enum Commands {
     Compliance {
         #[command(subcommand)]
         cmd: compliance::Compliance,
+    },
+    Snapshot {
+        #[command(subcommand)]
+        cmd: snapshot::Snapshot,
     },
 }
 
@@ -126,10 +137,7 @@ impl FromStr for LinkPath {
         let Ok(port_id) = types::PortId::try_from(port_id) else {
             anyhow::bail!("Invalid switch port: {port_id}");
         };
-        Ok(Self {
-            port_id,
-            link_id: link_id.parse()?,
-        })
+        Ok(Self { port_id, link_id: link_id.parse()? })
     }
 }
 
@@ -205,17 +213,26 @@ async fn main_impl() -> anyhow::Result<()> {
     let port = opts.port.unwrap_or_else(default_port);
     let host = opts.host.unwrap_or_else(|| "localhost".to_string());
     let log = slog::Logger::root(slog::Discard, slog::o!());
-    let client_state = ClientState {
-        tag: String::from("cli"),
-        log,
-    };
-    let client = Client::new(&format!("http://{host}:{port}"), client_state);
+    let client_state = ClientState { tag: String::from("cli"), log };
+    let reqwest_client = reqwest::ClientBuilder::new()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .expect("failed to build HTTP client");
+    let client = Client::new_with_client(
+        &format!("http://{host}:{port}"),
+        reqwest_client,
+        client_state,
+    );
 
     match opts.cmd {
         Commands::DpdBuildInfo => build_info(&client).await,
         Commands::Arp { cmd: a } => arp::arp_cmd(&client, a).await,
         Commands::Route { cmd: r } => route::route_cmd(&client, r).await,
         Commands::Addr { cmd: p } => addr::addr_cmd(&client, p).await,
+        Commands::AttachedSubnet { cmd: p } => {
+            attached::attsub_cmd(&client, p).await
+        }
         Commands::Nat { cmd: p } => nat::nat_cmd(&client, p).await,
         Commands::Counters { cmd: c } => counters::ctrs_cmd(&client, c).await,
         Commands::SwitchPort { cmd: p } => {
@@ -227,6 +244,9 @@ async fn main_impl() -> anyhow::Result<()> {
         }
         Commands::Compliance { cmd: compliance } => {
             compliance::compliance_cmd(&client, compliance).await
+        }
+        Commands::Snapshot { cmd } => {
+            snapshot::snapshot_cmd(&client, cmd).await
         }
     }
 }

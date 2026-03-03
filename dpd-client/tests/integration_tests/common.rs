@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::fmt::Write;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use std::{fmt, thread};
 
+use anyhow::Context;
 use anyhow::anyhow;
 use oxnet::Ipv4Net;
 use oxnet::Ipv6Net;
@@ -34,6 +35,9 @@ use types::PortId;
 
 const SHOW_VERBOSE: u8 = 0x01;
 const SHOW_HEX: u8 = 0x02;
+
+/// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
+pub const ADMIN_LOCAL_MULTICAST_PREFIX: u16 = 0xFF04;
 
 // Timeout set on `Pcap` objects.
 //
@@ -119,7 +123,7 @@ pub struct TestPacket {
     pub packet: Arc<packet::Packet>,
 }
 
-fn dump_hex(a: &[u8]) {
+pub fn dump_hex(a: &[u8]) {
     const CHUNK_SIZE: usize = 16;
     let mut off = 0;
 
@@ -250,10 +254,7 @@ impl Switch {
         let drain = slog_term::FullFormat::new(decorator).build().fuse();
         let drain = slog_async::Async::new(drain).build().fuse();
         let log = slog::Logger::root(drain, slog::o!());
-        let client_state = ClientState {
-            tag: String::from("test"),
-            log,
-        };
+        let client_state = ClientState { tag: String::from("test"), log };
         let client = Client::new(
             &format!("http://{ctrl_host}:{ctrl_port}"),
             client_state,
@@ -270,12 +271,7 @@ impl Switch {
         // rear ports, and then use `swadm` to return the ASIC ID for each link.
         let ports = vec![
             None,
-            Some(Port::new(
-                8,
-                PortId::try_from("rear29").unwrap(),
-                None,
-                None,
-            )),
+            Some(Port::new(8, PortId::try_from("rear29").unwrap(), None, None)),
             Some(Port::new(
                 16,
                 PortId::try_from("rear31").unwrap(),
@@ -544,6 +540,15 @@ impl Switch {
         Ok(())
     }
 
+    pub async fn set_uplink(&self, phys_port: PhysPort, uplink: bool) {
+        let (port_id, link_id) = self.link_id(phys_port).unwrap();
+        self.client
+            .link_uplink_set(&port_id, &link_id, uplink)
+            .await
+            .unwrap()
+            .into_inner()
+    }
+
     pub fn tofino_port(&self, phys_port: PhysPort) -> u16 {
         let idx: usize = phys_port.into();
         if phys_port == NO_PORT {
@@ -573,6 +578,7 @@ impl Switch {
 
     /// Return the port label for the given physical port, useful for
     /// counter information.
+    #[cfg(feature = "multicast")]
     pub fn port_label(&self, phys_port: PhysPort) -> Option<String> {
         let idx: usize = phys_port.into();
         if phys_port == NO_PORT {
@@ -624,15 +630,10 @@ impl Switch {
                 }
                 pcap::Ternary::Ok(data) => {
                     let packet = packet::Packet::parse(&data).unwrap();
-                    let copy = Packet {
-                        hdrs: packet.hdrs.clone(),
-                        body: packet.body,
-                    };
+                    let copy =
+                        Packet { hdrs: packet.hdrs.clone(), body: packet.body };
 
-                    let cap = TestPacket {
-                        port,
-                        packet: Arc::new(copy),
-                    };
+                    let cap = TestPacket { port, packet: Arc::new(copy) };
                     tx.send(cap).unwrap();
                 }
             }
@@ -708,9 +709,7 @@ impl Switch {
         let n_total_packets = send.len() + expect.len();
         let mut captured = Vec::with_capacity(n_total_packets);
         let now = std::time::Instant::now();
-        while now.elapsed() < self.packet_timeout
-            && captured.len() < n_total_packets
-        {
+        while now.elapsed() < self.packet_timeout {
             captured.extend(self.collected_packets_get());
             thread::sleep(Duration::from_millis(10));
         }
@@ -934,11 +933,13 @@ pub fn gen_udp_routed_pair(
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub enum OxideGeneveOption {
     External,
+    #[cfg(feature = "multicast")]
     Multicast(u8),
     Mss(u32),
 }
 
 /// Build a Geneve packet with a possible multicast tag.
+#[cfg(feature = "multicast")]
 pub fn gen_geneve_packet_with_mcast_tag(
     src: Endpoint,
     dst: Endpoint,
@@ -1013,6 +1014,7 @@ pub fn gen_geneve_packet(
                     0x00,
                 ]);
             }
+            #[cfg(feature = "multicast")]
             OxideGeneveOption::Multicast(tag) if *tag < 3 => {
                 #[rustfmt::skip]
                 geneve.options.extend_from_slice(&[
@@ -1047,6 +1049,7 @@ pub fn gen_geneve_packet(
                 ]);
                 geneve.options.extend_from_slice(&mss.to_be_bytes()[..]);
             }
+            #[cfg(feature = "multicast")]
             _ => {
                 panic!("illegal specification for option: {opt:?}")
             }
@@ -1088,8 +1091,8 @@ async fn set_route_ipv6_common(
     vlan_id: Option<u16>,
 ) -> TestResult {
     let (port_id, link_id) = switch.link_id(phys_port).unwrap();
-    let cidr = subnet.parse::<Ipv6Net>()?;
-    let tgt_ip: Ipv6Addr = gw.parse()?;
+    let cidr = subnet.parse::<Ipv6Net>().context("parsing route subnet")?;
+    let tgt_ip: Ipv6Addr = gw.parse().context("parsing route gateway")?;
 
     let route = types::Ipv6RouteUpdate {
         cidr,
@@ -1114,11 +1117,7 @@ async fn set_route_ipv6_common(
         .await
         .expect("Failed to get just-added IPv6 route entry")
         .into_inner();
-    assert_eq!(
-        route.len(),
-        1,
-        "Just added Ipv6-route has more than 1 entry"
-    );
+    assert_eq!(route.len(), 1, "Just added Ipv6-route has more than 1 entry");
     assert_eq!(
         route[0].port_id, port_id,
         "Just-added IPv6 route entry doesn't match"
@@ -1166,11 +1165,7 @@ pub async fn add_neighbor_ipv6(
         tag: switch.client.inner().tag.clone(),
         update: String::new(),
     };
-    switch
-        .client
-        .ndp_create(&entry)
-        .await
-        .expect("Failed to add NDP entry");
+    switch.client.ndp_create(&entry).await.expect("Failed to add NDP entry");
 
     let neighbor = switch
         .client
@@ -1178,11 +1173,7 @@ pub async fn add_neighbor_ipv6(
         .await
         .expect("Failed to get just-added NDP entry")
         .into_inner();
-    assert_eq!(
-        neighbor.mac,
-        mac.into(),
-        "Just-added NDP entry doesn't match"
-    );
+    assert_eq!(neighbor.mac, mac.into(), "Just-added NDP entry doesn't match");
     assert_eq!(neighbor.ip, host, "Just-added NDP entry doesn't match");
     Ok(())
 }
@@ -1199,13 +1190,13 @@ async fn set_route_ipv4_common(
     let (port_id, link_id) = switch.link_id(phys_port).unwrap();
     let route = types::Ipv4RouteUpdate {
         cidr,
-        target: types::Ipv4Route {
+        target: types::RouteTarget::V4(types::Ipv4Route {
             port_id: port_id.clone(),
             link_id: link_id.clone(),
             tgt_ip,
             tag: switch.client.inner().tag.clone(),
             vlan_id,
-        },
+        }),
         replace: false,
     };
     switch
@@ -1220,23 +1211,16 @@ async fn set_route_ipv4_common(
         .await
         .expect("failed to get just-added IPv4 route entry")
         .into_inner();
-    assert_eq!(
-        route.len(),
-        1,
-        "Just added IPv4-route has more than 1 entry"
-    );
-    assert_eq!(
-        route[0].port_id, port_id,
-        "Just-added IPv4 route entry doesn't match"
-    );
-    assert_eq!(
-        route[0].link_id, link_id,
-        "Just-added IPv4 route entry doesn't match"
-    );
-    assert_eq!(
-        route[0].tgt_ip, tgt_ip,
-        "Just-added IPv4 route entry doesn't match"
-    );
+
+    assert_eq!(route.len(), 1, "Just added IPv4-route has more than 1 entry");
+
+    let types::Route::V4(r) = &route[0] else {
+        panic!("expected v4 route");
+    };
+
+    assert_eq!(r.port_id, port_id, "Just-added IPv4 route entry doesn't match");
+    assert_eq!(r.link_id, link_id, "Just-added IPv4 route entry doesn't match");
+    assert_eq!(r.tgt_ip, tgt_ip, "Just-added IPv4 route entry doesn't match");
     Ok(())
 }
 
@@ -1247,6 +1231,61 @@ pub async fn set_route_ipv4(
     gw: &str,
 ) -> TestResult {
     set_route_ipv4_common(switch, subnet, phys_port, gw, None).await
+}
+
+async fn set_route_ipv4_over_ipv6_common(
+    switch: &Switch,
+    subnet: &str,
+    phys_port: PhysPort,
+    gw: &str,
+    vlan_id: Option<u16>,
+) -> TestResult {
+    let cidr = subnet.parse::<Ipv4Net>()?;
+    let tgt_ip: Ipv6Addr = gw.parse()?;
+    let (port_id, link_id) = switch.link_id(phys_port).unwrap();
+    let route = types::Ipv4RouteUpdate {
+        cidr,
+        target: types::RouteTarget::V6(types::Ipv6Route {
+            port_id: port_id.clone(),
+            link_id: link_id.clone(),
+            tgt_ip,
+            tag: switch.client.inner().tag.clone(),
+            vlan_id,
+        }),
+        replace: false,
+    };
+    switch
+        .client
+        .route_ipv4_set(&route)
+        .await
+        .expect("Failed to add IPv4 route entry");
+
+    let route = switch
+        .client
+        .route_ipv4_get(&cidr)
+        .await
+        .expect("failed to get just-added IPv4 route entry")
+        .into_inner();
+
+    assert_eq!(route.len(), 1, "Just added IPv4-route has more than 1 entry");
+
+    let types::Route::V6(r) = &route[0] else {
+        panic!("expected v4 route");
+    };
+
+    assert_eq!(r.port_id, port_id, "Just-added IPv4 route entry doesn't match");
+    assert_eq!(r.link_id, link_id, "Just-added IPv4 route entry doesn't match");
+    assert_eq!(r.tgt_ip, tgt_ip, "Just-added IPv4 route entry doesn't match");
+    Ok(())
+}
+
+pub async fn set_route_ipv4_over_ipv6(
+    switch: &Switch,
+    subnet: &str,
+    phys_port: PhysPort,
+    gw: &str,
+) -> TestResult {
+    set_route_ipv4_over_ipv6_common(switch, subnet, phys_port, gw, None).await
 }
 
 pub async fn add_arp_ipv4(
@@ -1262,11 +1301,7 @@ pub async fn add_arp_ipv4(
         tag: switch.client.inner().tag.clone(),
         update: String::new(),
     };
-    switch
-        .client
-        .arp_create(&entry)
-        .await
-        .expect("Failed to add ARP entry");
+    switch.client.arp_create(&entry).await.expect("Failed to add ARP entry");
 
     let arp = switch
         .client
@@ -1292,11 +1327,7 @@ pub async fn add_ndp_ipv6(
         tag: switch.client.inner().tag.clone(),
         update: String::new(),
     };
-    switch
-        .client
-        .ndp_create(&entry)
-        .await
-        .expect("Failed to add ARP entry");
+    switch.client.ndp_create(&entry).await.expect("Failed to add ARP entry");
 
     let ndp = switch
         .client
@@ -1411,6 +1442,7 @@ pub fn gen_arp_reply(src: Endpoint, tgt: Endpoint) -> Packet {
 }
 
 pub mod prelude {
+    pub use super::ADMIN_LOCAL_MULTICAST_PREFIX;
     pub use super::NO_PORT;
     pub use super::PhysPort;
     pub use super::SERVICE_PORT;
