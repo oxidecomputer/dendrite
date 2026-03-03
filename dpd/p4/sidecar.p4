@@ -608,10 +608,11 @@ control NatIngress (
 	}
 
 	// Separate table for IPv4 multicast packets that need to be encapsulated.
-	// Groups without VLAN match untagged only. Groups with VLAN match both
-	// untagged (for decapsulated Geneve from underlay) and correctly tagged.
-	// Packets with wrong VLAN miss and are not NAT encapsulated.
-	// When hdr.vlan.isValid()==false, vlan_id matches as 0.
+	//
+	// Each group has a single entry keyed on (dst_addr, vlan_valid, vlan_id).
+	// Groups with a VLAN match on (addr, true, vlan_id). Groups without VLAN
+	// match on (addr, false, 0). Packets with the wrong VLAN miss and are
+	// not NAT encapsulated.
 	table ingress_ipv4_mcast {
 		key = {
 			hdr.ipv4.dst_addr : exact;
@@ -633,11 +634,8 @@ control NatIngress (
 		mcast_ipv6_ingress_ctr.count();
 	}
 
-	// Separate table for IPv6 multicast packets that need to be encapsulated.
-	// Groups without VLAN match untagged only. Groups with VLAN match both
-	// untagged (for decapsulated Geneve from underlay) and correctly tagged.
-	// Packets with wrong VLAN miss and are not NAT encapsulated.
-	// When hdr.vlan.isValid()==false, vlan_id matches as 0.
+	// IPv6 counterpart of ingress_ipv4_mcast for IPv6 packets that need to be
+	// encapsulated. See ingress_ipv4_mcast for details on VLAN matching.
 	table ingress_ipv6_mcast {
 		key = {
 			hdr.ipv6.dst_addr : exact;
@@ -1355,8 +1353,8 @@ control MulticastRouter4(
 		}
 
 		if (!tbl.apply().hit) {
-			icmp_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);
-			meta.drop_reason = DROP_IPV6_UNROUTEABLE;
+			icmp_error(ICMP_DEST_UNREACH, ICMP_DST_UNREACH_NET);
+			meta.drop_reason = DROP_IPV4_UNROUTEABLE;
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
 		} else if (hdr.ipv4.ttl == 1 && !meta.service_routed) {
@@ -1584,7 +1582,7 @@ control EgressFilter(
 		egress_filter.apply();
 	}
 }
-	
+
 control MacRewrite(
 	inout sidecar_headers_t hdr,
 	in PortId_t port

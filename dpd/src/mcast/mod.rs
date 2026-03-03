@@ -720,7 +720,7 @@ pub(crate) fn modify_group_external(
     updated_group.int_fwding.nat_target = Some(nat_target);
 
     let old_vlan_id = updated_group.ext_fwding.vlan_id;
-    // VLAN is assigned directly -> Some(x) sets VLAN, None removes VLAN
+    // VLAN is assigned directly -> `Some(x)` sets VLAN, `None` removes VLAN
     updated_group.ext_fwding.vlan_id =
         new_group_info.external_forwarding.vlan_id;
     updated_group.sources = canonicalize_sources(
@@ -1896,7 +1896,7 @@ fn update_nat_tables(
 ) -> DpdResult<()> {
     match (group_ip, new_nat_target, old_nat_target) {
         (IpAddr::V4(ipv4), Some(new_nat), Some(old_nat)) => {
-            // NAT to NAT - update existing entry (handles VLAN changes internally)
+            // NAT to NAT -> update existing entry (handles VLAN changes internally)
             table::mcast::mcast_nat::update_ipv4_entry(
                 s,
                 ipv4,
@@ -1907,7 +1907,7 @@ fn update_nat_tables(
             )
         }
         (IpAddr::V6(ipv6), Some(new_nat), Some(old_nat)) => {
-            // NAT to NAT - update existing entry (handles VLAN changes internally)
+            // NAT to NAT -> update existing entry (handles VLAN changes internally)
             table::mcast::mcast_nat::update_ipv6_entry(
                 s,
                 ipv6,
@@ -2009,11 +2009,12 @@ fn update_fwding_tables(
             target_vlan_id,
         )
         .and_then(|_| {
-            // Update external bitmap for external members
-            // (only external bitmap entries exist; underlay replication
-            // uses ASIC multicast groups directly).
-            // Skip if no external members to avoid spurious errors
-            // when called during rollback on empty groups.
+            // Update external bitmap for external members (only external bitmap
+            // entries exist, whereas underlay replication uses ASIC multicast
+            // groups directly).
+            //
+            // Skip if no external members to avoid spurious errors when called
+            // during rollback on empty groups.
             if !members.iter().any(|m| m.direction == Direction::External) {
                 return Ok(());
             }

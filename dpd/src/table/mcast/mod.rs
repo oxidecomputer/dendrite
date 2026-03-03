@@ -58,10 +58,10 @@ impl fmt::Display for Ipv6MatchKey {
 
 /// VLAN-aware match key for NAT ingress tables.
 ///
-/// Matches on destination address, VLAN header validity, and VLAN ID to prevent
-/// VLAN translation. For groups with a VLAN, two entries are installed (untagged
-/// and tagged), packets with a mismatched VLAN miss both and are dropped rather
-/// than being translated to another customer's VLAN.
+/// Matches on destination address, VLAN header validity, and VLAN ID. A single
+/// entry is installed per group with an exact VLAN match, so packets with a
+/// mismatched VLAN miss and are dropped rather than being translated to another
+/// customer's VLAN.
 #[derive(MatchParse, Hash)]
 pub(super) struct Ipv4VlanMatchKey {
     dst_addr: Ipv4Addr,
@@ -91,10 +91,10 @@ impl fmt::Display for Ipv4VlanMatchKey {
 
 /// VLAN-aware match key for NAT ingress tables.
 ///
-/// Matches on destination address, VLAN header validity, and VLAN ID to prevent
-/// VLAN translation. For groups with a VLAN, two entries are installed (untagged
-/// and tagged), packets with a mismatched VLAN miss both and are dropped rather
-/// than being translated to another customer's VLAN.
+/// Matches on destination address, VLAN header validity, and VLAN ID. A single
+/// entry is installed per group with an exact VLAN match, so packets with a
+/// mismatched VLAN miss and are dropped rather than being translated to another
+/// customer's VLAN.
 #[derive(MatchParse, Hash)]
 pub(super) struct Ipv6VlanMatchKey {
     dst_addr: Ipv6Addr,

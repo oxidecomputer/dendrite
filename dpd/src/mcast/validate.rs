@@ -59,9 +59,9 @@ pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
 
     if !UNDERLAY_MULTICAST_SUBNET.contains(nat_target.internal_ip) {
         return Err(DpdError::Invalid(format!(
-            "NAT target internal IP address {internal_ip} is not in the reserved \
+            "NAT target internal IP address {} is not in the reserved \
              underlay multicast subnet (ff04::/64)",
-            internal_ip = nat_target.internal_ip
+            nat_target.internal_ip
         )));
     }
 

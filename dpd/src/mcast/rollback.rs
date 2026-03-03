@@ -57,7 +57,7 @@ trait RollbackOps {
     ) -> DpdResult<()> {
         self.log_rollback_error(
             "remove new source filters",
-            &format!("for group {group_ip}", group_ip = self.group_ip()),
+            &format!("for group {}", self.group_ip()),
             remove_source_filters(
                 self.switch(),
                 self.group_ip(),
@@ -66,7 +66,7 @@ trait RollbackOps {
         );
         self.log_rollback_error(
             "restore original source filters",
-            &format!("for group {group_ip}", group_ip = self.group_ip()),
+            &format!("for group {}", self.group_ip()),
             add_source_filters(
                 self.switch(),
                 self.group_ip(),
@@ -355,18 +355,16 @@ impl<'a> GroupCreateRollbackContext<'a> {
             self.log_rollback_error(
                 "remove external multicast group",
                 &format!(
-                    "for IP {group_ip} with ID {external_id}",
-                    group_ip = self.group_ip,
-                    external_id = self.external_id
+                    "for IP {} with ID {}",
+                    self.group_ip, self.external_id
                 ),
                 self.switch.asic_hdl.mc_group_destroy(self.external_id),
             );
             self.log_rollback_error(
                 "remove underlay multicast group",
                 &format!(
-                    "for IP {group_ip} with ID {underlay_id}",
-                    group_ip = self.group_ip,
-                    underlay_id = self.underlay_id
+                    "for IP {} with ID {}",
+                    self.group_ip, self.underlay_id
                 ),
                 self.switch.asic_hdl.mc_group_destroy(self.underlay_id),
             );
@@ -449,10 +447,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
                 // (bitmap entries are only created for internal groups with both group types)
                 self.log_rollback_error(
                     "delete IPv6 egress bitmap entry",
-                    &format!(
-                        "for external group {external_id}",
-                        external_id = self.external_id
-                    ),
+                    &format!("for external group {}", self.external_id),
                     table::mcast::mcast_egress::del_bitmap_entry(
                         self.switch,
                         self.external_id,
@@ -772,7 +767,7 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         if let Some(replication_info) = replication_info {
             self.log_rollback_error(
                 "restore replication settings",
-                &format!("for group {group_ip}", group_ip = self.group_ip),
+                &format!("for group {}", self.group_ip),
                 update_replication_tables(
                     self.switch,
                     self.group_ip,
@@ -791,10 +786,7 @@ impl<'a> GroupUpdateRollbackContext<'a> {
                 IpAddr::V4(ipv4) => {
                     self.log_rollback_error(
                         "restore IPv4 NAT settings",
-                        &format!(
-                            "for group {group_ip}",
-                            group_ip = self.group_ip
-                        ),
+                        &format!("for group {}", self.group_ip),
                         table::mcast::mcast_nat::update_ipv4_entry(
                             self.switch,
                             ipv4,
@@ -808,10 +800,7 @@ impl<'a> GroupUpdateRollbackContext<'a> {
                 IpAddr::V6(ipv6) => {
                     self.log_rollback_error(
                         "restore IPv6 NAT settings",
-                        &format!(
-                            "for group {group_ip}",
-                            group_ip = self.group_ip
-                        ),
+                        &format!("for group {}", self.group_ip),
                         table::mcast::mcast_nat::update_ipv6_entry(
                             self.switch,
                             ipv6,
@@ -827,7 +816,7 @@ impl<'a> GroupUpdateRollbackContext<'a> {
 
         self.log_rollback_error(
             "restore VLAN settings",
-            &format!("for group {group_ip}", group_ip = self.group_ip),
+            &format!("for group {}", self.group_ip),
             update_fwding_tables(
                 self.switch,
                 self.group_ip,

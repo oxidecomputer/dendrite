@@ -8,7 +8,7 @@
 //!
 //! Route tables match only on destination address and select the egress action:
 //! - `forward`: Forward without VLAN modification
-//! - `forward_vlan(vid)`: Add VLAN tag on egress
+//! - `forward_vlan(vlan_id)`: Add VLAN tag on egress
 //!
 //! VLAN-based access control (preventing VLAN translation) is handled by NAT
 //! ingress tables before encapsulation, not by route tables.
@@ -50,7 +50,7 @@ enum Ipv6Action {
 ///
 /// The action is selected based on VLAN configuration:
 /// - No VLAN: `forward` (no VLAN modification on egress)
-/// - With VLAN: `forward_vlan(vid)` (add VLAN tag on egress)
+/// - With VLAN: `forward_vlan(vlan_id)` (add VLAN tag on egress)
 pub(crate) fn add_ipv4_entry(
     s: &Switch,
     route: Ipv4Addr,
@@ -59,9 +59,9 @@ pub(crate) fn add_ipv4_entry(
     let match_key = Ipv4MatchKey::new(route);
     let action = match vlan_id {
         None => Ipv4Action::Forward,
-        Some(vid) => {
-            common::network::validate_vlan(vid)?;
-            Ipv4Action::ForwardVLAN { vlan_id: vid }
+        Some(vlan_id) => {
+            common::network::validate_vlan(vlan_id)?;
+            Ipv4Action::ForwardVLAN { vlan_id }
         }
     };
 
@@ -86,9 +86,9 @@ pub(crate) fn update_ipv4_entry(
     let match_key = Ipv4MatchKey::new(route);
     let action = match new_vlan_id {
         None => Ipv4Action::Forward,
-        Some(vid) => {
-            common::network::validate_vlan(vid)?;
-            Ipv4Action::ForwardVLAN { vlan_id: vid }
+        Some(vlan_id) => {
+            common::network::validate_vlan(vlan_id)?;
+            Ipv4Action::ForwardVLAN { vlan_id }
         }
     };
 
@@ -131,7 +131,7 @@ pub(crate) fn reset_ipv4(s: &Switch) -> DpdResult<()> {
 ///
 /// The action is selected based on VLAN configuration:
 /// - No VLAN: `forward` (no VLAN modification on egress)
-/// - With VLAN: `forward_vlan(vid)` (add VLAN tag on egress)
+/// - With VLAN: `forward_vlan(vlan_id)` (add VLAN tag on egress)
 ///
 /// Reserved underlay multicast subnet (ff04::/64) is internal to the rack
 /// and always uses Forward without VLAN tagging, regardless of the vlan_id
@@ -150,9 +150,9 @@ pub(crate) fn add_ipv6_entry(
     } else {
         match vlan_id {
             None => Ipv6Action::Forward,
-            Some(vid) => {
-                common::network::validate_vlan(vid)?;
-                Ipv6Action::ForwardVLAN { vlan_id: vid }
+            Some(vlan_id) => {
+                common::network::validate_vlan(vlan_id)?;
+                Ipv6Action::ForwardVLAN { vlan_id }
             }
         }
     };
@@ -184,9 +184,9 @@ pub(crate) fn update_ipv6_entry(
     } else {
         match new_vlan_id {
             None => Ipv6Action::Forward,
-            Some(vid) => {
-                common::network::validate_vlan(vid)?;
-                Ipv6Action::ForwardVLAN { vlan_id: vid }
+            Some(vlan_id) => {
+                common::network::validate_vlan(vlan_id)?;
+                Ipv6Action::ForwardVLAN { vlan_id }
             }
         }
     };
