@@ -59,9 +59,10 @@ pub fn delete_entry(s: &Switch, subnet: Ipv4Net) -> DpdResult<()> {
     s.table_entry_del(TableType::AttachedSubnetIpv4, &match_key)
 }
 
-pub fn table_dump(s: &Switch) -> DpdResult<views::Table> {
+pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
     s.table_dump::<AttachedSubnetV4MatchKey, AttachedSubnetV4Action>(
         TableType::AttachedSubnetIpv4,
+        from_hardware,
     )
 }
 

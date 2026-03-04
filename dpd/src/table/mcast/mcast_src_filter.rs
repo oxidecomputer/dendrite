@@ -15,7 +15,7 @@ use crate::{Switch, table::*};
 
 use aal::{ActionParse, MatchParse};
 use aal_macros::*;
-use oxnet::Ipv4Net;
+use oxnet::{Ipv4Net, Ipv6Net};
 use slog::debug;
 
 /// IPv4 Table for multicast source filter entries.
@@ -46,12 +46,13 @@ impl fmt::Display for Ipv4MatchKey {
 
 #[derive(MatchParse, Hash)]
 struct Ipv6MatchKey {
-    src_addr: Ipv6Addr,
+    #[match_xlate(name = "src_addr", type = "lpm")]
+    src_addr: Ipv6Net,
     dst_addr: Ipv6Addr,
 }
 
 impl Ipv6MatchKey {
-    fn new(src_addr: Ipv6Addr, dst_addr: Ipv6Addr) -> Self {
+    fn new(src_addr: Ipv6Net, dst_addr: Ipv6Addr) -> Self {
         Self { src_addr, dst_addr }
     }
 }
@@ -104,8 +105,14 @@ pub(crate) fn del_ipv4_entry(
 }
 
 /// Dump the IPv4 multicast source filter table's contents.
-pub(crate) fn ipv4_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv4MatchKey, Ipv4Action>(TableType::McastIpv4SrcFilter)
+pub(crate) fn ipv4_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv4MatchKey, Ipv4Action>(
+        TableType::McastIpv4SrcFilter,
+        from_hardware,
+    )
 }
 
 /// Fetch the IPv4 multicast source filter table's counters.
@@ -125,7 +132,7 @@ pub(crate) fn reset_ipv4(s: &Switch) -> DpdResult<()> {
 /// `src_addr, dst_addr -> allow_source_mcastv6`.
 pub(crate) fn add_ipv6_entry(
     s: &Switch,
-    src_addr: Ipv6Addr,
+    src_addr: Ipv6Net,
     dst_addr: Ipv6Addr,
 ) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(src_addr, dst_addr);
@@ -140,7 +147,7 @@ pub(crate) fn add_ipv6_entry(
 /// `src_addr, dst_addr`.
 pub(crate) fn del_ipv6_entry(
     s: &Switch,
-    src_addr: Ipv6Addr,
+    src_addr: Ipv6Net,
     dst_addr: Ipv6Addr,
 ) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(src_addr, dst_addr);
@@ -151,8 +158,14 @@ pub(crate) fn del_ipv6_entry(
 }
 
 /// Dump the IPv6 multicast source filter table's contents.
-pub(crate) fn ipv6_table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<Ipv6MatchKey, Ipv6Action>(TableType::McastIpv6SrcFilter)
+pub(crate) fn ipv6_table_dump(
+    s: &Switch,
+    from_hardware: bool,
+) -> DpdResult<views::Table> {
+    s.table_dump::<Ipv6MatchKey, Ipv6Action>(
+        TableType::McastIpv6SrcFilter,
+        from_hardware,
+    )
 }
 
 /// Fetch the IPv6 multicast source filter table's counters.
