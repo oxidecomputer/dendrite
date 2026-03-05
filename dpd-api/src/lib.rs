@@ -63,6 +63,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (10, ASIC_DETAILS),
     (9, SNAPSHOT),
     (8, MCAST_STRICT_UNDERLAY),
     (7, MCAST_SOURCE_FILTER_ANY),
@@ -1639,10 +1640,28 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/switch/identifiers",
+        versions = VERSION_ASIC_DETAILS..,
     }]
     async fn switch_identifiers(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseOk<SwitchIdentifiers>, HttpError>;
+
+    /// Get switch identifiers.
+    ///
+    /// This endpoint returns the switch identifiers, which can be used for
+    /// consistent field definitions across oximeter time series schemas.
+    #[endpoint {
+        method = GET,
+        path = "/switch/identifiers",
+        operation_id = "switch_identifiers",
+        versions = ..VERSION_ASIC_DETAILS,
+    }]
+    async fn switch_identifiers_v1(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<v1::SwitchIdentifiers>, HttpError> {
+        let result = Self::switch_identifiers(rqctx).await?.0;
+        Ok(HttpResponseOk(result.into()))
+    }
 
     /// Collect the link data consumed by `tfportd`.  This app-specific convenience
     /// routine is meant to reduce the time and traffic expended on this once-per-
@@ -1731,10 +1750,16 @@ pub trait DpdApi {
         path: Path<TableParam>,
     ) -> Result<HttpResponseOk<views::Table>, HttpError>;
 
+    /**
+     * Get the contents of a single P4 table.
+     * The name of the table should match one of those returned by the
+     * `table_list()` call.
+     */
     #[endpoint {
         method = GET,
         path = "/table/{table}/dump",
-        versions = ..VERSION_SNAPSHOT
+        versions = ..VERSION_SNAPSHOT,
+        operation_id = "table_dump"
     }]
     async fn table_dump_v1(
         rqctx: RequestContext<Self::Context>,
