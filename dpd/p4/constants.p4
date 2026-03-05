@@ -8,10 +8,6 @@
 const bit<24> IPV4_MCAST_MAC_PREFIX = 0x01005e;
 const bit<16> IPV6_MCAST_MAC_PREFIX = 0x3333;
 
-// Multicast IP address prefixes per RFC 1112 and RFC 4291.
-const bit<4> IPV4_MCAST_PREFIX = 0xe;    // 224.0.0.0/4
-const bit<8> IPV6_MCAST_PREFIX = 0xff;   // ff00::/8
-
 // TODO: these all need to be bigger. Early experimentation is showing that this
 // is going to need to come either through ATCAM/ALPM or code restructuring.
 const int IPV4_NAT_TABLE_SIZE       = 1024; // nat routing table
@@ -64,15 +60,16 @@ const bit<2> MULTICAST_TAG_UNDERLAY = 1;
 const bit<2> MULTICAST_TAG_UNDERLAY_EXTERNAL = 2;
 const bit<2> MULTICAST_TAG_INVALID = 3;  // Sentinel for missing/invalid header
 
-/* IPv6 Address Constants (16-bit prefix for TCAM optimization) */
-const bit<16> IPV6_SCOPE_MASK_16 = 0xffff;        // Match all 16 bits of prefix
-const bit<16> IPV6_ULA_MASK_16 = 0xff00;          // Match top 8 bits (fd00::/8)
+/* IPv6 multicast scope constants (16-bit prefix for parser select) */
 const bit<16> IPV6_INTERFACE_LOCAL_16 = 0xff01;   // ff01::/16
 const bit<16> IPV6_LINK_LOCAL_16 = 0xff02;        // ff02::/16
-const bit<16> IPV6_ADMIN_LOCAL_16 = 0xff04;       // ff04::/16
-const bit<16> IPV6_SITE_LOCAL_16 = 0xff05;        // ff05::/16
-const bit<16> IPV6_ORG_SCOPE_16 = 0xff08;         // ff08::/16
-const bit<16> IPV6_ULA_16 = 0xfd00;               // fd00::/8
+
+/* IPv6 Address Mask and Pattern Constants */
+// Reserved underlay multicast subnet (ff04::/64). This /64 within admin-local
+// scope is reserved for internal underlay multicast allocation. Customer
+// external groups may use other admin-local /64s (e.g., ff04:0:0:1::/64).
+const bit<128> IPV6_UNDERLAY_MASK = 0xffffffffffffffff0000000000000000;  // /64 prefix mask
+const bit<128> IPV6_UNDERLAY_MULTICAST_PATTERN = 0xff040000000000000000000000000000;  // ff04::/64
 
 /* Reasons a packet may be dropped by the p4 pipeline */
 const bit<8> DROP_IPV4_SWITCH_ADDR_MISS         = 0x01;

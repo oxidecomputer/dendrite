@@ -34,6 +34,7 @@ packet = { path = "../packet" }
 pcap = { path = "../pcap" }
 asic = { path = "../asic" }
 anyhow.workspace = true
+dpd-types.workspace = true
 lazy_static.workspace = true
 parking_lot.workspace = true
 rand.workspace = true

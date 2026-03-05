@@ -25,6 +25,7 @@ mod counters;
 mod link;
 mod nat;
 mod route;
+mod snapshot;
 mod switchport;
 mod table;
 
@@ -90,6 +91,10 @@ enum Commands {
     Compliance {
         #[command(subcommand)]
         cmd: compliance::Compliance,
+    },
+    Snapshot {
+        #[command(subcommand)]
+        cmd: snapshot::Snapshot,
     },
 }
 
@@ -209,7 +214,16 @@ async fn main_impl() -> anyhow::Result<()> {
     let host = opts.host.unwrap_or_else(|| "localhost".to_string());
     let log = slog::Logger::root(slog::Discard, slog::o!());
     let client_state = ClientState { tag: String::from("cli"), log };
-    let client = Client::new(&format!("http://{host}:{port}"), client_state);
+    let reqwest_client = reqwest::ClientBuilder::new()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .expect("failed to build HTTP client");
+    let client = Client::new_with_client(
+        &format!("http://{host}:{port}"),
+        reqwest_client,
+        client_state,
+    );
 
     match opts.cmd {
         Commands::DpdBuildInfo => build_info(&client).await,
@@ -230,6 +244,9 @@ async fn main_impl() -> anyhow::Result<()> {
         }
         Commands::Compliance { cmd: compliance } => {
             compliance::compliance_cmd(&client, compliance).await
+        }
+        Commands::Snapshot { cmd } => {
+            snapshot::snapshot_cmd(&client, cmd).await
         }
     }
 }

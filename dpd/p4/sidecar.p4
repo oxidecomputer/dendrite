@@ -121,9 +121,6 @@ control Filter(
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv4_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv6_ctr;
-#ifdef MULTICAST
-	bit<16> mcast_scope;
-#endif /* MULTICAST */
 
 	action dropv4() {
 		meta.drop_reason = DROP_IPV4_SWITCH_ADDR_MISS;
@@ -762,7 +759,11 @@ control NatIngress (
 				hdr.inner_eth.ether_type = hdr.vlan.ether_type;
 				hdr.vlan.setInvalid();
 			}
-		} else if (meta.uplink_ingress && !meta.is_switch_address) {
+		} else if (
+			meta.uplink_ingress &&
+			!meta.is_switch_address &&
+			!meta.is_link_local_mcastv6
+		) {
 			// If this packet arrived on an Uplink port and it
 			// wasn't addressed to the switch or to an established
 			// NAT range, then drop it. This lets us forward traffic
@@ -1711,7 +1712,7 @@ control MulticastIngress (
 
 	table mcast_source_filter_ipv6 {
 		key = {
-			hdr.inner_ipv6.src_addr: exact;
+			hdr.inner_ipv6.src_addr: lpm;
 			hdr.inner_ipv6.dst_addr: exact;
 		}
 		actions = {
@@ -1774,19 +1775,20 @@ control MulticastIngress (
 	// Note: SSM tables currently take one extra stage in the pipeline (17->18).
 	apply {
 		if (hdr.geneve.isValid() && hdr.inner_ipv4.isValid()) {
-			// Check if the inner destination address is an IPv4 SSM multicast
-			// address.
-			if (hdr.inner_ipv4.dst_addr[31:24] == 8w0xe8) {
+			// Check if the inner destination address is an IPv4 multicast
+			// address (224.0.0.0/4). Apply source filtering for both SSM
+			// (232.0.0.0/8) and ASM ranges.
+			if (hdr.inner_ipv4.dst_addr[31:28] == 4w0xe) {
 				mcast_source_filter_ipv4.apply();
 			} else {
 				meta.allow_source_mcast = true;
 			}
 		} else if (hdr.geneve.isValid() && hdr.inner_ipv6.isValid()) {
-			// Check if the inner destination address is an IPv6 SSM multicast
-			// address.
-			if ((hdr.inner_ipv6.dst_addr[127:120] == 8w0xff)
-				&& ((hdr.inner_ipv6.dst_addr[119:116] == 4w0x3))) {
-					mcast_source_filter_ipv6.apply();
+			// Check if the inner destination address is an IPv6 multicast
+			// address (ff00::/8). Apply source filtering for both SSM
+			// (ff3x::/16) and ASM ranges.
+			if (hdr.inner_ipv6.dst_addr[127:120] == 8w0xff) {
+				mcast_source_filter_ipv6.apply();
 			} else {
 				meta.allow_source_mcast = true;
 			}
@@ -1804,10 +1806,25 @@ control MulticastIngress (
 }
 
 
-/* This control is used to configure the egress port for multicast packets.
- * It includes actions for setting the decap ports bitmap and VLAN ID
- * (if necessary), as well as stripping headers and decrementing TTL or hop
- * limit.
+/* Multicast Egress - Per-Port Decapsulation
+ *
+ * Determines which replicated multicast copies should be decapsulated.
+ * Traffic bound for sleds remains encapsulated (OPTE on the destination sled
+ * handles decap). Traffic exiting via front panel ports may be decapsulated
+ * based on the per-group bitmap configuration.
+ *
+ * Flow:
+ *   1. mcast_tag_check   : Match packets with reserved underlay multicast
+ *                          subnet (ff04::/64, within admin-local ff04::/16)
+ *                          and mcast_tag == UNDERLAY_EXTERNAL
+ *   2. tbl_decap_ports   : Lookup by egress_rid to get 256-port decap bitmap
+ *   3. asic_id_to_port   : Map ASIC port ID to logical port number (0-255)
+ *   4. port_bitmap_check : Test port's bit in bitmap (see port_bitmap_check.p4)
+ *   5. modify_hdr        : If bitmap_result != 0, decapsulate packet (strip
+ *                          outer headers, decrement TTL/hop limit, handle VLAN)
+ *
+ * The bitmap marks which egress ports require decapsulation (typically external
+ * customer-facing ports) vs which keep encapsulation (underlay/sled-bound).
  */
 control MulticastEgress (
 	inout sidecar_headers_t hdr,
@@ -1843,10 +1860,16 @@ control MulticastEgress (
 	}
 
 
+	// Check if packet is destined to the reserved underlay multicast subnet
+	// (ff04::/64, within admin-local scope ff04::/16) with UNDERLAY_EXTERNAL tag.
+	// This determines whether decap/bitmap processing should occur.
+	//
+	// Uses a table rather than inline control flow due to Tofino PHV input
+	// limits on complex conditions.
 	table mcast_tag_check {
 		key = {
 			hdr.ipv6.isValid(): exact;
-			hdr.ipv6.dst_addr[127:112]: ternary @name("ipv6_scope");
+			hdr.ipv6.dst_addr: ternary;
 			hdr.geneve.isValid(): exact;
 			hdr.geneve_opts.oxg_mcast.isValid(): exact;
 			hdr.geneve_opts.oxg_mcast.mcast_tag: exact;
@@ -1855,17 +1878,10 @@ control MulticastEgress (
 		actions = { NoAction; }
 
 		const entries = {
-			// Admin-local (scope value 4): ff04::/16
-			( true, IPV6_ADMIN_LOCAL_16 &&& IPV6_SCOPE_MASK_16, true, true, 2w2 ) : NoAction;
-			// Site-local (scope value 5): ff05::/16
-			( true, IPV6_SITE_LOCAL_16 &&& IPV6_SCOPE_MASK_16, true, true, 2w2 ) : NoAction;
-			// Organization-local (scope value 8): ff08::/16
-			( true, IPV6_ORG_SCOPE_16 &&& IPV6_SCOPE_MASK_16, true, true, 2w2 ) : NoAction;
-			// ULA (Unique Local Address): fd00::/8
-			( true, IPV6_ULA_16 &&& IPV6_ULA_MASK_16, true, true, 2w2 ) : NoAction;
+			( true, IPV6_UNDERLAY_MULTICAST_PATTERN &&& IPV6_UNDERLAY_MASK, true, true, MULTICAST_TAG_UNDERLAY_EXTERNAL ) : NoAction;
 		}
 
-		const size = 4;
+		const size = 1;
 	}
 
 	table tbl_decap_ports {

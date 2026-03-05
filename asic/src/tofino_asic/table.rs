@@ -61,6 +61,7 @@ pub trait TofinoTableOps {
         hdl: &Handle,
         last_key: Option<KeyHdl>,
         max: usize,
+        from_hardware: bool,
     ) -> AsicResult<(Vec<KeyHdl>, Vec<DataHdl>)>;
 }
 
@@ -613,6 +614,7 @@ impl TofinoTableOps for Table {
         hdl: &Handle,
         last_key: Option<KeyHdl>,
         mut max: usize,
+        from_hardware: bool,
     ) -> AsicResult<(Vec<KeyHdl>, Vec<DataHdl>)> {
         if last_key.is_none() {
             max = 1;
@@ -654,7 +656,7 @@ impl TofinoTableOps for Table {
                     data_hdls.as_mut_ptr(),
                     max as u32,
                     &mut n,
-                    0, // read from cache
+                    if from_hardware { 1 } else { 0 },
                 )
             } {
                 // If the table isn't full, we can get an BF_OBJECT_NOT_FOUND error
@@ -808,12 +810,14 @@ impl aal::TableOps<Handle> for Table {
     fn get_entries<M: MatchParse, A: ActionParse>(
         &self,
         hdl: &Handle,
+        from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>> {
         let mut last_key: Option<KeyHdl> = None;
         let mut rval = Vec::new();
 
         loop {
-            let (mut keys, data) = self.entries_get(hdl, last_key, 256)?;
+            let (mut keys, data) =
+                self.entries_get(hdl, last_key, 256, from_hardware)?;
             assert_eq!(keys.len(), data.len());
 
             if keys.is_empty() {
@@ -863,7 +867,8 @@ impl aal::TableOps<Handle> for Table {
         let mut values: Vec<(M, CounterData)> = Vec::new();
         let mut last_key: Option<KeyHdl> = None;
         loop {
-            let (mut keys, data) = self.entries_get(hdl, last_key, 256)?;
+            let (mut keys, data) =
+                self.entries_get(hdl, last_key, 256, false)?;
             assert_eq!(keys.len(), data.len());
             if keys.is_empty() {
                 break;

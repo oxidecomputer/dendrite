@@ -65,8 +65,8 @@ pub fn delete_entry(s: &Switch, tgt_ip: Ipv4Addr) -> DpdResult<()> {
     s.table_entry_del(TableType::ArpIpv4, &match_key)
 }
 
-pub fn table_dump(s: &Switch) -> DpdResult<views::Table> {
-    s.table_dump::<MatchKey, Action>(TableType::ArpIpv4)
+pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
+    s.table_dump::<MatchKey, Action>(TableType::ArpIpv4, from_hardware)
 }
 
 pub fn counter_fetch(

@@ -55,6 +55,7 @@ toml.workspace = true
 usdt.workspace = true
 uuid.workspace = true
 reqwest.workspace = true
+reqwest012.workspace = true
 
 dropshot = { workspace = true, features = [ "usdt-probes" ] }
 gateway-client.workspace = true
