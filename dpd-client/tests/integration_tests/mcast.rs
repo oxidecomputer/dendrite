@@ -4571,7 +4571,11 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     // Update the internal group to add members (2 external, 1 underlay)
     // Meaning: two decap/port-bitmap members.
     let update_entry = types::MulticastGroupUpdateUnderlayEntry {
-        members: vec![external_member1, external_member2, underlay_member],
+        members: vec![
+            external_member1.clone(),
+            external_member2.clone(),
+            underlay_member.clone(),
+        ],
     };
 
     let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
@@ -4752,6 +4756,43 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     let expected_final = vec![];
 
     switch.packet_test(vec![send_final], expected_final)?;
+
+    // Re-add members after removing all. This exercises the full
+    // empty -> members -> empty -> members cycle and verifies that
+    // ASIC port state is properly cleaned up during the transition
+    // to empty, so that re-adding does not fail with a duplicate
+    // port error.
+    let readd_entry = types::MulticastGroupUpdateUnderlayEntry {
+        members: vec![external_member1, external_member2, underlay_member],
+    };
+
+    switch
+        .client
+        .multicast_group_update_underlay(
+            &ipv6_update,
+            &make_tag(TEST_TAG),
+            &readd_entry,
+        )
+        .await
+        .expect("Should re-add members after removing all");
+
+    let groups_after_readd = switch
+        .client
+        .multicast_groups_list_stream(None)
+        .try_collect::<Vec<_>>()
+        .await
+        .expect("Should list groups after re-add");
+
+    let readd_internal = groups_after_readd
+        .iter()
+        .find(|g| get_group_ip(g) == internal_group_ip)
+        .expect("Should find the internal group");
+
+    assert_eq!(
+        get_members(readd_internal).map(|m| m.len()).unwrap_or(0),
+        3,
+        "Internal group should have 3 members after re-add"
+    );
 
     cleanup_test_group(&switch, external_group_ip, TEST_TAG).await.unwrap();
     cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
