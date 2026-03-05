@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::process::ExitCode;
 
@@ -45,10 +45,11 @@ pub fn all_apis() -> anyhow::Result<ManagedApis> {
             ..Default::default()
         },
         api_description: dpd_api_mod::stub_api_description,
-        extra_validation: None,
     }];
 
-    let apis = ManagedApis::new(apis).context("error creating ManagedApis")?;
+    let apis = ManagedApis::new(apis)
+        .context("error creating ManagedApis")?
+        .with_git_stub_storage();
     Ok(apis)
 }
 

@@ -566,7 +566,10 @@ impl AsicOps for Handle {
 
     fn get_sidecar_identifiers(&self) -> AsicResult<impl SidecarIdentifiers> {
         unfurl!(self, get_sidecar_identifiers);
-        Ok(Identifiers::default())
+        Ok(Identifiers {
+            fuse: Some(crate::faux_fuse_data()),
+            ..Default::default()
+        })
     }
 }
 

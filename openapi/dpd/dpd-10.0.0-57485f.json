@@ -7,7 +7,7 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "4.0.0"
+    "version": "10.0.0"
   },
   "paths": {
     "/all-settings": {
@@ -459,7 +459,7 @@
     "/channels": {
       "get": {
         "summary": "Get the set of available channels for all ports.",
-        "description": "This returns the unused MAC channels for each physical switch port. This can be used to determine how many additional links can be crated on a physical switch port.",
+        "description": "This returns the unused MAC channels for each physical switch port. This can be used to determine how many additional links can be created on a physical switch port.",
         "operationId": "channels_list",
         "responses": {
           "200": {
@@ -1249,7 +1249,7 @@
     "/multicast/external-groups": {
       "post": {
         "summary": "Create an external-only multicast group configuration.",
-        "description": "External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast traffic that doesn't require replication infrastructure. These groups use simple forwarding tables and require a NAT target.",
+        "description": "External-only groups are used for IPv4 and non-admin-local IPv6 multicast traffic that doesn't require replication infrastructure. These groups use simple forwarding tables and require a NAT target.",
         "operationId": "multicast_group_create_external",
         "requestBody": {
           "content": {
@@ -1284,7 +1284,7 @@
     "/multicast/external-groups/{group_ip}": {
       "put": {
         "summary": "Update an external-only multicast group configuration for a given group IP address.",
-        "description": "External-only groups are used for IPv4 and non-admin-scoped IPv6 multicast traffic that doesn't require replication infrastructure.",
+        "description": "External-only groups are used for IPv4 and non-admin-local IPv6 multicast traffic that doesn't require replication infrastructure.\n\nThe `tag` query parameter must match the group's existing tag.",
         "operationId": "multicast_group_update_external",
         "parameters": [
           {
@@ -1294,6 +1294,15 @@
             "schema": {
               "type": "string",
               "format": "ip"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "description": "Tag that must match the group's existing tag.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/MulticastTag"
             }
           }
         ],
@@ -1308,8 +1317,8 @@
           "required": true
         },
         "responses": {
-          "201": {
-            "description": "successful creation",
+          "200": {
+            "description": "successful operation",
             "content": {
               "application/json": {
                 "schema": {
@@ -1426,7 +1435,8 @@
         }
       },
       "delete": {
-        "summary": "Delete a multicast group configuration by IP address.",
+        "summary": "Delete a multicast group configuration by IP address (API version 4+).",
+        "description": "All groups have tags (auto-generated if not provided at creation). The tag query parameter must match the group's existing tag.",
         "operationId": "multicast_group_delete",
         "parameters": [
           {
@@ -1436,6 +1446,15 @@
             "schema": {
               "type": "string",
               "format": "ip"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "description": "Tag that must match the group's existing tag.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/MulticastTag"
             }
           }
         ],
@@ -1455,6 +1474,7 @@
     "/multicast/tags/{tag}": {
       "get": {
         "summary": "List all multicast groups with a given tag.",
+        "description": "Returns paginated multicast groups matching the specified tag. Tags are assigned at group creation and are immutable. Use this endpoint to find all groups associated with a specific client or component.",
         "operationId": "multicast_groups_list_by_tag",
         "parameters": [
           {
@@ -1462,7 +1482,7 @@
             "name": "tag",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/MulticastTag"
             }
           },
           {
@@ -1510,6 +1530,7 @@
       },
       "delete": {
         "summary": "Delete all multicast groups (and associated routes) with a given tag.",
+        "description": "This is idempotent: if no groups exist with the given tag, the operation returns success (the desired end state of \"no groups with this tag\" is achieved). Use this endpoint for bulk cleanup of all groups associated with a specific client or component.",
         "operationId": "multicast_reset_by_tag",
         "parameters": [
           {
@@ -1517,7 +1538,7 @@
             "name": "tag",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/MulticastTag"
             }
           }
         ],
@@ -1537,7 +1558,6 @@
     "/multicast/underlay-groups": {
       "post": {
         "summary": "Create an underlay (internal) multicast group configuration.",
-        "description": "Underlay groups are used for admin-scoped IPv6 multicast traffic that requires replication infrastructure. These groups support both external and underlay members with full replication capabilities.",
         "operationId": "multicast_group_create_underlay",
         "requestBody": {
           "content": {
@@ -1571,8 +1591,7 @@
     },
     "/multicast/underlay-groups/{group_ip}": {
       "get": {
-        "summary": "Get an underlay (internal) multicast group configuration by admin-scoped",
-        "description": "IPv6 address.\n\nUnderlay groups handle admin-scoped IPv6 multicast traffic with replication infrastructure for external and underlay members.",
+        "summary": "Get an underlay (internal) multicast group configuration.",
         "operationId": "multicast_group_get_underlay",
         "parameters": [
           {
@@ -1580,7 +1599,7 @@
             "name": "group_ip",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/AdminScopedIpv6"
+              "$ref": "#/components/schemas/UnderlayMulticastIpv6"
             }
           }
         ],
@@ -1604,8 +1623,8 @@
         }
       },
       "put": {
-        "summary": "Update an underlay (internal) multicast group configuration for a given",
-        "description": "group IP address.\n\nUnderlay groups are used for admin-scoped IPv6 multicast traffic that requires replication infrastructure with external and underlay members.",
+        "summary": "Update an underlay (internal) multicast group configuration.",
+        "description": "The `tag` query parameter must match the group's existing tag.",
         "operationId": "multicast_group_update_underlay",
         "parameters": [
           {
@@ -1613,7 +1632,16 @@
             "name": "group_ip",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/AdminScopedIpv6"
+              "$ref": "#/components/schemas/UnderlayMulticastIpv6"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "description": "Tag that must match the group's existing tag.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/MulticastTag"
             }
           }
         ],
@@ -1650,6 +1678,7 @@
     "/multicast/untagged": {
       "delete": {
         "summary": "Delete all multicast groups (and associated routes) without a tag.",
+        "description": "DEPRECATED: All groups have default tags generated at creation time. This endpoint returns HTTP 410 Gone. Use `multicast_reset_by_tag` with the tag returned from group creation instead.",
         "operationId": "multicast_reset_untagged",
         "responses": {
           "204": {
@@ -3906,97 +3935,6 @@
         }
       }
     },
-    "/ports/{port_id}/links/{link_id}/nat_only": {
-      "get": {
-        "summary": "Return whether the link is configured to drop non-nat traffic",
-        "operationId": "link_nat_only_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "link_id",
-            "description": "The link in the switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/LinkId"
-            }
-          },
-          {
-            "in": "path",
-            "name": "port_id",
-            "description": "The switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/PortId"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "successful operation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Boolean",
-                  "type": "boolean"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      },
-      "put": {
-        "summary": "Set whether a port is configured to use drop non-nat traffic",
-        "operationId": "link_nat_only_set",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "link_id",
-            "description": "The link in the switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/LinkId"
-            }
-          },
-          {
-            "in": "path",
-            "name": "port_id",
-            "description": "The switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/PortId"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "title": "Boolean",
-                "type": "boolean"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "resource updated"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/ports/{port_id}/links/{link_id}/prbs": {
       "get": {
         "summary": "Return the link's PRBS speed and mode.",
@@ -4460,6 +4398,97 @@
         }
       }
     },
+    "/ports/{port_id}/links/{link_id}/uplink": {
+      "get": {
+        "summary": "Return whether a port is intended to carry uplink traffic",
+        "operationId": "link_uplink_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "description": "The link in the switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LinkId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Boolean",
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "summary": "Set whether a port is intended to carry uplink traffic",
+        "operationId": "link_uplink_set",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "description": "The link in the switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LinkId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Boolean",
+                "type": "boolean"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/ports/{port_id}/management-mode": {
       "get": {
         "summary": "Return the current management mode of a QSFP switch port.",
@@ -4787,7 +4816,7 @@
         }
       },
       "put": {
-        "summary": "Route an IPv4 subnet to a link and a nexthop gateway.",
+        "summary": "Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).",
         "description": "This call can be used to create a new single-path route or to replace any existing routes with a new single-path route.",
         "operationId": "route_ipv4_set",
         "requestBody": {
@@ -4813,7 +4842,7 @@
         }
       },
       "post": {
-        "summary": "Route an IPv4 subnet to a link and a nexthop gateway.",
+        "summary": "Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).",
         "description": "This call can be used to create a new single-path route or to add new targets to a multipath route.",
         "operationId": "route_ipv4_add",
         "requestBody": {
@@ -4906,7 +4935,7 @@
     },
     "/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}": {
       "delete": {
-        "summary": "Remove a single target for the given IPv4 subnet",
+        "summary": "Remove a single target for the given IPv4 subnet (IPv4 or IPv6 next hop)",
         "operationId": "route_ipv4_delete_target",
         "parameters": [
           {
@@ -4939,71 +4968,17 @@
           {
             "in": "path",
             "name": "tgt_ip",
-            "description": "The next hop in the IPv4 route",
+            "description": "The next hop in the route (IPv4 or IPv6)",
             "required": true,
             "schema": {
               "type": "string",
-              "format": "ipv4"
+              "format": "ip"
             }
           }
         ],
         "responses": {
           "204": {
             "description": "successful deletion"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/route/ipv4-over-ipv6": {
-      "put": {
-        "summary": "Route an IPv4 subnet to a link and an IPv6 nexthop gateway.",
-        "description": "This call can be used to create a new single-path route or to replace any existing routes with a new single-path route.",
-        "operationId": "route_ipv4_over_ipv6_set",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Ipv4OverIpv6RouteUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "resource updated"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      },
-      "post": {
-        "summary": "Route an IPv4 subnet to a link and an IPv6 nexthop gateway.",
-        "description": "This call can be used to create a new single-path route or to add new targets to a multipath route.",
-        "operationId": "route_ipv4_over_ipv6_add",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Ipv4OverIpv6RouteUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "resource updated"
           },
           "4XX": {
             "$ref": "#/components/responses/Error"
@@ -5291,6 +5266,79 @@
         }
       }
     },
+    "/snapshot/capture": {
+      "post": {
+        "summary": "Capture a PHV snapshot: create snapshot, set triggers, arm, wait",
+        "description": "for trigger, read capture, decode fields, and clean up.",
+        "operationId": "snapshot_capture",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotResult"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/snapshot/scope": {
+      "post": {
+        "summary": "Check which fields are in scope at a given stage.",
+        "operationId": "snapshot_scope",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotScopeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Array_of_SnapshotFieldScope",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SnapshotFieldScope"
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/switch/identifiers": {
       "get": {
         "summary": "Get switch identifiers.",
@@ -5399,6 +5447,14 @@
         "operationId": "table_dump",
         "parameters": [
           {
+            "in": "query",
+            "name": "from_hardware",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "in": "path",
             "name": "table",
             "required": true,
@@ -5458,11 +5514,6 @@
   },
   "components": {
     "schemas": {
-      "AdminScopedIpv6": {
-        "description": "A validated admin-scoped IPv6 multicast address.\n\nAdmin-scoped addresses are ff04::/16, ff05::/16, or ff08::/16. These are used for internal/underlay multicast groups.",
-        "type": "string",
-        "format": "ipv6"
-      },
       "AnLtStatus": {
         "description": "A collection of the data involved in the autonegiation/link-training process",
         "type": "object",
@@ -5960,6 +6011,33 @@
           "version"
         ]
       },
+      "ChipRevision": {
+        "description": "Chip revision derived from device_id and rev_num fuse fields.",
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "description": "Raw device ID from fuse.",
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "rev": {
+            "description": "Computed revision string (e.g., \"A0\", \"B0\", \"B1\").",
+            "type": "string"
+          },
+          "rev_num": {
+            "description": "Raw revision number from fuse.",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "device_id",
+          "rev",
+          "rev_num"
+        ]
+      },
       "CmisDatapath": {
         "description": "A datapath in a CMIS module.\n\nIn contrast to SFF-8636, CMIS makes first-class the concept of a datapath: a set of lanes and all the associated machinery involved in the transfer of data. This includes:\n\n- The \"application descriptor\" which is the host and media interfaces, and the lanes on each side used to transfer data; - The state of the datapath in a well-defined finite state machine (see CMIS 5.0 section 6.3.3); - The flags indicating how the datapath components are operating, such as receiving an input Rx signal or whether the transmitter is disabled.",
         "type": "object",
@@ -6224,6 +6302,69 @@
         "enum": [
           "Underlay",
           "External"
+        ]
+      },
+      "DisabledFeatures": {
+        "description": "Features disabled via fuse programming.",
+        "type": "object",
+        "properties": {
+          "bsync": {
+            "description": "Buffer sync disabled.",
+            "type": "boolean"
+          },
+          "mau": {
+            "description": "Disabled MAUs per pipe (21 bits each).",
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "minItems": 4,
+            "maxItems": 4
+          },
+          "pgen": {
+            "description": "Packet generator disabled.",
+            "type": "boolean"
+          },
+          "pipes": {
+            "description": "Disabled pipes (4-bit bitmap).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "ports": {
+            "description": "Disabled ports (40-bit bitmap).",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "resub": {
+            "description": "Resubmit disabled.",
+            "type": "boolean"
+          },
+          "speeds": {
+            "description": "Disabled speeds (64-bit bitmap).",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "tm_mem": {
+            "description": "Disabled traffic manager memory (32-bit bitmap).",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "bsync",
+          "mau",
+          "pgen",
+          "pipes",
+          "ports",
+          "resub",
+          "speeds",
+          "tm_mem"
         ]
       },
       "ElectricalMode": {
@@ -6500,6 +6641,114 @@
           "port_id"
         ]
       },
+      "FrequencySettings": {
+        "description": "Frequency settings from fuse data.",
+        "type": "object",
+        "properties": {
+          "bps": {
+            "description": "Backplane port speed frequency (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "bps_ext": {
+            "description": "Extended backplane frequency (4 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "cpu_speed_dis": {
+            "description": "CPU speed disabled (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "disabled": {
+            "description": "Frequency disabled.",
+            "type": "boolean"
+          },
+          "pcie_dis": {
+            "description": "PCIe disabled (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "pps": {
+            "description": "Packet processing speed frequency (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "pps_ext": {
+            "description": "Extended packet speed frequency (4 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "bps",
+          "bps_ext",
+          "cpu_speed_dis",
+          "disabled",
+          "pcie_dis",
+          "pps",
+          "pps_ext"
+        ]
+      },
+      "FuseData": {
+        "description": "Organized fuse data from the Tofino ASIC.",
+        "type": "object",
+        "properties": {
+          "chip_rev": {
+            "description": "Chip revision information.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ChipRevision"
+              }
+            ]
+          },
+          "disabled": {
+            "description": "Disabled features.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DisabledFeatures"
+              }
+            ]
+          },
+          "frequency": {
+            "description": "Frequency settings.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FrequencySettings"
+              }
+            ]
+          },
+          "manufacturing": {
+            "description": "Manufacturing and repair data.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ManufacturingData"
+              }
+            ]
+          },
+          "part": {
+            "description": "Part identification.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PartInfo"
+              }
+            ]
+          }
+        },
+        "required": [
+          "chip_rev",
+          "disabled",
+          "frequency",
+          "manufacturing",
+          "part"
+        ]
+      },
       "InstanceTarget": {
         "description": "represents an internal target for either NAT or an external subnet mapping",
         "type": "object",
@@ -6561,7 +6810,7 @@
         ]
       },
       "IpSrc": {
-        "description": "Source filter match key for multicast traffic.",
+        "description": "Source filter match key for multicast traffic.\n\nFor SSM groups, use `Exact` with specific source addresses. For ASM groups with any-source filtering, use `Any`.",
         "oneOf": [
           {
             "description": "Exact match for the source IP address.",
@@ -6578,17 +6827,11 @@
             "additionalProperties": false
           },
           {
-            "description": "Subnet match for the source IP address.",
-            "type": "object",
-            "properties": {
-              "Subnet": {
-                "$ref": "#/components/schemas/Ipv4Net"
-              }
-            },
-            "required": [
-              "Subnet"
-            ],
-            "additionalProperties": false
+            "description": "Match any source address (0.0.0.0/0 or ::/0 depending on group IP version).",
+            "type": "string",
+            "enum": [
+              "Any"
+            ]
           }
         ]
       },
@@ -6694,36 +6937,6 @@
         "type": "string",
         "pattern": "^(([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])/([0-9]|1[0-9]|2[0-9]|3[0-2])$"
       },
-      "Ipv4OverIpv6RouteUpdate": {
-        "type": "object",
-        "properties": {
-          "cidr": {
-            "description": "Traffic destined for any address within the CIDR block is routed using this information.",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Ipv4Net"
-              }
-            ]
-          },
-          "replace": {
-            "description": "Should this route replace any existing route?  If a route exists and this parameter is false, then the call will fail.",
-            "type": "boolean"
-          },
-          "target": {
-            "description": "A single Route associated with this CIDR",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Ipv6Route"
-              }
-            ]
-          }
-        },
-        "required": [
-          "cidr",
-          "replace",
-          "target"
-        ]
-      },
       "Ipv4Route": {
         "description": "A route for an IPv4 subnet.",
         "type": "object",
@@ -6756,7 +6969,7 @@
         ]
       },
       "Ipv4RouteUpdate": {
-        "description": "Represents a new or replacement mapping of a subnet to a single IPv4 RouteTarget nexthop target.",
+        "description": "Represents a new or replacement mapping of an IPv4 subnet to a single RouteTarget nexthop target, which may be either IPv4 or IPv6.",
         "type": "object",
         "properties": {
           "cidr": {
@@ -6775,7 +6988,7 @@
             "description": "A single Route associated with this CIDR",
             "allOf": [
               {
-                "$ref": "#/components/schemas/Ipv4Route"
+                "$ref": "#/components/schemas/RouteTarget"
               }
             ]
           }
@@ -7885,6 +8098,62 @@
           }
         ]
       },
+      "ManufacturingData": {
+        "description": "Manufacturing and repair data from fuse.",
+        "type": "object",
+        "properties": {
+          "core_repair": {
+            "description": "Core repair applied.",
+            "type": "boolean"
+          },
+          "die_rotation": {
+            "description": "Die rotation.",
+            "type": "boolean"
+          },
+          "pmro_and_skew": {
+            "description": "PMRO and skew value (12 bits).",
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "silent_spin": {
+            "description": "Silent spin (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "soft_pipe_dis": {
+            "description": "Soft pipe disable (4 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "tile_repair": {
+            "description": "Tile repair applied.",
+            "type": "boolean"
+          },
+          "voltage_scaling": {
+            "description": "Voltage scaling value (12 bits).",
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "wf_core_repair": {
+            "description": "Wafer core repair applied.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "core_repair",
+          "die_rotation",
+          "pmro_and_skew",
+          "silent_spin",
+          "soft_pipe_dis",
+          "tile_repair",
+          "voltage_scaling",
+          "wf_core_repair"
+        ]
+      },
       "MediaInterfaceId": {
         "oneOf": [
           {
@@ -8060,6 +8329,7 @@
           },
           "tag": {
             "nullable": true,
+            "description": "Tag for validating update/delete requests. If a tag is not provided, one is auto-generated as `{uuid}:{group_ip}`.",
             "type": "string"
           }
         },
@@ -8074,7 +8344,7 @@
         "type": "object",
         "properties": {
           "group_ip": {
-            "$ref": "#/components/schemas/AdminScopedIpv6"
+            "$ref": "#/components/schemas/UnderlayMulticastIpv6"
           },
           "members": {
             "type": "array",
@@ -8084,6 +8354,7 @@
           },
           "tag": {
             "nullable": true,
+            "description": "Tag for validating update/delete requests. If a tag is not provided, one is auto-generated as `{uuid}:{group_ip}`.",
             "type": "string"
           }
         },
@@ -8093,7 +8364,7 @@
         ]
       },
       "MulticastGroupExternalResponse": {
-        "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin IPv6 multicast via NAT targets.",
+        "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin-local IPv6 multicast via NAT targets.",
         "type": "object",
         "properties": {
           "external_forwarding": {
@@ -8119,7 +8390,7 @@
             }
           },
           "tag": {
-            "nullable": true,
+            "description": "Tag for validating update/delete requests. Always present and generated as `{uuid}:{group_ip}` if not provided at creation time.",
             "type": "string"
           }
         },
@@ -8127,7 +8398,8 @@
           "external_forwarding",
           "external_group_id",
           "group_ip",
-          "internal_forwarding"
+          "internal_forwarding",
+          "tag"
         ]
       },
       "MulticastGroupMember": {
@@ -8154,7 +8426,7 @@
         "description": "Unified response type for operations that return mixed group types.",
         "oneOf": [
           {
-            "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-scoped IPv6 multicast with full replication.",
+            "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-local IPv6 multicast with full replication.",
             "type": "object",
             "properties": {
               "external_group_id": {
@@ -8163,7 +8435,7 @@
                 "minimum": 0
               },
               "group_ip": {
-                "$ref": "#/components/schemas/AdminScopedIpv6"
+                "$ref": "#/components/schemas/UnderlayMulticastIpv6"
               },
               "kind": {
                 "type": "string",
@@ -8178,7 +8450,7 @@
                 }
               },
               "tag": {
-                "nullable": true,
+                "description": "Tag for validating update/delete requests. Always present and generated as `{uuid}:{group_ip}` if not provided at creation time.",
                 "type": "string"
               },
               "underlay_group_id": {
@@ -8192,11 +8464,12 @@
               "group_ip",
               "kind",
               "members",
+              "tag",
               "underlay_group_id"
             ]
           },
           {
-            "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin IPv6 multicast via NAT targets.",
+            "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin-local IPv6 multicast via NAT targets.",
             "type": "object",
             "properties": {
               "external_forwarding": {
@@ -8228,7 +8501,7 @@
                 }
               },
               "tag": {
-                "nullable": true,
+                "description": "Tag for validating update/delete requests. Always present and generated as `{uuid}:{group_ip}` if not provided at creation time.",
                 "type": "string"
               }
             },
@@ -8237,7 +8510,8 @@
               "external_group_id",
               "group_ip",
               "internal_forwarding",
-              "kind"
+              "kind",
+              "tag"
             ]
           }
         ]
@@ -8264,7 +8538,7 @@
         ]
       },
       "MulticastGroupUnderlayResponse": {
-        "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-scoped IPv6 multicast with full replication.",
+        "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-local IPv6 multicast with full replication.",
         "type": "object",
         "properties": {
           "external_group_id": {
@@ -8273,7 +8547,7 @@
             "minimum": 0
           },
           "group_ip": {
-            "$ref": "#/components/schemas/AdminScopedIpv6"
+            "$ref": "#/components/schemas/UnderlayMulticastIpv6"
           },
           "members": {
             "type": "array",
@@ -8282,7 +8556,7 @@
             }
           },
           "tag": {
-            "nullable": true,
+            "description": "Tag for validating update/delete requests. Always present and generated as `{uuid}:{group_ip}` if not provided at creation time.",
             "type": "string"
           },
           "underlay_group_id": {
@@ -8295,11 +8569,12 @@
           "external_group_id",
           "group_ip",
           "members",
+          "tag",
           "underlay_group_id"
         ]
       },
       "MulticastGroupUpdateExternalEntry": {
-        "description": "A multicast group update entry for PUT requests for external (to the rack) groups.",
+        "description": "A multicast group update entry for PUT requests for external (to the rack) groups.\n\nTag validation is performed via the `tag` query parameter.",
         "type": "object",
         "properties": {
           "external_forwarding": {
@@ -8314,10 +8589,6 @@
             "items": {
               "$ref": "#/components/schemas/IpSrc"
             }
-          },
-          "tag": {
-            "nullable": true,
-            "type": "string"
           }
         },
         "required": [
@@ -8326,7 +8597,7 @@
         ]
       },
       "MulticastGroupUpdateUnderlayEntry": {
-        "description": "Represents a multicast replication entry for PUT requests for internal (to the rack) groups.",
+        "description": "Represents a multicast replication entry for PUT requests for internal (to the rack) groups.\n\nTag validation is performed via the `tag` query parameter.",
         "type": "object",
         "properties": {
           "members": {
@@ -8334,10 +8605,6 @@
             "items": {
               "$ref": "#/components/schemas/MulticastGroupMember"
             }
-          },
-          "tag": {
-            "nullable": true,
-            "type": "string"
           }
         },
         "required": [
@@ -8381,6 +8648,35 @@
         "enum": [
           "valid",
           "invalid"
+        ]
+      },
+      "PartInfo": {
+        "description": "Part identification from fuse data.",
+        "type": "object",
+        "properties": {
+          "part_num": {
+            "description": "Part number (13 bits).",
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0
+          },
+          "pkg_id": {
+            "description": "Package ID (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "version": {
+            "description": "Fuse version (2 bits).",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "part_num",
+          "pkg_id",
+          "version"
         ]
       },
       "PcsCounters": {
@@ -9305,6 +9601,35 @@
           }
         ]
       },
+      "RouteTarget": {
+        "description": "Represents a specific egress port and nexthop target.",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "V4": {
+                "$ref": "#/components/schemas/Ipv4Route"
+              }
+            },
+            "required": [
+              "V4"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "V6": {
+                "$ref": "#/components/schemas/Ipv6Route"
+              }
+            },
+            "required": [
+              "V6"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
       "RxSigInfo": {
         "description": "Per-lane Rx signal information",
         "type": "object",
@@ -9488,6 +9813,301 @@
         "format": "uint8",
         "minimum": 0
       },
+      "SnapshotCreate": {
+        "description": "Request body for creating and capturing a PHV snapshot.",
+        "type": "object",
+        "properties": {
+          "dir": {
+            "description": "Whether to capture on the ingress or egress pipeline.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotDirection"
+              }
+            ]
+          },
+          "end_stage": {
+            "description": "Tofino hardware stage to stop capturing at.\n\nSee /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa to get a sense of stage layout.",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "fields": {
+            "description": "Field names to decode from the capture.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pipe": {
+            "description": "Index of the pipeline to capture. Typically this will be 0 through 3. Different ports map to different pipelines.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "start_stage": {
+            "description": "Tofino hardware stage to start capturing at.\n\nSee /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa to get a sense of stage layout.",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "timeout_secs": {
+            "description": "Timeout in seconds to wait for trigger.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "triggers": {
+            "description": "Fields and masks to use as snapshot trigger. Triggers are combined as a logical `and`.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotTrigger"
+            }
+          }
+        },
+        "required": [
+          "dir",
+          "end_stage",
+          "fields",
+          "pipe",
+          "start_stage",
+          "timeout_secs",
+          "triggers"
+        ]
+      },
+      "SnapshotDirection": {
+        "description": "Direction of a PHV snapshot.",
+        "oneOf": [
+          {
+            "description": "Take snapshot of ingress pipeline",
+            "type": "string",
+            "enum": [
+              "Ingress"
+            ]
+          },
+          {
+            "description": "Take snapshot of egress pipeline",
+            "type": "string",
+            "enum": [
+              "Egress"
+            ]
+          }
+        ]
+      },
+      "SnapshotFieldScope": {
+        "description": "Whether a field is in scope at a given stage.",
+        "type": "object",
+        "properties": {
+          "field": {
+            "description": "Field name",
+            "type": "string"
+          },
+          "in_scope": {
+            "description": "Whether or not the field is in scope.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "field",
+          "in_scope"
+        ]
+      },
+      "SnapshotFieldValue": {
+        "description": "A decoded field value from a snapshot capture.",
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "Name of the field.",
+            "type": "string"
+          },
+          "value": {
+            "nullable": true,
+            "description": "None if the field is not valid at this stage.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "SnapshotResult": {
+        "description": "Result of a snapshot capture operation.",
+        "type": "object",
+        "properties": {
+          "stages": {
+            "description": "Stages captured in the result.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotStageResult"
+            }
+          }
+        },
+        "required": [
+          "stages"
+        ]
+      },
+      "SnapshotScopeRequest": {
+        "description": "Request body for checking field scope at a given stage.",
+        "type": "object",
+        "properties": {
+          "dir": {
+            "description": "Whether to check the ingress or egress pipeline.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotDirection"
+              }
+            ]
+          },
+          "fields": {
+            "description": "Fields to check.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pipe": {
+            "description": "Pipeline index to check.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "stage": {
+            "description": "Stage index.",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "trigger": {
+            "description": "If true, check trigger scope; otherwise check capture scope.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dir",
+          "fields",
+          "pipe",
+          "stage",
+          "trigger"
+        ]
+      },
+      "SnapshotStageResult": {
+        "description": "Per-stage result from a snapshot capture.",
+        "type": "object",
+        "properties": {
+          "egress_dp_error": {
+            "description": "Datapath error detected in the egress pipeline at capture time. Only reported on Tofino 2+; always false on Tofino 1.",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Fields captured in the result.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotFieldValue"
+            }
+          },
+          "ingress_dp_error": {
+            "description": "Datapath error detected in the ingress pipeline at capture time. Only reported on Tofino 2+; always false on Tofino 1.",
+            "type": "boolean"
+          },
+          "local_stage_trigger": {
+            "description": "Whether this stage's own PHV match criteria fired the snapshot. This is the primary trigger: the PHV contents at this stage matched the key/mask programmed via the snapshot trigger configuration.",
+            "type": "boolean"
+          },
+          "next_table": {
+            "description": "The P4 table name that the MAU pipeline selected for execution in the following stage after processing this one.",
+            "type": "string"
+          },
+          "prev_stage_trigger": {
+            "description": "Whether the snapshot was triggered because the previous stage was already triggered and propagated its trigger signal forward. A `prev_stage_trigger` with no `local_stage_trigger` means this stage did not match the trigger criteria itself -- it was captured solely because an adjacent stage matched.",
+            "type": "boolean"
+          },
+          "stage_id": {
+            "description": "The index of the stage this result came from.",
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0
+          },
+          "tables": {
+            "description": "Tables captured in the result.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotTableResult"
+            }
+          },
+          "timer_trigger": {
+            "description": "Whether the snapshot was triggered by the timer mechanism rather than a PHV field match. Useful for capturing pipeline state at a specific time regardless of packet contents.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "egress_dp_error",
+          "fields",
+          "ingress_dp_error",
+          "local_stage_trigger",
+          "next_table",
+          "prev_stage_trigger",
+          "stage_id",
+          "tables",
+          "timer_trigger"
+        ]
+      },
+      "SnapshotTableResult": {
+        "description": "Table hit/miss result from a snapshot capture.",
+        "type": "object",
+        "properties": {
+          "executed": {
+            "description": "Whether the table was active in this stage. This is the primary gate: if a table was not executed, `hit`, `inhibited`, and `match_hit_address` are all meaningless (zeroed by the SDE).",
+            "type": "boolean"
+          },
+          "hit": {
+            "description": "Whether the match lookup found a matching entry.\n\nOnly meaningful when `executed` is true and `inhibited` is false. The absence of `hit` does not necessarily mean that a lookup was attempted. It simply means there was no hit, which could mean no lookup was attempted or that the table's gateway inhibited it.",
+            "type": "boolean"
+          },
+          "inhibited": {
+            "description": "Whether the table's gateway inhibited the match lookup from proceeding. Gateways are conditional guards attached to tables that can skip the lookup entirely. When inhibited, `hit` and `match_hit_address` will be 0. Only applicable to tables that have an attached gateway.",
+            "type": "boolean"
+          },
+          "match_hit_address": {
+            "description": "The physical address of the entry that matched, sourced from the exact-match or TCAM hit-address register depending on table type. Zero when the table was not executed or was inhibited.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "name": {
+            "description": "Name of the table",
+            "type": "string"
+          }
+        },
+        "required": [
+          "executed",
+          "hit",
+          "inhibited",
+          "match_hit_address",
+          "name"
+        ]
+      },
+      "SnapshotTrigger": {
+        "description": "A trigger field for a snapshot, with hex-encoded value and mask.",
+        "type": "object",
+        "properties": {
+          "field": {
+            "description": "Name of the field to capture.\n\nMust match what's in the phv ingress or phv egress section of /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa.",
+            "type": "string"
+          },
+          "mask": {
+            "description": "Hex-encoded mask (e.g. \"0xffffffffffff\")",
+            "type": "string"
+          },
+          "value": {
+            "description": "Hex-encoded value (e.g. \"0x112233445566\")",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "mask",
+          "value"
+        ]
+      },
       "SwitchIdentifiers": {
         "description": "Identifiers for a switch.",
         "type": "object",
@@ -9503,12 +10123,33 @@
             "minLength": 1,
             "maxLength": 1
           },
+          "fuse": {
+            "nullable": true,
+            "description": "Fuse data from the ASIC, if available.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FuseData"
+              }
+            ]
+          },
           "lot": {
             "nullable": true,
             "description": "Lot identifier.",
             "type": "string",
             "minLength": 1,
             "maxLength": 1
+          },
+          "lotnum": {
+            "nullable": true,
+            "description": "Lot number (4-character identifier within the lot).",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1
+            },
+            "minItems": 4,
+            "maxItems": 4
           },
           "model": {
             "description": "The model number of the switch being managed.",
@@ -9881,6 +10522,11 @@
           "sw"
         ]
       },
+      "UnderlayMulticastIpv6": {
+        "description": "A validated underlay multicast IPv6 address.\n\nUnderlay multicast addresses must be within the subnet allocated by Omicron for rack-internal multicast traffic (ff04::/64). This is a subset of the admin-local scope (ff04::/16) defined in RFC 4291.",
+        "type": "string",
+        "format": "ipv6"
+      },
       "Vendor": {
         "description": "Vendor-specific information about a transceiver module.",
         "type": "object",
@@ -9984,6 +10630,13 @@
         "required": [
           "items"
         ]
+      },
+      "MulticastTag": {
+        "description": "Tag for identifying and authorizing multicast group operations.\n\nTag format: 1 to 80 ASCII bytes containing alphanumeric characters, hyphens, underscores, colons, or periods. Default format is `{uuid}:{group_ip}`.",
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9_.:-]+$",
+        "minLength": 1,
+        "maxLength": 80
       }
     },
     "responses": {
