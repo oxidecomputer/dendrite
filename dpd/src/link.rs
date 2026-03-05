@@ -13,11 +13,10 @@ use crate::fault::Faultable;
 use crate::fault::LinkUpTracker;
 use crate::ports::AdminEvent;
 use crate::ports::Event;
-use crate::table::MacOps;
+use crate::table::mac;
 #[cfg(feature = "multicast")]
 use crate::table::mcast;
 use crate::table::port_ip;
-use crate::table::port_mac;
 use crate::table::uplink;
 use crate::transceivers::qsfp_xcvr_mpn;
 use crate::types::DpdError;
@@ -1565,26 +1564,22 @@ fn set_mac_config(
     asic_id: AsicId,
     mac: MacAddr,
 ) -> DpdResult<()> {
-    MacOps::<port_mac::PortMacTable>::mac_set(switch, asic_id, mac)?;
+    mac::mac_set(switch, asic_id, mac)?;
 
     #[cfg(feature = "multicast")]
     {
-        MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_set(
-            switch, asic_id, mac,
-        )?;
+        mac::mcast_mac_set(switch, asic_id, mac)?;
         mcast::mcast_egress::add_port_mapping_entry(switch, asic_id)?;
     }
     Ok(())
 }
 
 fn clear_mac_config(switch: &Switch, asic_id: AsicId) -> DpdResult<()> {
-    MacOps::<port_mac::PortMacTable>::mac_clear(switch, asic_id)?;
+    mac::mac_clear(switch, asic_id)?;
 
     #[cfg(feature = "multicast")]
     {
-        MacOps::<mcast::mcast_port_mac::PortMacTable>::mac_clear(
-            switch, asic_id,
-        )?;
+        mac::mcast_mac_clear(switch, asic_id)?;
         mcast::mcast_egress::del_port_mapping_entry(switch, asic_id)?;
     }
     Ok(())

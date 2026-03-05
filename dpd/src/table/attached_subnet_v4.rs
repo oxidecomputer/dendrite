@@ -17,9 +17,6 @@ use crate::Switch;
 use crate::table::*;
 use common::network::{InstanceTarget, MacAddr};
 
-pub const EXT_SUBNET_IPV4_TABLE_NAME: &str =
-    "pipe.Ingress.attached_subnet_ingress.attached_subnets_v4";
-
 // Used to identify entries in the external subnet table
 #[derive(MatchParse, Hash, Debug)]
 struct AttachedSubnetV4MatchKey {

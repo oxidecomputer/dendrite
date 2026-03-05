@@ -17,13 +17,6 @@ use aal_macros::*;
 use common::network::{MacAddr, NatTarget};
 use slog::debug;
 
-/// IPv4 Table for multicast NAT entries.
-pub(crate) const IPV4_TABLE_NAME: &str =
-    "pipe.Ingress.nat_ingress.ingress_ipv4_mcast";
-/// IPv6 Table for multicast NAT entries.
-pub(crate) const IPV6_TABLE_NAME: &str =
-    "pipe.Ingress.nat_ingress.ingress_ipv6_mcast";
-
 #[derive(ActionParse, Debug)]
 enum Ipv4Action {
     #[action_xlate(name = "mcast_forward_ipv4_to")]

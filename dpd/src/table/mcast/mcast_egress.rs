@@ -15,15 +15,6 @@ use aal_macros::*;
 use dpd_types::mcast::MulticastGroupId;
 use slog::debug;
 
-/// Table for multicast egress entries matching the multicast group ID
-/// and setting which ports to possibly decap.
-pub(crate) const DECAP_PORTS_TABLE_NAME: &str =
-    "pipe.Egress.mcast_egress.tbl_decap_ports";
-
-/// Table for multicast egress entries matching the replication group ID.
-pub(crate) const PORT_ID_TABLE_NAME: &str =
-    "pipe.Egress.mcast_egress.asic_id_to_port";
-
 #[derive(MatchParse, Hash)]
 struct MatchKeyDecapPorts {
     #[match_xlate(name = "egress_rid")]

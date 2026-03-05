@@ -57,8 +57,11 @@ impl DataHdl {
 }
 
 impl TableOps<StubHandle> for Table {
-    fn new(hdl: &StubHandle, name: &str) -> AsicResult<Table> {
-        let info = TableInfo::new(&hdl.rt, name)?;
+    fn new(
+        hdl: &StubHandle,
+        type_: common::table::TableType,
+    ) -> AsicResult<Table> {
+        let info = TableInfo::new(&hdl.rt, type_)?;
         Ok(Table { info })
     }
 

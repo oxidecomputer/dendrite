@@ -17,10 +17,6 @@ use aal_macros::*;
 use dpd_types::mcast::MulticastGroupId;
 use slog::debug;
 
-/// IPv6 Table for multicast replication entries and group membership.
-pub(crate) const IPV6_TABLE_NAME: &str =
-    "pipe.Ingress.mcast_ingress.mcast_replication_ipv6";
-
 #[derive(ActionParse, Debug)]
 enum Ipv6Action {
     #[action_xlate(name = "configure_mcastv6")]

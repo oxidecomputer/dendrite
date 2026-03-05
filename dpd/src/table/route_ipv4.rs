@@ -17,11 +17,6 @@ use oxnet::Ipv4Net;
 use slog::error;
 use slog::info;
 
-pub const INDEX_TABLE_NAME: &str =
-    "pipe.Ingress.l3_router.Router4.lookup_idx.lookup";
-pub const FORWARD_TABLE_NAME: &str =
-    "pipe.Ingress.l3_router.Router4.lookup_idx.route";
-
 // Used for indentifying entries in the index->route_data table
 #[derive(MatchParse, Hash, Debug)]
 struct IndexKey {
