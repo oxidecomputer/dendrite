@@ -4,6 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+#[cfg(feature = "multicast")]
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
@@ -42,7 +43,7 @@ use crate::integration_tests::common::prelude::*;
 // adjust the constant below to match the observed result.
 //
 #[cfg(feature = "multicast")]
-const IPV4_LPM_SIZE: usize = 8175; // ipv4 forwarding table
+const IPV4_LPM_SIZE: usize = 7164; // ipv4 forwarding table
 #[cfg(not(feature = "multicast"))]
 const IPV4_LPM_SIZE: usize = 8187; // ipv4 forwarding table
 

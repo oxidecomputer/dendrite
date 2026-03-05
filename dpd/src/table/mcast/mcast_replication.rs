@@ -69,7 +69,7 @@ pub(crate) fn add_ipv6_entry(
         level2_excl_id,
     };
 
-    debug!(s.log, "add mcast_ipv6 entry {} -> {:?}", dst_addr, action_data);
+    debug!(s.log, "add mcast_ipv6 entry {dst_addr} -> {action_data:?}");
 
     s.table_entry_add(TableType::McastIpv6, &match_key, &action_data)
 }
@@ -104,7 +104,7 @@ pub(crate) fn update_ipv6_entry(
         level2_excl_id,
     };
 
-    debug!(s.log, "update mcast_ipv6 entry {} -> {:?}", dst_addr, action_data);
+    debug!(s.log, "update mcast_ipv6 entry {dst_addr} -> {action_data:?}");
 
     s.table_entry_update(TableType::McastIpv6, &match_key, &action_data)
 }
@@ -114,7 +114,7 @@ pub(crate) fn update_ipv6_entry(
 pub(crate) fn del_ipv6_entry(s: &Switch, dst_addr: Ipv6Addr) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(dst_addr);
 
-    debug!(s.log, "delete mcast_ipv6 entry {}", match_key);
+    debug!(s.log, "delete mcast_ipv6 entry {match_key}");
 
     s.table_entry_del(TableType::McastIpv6, &match_key)
 }

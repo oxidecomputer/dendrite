@@ -19,6 +19,9 @@ use futures::TryStreamExt;
 use oxnet::MulticastMac;
 use packet::{Endpoint, eth, geneve, ipv4, ipv6, udp};
 
+const ETH_HDR_SZ: usize = 14;
+const ETH_8021Q_SZ: usize = 4;
+
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
 const MULTICAST_TEST_IPV6: Ipv6Addr =
     Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 1, 0x1010);
@@ -48,6 +51,27 @@ impl ToIpAddr for types::UnderlayMulticastIpv6 {
     fn to_ip_addr(&self) -> IpAddr {
         IpAddr::V6(self.0)
     }
+}
+
+/// Count table entries matching a specific IP address in any key field.
+fn count_entries_for_ip(entries: &[types::TableEntry], ip: &str) -> usize {
+    entries.iter().filter(|e| e.keys.values().any(|v| v.contains(ip))).count()
+}
+
+/// Check if any table entry for the given IP has a `forward_vlan` action with
+/// the specified VLAN ID.
+fn has_vlan_action_for_ip(
+    entries: &[types::TableEntry],
+    ip: &str,
+    vlan: u16,
+) -> bool {
+    entries.iter().any(|e| {
+        e.keys.values().any(|v| v.contains(ip))
+            && e.action_args
+                .get("vlan_id")
+                .map(|v| v == &vlan.to_string())
+                .unwrap_or(false)
+    })
 }
 
 async fn check_counter_incremented(
@@ -299,6 +323,7 @@ fn create_ipv4_multicast_packet(
     src_ip: &str,
     src_port: u16,
     dst_port: u16,
+    vlan_id: Option<u16>,
 ) -> packet::Packet {
     let multicast_ip = match multicast_ip_addr {
         IpAddr::V4(addr) => addr,
@@ -326,8 +351,14 @@ fn create_ipv4_multicast_packet(
     )
     .unwrap();
 
-    // Generate a UDP packet
-    common::gen_udp_packet(src_endpoint, dst_endpoint)
+    let mut pkt = common::gen_udp_packet(src_endpoint, dst_endpoint);
+    if let Some(vlan_id) = vlan_id {
+        eth::EthHdr::add_8021q(
+            &mut pkt,
+            eth::EthQHdr { eth_pcp: 0, eth_dei: 0, eth_vlan_tag: vlan_id },
+        );
+    }
+    pkt
 }
 
 fn create_ipv6_multicast_packet(
@@ -336,6 +367,7 @@ fn create_ipv6_multicast_packet(
     src_ip: &str,
     src_port: u16,
     dst_port: u16,
+    vlan_id: Option<u16>,
 ) -> packet::Packet {
     let multicast_ip = match multicast_ip_addr {
         IpAddr::V6(addr) => addr,
@@ -365,8 +397,14 @@ fn create_ipv6_multicast_packet(
     )
     .unwrap();
 
-    // Generate a UDP packet
-    common::gen_udp_packet(src_endpoint, dst_endpoint)
+    let mut pkt = common::gen_udp_packet(src_endpoint, dst_endpoint);
+    if let Some(vlan_id) = vlan_id {
+        eth::EthHdr::add_8021q(
+            &mut pkt,
+            eth::EthQHdr { eth_pcp: 0, eth_dei: 0, eth_vlan_tag: vlan_id },
+        );
+    }
+    pkt
 }
 
 /// Prepare the expected packet for multicast testing that either goes
@@ -381,12 +419,14 @@ fn prepare_expected_pkt(
     match nat_target {
         Some(nat) => {
             // Deparse the incoming packet so we can copy it into the encapsulated
-            // packet
+            // packet. The P4 pipeline strips the VLAN tag before Geneve
+            // encapsulation (hdr.vlan.setInvalid()), so remove it here.
             let ingress_payload = {
                 let mut encapped = send_pkt.clone();
                 let eth = encapped.hdrs.eth_hdr.as_mut().unwrap();
                 eth.eth_smac = MacAddr::new(0, 0, 0, 0, 0, 0);
                 eth.eth_dmac = nat.inner_mac.clone().into();
+                eth.eth_8021q = None;
                 encapped.deparse().unwrap().to_vec()
             };
 
@@ -427,14 +467,15 @@ fn prepare_expected_pkt(
                 ipv6::Ipv6Hdr::adjust_hlim(&mut recv_pkt, -1);
             }
 
-            // Add VLAN tag if required
+            // Set the egress VLAN tag to match the group config. The P4
+            // pipeline applies the group's VLAN on egress via forward_vlan.
             if let Some(vlan_id) = vlan {
-                recv_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_8021q =
-                    Some(eth::EthQHdr {
-                        eth_pcp: 0,
-                        eth_dei: 0,
-                        eth_vlan_tag: vlan_id,
-                    });
+                let eth = recv_pkt.hdrs.eth_hdr.as_mut().unwrap();
+                eth.eth_8021q = Some(eth::EthQHdr {
+                    eth_pcp: 0,
+                    eth_dei: 0,
+                    eth_vlan_tag: vlan_id,
+                });
             }
 
             // Rewrite src mac
@@ -534,6 +575,66 @@ async fn test_group_creation_with_validation() -> TestResult {
             );
         }
         _ => panic!("Expected ErrorResponse for invalid group ID"),
+    }
+
+    // Test with reserved VLAN ID 0 (also invalid)
+    let external_vlan0 = types::MulticastGroupCreateExternalEntry {
+        group_ip: IpAddr::V4(MULTICAST_TEST_IPV4),
+        tag: Some(TEST_TAG.to_string()),
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding {
+            vlan_id: Some(0), // Invalid: VLAN 0 is reserved
+        },
+        sources: None,
+    };
+
+    let res = switch
+        .client
+        .multicast_group_create_external(&external_vlan0)
+        .await
+        .expect_err("Should fail with reserved VLAN ID 0");
+
+    match res {
+        Error::ErrorResponse(inner) => {
+            assert_eq!(
+                inner.status(),
+                400,
+                "Expected 400 Bad Request status code for VLAN 0"
+            );
+        }
+        _ => panic!("Expected ErrorResponse for reserved VLAN ID 0"),
+    }
+
+    // Test with reserved VLAN ID 1 (also invalid)
+    let external_vlan1 = types::MulticastGroupCreateExternalEntry {
+        group_ip: IpAddr::V4(MULTICAST_TEST_IPV4),
+        tag: Some(TEST_TAG.to_string()),
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding {
+            vlan_id: Some(1), // Invalid: VLAN 1 is reserved
+        },
+        sources: None,
+    };
+
+    let res = switch
+        .client
+        .multicast_group_create_external(&external_vlan1)
+        .await
+        .expect_err("Should fail with reserved VLAN ID 1");
+
+    match res {
+        Error::ErrorResponse(inner) => {
+            assert_eq!(
+                inner.status(),
+                400,
+                "Expected 400 Bad Request status code for VLAN 1"
+            );
+        }
+        _ => panic!("Expected ErrorResponse for reserved VLAN ID 1"),
     }
 
     // Test with valid parameters
@@ -704,8 +805,53 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
         "ff04::200".parse::<std::net::Ipv6Addr>().unwrap()
     );
 
-    // Verify the admin-scoped group now has access to the VLAN via NAT target reference
-    // Check the bitmap table to see if VLAN 42 is properly set (this is where VLAN matters for P4)
+    // Verify IPv4 route table has one entry for the VLAN group.
+    // Route tables use simple destination address matching with
+    // forward_vlan(vlan_id) action. VLAN isolation (preventing translation) is
+    // handled by NAT ingress tables.
+    let route_table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
+        .await
+        .expect("Should dump IPv4 route table")
+        .into_inner();
+    let group_entries: Vec<_> = route_table
+        .entries
+        .iter()
+        .filter(|e| e.keys.values().any(|v| v.contains("224.1.2.3")))
+        .collect();
+    assert_eq!(
+        group_entries.len(),
+        1,
+        "Route table uses dst_addr only -> 1 entry per group"
+    );
+    // Verify the action is forward_vlan with VLAN 42
+    assert!(
+        group_entries[0]
+            .action_args
+            .get("vlan_id")
+            .map(|v| v == "42")
+            .unwrap_or(false),
+        "Route entry should have forward_vlan(42) action"
+    );
+
+    // Verify NAT ingress table has a single entry with exact VLAN match.
+    // Decapsulated Geneve never reaches this table due to the
+    // !hdr.geneve.isValid() guard, so one entry per group suffices.
+    let nat_table = switch
+        .client
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast", false)
+        .await
+        .expect("Should dump NAT ingress table")
+        .into_inner();
+    assert_eq!(
+        count_entries_for_ip(&nat_table.entries, "224.1.2.3"),
+        1,
+        "NAT table should have 1 entry with exact VLAN match"
+    );
+
+    // Verify the admin-scoped group now has access to the VLAN via NAT target
+    // reference.
     let bitmap_table = switch
         .client
         .table_dump("pipe.Egress.mcast_egress.tbl_decap_ports", false)
@@ -713,7 +859,8 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
         .expect("Should clean up internal group")
         .into_inner();
 
-    // Verify the admin-scoped group's bitmap entry has VLAN 42 from external group propagation
+    // Verify the admin-scoped group's bitmap entry has VLAN 42 from external
+    // group propagation.
     assert!(
         bitmap_table
             .entries
@@ -722,7 +869,8 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
         "Admin-scoped group bitmap should have VLAN 42 from external group"
     );
 
-    // Delete external group first since it references the internal group via NAT target
+    // Delete external group first since it references the internal group via
+    // NAT target
     cleanup_test_group(switch, created_external.group_ip, TEST_TAG)
         .await
         .unwrap();
@@ -780,6 +928,42 @@ async fn test_group_api_lifecycle() {
         Some(nat_target.clone())
     );
     assert_eq!(created.external_forwarding.vlan_id, Some(vlan_id));
+
+    // Route table: 1 entry (dst_addr only, VLAN via action)
+    let route_table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
+        .await
+        .expect("Should dump route table")
+        .into_inner();
+    let route_entries: Vec<_> = route_table
+        .entries
+        .iter()
+        .filter(|e| e.keys.values().any(|v| v.contains("224.0.1.0")))
+        .collect();
+    assert_eq!(
+        route_entries.len(),
+        1,
+        "Route table should have 1 entry per group (dst_addr only)"
+    );
+
+    // NAT table: 1 entry per group with exact VLAN match
+    let nat_table = switch
+        .client
+        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast", false)
+        .await
+        .expect("Should dump NAT table")
+        .into_inner();
+    let nat_entries: Vec<_> = nat_table
+        .entries
+        .iter()
+        .filter(|e| e.keys.values().any(|v| v.contains("224.0.1.0")))
+        .collect();
+    assert_eq!(
+        nat_entries.len(),
+        1,
+        "NAT table should have 1 entry with exact VLAN match"
+    );
 
     // Get all groups and verify our group is included
     let groups = switch
@@ -1613,6 +1797,7 @@ async fn test_multicast_ttl_zero() -> TestResult {
         src_ip,
         src_port,
         dst_port,
+        Some(10),
     );
 
     // Set TTL to 0 (should be dropped)
@@ -1693,6 +1878,7 @@ async fn test_multicast_ttl_one() -> TestResult {
         src_ip,
         src_port,
         dst_port,
+        Some(10),
     );
 
     // Set TTL to 1 - this should be dropped for multicast
@@ -1805,6 +1991,7 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
         src_ip,
         src_port,
         dst_port,
+        Some(10),
     );
 
     let to_recv1 = prepare_expected_pkt(
@@ -1911,6 +2098,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
         src_ip,
         src_port,
         dst_port,
+        Some(10),
     );
 
     // Modify the original packet to set the multicast tag, Vlan ID,
@@ -1926,7 +2114,12 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
     let nat_target = create_nat_target_ipv4();
 
     // Skip Ethernet header as it will be added by gen_geneve_packet
-    let eth_hdr_len = 14; // Standard Ethernet header length
+    let eth_hdr_len =
+        if og_pkt.hdrs.eth_hdr.as_ref().unwrap().eth_8021q.is_some() {
+            ETH_HDR_SZ + ETH_8021Q_SZ
+        } else {
+            ETH_HDR_SZ
+        };
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
 
     // Create the Geneve packet with mcast_tag = 0
@@ -2039,13 +2232,19 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
         src_ip,
         src_port,
         dst_port,
+        Some(10),
     );
 
     // Emulate Nat Target from previous packet in the chain.
     let nat_target = create_nat_target_ipv6();
 
     // Skip Ethernet header as it will be added by gen_geneve_packet
-    let eth_hdr_len = 14; // Standard Ethernet header length
+    let eth_hdr_len =
+        if og_pkt.hdrs.eth_hdr.as_ref().unwrap().eth_8021q.is_some() {
+            ETH_HDR_SZ + ETH_8021Q_SZ
+        } else {
+            ETH_HDR_SZ
+        };
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
 
     let geneve_src = Endpoint::parse(
@@ -2174,13 +2373,19 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
         src_ip,
         src_port,
         dst_port,
+        Some(10),
     );
 
     // Emulate Nat Target from previous packet in the chain.
     let nat_target = create_nat_target_ipv6();
 
     // Skip Ethernet header as it will be added by gen_geneve_packet
-    let eth_hdr_len = 14; // Standard Ethernet header length
+    let eth_hdr_len =
+        if og_pkt.hdrs.eth_hdr.as_ref().unwrap().eth_8021q.is_some() {
+            ETH_HDR_SZ + ETH_8021Q_SZ
+        } else {
+            ETH_HDR_SZ
+        };
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
 
     // Create the Geneve packet with mcast_tag = 2
@@ -2303,6 +2508,7 @@ async fn test_ipv4_multicast_drops_ingress_is_egress_port() -> TestResult {
         src_ip,
         src_port,
         dst_port,
+        None,
     );
 
     let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
@@ -2382,6 +2588,7 @@ async fn test_ipv6_multicast_hop_limit_zero() -> TestResult {
         "2001:db8::1",
         3333,
         4444,
+        Some(10),
     );
 
     // Set Hop Limit to 0 (should be dropped)
@@ -2466,6 +2673,7 @@ async fn test_ipv6_multicast_hop_limit_one() -> TestResult {
         src_ip,
         src_port,
         dst_port,
+        Some(10),
     );
 
     // Set Hop Limit to 1 - this should be dropped for multicast
@@ -2557,6 +2765,7 @@ async fn test_ipv6_multicast_basic_replication_nat_ingress() -> TestResult {
         "2001:db8::1",
         3333,
         4444,
+        Some(10),
     );
 
     let to_recv1 = prepare_expected_pkt(
@@ -2652,6 +2861,7 @@ async fn test_ipv4_multicast_source_filtering_exact_match() -> TestResult {
         &allowed_src_ip.to_string(),
         3333,
         4444,
+        Some(10),
     );
 
     let filtered_pkt = create_ipv4_multicast_packet(
@@ -2660,6 +2870,7 @@ async fn test_ipv4_multicast_source_filtering_exact_match() -> TestResult {
         &filtered_src_ip.to_string(),
         3333,
         4444,
+        Some(10),
     );
 
     let to_recv11 = prepare_expected_pkt(
@@ -2774,6 +2985,7 @@ async fn test_ipv4_multicast_source_filtering_multiple_exact() -> TestResult {
         &allowed_src_ip1.to_string(),
         3333,
         4444,
+        Some(10),
     );
 
     let allowed_pkt2 = create_ipv4_multicast_packet(
@@ -2782,6 +2994,7 @@ async fn test_ipv4_multicast_source_filtering_multiple_exact() -> TestResult {
         &allowed_src_ip2.to_string(),
         3333,
         4444,
+        Some(10),
     );
 
     let filtered_pkt = create_ipv4_multicast_packet(
@@ -2790,6 +3003,7 @@ async fn test_ipv4_multicast_source_filtering_multiple_exact() -> TestResult {
         &filtered_src_ip.to_string(),
         3333,
         4444,
+        Some(10),
     );
 
     let to_recv11 = prepare_expected_pkt(
@@ -2923,6 +3137,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
         &allowed_src_ip1.to_string(),
         3333,
         4444,
+        Some(10),
     );
 
     let allowed_pkt2 = create_ipv6_multicast_packet(
@@ -2931,6 +3146,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
         &allowed_src_ip2.to_string(),
         3333,
         4444,
+        Some(10),
     );
 
     let filtered_pkt = create_ipv6_multicast_packet(
@@ -2939,6 +3155,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
         "2001:db8::3", // Not in the allowed sources list
         3333,
         4444,
+        Some(10),
     );
 
     let to_recv11 = prepare_expected_pkt(
@@ -3063,6 +3280,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
         "192.168.1.10",
         3333,
         4444,
+        Some(10),
     );
     let to_recv1 = prepare_expected_pkt(
         switch,
@@ -3151,14 +3369,14 @@ async fn test_multicast_dynamic_membership() -> TestResult {
     let to_recv1_new = prepare_expected_pkt(
         switch,
         &to_send,
-        None,
+        vlan,
         get_nat_target(&created_group),
         Some(egress2),
     );
     let to_recv2_new = prepare_expected_pkt(
         switch,
         &to_send,
-        None,
+        vlan,
         get_nat_target(&created_group),
         Some(egress3),
     );
@@ -3250,6 +3468,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
         "192.168.1.10",
         3333,
         4444,
+        Some(10),
     );
 
     let to_send2 = create_ipv4_multicast_packet(
@@ -3258,6 +3477,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
         "192.168.1.10",
         3333,
         4444,
+        Some(20),
     );
 
     let to_recv1_1 = prepare_expected_pkt(
@@ -3686,10 +3906,6 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     Ok(())
 }
 
-/*
- * Commented out untl https://github.com/oxidecomputer/dendrite/issues/107 is
- * fixed
- *
 #[tokio::test]
 #[ignore]
 async fn test_multicast_vlan_translation_not_possible() -> TestResult {
@@ -3724,36 +3940,26 @@ async fn test_multicast_vlan_translation_not_possible() -> TestResult {
         types::InternalForwarding {
             nat_target: Some(create_nat_target_ipv4()),
         }, // Create NAT target
-        types::ExternalForwarding {
-            vlan_id: output_vlan,
-        },
+        types::ExternalForwarding { vlan_id: output_vlan },
         None,
     )
     .await;
 
     let src_mac = switch.get_port_mac(ingress).unwrap();
 
-    // Create test packet with input VLAN
+    // Create test packet with input VLAN 10, which differs from the
+    // group's configured VLAN 20.
     let input_vlan = 10;
-    let mut to_send = create_ipv4_multicast_packet(
+    let to_send = create_ipv4_multicast_packet(
         multicast_ip,
         src_mac,
         "192.168.1.20",
         4444,
         5555,
+        Some(input_vlan),
     );
 
-    // Add input VLAN tag
-    to_send.hdrs.eth_hdr.as_mut().unwrap().eth_8021q = Some(eth::EthQHdr {
-        eth_pcp: 0,
-        eth_dei: 0,
-        eth_vlan_tag: input_vlan,
-    });
-
-    let test_pkt = TestPacket {
-        packet: Arc::new(to_send),
-        port: ingress,
-    };
+    let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
 
     // Expect NO packets - this test demonstrates that VLAN translation
     // is not possible for multicast packets
@@ -3766,7 +3972,6 @@ async fn test_multicast_vlan_translation_not_possible() -> TestResult {
         .unwrap();
     cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
 }
-*/
 
 #[tokio::test]
 #[ignore]
@@ -3832,6 +4037,7 @@ async fn test_multicast_multiple_packets() -> TestResult {
             "192.168.1.10",
             src_port,
             dst_port,
+            Some(10),
         );
 
         let to_recv1 = prepare_expected_pkt(
@@ -3899,7 +4105,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
     // Define test ports
     let ingress = PhysPort(10);
 
-    // Use unique multicast IP addresses that we will NOT configure any group for
+    // Use unique multicast IP addresses that we will not configure any group for
     let unconfigured_multicast_ipv4 = IpAddr::V4(Ipv4Addr::new(224, 1, 255, 1)); // Unique IPv4 multicast
     let unconfigured_multicast_ipv6 =
         IpAddr::V6(Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 255, 1)); // Unique IPv6 multicast
@@ -3918,6 +4124,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
             "192.168.1.10",
             3333,
             4444,
+            None,
         );
 
         let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
@@ -3948,6 +4155,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
             "2001:db8::1",
             3333,
             4444,
+            None,
         );
 
         let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
@@ -4499,10 +4707,16 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         src_ip,
         src_port,
         dst_port,
+        Some(10),
     );
 
     // Create Geneve packet targeting the internal group
-    let eth_hdr_len = 14;
+    let eth_hdr_len =
+        if og_pkt.hdrs.eth_hdr.as_ref().unwrap().eth_8021q.is_some() {
+            ETH_HDR_SZ + ETH_8021Q_SZ
+        } else {
+            ETH_HDR_SZ
+        };
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
         Endpoint::parse(
@@ -4616,6 +4830,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         "2001:db8::2", // Different source IP to differentiate packets
         3334,
         4445,
+        Some(10),
     );
 
     // Test packet for use in final assertion
@@ -4853,10 +5068,16 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         src_ip,
         src_port,
         dst_port,
+        Some(10),
     );
 
     // Create Geneve packet targeting the internal group (like test_encapped_multicast_geneve_mcast_tag_to_underlay_members)
-    let eth_hdr_len = 14;
+    let eth_hdr_len =
+        if og_pkt.hdrs.eth_hdr.as_ref().unwrap().eth_8021q.is_some() {
+            ETH_HDR_SZ + ETH_8021Q_SZ
+        } else {
+            ETH_HDR_SZ
+        };
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
         Endpoint::parse(
@@ -4969,6 +5190,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         "10.1.1.2",
         1235,
         5679,
+        Some(10),
     );
 
     // Test packet for use in final assertion
@@ -6869,6 +7091,302 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
         .expect("Should fetch recreated group");
 
     assert_eq!(fetched.into_inner().members.len(), 2);
+
+    // Cleanup
+    switch
+        .client
+        .multicast_reset_by_tag(&make_tag(tag))
+        .await
+        .expect("Should cleanup by tag");
+
+    Ok(())
+}
+
+/// Tests the VLAN lifecycle for multicast groups, verifying route action
+/// transitions through None -> Some(10) -> Some(20) -> None.
+#[tokio::test]
+#[ignore]
+async fn test_vlan_lifecycle_route_entries() -> TestResult {
+    let switch = &*get_switch().await;
+    let tag = "vlan_lifecycle_test";
+
+    // Setup: create internal admin-scoped group for NAT target
+    let internal_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    let egress_port = PhysPort(28);
+    create_test_multicast_group(
+        switch,
+        internal_ip,
+        Some(tag),
+        &[(egress_port, types::Direction::Underlay)],
+        types::InternalForwarding { nat_target: None },
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
+    let group_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
+    let nat_target = create_nat_target_ipv4();
+    let test_ip = "224.0.1.0";
+
+    // Create without VLAN
+    let create_no_vlan = types::MulticastGroupCreateExternalEntry {
+        group_ip,
+        tag: Some(tag.to_string()),
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: None },
+        sources: None,
+    };
+
+    switch
+        .client
+        .multicast_group_create_external(&create_no_vlan)
+        .await
+        .expect("Should create group without VLAN");
+
+    // Update to add VLAN 10
+    let update_add_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_add_vlan,
+        )
+        .await
+        .expect("Should update group to add VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, Some(10));
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
+        .await?
+        .into_inner();
+    assert!(
+        has_vlan_action_for_ip(&table.entries, test_ip, 10),
+        "Route entry should have forward_vlan(10) action"
+    );
+
+    // Update to change VLAN 10 -> 20, verify no stale entries
+    let update_change_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(20) },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_change_vlan,
+        )
+        .await
+        .expect("Should update group to change VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, Some(20));
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
+        .await?
+        .into_inner();
+    assert!(
+        has_vlan_action_for_ip(&table.entries, test_ip, 20),
+        "Route entry should have forward_vlan(20) action"
+    );
+    assert!(
+        !has_vlan_action_for_ip(&table.entries, test_ip, 10),
+        "Should not have stale forward_vlan(10) action"
+    );
+
+    // Update to remove VLAN
+    let update_remove_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: None },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_remove_vlan,
+        )
+        .await
+        .expect("Should update group to remove VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, None);
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
+        .await?
+        .into_inner();
+    assert!(
+        !has_vlan_action_for_ip(&table.entries, test_ip, 20),
+        "Should not have forward_vlan action after VLAN removal"
+    );
+
+    // Cleanup
+    switch
+        .client
+        .multicast_reset_by_tag(&make_tag(tag))
+        .await
+        .expect("Should cleanup by tag");
+
+    Ok(())
+}
+
+/// IPv6 version of the VLAN lifecycle test. Exercises the same
+/// None -> Some(10) -> Some(20) -> None transitions on an IPv6
+/// external multicast group, verifying route and NAT table entries.
+#[tokio::test]
+#[ignore]
+async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
+    let switch = &*get_switch().await;
+    let tag = "vlan_lifecycle_v6_test";
+
+    // Setup: create internal admin-scoped group for NAT target
+    let internal_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    let egress_port = PhysPort(28);
+    create_test_multicast_group(
+        switch,
+        internal_ip,
+        Some(tag),
+        &[(egress_port, types::Direction::Underlay)],
+        types::InternalForwarding { nat_target: None },
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
+    // Use a distinct IPv6 multicast address (global scope, external group)
+    let group_ip: IpAddr = "ff0e::1:2020".parse().unwrap();
+    let nat_target = create_nat_target_ipv6();
+    let test_ip = "ff0e::1:2020";
+
+    // Create without VLAN
+    let create_no_vlan = types::MulticastGroupCreateExternalEntry {
+        group_ip,
+        tag: Some(tag.to_string()),
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: None },
+        sources: None,
+    };
+
+    switch
+        .client
+        .multicast_group_create_external(&create_no_vlan)
+        .await
+        .expect("Should create IPv6 group without VLAN");
+
+    // Update to add VLAN 10
+    let update_add_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_add_vlan,
+        )
+        .await
+        .expect("Should update IPv6 group to add VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, Some(10));
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl", false)
+        .await?
+        .into_inner();
+    assert!(
+        has_vlan_action_for_ip(&table.entries, test_ip, 10),
+        "Route entry should have forward_vlan(10) action"
+    );
+
+    // Update to change VLAN 10 -> 20, verify no stale entries
+    let update_change_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(20) },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_change_vlan,
+        )
+        .await
+        .expect("Should update IPv6 group to change VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, Some(20));
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl", false)
+        .await?
+        .into_inner();
+    assert!(
+        has_vlan_action_for_ip(&table.entries, test_ip, 20),
+        "Route entry should have forward_vlan(20) action"
+    );
+    assert!(
+        !has_vlan_action_for_ip(&table.entries, test_ip, 10),
+        "Should not have stale forward_vlan(10) action"
+    );
+
+    // Update to remove VLAN
+    let update_remove_vlan = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: None },
+        sources: None,
+    };
+
+    let updated = switch
+        .client
+        .multicast_group_update_external(
+            &group_ip,
+            &make_tag(tag),
+            &update_remove_vlan,
+        )
+        .await
+        .expect("Should update IPv6 group to remove VLAN");
+    assert_eq!(updated.into_inner().external_forwarding.vlan_id, None);
+
+    let table = switch
+        .client
+        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl", false)
+        .await?
+        .into_inner();
+    assert!(
+        !has_vlan_action_for_ip(&table.entries, test_ip, 20),
+        "Should not have forward_vlan action after VLAN removal"
+    );
 
     // Cleanup
     switch
