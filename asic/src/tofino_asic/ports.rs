@@ -378,12 +378,9 @@ pub fn set_prbs(
 
     let bf_mode = match mode {
         PortPrbsMode::Mode31 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_31,
-        PortPrbsMode::Mode23 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_23,
         PortPrbsMode::Mode15 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_15,
         PortPrbsMode::Mode13 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_13,
-        PortPrbsMode::Mode11 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_11,
         PortPrbsMode::Mode9 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_9,
-        PortPrbsMode::Mode7 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_7,
         PortPrbsMode::Mission => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_NONE,
     };
 

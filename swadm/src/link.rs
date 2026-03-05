@@ -570,7 +570,7 @@ pub enum SetLinkProp {
     /// Set  whether the link is configured for IPv6
     #[clap(visible_alias = "ipv6")]
     Ipv6Enabled { enabled: OnOff },
-    /// Set the PRBS mode for the link. (7, 9, 11, 15, 23, 31, or mission/off)
+    /// Set the PRBS mode for the link. (9, 13, 15, 31, or mission/off)
     Prbs { prbs: PortPrbsMode },
 }
 
