@@ -1385,11 +1385,18 @@ impl Switch {
         link_id: LinkId,
         prbs: PortPrbsMode,
     ) -> DpdResult<()> {
-        self.link_update(port_id, link_id, |link| {
-            link.config.prbs = prbs;
-            self.reconciler.trigger(port_id, link_id);
-            Ok(())
-        })
+        if prbs != PortPrbsMode::Mission && self.link_enabled(port_id, link_id)
+        {
+            Err(DpdError::Invalid(
+                "PRBS cannot be set on an enabled port".into(),
+            ))
+        } else {
+            self.link_update(port_id, link_id, |link| {
+                link.config.prbs = prbs;
+                self.reconciler.trigger(port_id, link_id);
+                Ok(())
+            })
+        }
     }
 
     /// Return whether a link is configured to drop non-nat traffic
@@ -1794,7 +1801,7 @@ async fn reconcile_link(
                 link.plumbed.autoneg
             );
             true
-        } else if !link.plumbed.tx_eq_pushed {
+        } else if link_enabled && !link.plumbed.tx_eq_pushed {
             debug!(log, "tx-eq needs an update, tearing down link",);
             true
         } else {
