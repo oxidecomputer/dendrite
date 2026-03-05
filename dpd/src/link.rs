@@ -1281,6 +1281,28 @@ impl Switch {
         })?
     }
 
+    /// Return the measured error counts for a PRBS-enabled link over a
+    /// specified time period.
+    pub fn link_prbs_get_err(
+        &self,
+        port_id: PortId,
+        link_id: LinkId,
+        ms: u32,
+    ) -> DpdResult<Vec<u32>> {
+        self.link_fetch(port_id, link_id, |link| {
+            if !link.plumbed.enabled
+                || link.plumbed.prbs == PortPrbsMode::Mission
+            {
+                return Err(DpdError::Invalid(String::from(
+                    "PRBS errors can only be counted when a link is enabled\n\
+		    and has PRBS configured",
+                )));
+            }
+            self.asic_hdl
+                .port_prbs_get_err(link.port_hdl, ms)
+                .map_err(DpdError::from)
+        })?
+    }
     /// Return whether a link is enabled.
     pub fn link_enabled(
         &self,
@@ -1385,11 +1407,19 @@ impl Switch {
         link_id: LinkId,
         prbs: PortPrbsMode,
     ) -> DpdResult<()> {
-        self.link_update(port_id, link_id, |link| {
-            link.config.prbs = prbs;
-            self.reconciler.trigger(port_id, link_id);
-            Ok(())
-        })
+        if prbs != PortPrbsMode::Mission
+            && self.link_enabled(port_id, link_id)?
+        {
+            Err(DpdError::Invalid(
+                "PRBS cannot be set on an enabled port".into(),
+            ))
+        } else {
+            self.link_update(port_id, link_id, |link| {
+                link.config.prbs = prbs;
+                self.reconciler.trigger(port_id, link_id);
+                Ok(())
+            })
+        }
     }
 
     /// Return whether a link is configured to drop non-nat traffic
@@ -1687,6 +1717,7 @@ fn plumb_link(
     link.plumbed.speed = link.config.speed;
     link.plumbed.fec = fec;
     link.plumbed.enabled = false;
+    link.plumbed.prbs = PortPrbsMode::Mission;
     link.plumbed.lane_cnt = switch.asic_hdl.port_get_lane_cnt(port_hdl)?;
 
     // Set the autonegotiation value
@@ -1794,7 +1825,7 @@ async fn reconcile_link(
                 link.plumbed.autoneg
             );
             true
-        } else if !link.plumbed.tx_eq_pushed {
+        } else if link.config.enabled && !link.plumbed.tx_eq_pushed {
             debug!(log, "tx-eq needs an update, tearing down link",);
             true
         } else {

@@ -378,23 +378,58 @@ pub fn set_prbs(
 
     let bf_mode = match mode {
         PortPrbsMode::Mode31 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_31,
-        PortPrbsMode::Mode23 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_23,
         PortPrbsMode::Mode15 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_15,
         PortPrbsMode::Mode13 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_13,
-        PortPrbsMode::Mode11 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_11,
         PortPrbsMode::Mode9 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_9,
-        PortPrbsMode::Mode7 => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_7,
         PortPrbsMode::Mission => bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_NONE,
     };
 
     let mut fp = FrontPortHandle::from_port_hdl(hdl, port_hdl)?;
-    unsafe { bf_pm_port_prbs_mode_set(hdl.dev_id, fp.ptr(), 1, bf_mode) }
-        .check_error("setting prbs mode")?;
+    if bf_mode == bf_port_prbs_mode_e_BF_PORT_PRBS_MODE_NONE {
+        unsafe { bf_pm_port_prbs_mode_clear(hdl.dev_id, fp.ptr(), 1) }
+            .check_error("clearing prbs mode")?;
+    } else {
+        unsafe { bf_pm_port_prbs_mode_set(hdl.dev_id, fp.ptr(), 1, bf_mode) }
+            .check_error("setting prbs mode")?;
+    }
     config.prbs = mode;
     Ok(())
 }
 
 const MAX_N_LANES: usize = 16;
+
+pub fn get_err_prbs(
+    hdl: &Handle,
+    port_hdl: PortHdl,
+    _ms: u32,
+) -> AsicResult<Vec<u32>> {
+    let mut phys_ports = hdl.phys_ports.lock().unwrap();
+    let config = phys_ports.get_tofino_port_mut(port_hdl)?;
+
+    if !config.enabled || config.prbs == PortPrbsMode::Mission {
+        return Err(AsicError::InvalidArg(
+            "port must be enabled for PRBS before monitoring errors"
+                .to_string(),
+        ));
+    }
+
+    let dev = hdl.dev_id;
+    let mut fp = FrontPortHandle::from_port_hdl(hdl, port_hdl)?;
+    let n_lanes = config.channels.len();
+    let mut stats: bf_port_sds_prbs_stats_t = unsafe { std::mem::zeroed() };
+    let errors = unsafe {
+        bf_pm_port_prbs_mode_stats_get(dev, fp.ptr(), &mut stats)
+            .check_error("bf_pm_port_prbs_stats_get")?;
+        stats
+            .prbs_stats
+            .tof2_channel
+            .iter()
+            .take(n_lanes)
+            .map(|c| c.errors)
+            .collect::<Vec<u32>>()
+    };
+    Ok(errors)
+}
 
 const fn empty_ber() -> bf_port_ber_t {
     bf_port_ber_t {

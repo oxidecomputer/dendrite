@@ -173,6 +173,14 @@ impl AsicOps for Handle {
         ports::set_prbs(self, port_hdl, mode)
     }
 
+    fn port_prbs_get_err(
+        &self,
+        port_hdl: PortHdl,
+        ms: u32,
+    ) -> AsicResult<Vec<u32>> {
+        ports::get_err_prbs(self, port_hdl, ms)
+    }
+
     fn port_ber_get(&self, port_hdl: PortHdl) -> AsicResult<aal::Ber> {
         ports::get_ber(self, port_hdl)
     }

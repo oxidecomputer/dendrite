@@ -1,7 +1,9 @@
 bf_rmon_counter_t
 bf_rmon_counter_array_t
 bf_pm_fsm_st
+bf_pm_port_info_t
 pm_intf_fsm_states_t
+bf_port_sds_prbs_stats_t
 bf_port_ber_t
 qsfp_fsm_state_t
 qsfp_fsm_ch_en_state_t

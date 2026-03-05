@@ -7,6 +7,7 @@
 //! DPD endpoint definitions.
 
 pub mod v1;
+pub mod v10;
 pub mod v2;
 pub mod v7;
 
@@ -63,6 +64,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (11, PRBS_IMPROVEMENT),
     (10, ASIC_DETAILS),
     (9, SNAPSHOT),
     (8, MCAST_STRICT_UNDERLAY),
@@ -815,6 +817,19 @@ pub trait DpdApi {
     /// Get an existing link by ID.
     #[endpoint {
         method = GET,
+        versions = ..VERSION_PRBS_IMPROVEMENT,
+        path = "/ports/{port_id}/links/{link_id}"
+    }]
+    async fn link_get_v10(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<v10::Link>, HttpError> {
+        Self::link_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+    }
+    /// Get an existing link by ID.
+    #[endpoint {
+        method = GET,
+        versions = VERSION_PRBS_IMPROVEMENT..,
         path = "/ports/{port_id}/links/{link_id}"
     }]
     async fn link_get(
@@ -835,6 +850,24 @@ pub trait DpdApi {
     /// List the links within a single switch port.
     #[endpoint {
         method = GET,
+        versions = ..VERSION_PRBS_IMPROVEMENT,
+        path = "/ports/{port_id}/links",
+    }]
+    async fn link_list_v10(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<PortIdPathParams>,
+    ) -> Result<HttpResponseOk<Vec<v10::Link>>, HttpError> {
+        Self::link_list(rqctx, path).await.map(|resp| {
+            resp.map(|list| {
+                list.into_iter().map(Into::into).collect::<Vec<v10::Link>>()
+            })
+        })
+    }
+
+    /// List the links within a single switch port.
+    #[endpoint {
+        method = GET,
+        versions = VERSION_PRBS_IMPROVEMENT..,
         path = "/ports/{port_id}/links",
     }]
     async fn link_list(
@@ -845,6 +878,23 @@ pub trait DpdApi {
     /// List all links, on all switch ports.
     #[endpoint {
         method = GET,
+        versions = ..VERSION_PRBS_IMPROVEMENT,
+        path = "/links",
+    }]
+    async fn link_list_all_v10(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<LinkFilter>,
+    ) -> Result<HttpResponseOk<Vec<v10::Link>>, HttpError> {
+        Self::link_list_all(rqctx, query).await.map(|resp| {
+            resp.map(|list| {
+                list.into_iter().map(Into::into).collect::<Vec<v10::Link>>()
+            })
+        })
+    }
+    /// List all links, on all switch ports.
+    #[endpoint {
+        method = GET,
+        versions = VERSION_PRBS_IMPROVEMENT..,
         path = "/links",
     }]
     async fn link_list_all(
@@ -947,6 +997,25 @@ pub trait DpdApi {
     /// Set a link's PRBS speed and mode.
     #[endpoint {
         method = PUT,
+        versions = ..VERSION_PRBS_IMPROVEMENT,
+        path = "/ports/{port_id}/links/{link_id}/prbs",
+    }]
+    async fn link_prbs_set_v10(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+        body: TypedBody<v10::PortPrbsMode>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let mode = PortPrbsMode::try_from(body.into_inner()).map_err(|e| {
+            HttpError::for_bad_request(None, format!("bad PRBS mode: {e}"))
+        })?;
+
+        Self::link_prbs_set(rqctx, path, TypedBody::from(mode)).await
+    }
+
+    /// Set a link's PRBS speed and mode.
+    #[endpoint {
+        method = PUT,
+        versions = VERSION_PRBS_IMPROVEMENT..,
         path = "/ports/{port_id}/links/{link_id}/prbs",
     }]
     async fn link_prbs_set(
@@ -962,6 +1031,24 @@ pub trait DpdApi {
     /// underlying circuitry (such as filter gains).
     #[endpoint {
         method = GET,
+        versions = ..VERSION_PRBS_IMPROVEMENT,
+        path = "/ports/{port_id}/links/{link_id}/prbs",
+    }]
+    async fn link_prbs_get_v10(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<v10::PortPrbsMode>, HttpError> {
+        Self::link_prbs_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+    }
+
+    /// Return the link's PRBS speed and mode.
+    ///
+    /// During link training, a pseudorandom bit sequence (PRBS) is used to allow
+    /// each side to synchronize their clocks and set various parameters on the
+    /// underlying circuitry (such as filter gains).
+    #[endpoint {
+        method = GET,
+        versions = VERSION_PRBS_IMPROVEMENT..,
         path = "/ports/{port_id}/links/{link_id}/prbs",
     }]
     async fn link_prbs_get(
@@ -2564,6 +2651,21 @@ pub trait DpdApi {
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<Ber>, HttpError>;
 
+    /**
+     * Return the measured bit-error rate for a link with an active PRBS
+     * connection to another switch.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/prbs_get_err",
+        versions = VERSION_PRBS_IMPROVEMENT..,
+    }]
+    async fn link_prbs_get_err(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+        body: TypedBody<MsDuration>,
+    ) -> Result<HttpResponseOk<Vec<u32>>, HttpError>;
+
     /// Capture a PHV snapshot: create snapshot, set triggers, arm, wait
     /// for trigger, read capture, decode fields, and clean up.
     #[endpoint {
@@ -2586,6 +2688,13 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         body: TypedBody<SnapshotScopeRequest>,
     ) -> Result<HttpResponseOk<Vec<SnapshotFieldScope>>, HttpError>;
+}
+
+/// Duration in milliseconds
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MsDuration {
+    /// Duration in milliseconds
+    pub ms: u32,
 }
 
 /// Parameter used to create a port.
