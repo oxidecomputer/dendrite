@@ -20,7 +20,7 @@ pub const TABLE_NAME: &str = "pipe.Ingress.l3_router.Ndp.tbl";
 
 #[derive(MatchParse, Hash)]
 struct MatchKey {
-    #[match_xlate(name = "nexthop_ipv6")]
+    #[match_xlate(name = "nexthop")]
     ip: Ipv6Addr,
 }
 
