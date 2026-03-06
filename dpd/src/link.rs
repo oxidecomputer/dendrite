@@ -1385,7 +1385,8 @@ impl Switch {
         link_id: LinkId,
         prbs: PortPrbsMode,
     ) -> DpdResult<()> {
-        if prbs != PortPrbsMode::Mission && self.link_enabled(port_id, link_id)
+        if prbs != PortPrbsMode::Mission
+            && self.link_enabled(port_id, link_id)?
         {
             Err(DpdError::Invalid(
                 "PRBS cannot be set on an enabled port".into(),
@@ -1801,7 +1802,7 @@ async fn reconcile_link(
                 link.plumbed.autoneg
             );
             true
-        } else if link_enabled && !link.plumbed.tx_eq_pushed {
+        } else if link.config.enabled && !link.plumbed.tx_eq_pushed {
             debug!(log, "tx-eq needs an update, tearing down link",);
             true
         } else {
