@@ -1530,6 +1530,7 @@ control NatEgressFilter(
 	}
 }
 
+
 /* Rewrite the source MAC address based on the egress port. For multicast
  * packets, also derive the destination MAC from the destination IP address.
  */
