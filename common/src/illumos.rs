@@ -154,9 +154,39 @@ pub async fn address_add(
         }
     }
 
-    let addr = addr.to_string();
-    ipadm_quiet(&["create-addr", "-t", "-T", "static", "-a", &addr, &addr_obj])
-        .await
+    let saddr = addr.to_string();
+    ipadm_quiet(&[
+        "create-addr",
+        "-t",
+        "-T",
+        "static",
+        "-a",
+        &saddr,
+        &addr_obj,
+    ])
+    .await?;
+
+    if addr.is_ipv4() {
+        // When we add an IPv4 address to the interface, ensure that we are not
+        // accepting routes in the switch zone for this interface.
+        //
+        // Generally speaking, the front ports are router ports and the
+        // technician ports are host ports. Router advertisements are for hosts
+        // and we should not be reacting to them on router ports. The interface
+        // property below makes this so.
+        ipadm_quiet(&[
+            "set-ifprop",
+            "-t",
+            "-p",
+            "exchange_routes=off",
+            "-m",
+            "ipv4",
+            iface,
+        ])
+        .await?;
+    }
+
+    Ok(())
 }
 
 /// Remove an IP address from an existing link.
@@ -168,7 +198,31 @@ pub async fn address_remove(addrobj: &str) -> Result<()> {
 pub async fn linklocal_add(iface: &str, tag: &str) -> Result<()> {
     let addr_obj = format!("{iface}/{tag}");
 
-    ipadm_quiet(&["create-addr", "-t", "-T", "addrconf", &addr_obj]).await
+    ipadm_quiet(&["create-addr", "-t", "-T", "addrconf", &addr_obj]).await?;
+
+    // When we add a link local address to an interface, it becomes possible to
+    // receive NDP router advertisements (RA) on that interface. If we receive
+    // an RA that has a non-zero router-lifetime field without setting the
+    // interface property exchange_routes=off that will result in a default
+    // route being installed in the switch zone pointing out a font switch port.
+    // That creates a potential conflict with default IPv6 routes going out the
+    // techport.
+    //
+    // Generally speaking, the front ports are router ports and the technician
+    // ports are host ports. NDP RAs are for hosts and we should not be reacting
+    // to them on router ports. The interface property below makes this so.
+    ipadm_quiet(&[
+        "set-ifprop",
+        "-t",
+        "-p",
+        "exchange_routes=off",
+        "-m",
+        "ipv6",
+        iface,
+    ])
+    .await?;
+
+    Ok(())
 }
 
 /// Create a vlan link on top of the specified link
