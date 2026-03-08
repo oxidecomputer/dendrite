@@ -39,6 +39,7 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use clap::Parser;
+use common::illumos::AddressFamily;
 use libc::c_int;
 use oxnet::IpNet;
 use oxnet::Ipv4Net;
@@ -452,7 +453,36 @@ async fn create_addrobj(
         // some point.
         error!(log, "failed to create {addr}: {e:?}");
         e
-    })
+    })?;
+
+    // The uplink ports on the switch are router ports. This means that we
+    // should not be modifying the switch zone OS routing tables in response to
+    // router advertisements we receive. Router advertisements are for hosts,
+    // routers are not supposed to respond to them on router ports. By disabling
+    // route exchange in the illumos host, we are asking the OS not to respond
+    // to router advertisements as a host. Maghemite takes responsibility
+    // for generating and handling router advertisements and solicitations as
+    // a router.
+    illumos::set_interface_exchange_routes(iface, false, AddressFamily::Ipv6)
+        .await
+        .map_err(|e| {
+            error!(
+                log,
+                "failed to disable ipv6 route exchange on interface {iface}: {e:?}"
+            );
+            e
+        })?;
+    illumos::set_interface_exchange_routes(iface, false, AddressFamily::Ipv4)
+        .await
+        .map_err(|e| {
+            error!(
+                log,
+                "failed to disable ipv4 route exchange on interface {iface}: {e:?}"
+            );
+            e
+        })?;
+
+    Ok(())
 }
 
 // Query illumos for all of the addresses on the interfaces we've been asked to
