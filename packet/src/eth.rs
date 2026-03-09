@@ -50,6 +50,17 @@ pub struct EthHdr {
     pub eth_size: u16,
 }
 
+impl EthHdr {
+    /// Return the wire size of this L2 header, including any 802.1Q tag.
+    pub fn hdr_len(&self) -> usize {
+        if self.eth_8021q.is_some() {
+            ETH_HDR_SZ + ETH_8021Q_SZ
+        } else {
+            ETH_HDR_SZ
+        }
+    }
+}
+
 pub const ETHER_IPV4: u16 = 0x800;
 pub const ETHER_ARP: u16 = 0x806;
 pub const ETHER_VLAN: u16 = 0x8100;

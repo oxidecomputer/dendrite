@@ -19,9 +19,6 @@ use futures::TryStreamExt;
 use oxnet::MulticastMac;
 use packet::{Endpoint, eth, geneve, ipv4, ipv6, udp};
 
-const ETH_HDR_SZ: usize = 14;
-const ETH_8021Q_SZ: usize = 4;
-
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
 const MULTICAST_TEST_IPV6: Ipv6Addr =
     Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 1, 0x1010);
@@ -2114,12 +2111,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
     let nat_target = create_nat_target_ipv4();
 
     // Skip Ethernet header as it will be added by gen_geneve_packet
-    let eth_hdr_len =
-        if og_pkt.hdrs.eth_hdr.as_ref().unwrap().eth_8021q.is_some() {
-            ETH_HDR_SZ + ETH_8021Q_SZ
-        } else {
-            ETH_HDR_SZ
-        };
+    let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
 
     // Create the Geneve packet with mcast_tag = 0
@@ -2239,12 +2231,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
     let nat_target = create_nat_target_ipv6();
 
     // Skip Ethernet header as it will be added by gen_geneve_packet
-    let eth_hdr_len =
-        if og_pkt.hdrs.eth_hdr.as_ref().unwrap().eth_8021q.is_some() {
-            ETH_HDR_SZ + ETH_8021Q_SZ
-        } else {
-            ETH_HDR_SZ
-        };
+    let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
 
     let geneve_src = Endpoint::parse(
@@ -2380,12 +2367,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     let nat_target = create_nat_target_ipv6();
 
     // Skip Ethernet header as it will be added by gen_geneve_packet
-    let eth_hdr_len =
-        if og_pkt.hdrs.eth_hdr.as_ref().unwrap().eth_8021q.is_some() {
-            ETH_HDR_SZ + ETH_8021Q_SZ
-        } else {
-            ETH_HDR_SZ
-        };
+    let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
 
     // Create the Geneve packet with mcast_tag = 2
@@ -4711,12 +4693,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     );
 
     // Create Geneve packet targeting the internal group
-    let eth_hdr_len =
-        if og_pkt.hdrs.eth_hdr.as_ref().unwrap().eth_8021q.is_some() {
-            ETH_HDR_SZ + ETH_8021Q_SZ
-        } else {
-            ETH_HDR_SZ
-        };
+    let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
         Endpoint::parse(
@@ -5072,12 +5049,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     );
 
     // Create Geneve packet targeting the internal group (like test_encapped_multicast_geneve_mcast_tag_to_underlay_members)
-    let eth_hdr_len =
-        if og_pkt.hdrs.eth_hdr.as_ref().unwrap().eth_8021q.is_some() {
-            ETH_HDR_SZ + ETH_8021Q_SZ
-        } else {
-            ETH_HDR_SZ
-        };
+    let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
         Endpoint::parse(
