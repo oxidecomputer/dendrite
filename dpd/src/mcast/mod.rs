@@ -823,21 +823,20 @@ pub(crate) fn modify_group_internal(
     // Configure replication based on member count transitions
     let replication_info = match (
         new_group_info.members.is_empty(),
-        group_entry.replication_info.is_some(),
+        &group_entry.replication_info,
     ) {
-        (true, true) => {
+        (true, Some(repl_info)) => {
             // Transition from members to empty.
             //
             // First, remove ports from ASIC groups before cleaning up
             // replication table entries, otherwise stale ports cause subsequent
             // re-adds to fail with "already contains port".
-            let repl_info = group_entry.replication_info.clone().unwrap();
             process_membership_changes(
                 s,
                 group_ip.into(),
                 &new_group_info.members,
-                &mut group_entry,
-                &repl_info,
+                &group_entry,
+                repl_info,
             )
             .inspect_err(|_e| {
                 mcast.groups.insert(group_ip.into(), group_entry.clone());
@@ -850,15 +849,15 @@ pub(crate) fn modify_group_internal(
             group_entry.replication_info = None;
             None
         }
-        (false, false) => {
+        (false, None) => {
             // Transition from empty to members - configure replication
             Some(configure_replication(group_entry.external_group_id()))
         }
-        (false, true) => {
+        (false, Some(_)) => {
             // Already has members and replication - keep existing
             group_entry.replication_info.clone()
         }
-        (true, false) => {
+        (true, None) => {
             // Already empty and no replication - keep none
             None
         }
@@ -881,7 +880,7 @@ pub(crate) fn modify_group_internal(
         s,
         group_ip.into(),
         &new_group_info.members,
-        &mut group_entry,
+        &group_entry,
         repl_info,
     )
     .inspect_err(|_e| {
@@ -1495,7 +1494,7 @@ fn process_membership_changes(
     s: &Switch,
     group_ip: IpAddr,
     new_members: &[MulticastGroupMember],
-    group_entry: &mut MulticastGroup,
+    group_entry: &MulticastGroup,
     replication_info: &MulticastReplicationInfo,
 ) -> DpdResult<(Vec<MulticastGroupMember>, Vec<MulticastGroupMember>)> {
     // First validate that IPv4 doesn't have underlay members
