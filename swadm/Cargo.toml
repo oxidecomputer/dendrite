@@ -19,6 +19,7 @@ futures.workspace = true
 humantime.workspace = true
 oxide-tokio-rt.workspace = true
 oxnet.workspace = true
+regex.workspace = true
 slog.workspace = true
 tabwriter.workspace = true
 tokio.workspace = true

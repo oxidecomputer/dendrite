@@ -116,10 +116,16 @@ impl FromStr for LinkName {
 }
 
 // A "path" to a link, structured as `port_id/link_id`.
-#[derive(Clone, Debug, Parser)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Parser)]
 pub struct LinkPath {
     port_id: types::PortId,
     link_id: types::LinkId,
+}
+
+impl From<&types::Link> for LinkPath {
+    fn from(value: &types::Link) -> Self {
+        LinkPath { port_id: value.port_id.clone(), link_id: value.link_id }
+    }
 }
 
 impl FromStr for LinkPath {

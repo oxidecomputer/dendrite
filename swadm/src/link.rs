@@ -4,7 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::From;
 use std::io::{Write, stdout};
 use std::net::IpAddr;
@@ -1545,6 +1545,62 @@ fn display_link_history(
     tw.flush().unwrap();
 }
 
+const FILTER_RE: &str = r"(int|rear|qsfp)([0-9]+)?/?([0-9]+)?$";
+
+fn apply_filter(
+    filters: &Vec<String>,
+    ids: Vec<LinkPath>,
+) -> anyhow::Result<(HashSet<LinkPath>, Vec<String>)> {
+    let filter_re = regex::Regex::new(FILTER_RE).unwrap();
+
+    let mut matches = HashSet::new();
+    let mut unused = Vec::new();
+    for f in filters {
+        let lc = f.to_lowercase();
+        let Some(caps) = filter_re.captures(&lc) else {
+            bail!(format!("invalid filter: {}", f));
+        };
+        let filter_type = caps.get(1).map(|m| m.as_str()).unwrap();
+        let filter_port = caps.get(2).map(|m| m.as_str());
+        let filter_link =
+            caps.get(3).map(|m| m.as_str().parse::<u8>().unwrap());
+        let mut used = false;
+
+        for id in &ids {
+            // Annoyingly, we don't have access to the raw components of the
+            // port ID here, so we have to convert it to a string first.
+            let port_id = id.port_id.to_string();
+            let (id_type, id_port) = if port_id.starts_with("int") {
+                ("int", port_id.strip_prefix("int"))
+            } else if port_id.starts_with("rear") {
+                ("rear", port_id.strip_prefix("rear"))
+            } else if port_id.starts_with("qsfp") {
+                ("qsfp", port_id.strip_prefix("qsfp"))
+            } else {
+                bail!(format!("invalid port_id found: {port_id}"))
+            };
+            if filter_type != id_type {
+                continue;
+            }
+
+            if filter_port.is_some() && filter_port != id_port {
+                continue;
+            }
+            if let Some(x) = filter_link
+                && x != *id.link_id
+            {
+                continue;
+            }
+            matches.insert(id.clone());
+            used = true;
+        }
+        if !used {
+            unused.push(f.clone());
+        }
+    }
+    Ok((matches, unused))
+}
+
 pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
     match link {
         Link::Create(LinkCreate { port_id, speed, lane, fec, autoneg, kr }) => {
@@ -1640,17 +1696,20 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 .await
                 .context("failed to list all links")?
                 .into_inner();
+            let mut unused_filters = Vec::new();
             if !filter.is_empty() {
+                let (ids, unused) = apply_filter(
+                    &filter,
+                    links.iter().map(LinkPath::from).collect(),
+                )?;
                 links = links
                     .into_iter()
-                    .filter(|l| {
-                        let p = l.port_id.to_string();
-                        filter.iter().any(|f| p.contains(f))
-                    })
+                    .filter(|l| ids.contains(&LinkPath::from(l)))
                     .collect::<Vec<dpd_client::types::Link>>();
-                if links.is_empty() {
-                    bail!("no links found with matching names");
-                }
+                unused_filters = unused;
+            }
+            if links.is_empty() {
+                bail!("no links found");
             }
             if parseable {
                 let fields =
@@ -1667,6 +1726,9 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                     print_link(&mut tw, link, fields)?;
                 }
                 tw.flush()?;
+            }
+            if !unused_filters.is_empty() {
+                bail!("unused filters: {unused_filters:?}");
             }
         }
         Link::GetProp { link, property } => {
@@ -2065,4 +2127,52 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[test]
+fn test_filter() {
+    struct TestCase {
+        test: &'static str,
+        type_: Option<&'static str>,
+        port: Option<&'static str>,
+        link: Option<&'static str>,
+    }
+
+    impl TestCase {
+        pub fn new(
+            test: &'static str,
+            type_: Option<&'static str>,
+            port: Option<&'static str>,
+            link: Option<&'static str>,
+        ) -> Self {
+            TestCase { test, type_, port, link }
+        }
+    }
+    let tests = vec![
+        TestCase::new("rear", Some("rear"), None, None),
+        TestCase::new("qsfp10", Some("qsfp"), Some("10"), None),
+        TestCase::new("int0/0", Some("int"), Some("0"), Some("0")),
+        TestCase::new("int0/", Some("int"), Some("0"), None),
+        TestCase::new("int0/0/", None, None, None),
+        TestCase::new("into0", None, None, None),
+        TestCase::new("xxx", None, None, None),
+        TestCase::new("xxx0", None, None, None),
+        TestCase::new("xxx0/0", None, None, None),
+        TestCase::new("qsfp/0/0", None, None, None),
+        TestCase::new("qsfp0/0/0", None, None, None),
+    ];
+
+    let re = regex::Regex::new(FILTER_RE).unwrap();
+    for t in tests {
+        println!("testing {}", t.test);
+        if let Some(caps) = re.captures(&t.test.to_lowercase()) {
+            assert_eq!(caps.get(1).map(|m| m.as_str()), t.type_);
+            assert_eq!(caps.get(2).map(|m| m.as_str()), t.port);
+            assert_eq!(caps.get(3).map(|m| m.as_str()), t.link);
+        } else {
+            assert_eq!(None, t.type_);
+            assert_eq!(None, t.port);
+            assert_eq!(None, t.link);
+        }
+    }
 }

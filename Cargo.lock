@@ -6889,6 +6889,7 @@ dependencies = [
  "humantime",
  "oxide-tokio-rt",
  "oxnet",
+ "regex",
  "slog",
  "tabwriter",
  "tokio",
