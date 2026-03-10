@@ -112,9 +112,7 @@ pub(crate) fn add_bitmap_entry(
     };
     debug!(
         s.log,
-        "add multicast egress entry for decap {} -> {:?}",
-        match_key,
-        action_data
+        "add multicast egress entry for decap {match_key} -> {action_data:?}"
     );
 
     s.table_entry_add(
@@ -143,9 +141,7 @@ pub(crate) fn update_bitmap_entry(
 
     debug!(
         s.log,
-        "update multicast egress entry for decap {} -> {:?}",
-        match_key,
-        action_data
+        "update multicast egress entry for decap {match_key} -> {action_data:?}"
     );
 
     s.table_entry_update(
@@ -165,9 +161,7 @@ pub(crate) fn del_bitmap_entry(
 
     debug!(
         s.log,
-        "delete multicast egress entry for decap {} -> {}",
-        match_key,
-        mcast_external_grp
+        "delete multicast egress entry for decap {match_key} -> {mcast_external_grp}"
     );
 
     s.table_entry_del(TableType::McastEgressDecapPorts, &match_key)
@@ -212,7 +206,7 @@ pub(crate) fn add_port_mapping_entry(
 
     let action_data = PortIdAction::SetPortNumber { port_number: port.as_u8() };
 
-    debug!(s.log, "add port id entry {} -> {:?}", match_key, action_data);
+    debug!(s.log, "add port id entry {match_key} -> {action_data:?}");
 
     s.table_entry_add(
         TableType::McastEgressPortMapping,
@@ -234,7 +228,7 @@ pub(crate) fn update_port_mapping_entry(
 
     let action_data = PortIdAction::SetPortNumber { port_number: port.as_u8() };
 
-    debug!(s.log, "update port id entry {} -> {:?}", match_key, action_data);
+    debug!(s.log, "update port id entry {match_key} -> {action_data:?}");
 
     s.table_entry_update(
         TableType::McastEgressPortMapping,
@@ -251,7 +245,7 @@ pub(crate) fn del_port_mapping_entry(
 ) -> DpdResult<()> {
     let match_key = MatchKeyPortId::new(asic_port_id);
 
-    debug!(s.log, "delete port id entry {} -> {}", match_key, asic_port_id);
+    debug!(s.log, "delete port id entry {match_key} -> {asic_port_id}");
 
     s.table_entry_del(TableType::McastEgressPortMapping, &match_key)
 }

@@ -177,6 +177,54 @@ pub async fn vlan_create(over: &str, vlan_id: u16, vlan: &str) -> Result<()> {
     dladm_quiet(&["create-vlan", "-t", "-v", &vlan_id, "-l", over, vlan]).await
 }
 
+/// What address family to use when enabling/disabling route exchange for an
+/// interface.
+#[derive(Debug, Clone, Copy)]
+pub enum AddressFamily {
+    Ipv4,
+    Ipv6,
+}
+
+impl AddressFamily {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ipv4 => "ipv4",
+            Self::Ipv6 => "ipv6",
+        }
+    }
+}
+
+/// Enable or disable route exchange for a particular interface. Disabling
+/// has the following implications.
+///
+/// IPv6:
+/// - The host OS will ignore all NDP router solicitation (RS) and router
+///   advertisement (RA) messages.
+/// - The host OS will suppress RIPng send/receive
+///
+/// IPv4:
+/// - The host OS discards inbound RIP packets
+/// - The host OS suppresses ICMP router discovery
+pub async fn set_interface_exchange_routes(
+    iface: &str,
+    enabled: bool,
+    address_family: AddressFamily,
+) -> Result<()> {
+    let value =
+        if enabled { "exchange_routes=on" } else { "exchange_routes=off" };
+
+    ipadm_quiet(&[
+        "set-ifprop",
+        "-t",
+        "-p",
+        value,
+        "-m",
+        address_family.as_str(),
+        iface,
+    ])
+    .await
+}
+
 /// Remove a vlan link
 pub async fn vlan_delete(vlan: &str) -> Result<()> {
     dladm_quiet(&["delete-vlan", vlan]).await

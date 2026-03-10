@@ -608,8 +608,17 @@ control NatIngress (
 	}
 
 	// Separate table for IPv4 multicast packets that need to be encapsulated.
+	//
+	// Each group has a single entry keyed on (dst_addr, vlan_valid, vlan_id).
+	// Groups with a VLAN match on (addr, true, vlan_id). Groups without VLAN
+	// match on (addr, false, 0). Packets with the wrong VLAN miss and are
+	// not NAT encapsulated.
 	table ingress_ipv4_mcast {
-		key = { hdr.ipv4.dst_addr : exact; }
+		key = {
+			hdr.ipv4.dst_addr : exact;
+			hdr.vlan.isValid() : exact;
+			hdr.vlan.vlan_id : exact;
+		}
 		actions = { mcast_forward_ipv4_to; }
 		const size = IPV4_MULTICAST_TABLE_SIZE;
 		counters = mcast_ipv4_ingress_ctr;
@@ -625,9 +634,14 @@ control NatIngress (
 		mcast_ipv6_ingress_ctr.count();
 	}
 
-	// Separate table for IPv6 multicast packets that need to be encapsulated.
+	// IPv6 counterpart of ingress_ipv4_mcast for IPv6 packets that need to be
+	// encapsulated. See ingress_ipv4_mcast for details on VLAN matching.
 	table ingress_ipv6_mcast {
-		key = { hdr.ipv6.dst_addr : exact; }
+		key = {
+			hdr.ipv6.dst_addr : exact;
+			hdr.vlan.isValid() : exact;
+			hdr.vlan.vlan_id : exact;
+		}
 		actions = { mcast_forward_ipv6_to; }
 		const size = IPV6_MULTICAST_TABLE_SIZE;
 		counters = mcast_ipv6_ingress_ctr;
@@ -1330,15 +1344,17 @@ control MulticastRouter4(
 	apply {
 		// If the packet came in with a VLAN tag, we need to invalidate
 		// the VLAN header before we do the lookup.  The VLAN header
-		// will be re-attached if set in the forward_vlan action.
+		// will be re-attached if set in the forward_vlan action (or
+		// untagged for groups without VLAN). This prevents unintended
+		// VLAN translation.
 		if (hdr.vlan.isValid()) {
 			hdr.ethernet.ether_type = hdr.vlan.ether_type;
 			hdr.vlan.setInvalid();
 		}
 
 		if (!tbl.apply().hit) {
-			icmp_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);
-			meta.drop_reason = DROP_IPV6_UNROUTEABLE;
+			icmp_error(ICMP_DEST_UNREACH, ICMP_DST_UNREACH_NET);
+			meta.drop_reason = DROP_IPV4_UNROUTEABLE;
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
 		} else if (hdr.ipv4.ttl == 1 && !meta.service_routed) {
@@ -1470,7 +1486,9 @@ control MulticastRouter6 (
 	apply {
 		// If the packet came in with a VLAN tag, we need to invalidate
 		// the VLAN header before we do the lookup.  The VLAN header
-		// will be re-attached if set in the forward_vlan action.
+		// will be re-attached if set in the forward_vlan action (or
+		// untagged for groups without VLAN). This prevents unintended
+		// VLAN translation.
 		if (hdr.vlan.isValid()) {
 			hdr.ethernet.ether_type = hdr.vlan.ether_type;
 			hdr.vlan.setInvalid();

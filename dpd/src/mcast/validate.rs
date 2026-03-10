@@ -52,8 +52,8 @@ pub(crate) fn validate_multicast_address(
 pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
     if !nat_target.inner_mac.is_multicast() {
         return Err(DpdError::Invalid(format!(
-            "NAT target inner MAC address {} is not a multicast MAC address",
-            nat_target.inner_mac
+            "NAT target inner MAC address {inner_mac} is not a multicast MAC address",
+            inner_mac = nat_target.inner_mac
         )));
     }
 
