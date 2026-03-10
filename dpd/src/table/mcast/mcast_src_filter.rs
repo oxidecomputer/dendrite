@@ -85,7 +85,7 @@ pub(crate) fn add_ipv4_entry(
     let match_key = Ipv4MatchKey::new(src_addr, dst_addr);
     let action_data = Ipv4Action::AllowSrc;
 
-    debug!(s.log, "add source filter entry {} -> {:?}", src_addr, action_data);
+    debug!(s.log, "add source filter entry {src_addr} -> {action_data:?}");
 
     s.table_entry_add(TableType::McastIpv4SrcFilter, &match_key, &action_data)
 }
@@ -99,7 +99,7 @@ pub(crate) fn del_ipv4_entry(
 ) -> DpdResult<()> {
     let match_key = Ipv4MatchKey::new(src_addr, dst_addr);
 
-    debug!(s.log, "delete source filter entry {} -> {}", src_addr, dst_addr);
+    debug!(s.log, "delete source filter entry {src_addr} -> {dst_addr}");
 
     s.table_entry_del(TableType::McastIpv4SrcFilter, &match_key)
 }
@@ -138,7 +138,7 @@ pub(crate) fn add_ipv6_entry(
     let match_key = Ipv6MatchKey::new(src_addr, dst_addr);
     let action_data = Ipv6Action::AllowSrc;
 
-    debug!(s.log, "add source filter entry {} -> {:?}", src_addr, action_data);
+    debug!(s.log, "add source filter entry {src_addr} -> {action_data:?}");
 
     s.table_entry_add(TableType::McastIpv6SrcFilter, &match_key, &action_data)
 }
@@ -152,7 +152,7 @@ pub(crate) fn del_ipv6_entry(
 ) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(src_addr, dst_addr);
 
-    debug!(s.log, "delete source filter entry {} -> {}", src_addr, dst_addr);
+    debug!(s.log, "delete source filter entry {src_addr} -> {dst_addr}");
 
     s.table_entry_del(TableType::McastIpv6SrcFilter, &match_key)
 }
