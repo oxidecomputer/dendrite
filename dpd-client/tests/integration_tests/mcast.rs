@@ -808,7 +808,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
     // handled by NAT ingress tables.
     let route_table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
+        .table_dump("Ingress.l3_router.MulticastRouter4.tbl", false)
         .await
         .expect("Should dump IPv4 route table")
         .into_inner();
@@ -837,7 +837,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
     // !hdr.geneve.isValid() guard, so one entry per group suffices.
     let nat_table = switch
         .client
-        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast", false)
+        .table_dump("Ingress.nat_ingress.ingress_ipv4_mcast", false)
         .await
         .expect("Should dump NAT ingress table")
         .into_inner();
@@ -929,7 +929,7 @@ async fn test_group_api_lifecycle() {
     // Route table: 1 entry (dst_addr only, VLAN via action)
     let route_table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
+        .table_dump("Ingress.l3_router.MulticastRouter4.tbl", false)
         .await
         .expect("Should dump route table")
         .into_inner();
@@ -947,7 +947,7 @@ async fn test_group_api_lifecycle() {
     // NAT table: 1 entry per group with exact VLAN match
     let nat_table = switch
         .client
-        .table_dump("pipe.Ingress.nat_ingress.ingress_ipv4_mcast", false)
+        .table_dump("Ingress.nat_ingress.ingress_ipv4_mcast", false)
         .await
         .expect("Should dump NAT table")
         .into_inner();
@@ -6317,9 +6317,9 @@ async fn test_multicast_group_get_underlay() -> TestResult {
 }
 
 const SOURCE_FILTER_IPV4_TABLE: &str =
-    "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4";
+    "Ingress.mcast_ingress.mcast_source_filter_ipv4";
 const SOURCE_FILTER_IPV6_TABLE: &str =
-    "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv6";
+    "Ingress.mcast_ingress.mcast_source_filter_ipv6";
 
 /// Test that when `IpSrc::Any` is present in the sources list, only a single
 /// /0 entry is added to the source filter table (not individual entries for
@@ -7162,7 +7162,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
 
     let table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
+        .table_dump("Ingress.l3_router.MulticastRouter4.tbl", false)
         .await?
         .into_inner();
     assert!(
@@ -7192,7 +7192,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
 
     let table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
+        .table_dump("Ingress.l3_router.MulticastRouter4.tbl", false)
         .await?
         .into_inner();
     assert!(
@@ -7226,7 +7226,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
 
     let table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter4.tbl", false)
+        .table_dump("Ingress.l3_router.MulticastRouter4.tbl", false)
         .await?
         .into_inner();
     assert!(
@@ -7311,7 +7311,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
 
     let table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl", false)
+        .table_dump("Ingress.l3_router.MulticastRouter6.tbl", false)
         .await?
         .into_inner();
     assert!(
@@ -7341,7 +7341,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
 
     let table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl", false)
+        .table_dump("Ingress.l3_router.MulticastRouter6.tbl", false)
         .await?
         .into_inner();
     assert!(
@@ -7375,7 +7375,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
 
     let table = switch
         .client
-        .table_dump("pipe.Ingress.l3_router.MulticastRouter6.tbl", false)
+        .table_dump("Ingress.l3_router.MulticastRouter6.tbl", false)
         .await?
         .into_inner();
     assert!(
