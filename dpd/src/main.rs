@@ -287,7 +287,9 @@ impl Switch {
         let mac_mgmt = Mutex::new(macaddrs::MacManagement::new(&log));
 
         #[cfg(feature = "tofino_asic")]
-        run_interrupt_monitor(log.clone());
+        if !asic_hdl.is_model() {
+            run_interrupt_monitor(log.clone());
+        }
 
         let ws_log = log.new(slog::o!("unit" => "workflow_server"));
         let workflow_server = rpw::WorkflowServer::new(ws_log);
