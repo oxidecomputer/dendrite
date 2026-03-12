@@ -9,8 +9,9 @@ use super::harness::{
     new_dpd_client, run_dpd,
 };
 use super::util::{link_list_ipv4, link_list_ipv6};
-use asic::chaos::{AsicConfig, Chaos, TableChaos, table};
+use asic::chaos::{AsicConfig, Chaos, TableChaos};
 use asic::table_chaos;
+use common::table::TableType;
 use dpd_client::types::{
     LinkCreate, LinkId, LinkSettings, PortFec, PortId, PortSettings, PortSpeed,
 };
@@ -109,7 +110,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
     // for the switch IPv4 address table.
     let config = AsicConfig {
         radix: TESTING_RADIX,
-        table_entry_add: table_chaos!((table::SWITCH_IPV4_ADDR, 1.0)),
+        table_entry_add: table_chaos!((TableType::PortAddrIpv4, 1.0)),
         ..Default::default()
     };
 
