@@ -846,13 +846,17 @@ impl Switch {
         let port_fsm_state = match update {
             PortUpdate::FSM { fsm, state, .. } => {
                 let fsm_state = asic::FsmState::new(*fsm, *state)?;
+                let fsm = asic::FsmType::try_from(*fsm)?;
                 let channel = match fsm_state {
                     #[cfg(feature = "tofino_asic")]
                     asic::FsmState::QsfpChannel(_) => Some(link_id.into()),
                     _ => None,
                 };
 
-                self.record_event(asic_port_id, Event::Fsm(channel, fsm_state));
+                self.record_event(
+                    asic_port_id,
+                    Event::Fsm(channel, fsm, fsm_state),
+                );
                 match fsm_state {
                     asic::FsmState::Port(s) => Some(s),
                     // If we're handling an update for anything other than the

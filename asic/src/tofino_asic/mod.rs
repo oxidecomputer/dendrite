@@ -35,6 +35,7 @@ use aal::{
     AsicError, AsicOps, AsicResult, Connector, PortHdl, SidecarIdentifiers,
 };
 pub use link_fsm::FsmState;
+pub use link_fsm::FsmType;
 pub use link_fsm::PortFsmState;
 
 /// There are three generations of the Tofino ASIC, which the SDE refers to as

@@ -11,9 +11,9 @@
 TOFINO_STAGES=20
 
 # These describe which version of the SDE to download and where to find it
-SDE_COMMIT=53519b8cf74fe832cc7838ea92683564ce4026f2
-SDE_PKG_SHA256=ed783a1e7c8d59c392e8cc89114fb0d495b5475373b762068a719e0fb215f5a0
-SDE_DEB_SHA256=90a18b65a6c65f4d15d5f75a00e42ae55a27ffaff2066061aa95feefbe85e163
+SDE_COMMIT=4c7f6924d47ec3ac65312e142586d919c05ad5ec
+SDE_PKG_SHA256=f2dd0bfabad0e60f92d9972cfcfbbd685e37036ab3135e72c4b82b333418983c
+SDE_DEB_SHA256=59a40e1d4f753c2d15f4949403f3c2d2cf4c3f199bfc30ccf688b9e48c6bce21
 
 [ `uname -s` == "SunOS" ] && SERIES=illumos
 [ `uname -s` == "SunOS" ] || SERIES=linux
