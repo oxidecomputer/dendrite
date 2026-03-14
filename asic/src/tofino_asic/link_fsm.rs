@@ -33,19 +33,19 @@ pub enum FsmType {
 
 impl FsmType {
     pub fn is_port_fsm(&self) -> bool {
-        match self {
+        matches!(
+            self,
             FsmType::PortDfe
-            | FsmType::PortAn
-            | FsmType::PortPRBS
-            | FsmType::PortPipeLoopback
-            | FsmType::PortMacNearLoopback
-            | FsmType::PortMacFarLoopback
-            | FsmType::PortPcsLoopback
-            | FsmType::PortSwModel
-            | FsmType::PortTxMode
-            | FsmType::PortEmulator => true,
-            _ => false,
-        }
+                | FsmType::PortAn
+                | FsmType::PortPRBS
+                | FsmType::PortPipeLoopback
+                | FsmType::PortMacNearLoopback
+                | FsmType::PortMacFarLoopback
+                | FsmType::PortPcsLoopback
+                | FsmType::PortSwModel
+                | FsmType::PortTxMode
+                | FsmType::PortEmulator
+        )
     }
 }
 
