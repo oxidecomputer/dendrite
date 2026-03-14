@@ -401,7 +401,7 @@ const MAX_N_LANES: usize = 16;
 pub fn get_err_prbs(
     hdl: &Handle,
     port_hdl: PortHdl,
-    _ms: u32,
+    ms: u32,
 ) -> AsicResult<Vec<u32>> {
     let mut phys_ports = hdl.phys_ports.lock().unwrap();
     let config = phys_ports.get_tofino_port_mut(port_hdl)?;
@@ -418,7 +418,7 @@ pub fn get_err_prbs(
     let n_lanes = config.channels.len();
     let mut stats: bf_port_sds_prbs_stats_t = unsafe { std::mem::zeroed() };
     let errors = unsafe {
-        bf_pm_port_prbs_mode_stats_get(dev, fp.ptr(), &mut stats)
+        bf_pm_port_prbs_mode_stats_get(dev, fp.ptr(), &mut stats, ms)
             .check_error("bf_pm_port_prbs_stats_get")?;
         stats
             .prbs_stats

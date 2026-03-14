@@ -21,6 +21,7 @@ use common::ports::{PortFec, PortId, PortMedia, PortPrbsMode, PortSpeed};
 
 use crate::Identifiers;
 pub use crate::faux_fsm::FsmState;
+pub use crate::faux_fsm::FsmType;
 pub use crate::faux_fsm::PortFsmState;
 
 pub mod table;
