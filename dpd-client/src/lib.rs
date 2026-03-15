@@ -190,12 +190,9 @@ impl From<types::PortPrbsMode> for ports::PortPrbsMode {
     fn from(p: types::PortPrbsMode) -> Self {
         match p {
             types::PortPrbsMode::Mode31 => ports::PortPrbsMode::Mode31,
-            types::PortPrbsMode::Mode23 => ports::PortPrbsMode::Mode23,
             types::PortPrbsMode::Mode15 => ports::PortPrbsMode::Mode15,
             types::PortPrbsMode::Mode13 => ports::PortPrbsMode::Mode13,
-            types::PortPrbsMode::Mode11 => ports::PortPrbsMode::Mode11,
             types::PortPrbsMode::Mode9 => ports::PortPrbsMode::Mode9,
-            types::PortPrbsMode::Mode7 => ports::PortPrbsMode::Mode7,
             types::PortPrbsMode::Mission => ports::PortPrbsMode::Mission,
         }
     }
@@ -205,12 +202,9 @@ impl From<ports::PortPrbsMode> for types::PortPrbsMode {
     fn from(p: ports::PortPrbsMode) -> Self {
         match p {
             ports::PortPrbsMode::Mode31 => types::PortPrbsMode::Mode31,
-            ports::PortPrbsMode::Mode23 => types::PortPrbsMode::Mode23,
             ports::PortPrbsMode::Mode15 => types::PortPrbsMode::Mode15,
             ports::PortPrbsMode::Mode13 => types::PortPrbsMode::Mode13,
-            ports::PortPrbsMode::Mode11 => types::PortPrbsMode::Mode11,
             ports::PortPrbsMode::Mode9 => types::PortPrbsMode::Mode9,
-            ports::PortPrbsMode::Mode7 => types::PortPrbsMode::Mode7,
             ports::PortPrbsMode::Mission => types::PortPrbsMode::Mission,
         }
     }

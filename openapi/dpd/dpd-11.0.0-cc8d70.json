@@ -7,7 +7,7 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "10.0.0"
+    "version": "11.0.0"
   },
   "paths": {
     "/all-settings": {
@@ -4015,6 +4015,67 @@
         "responses": {
           "204": {
             "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/ports/{port_id}/links/{link_id}/prbs_get_err": {
+      "get": {
+        "summary": "Return the measured bit-error rate for a link with an active PRBS",
+        "description": "connection to another switch.",
+        "operationId": "link_prbs_get_err",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "description": "The link in the switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LinkId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MsDuration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Array_of_uint32",
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
           },
           "4XX": {
             "$ref": "#/components/responses/Error"
@@ -8306,6 +8367,21 @@
           }
         }
       },
+      "MsDuration": {
+        "description": "Duration in milliseconds",
+        "type": "object",
+        "properties": {
+          "ms": {
+            "description": "Duration in milliseconds",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "ms"
+        ]
+      },
       "MulticastGroupCreateExternalEntry": {
         "description": "A multicast group configuration for POST requests for external (to the rack) groups.",
         "type": "object",
@@ -8810,12 +8886,9 @@
         "type": "string",
         "enum": [
           "Mode31",
-          "Mode23",
           "Mode15",
           "Mode13",
-          "Mode11",
           "Mode9",
-          "Mode7",
           "Mission"
         ]
       },

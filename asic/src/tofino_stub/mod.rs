@@ -202,6 +202,14 @@ impl AsicOps for StubHandle {
         Err(AsicError::OperationUnsupported)
     }
 
+    fn port_prbs_get_err(
+        &self,
+        _port_hdl: PortHdl,
+        _ms: u32,
+    ) -> AsicResult<Vec<u32>> {
+        Err(AsicError::OperationUnsupported)
+    }
+
     fn port_add(
         &self,
         connector: Connector,
