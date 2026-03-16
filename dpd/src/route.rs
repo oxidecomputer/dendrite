@@ -126,6 +126,21 @@ use oxnet::{IpNet, Ipv4Net, Ipv6Net};
 const MAX_TARGETS_IPV4: usize = 32;
 const MAX_TARGETS_IPV6: usize = 32;
 
+// Each route index maps to 2 physical entries in the forward table:
+// one for normal forwarding (TTL > 1) and one for TTL exceeded (TTL == 1).
+const ROUTE_FWD_ENTRIES_PER_ROUTE: u32 = 2;
+
+/// Convert a P4 table size to freemap size, accounting for the fact that each
+/// logical route uses multiple physical entries.
+fn freemap_size_from_table(table_size: u32) -> DpdResult<u16> {
+    let logical_routes = table_size / ROUTE_FWD_ENTRIES_PER_ROUTE;
+    u16::try_from(logical_routes).map_err(|_| {
+        DpdError::Invalid(format!(
+            "route table size {table_size} exceeds maximum supported"
+        ))
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Route {
     tag: String,
@@ -515,18 +530,19 @@ fn add_route_locked(
 ) -> DpdResult<()> {
     info!(switch.log, "adding route {subnet} -> {:?}", route.tgt_ip);
 
-    // Verify that the slot freelist has been initialized
+    // Verify that the slot freelist has been initialized.
+    // The freemap tracks logical route indices, not physical table entries.
+    // Since each route uses ROUTE_FWD_ENTRIES_PER_ROUTE physical entries
+    // (normal forward + TTL exceeded), we divide the table size accordingly.
     let max_targets;
     if subnet.is_ipv4() {
         max_targets = MAX_TARGETS_IPV4;
-        route_data.v4_freemap.maybe_init(
-            switch.table_size(table::TableType::RouteFwdIpv4)? as u16,
-        );
+        let table_size = switch.table_size(table::TableType::RouteFwdIpv4)?;
+        route_data.v4_freemap.maybe_init(freemap_size_from_table(table_size)?);
     } else {
         max_targets = MAX_TARGETS_IPV6;
-        route_data.v6_freemap.maybe_init(
-            switch.table_size(table::TableType::RouteFwdIpv6)? as u16,
-        );
+        let table_size = switch.table_size(table::TableType::RouteFwdIpv6)?;
+        route_data.v6_freemap.maybe_init(freemap_size_from_table(table_size)?);
     }
 
     // Get the old set of targets that we'll be adding to

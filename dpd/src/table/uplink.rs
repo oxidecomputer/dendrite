@@ -14,7 +14,7 @@ use aal::{ActionParse, MatchParse};
 use aal_macros::*;
 
 pub const INGRESS_TABLE_NAME: &str = "pipe.Ingress.filter.uplink_ports";
-pub const EGRESS_TABLE_NAME: &str = "pipe.Ingress.egress_filter.egress_filter";
+pub const EGRESS_TABLE_NAME: &str = "pipe.Egress.egress_filter.egress_filter";
 
 #[derive(MatchParse, Debug, Hash)]
 struct IngressMatchKey {
@@ -30,7 +30,7 @@ enum IngressAction {
 
 #[derive(MatchParse, Debug, Hash)]
 struct EgressMatchKey {
-    #[match_xlate(name = "ucast_egress_port")]
+    #[match_xlate(name = "egress_port")]
     out_port: u16,
 }
 
