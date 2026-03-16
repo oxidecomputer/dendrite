@@ -23,16 +23,16 @@ pub mod ports;
 fn table_name(type_: TableType) -> &'static str {
     match type_ {
         TableType::RouteIdxIpv4 => {
-            "pipe.Ingress.l3_router.Router4.lookup_idx.lookup"
+            "pipe.Ingress.l3_router.router4.lookup_idx.lookup"
         }
         TableType::RouteFwdIpv4 => {
-            "pipe.Ingress.l3_router.Router4.lookup_idx.route"
+            "pipe.Ingress.l3_router.router4.lookup_idx.route"
         }
         TableType::RouteIdxIpv6 => {
-            "pipe.Ingress.l3_router.Router6.lookup_idx.lookup"
+            "pipe.Ingress.l3_router.router6.lookup_idx.lookup"
         }
         TableType::RouteFwdIpv6 => {
-            "pipe.Ingress.l3_router.Router6.lookup_idx.route"
+            "pipe.Ingress.l3_router.router6.lookup_idx.route"
         }
         #[cfg(feature = "multicast")]
         TableType::RouteIpv4Mcast => {
@@ -44,13 +44,15 @@ fn table_name(type_: TableType) -> &'static str {
         }
         TableType::ArpIpv4 => "pipe.Ingress.l3_router.Arp.tbl",
         TableType::NeighborIpv6 => "pipe.Ingress.l3_router.Ndp.tbl",
-        TableType::PortMacAddress => "pipe.Ingress.mac_rewrite.mac_rewrite",
+        TableType::PortMacAddress => {
+            "pipe.Egress.unicast_mac_rewrite.mac_rewrite"
+        }
         TableType::PortAddrIpv4 => "pipe.Ingress.filter.switch_ipv4_addr",
         TableType::PortAddrIpv6 => "pipe.Ingress.filter.switch_ipv6_addr",
         TableType::NatIngressIpv4 => "pipe.Ingress.nat_ingress.ingress_ipv4",
         TableType::NatIngressIpv6 => "pipe.Ingress.nat_ingress.ingress_ipv6",
         TableType::UplinkIngress => "pipe.Ingress.filter.uplink_ports",
-        TableType::UplinkEgress => "pipe.Ingress.egress_filter.egress_filter",
+        TableType::UplinkEgress => "pipe.Egress.egress_filter.egress_filter",
         TableType::AttachedSubnetIpv4 => {
             "pipe.Ingress.attached_subnet_ingress.attached_subnets_v4"
         }
@@ -78,7 +80,9 @@ fn table_name(type_: TableType) -> &'static str {
             "pipe.Ingress.nat_ingress.ingress_ipv6_mcast"
         }
         #[cfg(feature = "multicast")]
-        TableType::PortMacAddressMcast => "pipe.Egress.mac_rewrite.mac_rewrite",
+        TableType::PortMacAddressMcast => {
+            "pipe.Egress.mcast_mac_rewrite.mac_rewrite"
+        }
         #[cfg(feature = "multicast")]
         TableType::McastEgressDecapPorts => {
             "pipe.Egress.mcast_egress.tbl_decap_ports"
@@ -96,9 +100,13 @@ fn counter_table_name(id: CounterId) -> &'static str {
         CounterId::Service => "pipe.Ingress.services.service_ctr",
         CounterId::Ingress => "pipe.Ingress.ingress_ctr",
         CounterId::Packet => "pipe.Ingress.packet_ctr",
-        CounterId::Egress => "pipe.Ingress.egress_ctr",
         CounterId::DropPort => "pipe.Ingress.drop_port_ctr",
         CounterId::DropReason => "pipe.Ingress.drop_reason_ctr",
+        CounterId::Forwarded => "pipe.Egress.forwarded_ctr",
+        CounterId::Unicast => "pipe.Egress.unicast_ctr",
+        CounterId::MulticastLL => "pipe.Egress.link_local_mcast_ctr",
+        CounterId::EgressDropPort => "pipe.Egress.drop_port_ctr",
+        CounterId::EgressDropReason => "pipe.Egress.drop_reason_ctr",
         #[cfg(feature = "multicast")]
         CounterId::Multicast(id) => mulitcast_counter_table_name(id),
     }
@@ -107,16 +115,9 @@ fn counter_table_name(id: CounterId) -> &'static str {
 #[cfg(feature = "multicast")]
 fn mulitcast_counter_table_name(id: MulticastCounterId) -> &'static str {
     match id {
-        MulticastCounterId::EgressDropPort => "pipe.Egress.drop_port_ctr",
-        MulticastCounterId::EgressDropReason => "pipe.Egress.drop_reason_ctr",
-        MulticastCounterId::Unicast => "pipe.Egress.unicast_ctr",
         MulticastCounterId::Multicast => "pipe.Egress.mcast_ctr",
         MulticastCounterId::MulticastExt => "pipe.Egress.external_mcast_ctr",
-        MulticastCounterId::MulticastLL => "pipe.Egress.link_local_mcast_ctr",
         MulticastCounterId::MulticastUL => "pipe.Egress.underlay_mcast_ctr",
-        MulticastCounterId::MulticastDrop => {
-            "pipe.Ingress.filter.drop_mcast_ctr"
-        }
     }
 }
 
