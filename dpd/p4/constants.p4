@@ -4,7 +4,9 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-const bit<16> L2_ISOLATED_FLAG = 0x8000;
+// Multicast MAC prefixes per RFC 1112 and RFC 2464.
+const bit<24> IPV4_MCAST_MAC_PREFIX = 0x01005e;
+const bit<16> IPV6_MCAST_MAC_PREFIX = 0x3333;
 
 // TODO: these all need to be bigger. Early experimentation is showing that this
 // is going to need to come either through ATCAM/ALPM or code restructuring.
@@ -12,6 +14,7 @@ const int IPV4_NAT_TABLE_SIZE       = 1024; // nat routing table
 const int IPV6_NAT_TABLE_SIZE       = 1024; // nat routing table
 const int IPV4_LPM_SIZE             = 8192; // ipv4 forwarding table
 const int IPV6_LPM_SIZE             = 1024; // ipv6 forwarding table
+const int FWD_ENTRIES_PER_ROUTE     = 2;    // TTL compound key: forward + ttl_exceeded
 const int IPV4_ARP_SIZE             = 512;  // arp cache
 const int IPV6_NEIGHBOR_SIZE        = 512;  // ipv6 neighbor cache
 const int SWITCH_IPV4_ADDRS_SIZE    = 512;  // ipv4 addrs assigned to our ports
@@ -55,6 +58,11 @@ const bit<32> SVC_COUNTER_MAX = 7;
 const bit<2> MULTICAST_TAG_EXTERNAL = 0;
 const bit<2> MULTICAST_TAG_UNDERLAY = 1;
 const bit<2> MULTICAST_TAG_UNDERLAY_EXTERNAL = 2;
+const bit<2> MULTICAST_TAG_INVALID = 3;  // Sentinel for missing/invalid header
+
+/* IPv6 multicast scope constants (16-bit prefix for parser select) */
+const bit<16> IPV6_INTERFACE_LOCAL_16 = 0xff01;   // ff01::/16
+const bit<16> IPV6_LINK_LOCAL_16 = 0xff02;        // ff02::/16
 
 /* IPv6 Address Mask and Pattern Constants */
 // Reserved underlay multicast subnet (ff04::/64). This /64 within admin-local
@@ -92,4 +100,3 @@ const bit<8> DROP_GENEVE_OPTION_MALFORMED       = 0x19;
 const bit<8> DROP_GENEVE_OPTION_UNKNOWN         = 0x1A;
 // MAX(DROP_xxx) + 1
 const bit<32> DROP_REASON_MAX                   = 0x1B;
-

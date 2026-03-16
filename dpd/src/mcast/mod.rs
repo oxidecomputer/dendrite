@@ -2398,11 +2398,13 @@ mod tests {
             IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
             IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
         ];
-        let expected = vec![
-            IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
-            IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
-        ];
-        assert_eq!(canonicalize_sources(Some(exact_sources)), Some(expected));
+        assert_eq!(
+            canonicalize_sources(Some(exact_sources)),
+            Some(vec![
+                IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
+                IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
+            ])
+        );
 
         // Single Exact source stays as-is
         let single_exact = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(

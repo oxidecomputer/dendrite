@@ -8,8 +8,8 @@
 
 use crate::table::{MacTable, TableType};
 
-/// Table for multicast port MAC entries.
-pub const TABLE_NAME: &str = "pipe.Egress.mac_rewrite.mac_rewrite";
+/// Table name for multicast port MAC rewrite entries.
+pub const TABLE_NAME: &str = "pipe.Egress.mcast_mac_rewrite.mac_rewrite";
 
 /// Table for multicast port MAC entries.
 pub struct PortMacTable;

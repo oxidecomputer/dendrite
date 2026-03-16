@@ -2,11 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use super::{MacTable, TableType};
 
-pub const TABLE_NAME: &str = "pipe.Ingress.mac_rewrite.mac_rewrite";
+// Unicast MAC rewrite table (always present in both MULTICAST and non-MULTICAST P4)
+pub const TABLE_NAME: &str = "pipe.Egress.unicast_mac_rewrite.mac_rewrite";
 
 pub struct PortMacTable;
 
