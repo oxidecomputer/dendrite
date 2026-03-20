@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::convert::TryFrom;
 use std::fmt;
@@ -512,12 +512,9 @@ pub struct PortSpeedFec {
 )]
 pub enum PortPrbsMode {
     Mode31,
-    Mode23,
     Mode15,
     Mode13,
-    Mode11,
     Mode9,
-    Mode7,
     Mission, // i.e. PRBS disabled
 }
 
@@ -525,12 +522,9 @@ impl fmt::Display for PortPrbsMode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             PortPrbsMode::Mode31 => write!(f, "31"),
-            PortPrbsMode::Mode23 => write!(f, "23"),
             PortPrbsMode::Mode15 => write!(f, "15"),
             PortPrbsMode::Mode13 => write!(f, "13"),
-            PortPrbsMode::Mode11 => write!(f, "11"),
             PortPrbsMode::Mode9 => write!(f, "9"),
-            PortPrbsMode::Mode7 => write!(f, "7"),
             PortPrbsMode::Mission => write!(f, "Off"),
         }
     }
@@ -541,12 +535,10 @@ impl FromStr for PortPrbsMode {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "Mode31" | "mode31" | "31" => Ok(PortPrbsMode::Mode31),
-            "Mode23" | "mode23" | "23" => Ok(PortPrbsMode::Mode23),
-            "Mode15" | "mode15" | "15" => Ok(PortPrbsMode::Mode15),
-            "Mode11" | "mode11" | "11" => Ok(PortPrbsMode::Mode11),
-            "Mode9" | "mode9" | "9" => Ok(PortPrbsMode::Mode9),
-            "Mode7" | "mode7" | "7" => Ok(PortPrbsMode::Mode7),
+            "mode31" | "31" => Ok(PortPrbsMode::Mode31),
+            "mode13" | "13" => Ok(PortPrbsMode::Mode13),
+            "mode15" | "15" => Ok(PortPrbsMode::Mode15),
+            "mode9" | "9" => Ok(PortPrbsMode::Mode9),
             "off" | "none" | "mission" => Ok(PortPrbsMode::Mission),
             _ => Err("invalid prbs mode"),
         }

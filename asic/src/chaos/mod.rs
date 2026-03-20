@@ -22,6 +22,7 @@ use common::table::TableType;
 
 use crate::Identifiers;
 pub use crate::faux_fsm::FsmState;
+pub use crate::faux_fsm::FsmType;
 pub use crate::faux_fsm::PortFsmState;
 
 pub mod table;
@@ -181,6 +182,7 @@ pub struct AsicConfig {
     pub port_enable_get: Chaos,
     pub port_enable_set: Chaos,
     pub port_prbs_set: Chaos,
+    pub port_prbs_get_err: Chaos,
     pub port_add: Chaos,
     pub port_delete: Chaos,
     pub register_port_update_handler: Chaos,
@@ -214,6 +216,7 @@ impl AsicConfig {
             port_enable_get: Chaos::new(v),
             port_enable_set: Chaos::new(v),
             port_prbs_set: Chaos::new(v),
+            port_prbs_get_err: Chaos::new(v),
             port_add: Chaos::new(v),
             port_delete: Chaos::new(v),
             register_port_update_handler: Chaos::new(v),
@@ -274,6 +277,7 @@ impl AsicConfig {
             port_autoneg_set: Chaos::new(v),
             port_enable_set: Chaos::new(v),
             port_prbs_set: Chaos::new(v),
+            port_prbs_get_err: Chaos::new(v),
             port_add: Chaos::new(v),
             port_delete: Chaos::new(v),
             // TODO this can cause dpd to fail to start
@@ -532,6 +536,15 @@ impl AsicOps for Handle {
     ) -> AsicResult<()> {
         unfurl!(self, port_prbs_set);
         Ok(())
+    }
+
+    fn port_prbs_get_err(
+        &self,
+        _port_hdl: PortHdl,
+        _ms: u32,
+    ) -> AsicResult<Vec<u32>> {
+        unfurl!(self, port_prbs_get_err);
+        Ok(Vec::new())
     }
 
     fn port_add(

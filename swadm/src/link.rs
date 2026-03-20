@@ -115,6 +115,16 @@ pub enum LinkCounters {
         /// The link to fetch the BER for.
         link: LinkPath,
     },
+
+    /// Fetch the per-lane error counts over a specific period of time for a
+    /// PRBS-enabled link.
+    Prbs {
+        /// The link to fetch the PRBS error stats for.
+        link: LinkPath,
+        /// The time, specified in milliseconds, in which to count errors
+        #[clap(default_value = "10")]
+        ms: u32,
+    },
 }
 
 /// Manage faults on ethernet links
@@ -572,7 +582,7 @@ pub enum SetLinkProp {
     /// Set  whether the link is configured for IPv6
     #[clap(visible_alias = "ipv6")]
     Ipv6Enabled { enabled: OnOff },
-    /// Set the PRBS mode for the link. (7, 9, 11, 15, 23, 31, or mission/off)
+    /// Set the PRBS mode for the link. (9, 13, 15, 31, or mission/off)
     Prbs { prbs: PortPrbsMode },
 }
 
@@ -749,6 +759,28 @@ async fn link_up_counters(
 
     for c in counters {
         writeln!(tw, "{}\t{}\t{}", c.link_path, c.current, c.total)?;
+    }
+    tw.flush().map_err(|e| e.into())
+}
+
+async fn link_prbs_err(
+    client: &Client,
+    link: LinkPath,
+    ms: u32,
+) -> anyhow::Result<()> {
+    let errors = client
+        .link_prbs_get_err(
+            &link.port_id,
+            &link.link_id,
+            &types::MsDuration { ms },
+        )
+        .await
+        .map(|r| r.into_inner())
+        .context("failed to get PRBS error counts")?;
+    let mut tw = TabWriter::new(stdout());
+    writeln!(tw, "{}\t{}", "Lane".underline(), "Errors".underline(),)?;
+    for (lane, e) in errors.iter().enumerate() {
+        writeln!(tw, "{}\t{}", lane, e)?;
     }
     tw.flush().map_err(|e| e.into())
 }
@@ -2015,6 +2047,9 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
             LinkCounters::Ber { link } => link_ber(client, link)
                 .await
                 .context("failed to fetch link BER")?,
+            LinkCounters::Prbs { link, ms } => {
+                link_prbs_err(client, link, ms).await?
+            }
         },
         Link::Serdes { cmd: serdes } => match serdes {
             Serdes::Get { cmd: get } => match get {

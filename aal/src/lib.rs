@@ -213,6 +213,13 @@ pub trait AsicOps {
         mode: PortPrbsMode,
     ) -> AsicResult<()>;
 
+    /// Get a port's PRBS error counts
+    fn port_prbs_get_err(
+        &self,
+        port_hdl: PortHdl,
+        ms: u32,
+    ) -> AsicResult<Vec<u32>>;
+
     /// "Add" a port to the ASIC.  This carves out a collection of lanes on a
     /// physical connector and instructs the ASIC to start managing them as a
     /// single logical port.
