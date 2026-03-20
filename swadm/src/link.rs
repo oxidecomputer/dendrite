@@ -4,14 +4,16 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::From;
 use std::io::{Write, stdout};
 use std::net::IpAddr;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::Context;
 use anyhow::bail;
+use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use colored::*;
 use futures::stream::TryStreamExt;
@@ -331,7 +333,7 @@ pub enum Link {
         /// This does a simple substring search in the link name, e.g.,
         /// "rear0/0". Those whose link name contains the substring are printed,
         /// and others are filtered out.
-        filter: Option<String>,
+        filter: Vec<String>,
     },
 
     /// Enable a link.
@@ -365,15 +367,13 @@ pub enum Link {
     /// be relative to the current time when displaying events in the default
     /// order, or relative to the oldest time when displaying events from oldest
     /// to newest.
-    ///
-    /// The --raw option will cause the raw timestamps to be displayed.  This
-    /// timestamp can't be used to determine the wallclock time of an event, but
-    /// it can be used to correlate events across multiple links.
     History {
-        /// The link to get the history of.
-        link: LinkPath,
-        /// Display raw timestamps rather than relative
-        #[clap(long, visible_alias = "R")]
+        /// Display the time of day for each event, to enable correlation with
+        /// logfile messages.
+        #[clap(long, group = "time")]
+        tod: bool,
+        /// Display the time of each event in raw milliseconds.
+        #[clap(long, group = "time")]
         raw: bool,
         /// Display history from oldest event to newest event
         #[clap(long, short)]
@@ -381,6 +381,8 @@ pub enum Link {
         /// Maximum number of events to display
         #[clap(short)]
         n: Option<usize>,
+        /// The link to get the history of.
+        link: LinkPath,
     },
 
     /// Manage a link in the Faulted state
@@ -862,7 +864,7 @@ async fn link_rmon_counters(
 
     let delay = match interval {
         None => None,
-        Some(d) if d >= 1 => Some(std::time::Duration::from_secs(d as u64)),
+        Some(d) if d >= 1 => Some(Duration::from_secs(d as u64)),
         _ => bail!("interval must be > 0"),
     };
 
@@ -1474,14 +1476,17 @@ fn print_link_verbose(
 
 fn display_link_history(
     history: types::LinkHistory,
+    tod: bool,
     raw: bool,
     reverse: bool,
     n: Option<usize>,
 ) {
-    let (newest, mut events) = (history.timestamp, history.events);
+    let (newest, mut events) = (history.relative, history.events);
     if events.is_empty() {
         return;
     }
+    let collect_time =
+        DateTime::<Utc>::from_timestamp_millis(history.timestamp).unwrap();
     let oldest = if reverse {
         events.sort_by_key(|a| a.timestamp);
         events[0].timestamp
@@ -1506,12 +1511,23 @@ fn display_link_history(
         writeln!(
             &mut tw,
             "{}\t{}\t{}\t{}\t{}",
-            if raw {
-                event.timestamp
-            } else if reverse {
-                event.timestamp - oldest
+            if tod {
+                let delta =
+                    Duration::from_millis((newest - event.timestamp) as u64);
+                let dt = collect_time - delta;
+                dt.format("%+").to_string()
             } else {
-                newest - event.timestamp
+                let timing = if reverse {
+                    event.timestamp - oldest
+                } else {
+                    newest - event.timestamp
+                };
+                if raw {
+                    timing.to_string()
+                } else {
+                    let d = Duration::from_millis(timing.try_into().unwrap());
+                    humantime::format_duration(d).to_string()
+                }
             },
             event.class,
             event.subclass,
@@ -1527,6 +1543,62 @@ fn display_link_history(
         .unwrap();
     }
     tw.flush().unwrap();
+}
+
+const FILTER_RE: &str = r"(int|rear|qsfp)([0-9]+)?/?([0-9]+)?$";
+
+fn apply_filter(
+    filters: &Vec<String>,
+    ids: Vec<LinkPath>,
+) -> anyhow::Result<(HashSet<LinkPath>, Vec<String>)> {
+    let filter_re = regex::Regex::new(FILTER_RE).unwrap();
+
+    let mut matches = HashSet::new();
+    let mut unused = Vec::new();
+    for f in filters {
+        let lc = f.to_lowercase();
+        let Some(caps) = filter_re.captures(&lc) else {
+            bail!(format!("invalid filter: {}", f));
+        };
+        let filter_type = caps.get(1).map(|m| m.as_str()).unwrap();
+        let filter_port = caps.get(2).map(|m| m.as_str());
+        let filter_link =
+            caps.get(3).map(|m| m.as_str().parse::<u8>().unwrap());
+        let mut used = false;
+
+        for id in &ids {
+            // Annoyingly, we don't have access to the raw components of the
+            // port ID here, so we have to convert it to a string first.
+            let port_id = id.port_id.to_string();
+            let (id_type, id_port) = if port_id.starts_with("int") {
+                ("int", port_id.strip_prefix("int"))
+            } else if port_id.starts_with("rear") {
+                ("rear", port_id.strip_prefix("rear"))
+            } else if port_id.starts_with("qsfp") {
+                ("qsfp", port_id.strip_prefix("qsfp"))
+            } else {
+                bail!(format!("invalid port_id found: {port_id}"))
+            };
+            if filter_type != id_type {
+                continue;
+            }
+
+            if filter_port.is_some() && filter_port != id_port {
+                continue;
+            }
+            if let Some(x) = filter_link
+                && x != *id.link_id
+            {
+                continue;
+            }
+            matches.insert(id.clone());
+            used = true;
+        }
+        if !used {
+            unused.push(f.clone());
+        }
+    }
+    Ok((matches, unused))
 }
 
 pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
@@ -1619,11 +1691,26 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 print_link_fields();
                 return Ok(());
             }
-            let links = client
-                .link_list_all(filter.as_deref())
+            let mut links = client
+                .link_list_all(None)
                 .await
                 .context("failed to list all links")?
                 .into_inner();
+            let mut unused_filters = Vec::new();
+            if !filter.is_empty() {
+                let (ids, unused) = apply_filter(
+                    &filter,
+                    links.iter().map(LinkPath::from).collect(),
+                )?;
+                links = links
+                    .into_iter()
+                    .filter(|l| ids.contains(&LinkPath::from(l)))
+                    .collect::<Vec<dpd_client::types::Link>>();
+                unused_filters = unused;
+            }
+            if links.is_empty() {
+                bail!("no links found");
+            }
             if parseable {
                 let fields =
                     fields.as_deref().unwrap_or(DEFAULT_PARSEABLE_FIELDS);
@@ -1639,6 +1726,9 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                     print_link(&mut tw, link, fields)?;
                 }
                 tw.flush()?;
+            }
+            if !unused_filters.is_empty() {
+                bail!("unused filters: {unused_filters:?}");
             }
         }
         Link::GetProp { link, property } => {
@@ -1861,12 +1951,12 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 .await
                 .with_context(|| "failed to disable link")?;
         }
-        Link::History { link, raw, reverse, n } => {
+        Link::History { link, tod, raw, reverse, n } => {
             let history = client
                 .link_history_get(&link.port_id, &link.link_id)
                 .await
                 .context("failed to get Link history")?;
-            display_link_history(history.into_inner(), raw, reverse, n);
+            display_link_history(history.into_inner(), tod, raw, reverse, n);
         }
         Link::Fault { cmd: fault } => match fault {
             Fault::Show { link_path } => {
@@ -2037,4 +2127,52 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[test]
+fn test_filter() {
+    struct TestCase {
+        test: &'static str,
+        type_: Option<&'static str>,
+        port: Option<&'static str>,
+        link: Option<&'static str>,
+    }
+
+    impl TestCase {
+        pub fn new(
+            test: &'static str,
+            type_: Option<&'static str>,
+            port: Option<&'static str>,
+            link: Option<&'static str>,
+        ) -> Self {
+            TestCase { test, type_, port, link }
+        }
+    }
+    let tests = vec![
+        TestCase::new("rear", Some("rear"), None, None),
+        TestCase::new("qsfp10", Some("qsfp"), Some("10"), None),
+        TestCase::new("int0/0", Some("int"), Some("0"), Some("0")),
+        TestCase::new("int0/", Some("int"), Some("0"), None),
+        TestCase::new("int0/0/", None, None, None),
+        TestCase::new("into0", None, None, None),
+        TestCase::new("xxx", None, None, None),
+        TestCase::new("xxx0", None, None, None),
+        TestCase::new("xxx0/0", None, None, None),
+        TestCase::new("qsfp/0/0", None, None, None),
+        TestCase::new("qsfp0/0/0", None, None, None),
+    ];
+
+    let re = regex::Regex::new(FILTER_RE).unwrap();
+    for t in tests {
+        println!("testing {}", t.test);
+        if let Some(caps) = re.captures(&t.test.to_lowercase()) {
+            assert_eq!(caps.get(1).map(|m| m.as_str()), t.type_);
+            assert_eq!(caps.get(2).map(|m| m.as_str()), t.port);
+            assert_eq!(caps.get(3).map(|m| m.as_str()), t.link);
+        } else {
+            assert_eq!(None, t.type_);
+            assert_eq!(None, t.port);
+            assert_eq!(None, t.link);
+        }
+    }
 }

@@ -7,7 +7,7 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "10.0.0"
+    "version": "11.0.0"
   },
   "paths": {
     "/all-settings": {
@@ -7758,14 +7758,20 @@
               "$ref": "#/components/schemas/LinkEvent"
             }
           },
+          "relative": {
+            "description": "The timestamp in milliseconds at which this history was collected, relative to the time the switch management daemon started.",
+            "type": "integer",
+            "format": "int64"
+          },
           "timestamp": {
-            "description": "The timestamp in milliseconds at which this history was collected.",
+            "description": "The wallclock time in milliseconds at which this history was collected.",
             "type": "integer",
             "format": "int64"
           }
         },
         "required": [
           "events",
+          "relative",
           "timestamp"
         ]
       },

@@ -4,7 +4,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/
 #
-# Copyright 2025 Oxide Computer Company
+# Copyright 2026 Oxide Computer Company
 
 WS=${WS:=`git rev-parse --show-toplevel 2> /dev/null`}
 P4_NAME=${P4_NAME:=sidecar}
