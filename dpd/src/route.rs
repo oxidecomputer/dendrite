@@ -120,6 +120,7 @@ use crate::freemap;
 use crate::types::{DpdError, DpdResult};
 use crate::{Switch, table};
 use common::ports::PortId;
+use common::table::TableType;
 use oxnet::{IpNet, Ipv4Net, Ipv6Net};
 
 // These are the largest numbers of targets supported for a single route
@@ -519,14 +520,14 @@ fn add_route_locked(
     let max_targets;
     if subnet.is_ipv4() {
         max_targets = MAX_TARGETS_IPV4;
-        route_data.v4_freemap.maybe_init(
-            switch.table_size(table::TableType::RouteFwdIpv4)? as u16,
-        );
+        route_data
+            .v4_freemap
+            .maybe_init(switch.table_size(TableType::RouteFwdIpv4)? as u16);
     } else {
         max_targets = MAX_TARGETS_IPV6;
-        route_data.v6_freemap.maybe_init(
-            switch.table_size(table::TableType::RouteFwdIpv6)? as u16,
-        );
+        route_data
+            .v6_freemap
+            .maybe_init(switch.table_size(TableType::RouteFwdIpv6)? as u16);
     }
 
     // Get the old set of targets that we'll be adding to

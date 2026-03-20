@@ -16,8 +16,6 @@ use crate::Switch;
 use crate::table::*;
 use common::network::MacAddr;
 
-pub const TABLE_NAME: &str = "pipe.Ingress.l3_router.Ndp.tbl";
-
 #[derive(MatchParse, Hash)]
 struct MatchKey {
     #[match_xlate(name = "nexthop_ipv6")]

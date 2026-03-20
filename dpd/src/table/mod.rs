@@ -7,75 +7,29 @@
 use std::convert::TryFrom;
 use std::hash::Hash;
 
-use slog::{debug, error, info};
+use common::table;
+use slog::debug;
 
 use crate::Switch;
 use crate::types::*;
 use aal::ActionParse;
 use aal::MatchParse;
 use aal::TableOps;
-use common::network::MacAddr;
+use common::table::TableType;
 use dpd_types::views;
 
 pub mod arp_ipv4;
 pub mod attached_subnet_v4;
 pub mod attached_subnet_v6;
+pub mod mac;
 #[cfg(feature = "multicast")]
 pub mod mcast;
 pub mod nat;
 pub mod neighbor_ipv6;
 pub mod port_ip;
-pub mod port_mac;
 pub mod route_ipv4;
 pub mod route_ipv6;
 pub mod uplink;
-
-const BASE_TABLES: [(&str, TableType); 15] = [
-    (route_ipv4::INDEX_TABLE_NAME, TableType::RouteIdxIpv4),
-    (route_ipv4::FORWARD_TABLE_NAME, TableType::RouteFwdIpv4),
-    (route_ipv6::INDEX_TABLE_NAME, TableType::RouteIdxIpv6),
-    (route_ipv6::FORWARD_TABLE_NAME, TableType::RouteFwdIpv6),
-    (arp_ipv4::TABLE_NAME, TableType::ArpIpv4),
-    (neighbor_ipv6::TABLE_NAME, TableType::NeighborIpv6),
-    (port_mac::TABLE_NAME, TableType::PortMac),
-    (port_ip::IPV4_TABLE_NAME, TableType::PortIpv4),
-    (port_ip::IPV6_TABLE_NAME, TableType::PortIpv6),
-    (nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4),
-    (nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6),
-    (uplink::INGRESS_TABLE_NAME, TableType::UplinkIngress),
-    (uplink::EGRESS_TABLE_NAME, TableType::UplinkEgress),
-    (
-        attached_subnet_v4::EXT_SUBNET_IPV4_TABLE_NAME,
-        TableType::AttachedSubnetIpv4,
-    ),
-    (
-        attached_subnet_v6::EXT_SUBNET_IPV6_TABLE_NAME,
-        TableType::AttachedSubnetIpv6,
-    ),
-];
-
-#[cfg(feature = "multicast")]
-const MCAST_TABLES: [(&str, TableType); 10] = [
-    (mcast::mcast_replication::IPV6_TABLE_NAME, TableType::McastIpv6),
-    (mcast::mcast_src_filter::IPV4_TABLE_NAME, TableType::McastIpv4SrcFilter),
-    (mcast::mcast_src_filter::IPV6_TABLE_NAME, TableType::McastIpv6SrcFilter),
-    (mcast::mcast_nat::IPV4_TABLE_NAME, TableType::NatIngressIpv4Mcast),
-    (mcast::mcast_nat::IPV6_TABLE_NAME, TableType::NatIngressIpv6Mcast),
-    (mcast::mcast_route::IPV4_TABLE_NAME, TableType::RouteIpv4Mcast),
-    (mcast::mcast_route::IPV6_TABLE_NAME, TableType::RouteIpv6Mcast),
-    (mcast::mcast_port_mac::TABLE_NAME, TableType::PortMacMcast),
-    (
-        mcast::mcast_egress::DECAP_PORTS_TABLE_NAME,
-        TableType::McastEgressDecapPorts,
-    ),
-    (
-        mcast::mcast_egress::PORT_ID_TABLE_NAME,
-        TableType::McastEgressPortMapping,
-    ),
-];
-
-#[cfg(not(feature = "multicast"))]
-const MCAST_TABLES: [(&str, TableType); 0] = [];
 
 /// Basic statistics about p4 table usage
 #[derive(Clone, Debug, Default)]
@@ -120,7 +74,7 @@ impl TableUsage {
 /// A P4 table.
 pub struct Table {
     /// Name of the table
-    pub name: String,
+    pub type_: TableType,
     /// Basic capacity and usage statistics
     pub usage: TableUsage,
     /// asic-specific data
@@ -129,17 +83,13 @@ pub struct Table {
 
 impl Table {
     /// Allocate a new ASIC table with an empty usage structure
-    pub fn new(hdl: &asic::Handle, name: &str) -> DpdResult<Self>
+    pub fn new(hdl: &asic::Handle, type_: TableType) -> DpdResult<Self>
     where
         Self: Sized,
     {
-        let asic_data = asic::Table::new(hdl, name)?;
+        let asic_data = asic::Table::new(hdl, type_)?;
         let size = asic_data.size();
-        Ok(Table {
-            name: name.to_string(),
-            usage: TableUsage::new(size as u32),
-            asic_data,
-        })
+        Ok(Table { type_, usage: TableUsage::new(size as u32), asic_data })
     }
 
     /// Returns the number of entries the table can hold
@@ -169,7 +119,7 @@ impl Table {
     {
         if self.usage.occupancy == self.usage.size {
             self.usage.exhaustion += 1;
-            Err(DpdError::TableFull(self.name.clone()))
+            Err(DpdError::TableFull(self.type_.to_string()))
         } else {
             self.asic_data
                 .entry_add(hdl, key, data)
@@ -255,7 +205,7 @@ impl Table {
 }
 
 pub fn list(switch: &Switch) -> Vec<String> {
-    switch.tables.values().map(|t| t.lock().unwrap().name.to_string()).collect()
+    switch.tables.keys().map(|t| t.to_string()).collect()
 }
 
 /// Given the name of a table, call into the table-specific code to get the
@@ -294,11 +244,13 @@ pub fn get_entries(
         TableType::AttachedSubnetIpv6 => {
             attached_subnet_v6::table_dump(switch, from_hardware)
         }
-        TableType::PortIpv4 => port_ip::ipv4_table_dump(switch, from_hardware),
-        TableType::PortIpv6 => port_ip::ipv6_table_dump(switch, from_hardware),
-        TableType::PortMac => {
-            MacOps::<port_mac::PortMacTable>::table_dump(switch, from_hardware)
+        TableType::PortAddrIpv4 => {
+            port_ip::ipv4_table_dump(switch, from_hardware)
         }
+        TableType::PortAddrIpv6 => {
+            port_ip::ipv6_table_dump(switch, from_hardware)
+        }
+        TableType::PortMacAddress => mac::table_dump(switch, from_hardware),
         TableType::UplinkEgress => {
             uplink::egress_table_dump(switch, from_hardware)
         }
@@ -334,11 +286,8 @@ pub fn get_entries(
             mcast::mcast_route::ipv6_table_dump(switch, from_hardware)
         }
         #[cfg(feature = "multicast")]
-        TableType::PortMacMcast => {
-            MacOps::<mcast::mcast_port_mac::PortMacTable>::table_dump(
-                switch,
-                from_hardware,
-            )
+        TableType::PortMacAddressMcast => {
+            mac::mcast_table_dump(switch, from_hardware)
         }
         #[cfg(feature = "multicast")]
         TableType::McastEgressDecapPorts => {
@@ -348,6 +297,9 @@ pub fn get_entries(
         TableType::McastEgressPortMapping => {
             mcast::mcast_egress::port_mapping_table_dump(switch, from_hardware)
         }
+        x => Err(DpdError::Other(format!(
+            "table {x} has no associated table entries"
+        ))),
     }
 }
 
@@ -375,17 +327,19 @@ pub fn get_counters(
             neighbor_ipv6::counter_fetch(switch, force_sync)
         }
         TableType::ArpIpv4 => arp_ipv4::counter_fetch(switch, force_sync),
-        TableType::PortMac => {
-            MacOps::<port_mac::PortMacTable>::counter_fetch(switch, force_sync)
-        }
+        TableType::PortMacAddress => mac::counter_fetch(switch, force_sync),
         TableType::NatIngressIpv4 => {
             nat::ipv4_counter_fetch(switch, force_sync)
         }
         TableType::NatIngressIpv6 => {
             nat::ipv6_counter_fetch(switch, force_sync)
         }
-        TableType::PortIpv4 => port_ip::ipv4_counter_fetch(switch, force_sync),
-        TableType::PortIpv6 => port_ip::ipv6_counter_fetch(switch, force_sync),
+        TableType::PortAddrIpv4 => {
+            port_ip::ipv4_counter_fetch(switch, force_sync)
+        }
+        TableType::PortAddrIpv6 => {
+            port_ip::ipv6_counter_fetch(switch, force_sync)
+        }
         TableType::AttachedSubnetIpv4 => {
             attached_subnet_v4::counter_fetch(switch, force_sync)
         }
@@ -435,217 +389,21 @@ pub fn get_counters(
             mcast::mcast_egress::port_mapping_counter_fetch(switch, force_sync)
         }
         #[cfg(feature = "multicast")]
-        TableType::PortMacMcast => {
-            MacOps::<mcast::mcast_port_mac::PortMacTable>::counter_fetch(
-                switch, force_sync,
-            )
+        TableType::PortMacAddressMcast => {
+            mac::mcast_counter_fetch(switch, force_sync)
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum TableType {
-    RouteIdxIpv4,
-    RouteFwdIpv4,
-    RouteIdxIpv6,
-    RouteFwdIpv6,
-    #[cfg(feature = "multicast")]
-    RouteIpv4Mcast,
-    #[cfg(feature = "multicast")]
-    RouteIpv6Mcast,
-    ArpIpv4,
-    NeighborIpv6,
-    PortMac,
-    PortIpv4,
-    PortIpv6,
-    NatIngressIpv4,
-    NatIngressIpv6,
-    UplinkIngress,
-    UplinkEgress,
-    AttachedSubnetIpv4,
-    AttachedSubnetIpv6,
-    #[cfg(feature = "multicast")]
-    McastIpv6,
-    #[cfg(feature = "multicast")]
-    McastIpv4SrcFilter,
-    #[cfg(feature = "multicast")]
-    McastIpv6SrcFilter,
-    #[cfg(feature = "multicast")]
-    NatIngressIpv4Mcast,
-    #[cfg(feature = "multicast")]
-    NatIngressIpv6Mcast,
-    #[cfg(feature = "multicast")]
-    PortMacMcast,
-    #[cfg(feature = "multicast")]
-    McastEgressDecapPorts,
-    #[cfg(feature = "multicast")]
-    McastEgressPortMapping,
-}
-
-fn name_to_type() -> impl Iterator<Item = &'static (&'static str, TableType)> {
-    BASE_TABLES.iter().chain(MCAST_TABLES.iter())
-}
-
-impl TryFrom<&str> for TableType {
-    type Error = DpdError;
-
-    fn try_from(name: &str) -> Result<Self, Self::Error> {
-        let name = name.to_lowercase();
-        for (table_name, table_type) in name_to_type() {
-            if table_name.to_lowercase() == name {
-                return Ok(*table_type);
-            }
-        }
-        Err(DpdError::NoSuchTable(name))
+        x => Err(DpdError::Other(format!(
+            "table {x} has no associated counters"
+        ))),
     }
 }
 
 pub fn init(switch: &mut Switch) -> anyhow::Result<()> {
     debug!(switch.log, "initializing tables");
 
-    for (name, table_type) in name_to_type() {
-        switch.table_add(name, *table_type)?;
+    for table_type in table::get_table_types() {
+        switch.table_add(table_type)?;
     }
 
     Ok(())
-}
-
-// Common trait for Mac-related table rewriting
-pub trait MacTable {
-    // The table type identifier
-    fn table_type() -> TableType;
-    fn table_name() -> &'static str;
-}
-
-#[derive(aal_macros::MatchParse, Debug, Hash)]
-struct MacMatchKey {
-    port: u16,
-}
-
-#[derive(aal_macros::ActionParse, Debug)]
-enum MacAction {
-    #[action_xlate(name = "rewrite")]
-    Rewrite { mac: MacAddr },
-}
-
-// Generic MAC operations that work with any table that implements MacTable
-pub struct MacOps<T: MacTable> {
-    _phantom: std::marker::PhantomData<T>,
-}
-
-impl<T: MacTable> MacOps<T> {
-    /// Update an _existing_ entry in the MAC table.
-    #[allow(dead_code)]
-    pub(crate) fn mac_update(
-        s: &Switch,
-        port: u16,
-        mac: MacAddr,
-    ) -> DpdResult<()> {
-        let match_key = MacMatchKey { port };
-        let action_data = MacAction::Rewrite { mac };
-
-        match s.table_entry_update(T::table_type(), &match_key, &action_data) {
-            Ok(_) => {
-                info!(
-                    s.log,
-                    "update mac on {} in table {}: {}",
-                    port,
-                    T::table_name(),
-                    mac
-                );
-                Ok(())
-            }
-            Err(e) => {
-                error!(
-                    s.log,
-                    "update mac on {} in table {}: {} failed: {:?}",
-                    port,
-                    T::table_name(),
-                    mac,
-                    e
-                );
-                Err(e)
-            }
-        }
-    }
-
-    /// Add a new entry to the MAC table.
-    ///
-    /// An error is returned if the entry already exists. Use `mac_update` instead.
-    pub fn mac_set(s: &Switch, port: u16, mac: MacAddr) -> DpdResult<()> {
-        let match_key = MacMatchKey { port };
-        let action_data = MacAction::Rewrite { mac };
-
-        match s.table_entry_add(T::table_type(), &match_key, &action_data) {
-            Ok(_) => {
-                info!(
-                    s.log,
-                    "set mac on {} in table {}: {}",
-                    port,
-                    T::table_name(),
-                    mac
-                );
-                Ok(())
-            }
-            Err(e) => {
-                error!(
-                    s.log,
-                    "set mac on {} in table {}: {} failed: {:?}",
-                    port,
-                    T::table_name(),
-                    mac,
-                    e
-                );
-                Err(e)
-            }
-        }
-    }
-
-    /// Remove an entry from the MAC table.
-    pub fn mac_clear(s: &Switch, port: u16) -> DpdResult<()> {
-        let match_key = MacMatchKey { port };
-
-        match s.table_entry_del(T::table_type(), &match_key) {
-            Ok(_) => {
-                info!(
-                    s.log,
-                    "cleared mac on {} in table {}",
-                    port,
-                    T::table_name()
-                );
-                Ok(())
-            }
-            Err(e) => {
-                error!(
-                    s.log,
-                    "clear mac on {} in table {} failed: {:?}",
-                    port,
-                    T::table_name(),
-                    e
-                );
-                Err(e)
-            }
-        }
-    }
-
-    pub fn table_dump(
-        s: &Switch,
-        from_hardware: bool,
-    ) -> DpdResult<views::Table> {
-        s.table_dump::<MacMatchKey, MacAction>(T::table_type(), from_hardware)
-    }
-
-    pub fn counter_fetch(
-        s: &Switch,
-        force_sync: bool,
-    ) -> DpdResult<Vec<views::TableCounterEntry>> {
-        s.counter_fetch::<MacMatchKey>(force_sync, T::table_type())
-    }
-
-    /// Remove all entries from the MAC table.
-    #[cfg_attr(not(feature = "tofino_asic"), allow(dead_code))]
-    pub fn reset(s: &Switch) -> DpdResult<()> {
-        info!(s.log, "reset port macs in table {}", T::table_name());
-        s.table_clear(T::table_type())
-    }
 }
