@@ -312,6 +312,14 @@ impl AsicOps for Handle {
         Ok(())
     }
 
+    fn port_prbs_get_err(
+        &self,
+        _port_hdl: PortHdl,
+        _ms: u32,
+    ) -> AsicResult<Vec<u32>> {
+        Ok(Vec::new())
+    }
+
     fn port_add(
         &self,
         connector: Connector,

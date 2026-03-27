@@ -16,16 +16,48 @@ use aal::AsicResult;
 /// The set of finite state machines we track
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FsmType {
-    Port,
+    Port(PortFsmType),
     Media,
     Qsfp,
     QsfpChannel,
 }
 
+/// The set of port-level finite state machines we track
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PortFsmType {
+    Dfe,
+    An,
+    #[allow(clippy::upper_case_acronyms)]
+    PRBS,
+    PipeLoopback,
+    MacNearLoopback,
+    MacFarLoopback,
+    PcsLoopback,
+    SwModel,
+    TxMode,
+    Emulator,
+}
+
+impl fmt::Display for PortFsmType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PortFsmType::Dfe => write!(f, "Dfe"),
+            PortFsmType::An => write!(f, "An"),
+            PortFsmType::PRBS => write!(f, "PRBS"),
+            PortFsmType::PipeLoopback => write!(f, "PipeLoopback"),
+            PortFsmType::MacNearLoopback => write!(f, "MacNearLoopback"),
+            PortFsmType::MacFarLoopback => write!(f, "MacFarLoopback"),
+            PortFsmType::PcsLoopback => write!(f, "PcsLoopback"),
+            PortFsmType::SwModel => write!(f, "SwModel"),
+            PortFsmType::TxMode => write!(f, "TxMode"),
+            PortFsmType::Emulator => write!(f, "Emulator"),
+        }
+    }
+}
 impl fmt::Display for FsmType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FsmType::Port => write!(f, "Port"),
+            FsmType::Port(x) => write!(f, "Port ({x})"),
             FsmType::Media => write!(f, "Media"),
             FsmType::Qsfp => write!(f, "Qsfp"),
             FsmType::QsfpChannel => write!(f, "QsfpChannel"),
@@ -38,7 +70,36 @@ impl TryFrom<genpd::bf_fsm_type_t> for FsmType {
 
     fn try_from(t: genpd::bf_fsm_type_t) -> AsicResult<Self> {
         match t {
-            genpd::bf_fsm_type_t_BF_FSM_PORT => Ok(FsmType::Port),
+            genpd::bf_fsm_type_t_BF_FSM_PORT_DFE => {
+                Ok(FsmType::Port(PortFsmType::Dfe))
+            }
+            genpd::bf_fsm_type_t_BF_FSM_PORT_AUTONEG => {
+                Ok(FsmType::Port(PortFsmType::An))
+            }
+            genpd::bf_fsm_type_t_BF_FSM_PORT_PRBS => {
+                Ok(FsmType::Port(PortFsmType::PRBS))
+            }
+            genpd::bf_fsm_type_t_BF_FSM_PORT_PIPE_LOOPBACK => {
+                Ok(FsmType::Port(PortFsmType::PipeLoopback))
+            }
+            genpd::bf_fsm_type_t_BF_FSM_PORT_MAC_NEAR_LOOPBACK => {
+                Ok(FsmType::Port(PortFsmType::MacNearLoopback))
+            }
+            genpd::bf_fsm_type_t_BF_FSM_PORT_MAC_FAR_LOOPBACK => {
+                Ok(FsmType::Port(PortFsmType::MacFarLoopback))
+            }
+            genpd::bf_fsm_type_t_BF_FSM_PORT_PCS_LOOPBACK => {
+                Ok(FsmType::Port(PortFsmType::PcsLoopback))
+            }
+            genpd::bf_fsm_type_t_BF_FSM_PORT_SW_MODEL => {
+                Ok(FsmType::Port(PortFsmType::SwModel))
+            }
+            genpd::bf_fsm_type_t_BF_FSM_PORT_TX_MODE => {
+                Ok(FsmType::Port(PortFsmType::TxMode))
+            }
+            genpd::bf_fsm_type_t_BF_FSM_PORT_EMULATOR => {
+                Ok(FsmType::Port(PortFsmType::Emulator))
+            }
             genpd::bf_fsm_type_t_BF_FSM_MEDIA => Ok(FsmType::Media),
             genpd::bf_fsm_type_t_BF_FSM_QSFP => Ok(FsmType::Qsfp),
             genpd::bf_fsm_type_t_BF_FSM_QSFP_CHANNEL => {
@@ -63,7 +124,6 @@ impl FsmState {
     /// instance
     pub fn new(fsm: u32, state: u32) -> AsicResult<Self> {
         match FsmType::try_from(fsm)? {
-            FsmType::Port => Ok(FsmState::Port(PortFsmState::try_from(state)?)),
             FsmType::Media => {
                 Ok(FsmState::Media(MediaFsmState::try_from(state)?))
             }
@@ -71,16 +131,9 @@ impl FsmState {
             FsmType::QsfpChannel => {
                 Ok(FsmState::QsfpChannel(QsfpChannelFsmState::try_from(state)?))
             }
-        }
-    }
-
-    /// Given an FsmState, return the name of the FSM to which it belongs
-    pub fn fsm(&self) -> FsmType {
-        match self {
-            FsmState::Port(_) => FsmType::Port,
-            FsmState::Media(_) => FsmType::Media,
-            FsmState::Qsfp(_) => FsmType::Qsfp,
-            FsmState::QsfpChannel(_) => FsmType::QsfpChannel,
+            FsmType::Port(_) => {
+                Ok(FsmState::Port(PortFsmState::try_from(state)?))
+            }
         }
     }
 

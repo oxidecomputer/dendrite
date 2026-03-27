@@ -35,6 +35,7 @@ use aal::{
     AsicError, AsicOps, AsicResult, Connector, PortHdl, SidecarIdentifiers,
 };
 pub use link_fsm::FsmState;
+pub use link_fsm::FsmType;
 pub use link_fsm::PortFsmState;
 
 /// There are three generations of the Tofino ASIC, which the SDE refers to as
@@ -171,6 +172,14 @@ impl AsicOps for Handle {
         mode: PortPrbsMode,
     ) -> AsicResult<()> {
         ports::set_prbs(self, port_hdl, mode)
+    }
+
+    fn port_prbs_get_err(
+        &self,
+        port_hdl: PortHdl,
+        ms: u32,
+    ) -> AsicResult<Vec<u32>> {
+        ports::get_err_prbs(self, port_hdl, ms)
     }
 
     fn port_ber_get(&self, port_hdl: PortHdl) -> AsicResult<aal::Ber> {

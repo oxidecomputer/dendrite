@@ -81,7 +81,7 @@ bf_rt_operations_counter_sync_set
 bf_rt_begin_batch
 bf_rt_end_batch
 
-# pipe manager calls
+# port manager calls
 bf_pm_port_add
 bf_pm_port_delete
 bf_pm_port_delete_all
@@ -96,22 +96,23 @@ bf_pm_port_kr_mode_get
 bf_pm_port_autoneg_set
 bf_pm_port_autoneg_get
 bf_pm_port_prbs_mode_set
+bf_pm_port_prbs_mode_clear
+bf_pm_port_prbs_mode_stats_get
 bf_pm_port_ber_get
-
-bf_eth_cpu_port_get
-bf_port_oper_state_get
-
-bf_port_mac_stats_hw_sync_get
-bf_port_pcs_counters_get
-bf_port_rs_fec_status_and_counters_get
-bf_port_encoding_mode_get
-bf_port_speed_get
-
 bf_pm_port_media_type_get
 bf_pm_port_front_panel_port_get_first
 bf_pm_port_front_panel_port_get_next
 bf_pm_port_front_panel_port_to_dev_port_get
 bf_pm_port_valid_speed_and_channel
+
+bf_eth_cpu_port_get
+
+bf_port_oper_state_get
+bf_port_mac_stats_hw_sync_get
+bf_port_pcs_counters_get
+bf_port_rs_fec_status_and_counters_get
+bf_port_encoding_mode_get
+bf_port_speed_get
 
 bf_pm_serdes_tx_eq_override_set
 

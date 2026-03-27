@@ -2821,6 +2821,22 @@ impl DpdApi for DpdApiImpl {
         ))
     }
 
+    async fn link_prbs_get_err(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+        body: TypedBody<MsDuration>,
+    ) -> Result<HttpResponseOk<Vec<u32>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        let port_id = path.port_id;
+        let link_id = path.link_id;
+        let duration = body.into_inner();
+        switch
+            .link_prbs_get_err(port_id, link_id, duration.ms)
+            .map(HttpResponseOk)
+            .map_err(|e| e.into())
+    }
+
     #[cfg(feature = "tofino_asic")]
     async fn snapshot_capture(
         rqctx: RequestContext<Self::Context>,
