@@ -290,6 +290,7 @@ impl Switch {
 
         #[cfg(feature = "tofino_asic")]
         if !asic_hdl.is_model() {
+            #[cfg(feature = "interrupts")]
             run_interrupt_monitor(log.clone());
         }
 
@@ -814,7 +815,7 @@ async fn run_dpd(opt: Opt) -> anyhow::Result<()> {
     }
 }
 
-#[cfg(feature = "tofino_asic")]
+#[cfg(all(feature = "tofino_asic", feature = "interrupts"))]
 fn run_interrupt_monitor(log: slog::Logger) {
     std::thread::spawn(move || {
         asic::tofino_asic::interrupt_monitor::monitor_interrupts(log);
