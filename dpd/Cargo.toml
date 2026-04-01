@@ -13,6 +13,7 @@ softnpu = ["asic/softnpu"]
 chaos = ["asic/chaos"]
 transceiver-chaos = ["dep:rand"]
 tokio-console = ["dep:console-subscriber", "tokio/tracing"]
+interrupts = ["asic/interrupts"]
 
 [build-dependencies]
 anyhow = "1.0"

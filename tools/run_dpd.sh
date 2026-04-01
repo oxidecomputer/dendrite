@@ -4,7 +4,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/
 #
-# Copyright 2025 Oxide Computer Company
+# Copyright 2026 Oxide Computer Company
 
 WS=${WS:=`git rev-parse --show-toplevel 2> /dev/null`}
 P4_NAME=${P4_NAME:=sidecar}
@@ -15,14 +15,15 @@ LISTEN_ADDRESS="--listen-addresses [::1]:12224"
 BOARD_REV="b"
 MAC_BASE="--mac-base a8:40:25:00:00:02"
 GDB=""
+BIN_SUBDIR=target/debug
 
 function usage() {
 	echo "Usage: $0 [-gh] [-b <binary name> ] [-d <P4 directory> [-m <model address> ]"
-	echo "\t[-l <human | json> ] [-L <listen address>] [ -M <BASE_MAC> ]"
+	echo "\t[-l <human | json> ] [-L <listen address>] [ -M <BASE_MAC> ] [ -r ]"
 	echo "\t[-4 <P4 program>] [ -p <port config> ] [ -x <transceiver_interface> ]"
 }
 
-while getopts b:d:ghl:m:p:r:t:x:4:L: opt
+while getopts b:d:ghl:m:p:rt:x:4:L: opt
 do
 	if [ $opt == "b" ]; then
 		BIN_NAME=$OPTARG
@@ -43,6 +44,8 @@ do
 		else
 			PORT_CONFIG="--port-config $OPTARG"
 		fi
+	elif [ $opt == "r" ]; then
+		BIN_SUBDIR=target/release
 	elif [ $opt == "x" ]; then
 		XCVR_CONFIG="--transceiver-interface $OPTARG"
 	elif [ $opt == "4" ]; then
@@ -71,7 +74,7 @@ if [ x${WS} == "x" ]; then
 	export ZLOG_CFG=/opt/oxide/dendrite/misc/zlog-cfg
 else
 	# assume we're running in a workspace
-	export BIN_DIR=${WS}/target/debug
+	export BIN_DIR=${WS}/${BIN_SUBDIR}
 	export ZLOG_CFG=${WS}/dpd/misc/zlog-cfg
 fi
 

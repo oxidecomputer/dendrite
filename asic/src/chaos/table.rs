@@ -14,49 +14,17 @@ use crate::chaos::{Handle, table_unfurl};
 use aal::{
     ActionParse, AsicError, AsicResult, CounterData, MatchParse, TableOps,
 };
-
-// These names line up with the table names in the sidecar P4 program.
-pub const ROUTE_IPV4: &str = "pipe.Ingress.l3_router.routes_ipv4";
-pub const ROUTE_IPV6: &str = "pipe.Ingress.l3_router.routes_ipv6";
-pub const ARP_IPV4: &str = "pipe.Ingress.l3_router.arp_ipv4";
-pub const NEIGHBOR_IPV6: &str = "pipe.Ingress.l3_router.neighbor_ipv6";
-pub const MAC_REWRITE: &str = "pipe.Ingress.mac_rewrite.mac_rewrite";
-pub const SWITCH_IPV4_ADDR: &str = "pipe.Ingress.filter.switch_ipv4_addr";
-pub const SWITCH_IPV6_ADDR: &str = "pipe.Ingress.filter.switch_ipv6_addr";
-pub const NAT_INGRESS_IPV4: &str = "pipe.Ingress.nat_ingress.ingress_ipv4";
-pub const NAT_INGRESS_IPV6: &str = "pipe.Ingress.nat_ingress.ingress_ipv6";
-pub(crate) const MCAST_NAT_INGRESS_IPV4: &str =
-    "pipe.Ingress.nat_ingress.ingress_ipv4_mcast";
-pub(crate) const MCAST_NAT_INGRESS_IPV6: &str =
-    "pipe.Ingress.nat_ingress.ingress_ipv6_mcast";
-pub(crate) const MCAST_REPLICATION_IPV4: &str =
-    "pipe.Ingress.mcast_ingress.mcast_replication_ipv4";
-pub(crate) const MCAST_REPLICATION_IPV6: &str =
-    "pipe.Ingress.mcast_ingress.mcast_replication_ipv6";
-pub(crate) const MCAST_SRC_FILTER_IPV4: &str =
-    "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4";
-pub(crate) const MCAST_SRC_FILTER_IPV6: &str =
-    "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv6";
-pub(crate) const MCAST_ROUTE_IPV4: &str =
-    "pipe.Ingress.l3_router.MulticastRouter4.tbl";
-pub(crate) const MCAST_ROUTE_IPV6: &str =
-    "pipe.Ingress.l3_router.MulticastRouter6.tbl";
-pub(crate) const MCAST_MAC_REWRITE: &str =
-    "pipe.Egress.mac_rewrite.mac_rewrite";
-pub(crate) const MCAST_DECAP_PORTS: &str =
-    "pipe.Egress.mcast_egress.tbl_decap_ports";
-pub(crate) const MCAST_PORT_ID_MAPPING: &str =
-    "pipe.Egress.mcast_egress.asic_id_to_port";
+use common::table::TableType;
 
 pub struct Table {
-    name: String,
+    type_: TableType,
     keys: Mutex<HashSet<u64>>,
 }
 
 impl TableOps<Handle> for Table {
-    fn new(hdl: &Handle, name: &str) -> AsicResult<Table> {
-        table_unfurl!(hdl, name, table_new);
-        Ok(Table { name: name.into(), keys: Mutex::new(HashSet::new()) })
+    fn new(hdl: &Handle, type_: TableType) -> AsicResult<Table> {
+        table_unfurl!(hdl, type_, table_new);
+        Ok(Table { type_, keys: Mutex::new(HashSet::new()) })
     }
 
     fn size(&self) -> usize {
@@ -69,7 +37,7 @@ impl TableOps<Handle> for Table {
     }
 
     fn clear(&self, hdl: &Handle) -> AsicResult<()> {
-        table_unfurl!(hdl, &self.name, table_clear);
+        table_unfurl!(hdl, self.type_, table_clear);
         let mut keys = self.keys.lock().unwrap();
         *keys = HashSet::new();
         Ok(())
@@ -89,7 +57,7 @@ impl TableOps<Handle> for Table {
         if keys.contains(&x) {
             return Err(AsicError::Exists);
         }
-        table_unfurl!(hdl, &self.name, table_entry_add);
+        table_unfurl!(hdl, self.type_, table_entry_add);
         keys.insert(x);
         Ok(())
     }
@@ -110,7 +78,7 @@ impl TableOps<Handle> for Table {
                 "table entry not found".to_string(),
             ));
         }
-        table_unfurl!(hdl, &self.name, table_entry_update);
+        table_unfurl!(hdl, self.type_, table_entry_update);
         Ok(())
     }
 
@@ -129,7 +97,7 @@ impl TableOps<Handle> for Table {
                 "table entry not found".to_string(),
             ));
         }
-        table_unfurl!(hdl, &self.name, table_entry_del);
+        table_unfurl!(hdl, self.type_, table_entry_del);
         keys.remove(&x);
         Ok(())
     }

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -43,7 +43,7 @@ pub enum AdminEvent {
 pub enum Event {
     Admin(AdminEvent),
     Error(String),
-    Fsm(Option<u8>, asic::FsmState),
+    Fsm(Option<u8>, asic::FsmType, asic::FsmState),
 }
 
 // Record a maximum of 1024 events
@@ -84,10 +84,10 @@ impl From<&EventRecord> for LinkEvent {
                 subclass: "LinkConfig".to_string(),
                 details: Some(e.clone()),
             },
-            Event::Fsm(channel, fsm) => LinkEvent {
+            Event::Fsm(channel, type_, fsm) => LinkEvent {
                 timestamp: record.timestamp,
                 channel: *channel,
-                class: format!("{}FSM", fsm.fsm()),
+                class: format!("{type_} FSM"),
                 subclass: fsm.state_name(),
                 details: None,
             },

@@ -13,8 +13,112 @@ use serde::Deserialize;
 use aal::AsicError;
 use aal::AsicResult;
 use aal::MatchType;
+use common::counters::CounterId;
+#[cfg(feature = "multicast")]
+use common::counters::MulticastCounterId;
+use common::table::TableType;
 
 pub mod ports;
+
+fn table_name(type_: TableType) -> &'static str {
+    match type_ {
+        TableType::RouteIdxIpv4 => {
+            "pipe.Ingress.l3_router.Router4.lookup_idx.lookup"
+        }
+        TableType::RouteFwdIpv4 => {
+            "pipe.Ingress.l3_router.Router4.lookup_idx.route"
+        }
+        TableType::RouteIdxIpv6 => {
+            "pipe.Ingress.l3_router.Router6.lookup_idx.lookup"
+        }
+        TableType::RouteFwdIpv6 => {
+            "pipe.Ingress.l3_router.Router6.lookup_idx.route"
+        }
+        #[cfg(feature = "multicast")]
+        TableType::RouteIpv4Mcast => {
+            "pipe.Ingress.l3_router.MulticastRouter4.tbl"
+        }
+        #[cfg(feature = "multicast")]
+        TableType::RouteIpv6Mcast => {
+            "pipe.Ingress.l3_router.MulticastRouter6.tbl"
+        }
+        TableType::ArpIpv4 => "pipe.Ingress.l3_router.Arp.tbl",
+        TableType::NeighborIpv6 => "pipe.Ingress.l3_router.Ndp.tbl",
+        TableType::PortMacAddress => "pipe.Ingress.mac_rewrite.mac_rewrite",
+        TableType::PortAddrIpv4 => "pipe.Ingress.filter.switch_ipv4_addr",
+        TableType::PortAddrIpv6 => "pipe.Ingress.filter.switch_ipv6_addr",
+        TableType::NatIngressIpv4 => "pipe.Ingress.nat_ingress.ingress_ipv4",
+        TableType::NatIngressIpv6 => "pipe.Ingress.nat_ingress.ingress_ipv6",
+        TableType::UplinkIngress => "pipe.Ingress.filter.uplink_ports",
+        TableType::UplinkEgress => "pipe.Ingress.egress_filter.egress_filter",
+        TableType::AttachedSubnetIpv4 => {
+            "pipe.Ingress.attached_subnet_ingress.attached_subnets_v4"
+        }
+        TableType::AttachedSubnetIpv6 => {
+            "pipe.Ingress.attached_subnet_ingress.attached_subnets_v6"
+        }
+        #[cfg(feature = "multicast")]
+        TableType::McastIpv6 => {
+            "pipe.Ingress.mcast_ingress.mcast_replication_ipv6"
+        }
+        #[cfg(feature = "multicast")]
+        TableType::McastIpv4SrcFilter => {
+            "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv4"
+        }
+        #[cfg(feature = "multicast")]
+        TableType::McastIpv6SrcFilter => {
+            "pipe.Ingress.mcast_ingress.mcast_source_filter_ipv6"
+        }
+        #[cfg(feature = "multicast")]
+        TableType::NatIngressIpv4Mcast => {
+            "pipe.Ingress.nat_ingress.ingress_ipv4_mcast"
+        }
+        #[cfg(feature = "multicast")]
+        TableType::NatIngressIpv6Mcast => {
+            "pipe.Ingress.nat_ingress.ingress_ipv6_mcast"
+        }
+        #[cfg(feature = "multicast")]
+        TableType::PortMacAddressMcast => "pipe.Egress.mac_rewrite.mac_rewrite",
+        #[cfg(feature = "multicast")]
+        TableType::McastEgressDecapPorts => {
+            "pipe.Egress.mcast_egress.tbl_decap_ports"
+        }
+        #[cfg(feature = "multicast")]
+        TableType::McastEgressPortMapping => {
+            "pipe.Egress.mcast_egress.asic_id_to_port"
+        }
+        TableType::Counter(c) => counter_table_name(c),
+    }
+}
+
+fn counter_table_name(id: CounterId) -> &'static str {
+    match id {
+        CounterId::Service => "pipe.Ingress.services.service_ctr",
+        CounterId::Ingress => "pipe.Ingress.ingress_ctr",
+        CounterId::Packet => "pipe.Ingress.packet_ctr",
+        CounterId::Egress => "pipe.Ingress.egress_ctr",
+        CounterId::DropPort => "pipe.Ingress.drop_port_ctr",
+        CounterId::DropReason => "pipe.Ingress.drop_reason_ctr",
+        #[cfg(feature = "multicast")]
+        CounterId::Multicast(id) => mulitcast_counter_table_name(id),
+    }
+}
+
+#[cfg(feature = "multicast")]
+fn mulitcast_counter_table_name(id: MulticastCounterId) -> &'static str {
+    match id {
+        MulticastCounterId::EgressDropPort => "pipe.Egress.drop_port_ctr",
+        MulticastCounterId::EgressDropReason => "pipe.Egress.drop_reason_ctr",
+        MulticastCounterId::Unicast => "pipe.Egress.unicast_ctr",
+        MulticastCounterId::Multicast => "pipe.Egress.mcast_ctr",
+        MulticastCounterId::MulticastExt => "pipe.Egress.external_mcast_ctr",
+        MulticastCounterId::MulticastLL => "pipe.Egress.link_local_mcast_ctr",
+        MulticastCounterId::MulticastUL => "pipe.Egress.underlay_mcast_ctr",
+        MulticastCounterId::MulticastDrop => {
+            "pipe.Ingress.filter.drop_mcast_ctr"
+        }
+    }
+}
 
 #[derive(Debug)]
 // Allow clippy to pass with tofino_stub
@@ -49,6 +153,7 @@ pub type DataMap = HashMap<String, u32>;
 // Allow clippy to pass with tofino_stub
 #[cfg_attr(not(feature = "tofino_asic"), allow(dead_code))]
 pub struct TableInfo {
+    pub name: String,
     pub keys: KeyMap,
     pub actions: ActionMap,
     pub data: DataMap,
@@ -61,10 +166,17 @@ fn missing(what: &str, which: &str) -> AsicError {
 }
 
 impl TableInfo {
-    pub fn new(bfrt: &BfRt, name: &str) -> AsicResult<Self> {
+    pub fn new(bfrt: &BfRt, type_: TableType) -> AsicResult<Self> {
+        let name = table_name(type_);
         let (keys, actions, data, size) = bfrt.get_table(name)?;
 
-        Ok(TableInfo { keys, actions, data, size: size as usize })
+        Ok(TableInfo {
+            name: name.to_string(),
+            keys,
+            actions,
+            data,
+            size: size as usize,
+        })
     }
 
     #[cfg(feature = "tofino_asic")]

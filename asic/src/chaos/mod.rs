@@ -18,9 +18,11 @@ use aal::{
     SidecarIdentifiers,
 };
 use common::ports::{PortFec, PortId, PortMedia, PortPrbsMode, PortSpeed};
+use common::table::TableType;
 
 use crate::Identifiers;
 pub use crate::faux_fsm::FsmState;
+pub use crate::faux_fsm::FsmType;
 pub use crate::faux_fsm::PortFsmState;
 
 pub mod table;
@@ -68,7 +70,7 @@ impl Chaos {
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct TableChaos {
     /// Track a set of chaos probabilities keyed by strings.
-    pub values: HashMap<String, f64>,
+    pub values: HashMap<TableType, f64>,
 }
 
 /// A convenience function for creating chaos tables.
@@ -84,31 +86,54 @@ macro_rules! table_chaos {
 }
 
 impl TableChaos {
+    fn add_tables(&mut self, ids: Vec<TableType>, prob: f64) {
+        for id in ids {
+            self.values.insert(id, prob);
+        }
+    }
+
     /// Create a new chaos table with all known dendrite table identifiers,
     /// assigning each a uniform chaos value.
     pub fn uniform(v: f64) -> Self {
-        table_chaos!(
-            (table::ROUTE_IPV4, v),
-            (table::ROUTE_IPV6, v),
-            (table::ARP_IPV4, v),
-            (table::NEIGHBOR_IPV6, v),
-            (table::MAC_REWRITE, v),
-            (table::SWITCH_IPV4_ADDR, v),
-            (table::SWITCH_IPV6_ADDR, v),
-            (table::NAT_INGRESS_IPV4, v),
-            (table::NAT_INGRESS_IPV6, v),
-            (table::MCAST_NAT_INGRESS_IPV4, v),
-            (table::MCAST_NAT_INGRESS_IPV6, v),
-            (table::MCAST_REPLICATION_IPV4, v),
-            (table::MCAST_REPLICATION_IPV6, v),
-            (table::MCAST_SRC_FILTER_IPV4, v),
-            (table::MCAST_SRC_FILTER_IPV6, v),
-            (table::MCAST_ROUTE_IPV4, v),
-            (table::MCAST_ROUTE_IPV6, v),
-            (table::MCAST_MAC_REWRITE, v),
-            (table::MCAST_DECAP_PORTS, v),
-            (table::MCAST_PORT_ID_MAPPING, v)
-        )
+        let mut tc = TableChaos { values: HashMap::new() };
+
+        tc.add_tables(
+            vec![
+                TableType::RouteIdxIpv4,
+                TableType::RouteFwdIpv4,
+                TableType::RouteIdxIpv6,
+                TableType::RouteFwdIpv6,
+                TableType::ArpIpv4,
+                TableType::NeighborIpv6,
+                TableType::PortMacAddress,
+                TableType::PortAddrIpv4,
+                TableType::PortAddrIpv6,
+                TableType::NatIngressIpv4,
+                TableType::NatIngressIpv6,
+                TableType::UplinkIngress,
+                TableType::UplinkEgress,
+                TableType::AttachedSubnetIpv4,
+                TableType::AttachedSubnetIpv6,
+            ],
+            v,
+        );
+        #[cfg(feature = "multicast")]
+        tc.add_tables(
+            vec![
+                TableType::RouteIpv4Mcast,
+                TableType::RouteIpv6Mcast,
+                TableType::McastIpv6,
+                TableType::McastIpv4SrcFilter,
+                TableType::McastIpv6SrcFilter,
+                TableType::NatIngressIpv4Mcast,
+                TableType::NatIngressIpv6Mcast,
+                TableType::PortMacAddressMcast,
+                TableType::McastEgressDecapPorts,
+                TableType::McastEgressPortMapping,
+            ],
+            v,
+        );
+        tc
     }
 
     /// Return a chaos error according to the underlying probability value for
@@ -116,10 +141,10 @@ impl TableChaos {
     pub fn unfurled(
         &self,
         log: &Logger,
-        id: &str,
+        id: TableType,
         message: &str,
     ) -> AsicResult<()> {
-        if let Some(value) = self.values.get(id)
+        if let Some(value) = self.values.get(&id)
             && *value >= random()
         {
             slog::error!(log, "chaos table error: {}", message);
@@ -157,6 +182,7 @@ pub struct AsicConfig {
     pub port_enable_get: Chaos,
     pub port_enable_set: Chaos,
     pub port_prbs_set: Chaos,
+    pub port_prbs_get_err: Chaos,
     pub port_add: Chaos,
     pub port_delete: Chaos,
     pub register_port_update_handler: Chaos,
@@ -190,6 +216,7 @@ impl AsicConfig {
             port_enable_get: Chaos::new(v),
             port_enable_set: Chaos::new(v),
             port_prbs_set: Chaos::new(v),
+            port_prbs_get_err: Chaos::new(v),
             port_add: Chaos::new(v),
             port_delete: Chaos::new(v),
             register_port_update_handler: Chaos::new(v),
@@ -250,6 +277,7 @@ impl AsicConfig {
             port_autoneg_set: Chaos::new(v),
             port_enable_set: Chaos::new(v),
             port_prbs_set: Chaos::new(v),
+            port_prbs_get_err: Chaos::new(v),
             port_add: Chaos::new(v),
             port_delete: Chaos::new(v),
             // TODO this can cause dpd to fail to start
@@ -508,6 +536,15 @@ impl AsicOps for Handle {
     ) -> AsicResult<()> {
         unfurl!(self, port_prbs_set);
         Ok(())
+    }
+
+    fn port_prbs_get_err(
+        &self,
+        _port_hdl: PortHdl,
+        _ms: u32,
+    ) -> AsicResult<Vec<u32>> {
+        unfurl!(self, port_prbs_get_err);
+        Ok(Vec::new())
     }
 
     fn port_add(

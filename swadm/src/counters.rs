@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::io::Write;
 use std::io::stdout;
@@ -24,6 +24,7 @@ use dpd_client::types;
 /// non-development debugging, you probably want "swadm link counters".
 pub enum P4Counters {
     /// list all available counters
+    #[clap(visible_alias = "ls")]
     List,
     /// get data from the given counter
     Get {

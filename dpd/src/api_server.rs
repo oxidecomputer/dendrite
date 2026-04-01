@@ -1940,10 +1940,12 @@ impl DpdApi for DpdApiImpl {
     async fn counter_list(
         _rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<String>>, HttpError> {
-        match counters::get_counter_names() {
-            Err(e) => Err(e.into()),
-            Ok(counters) => Ok(HttpResponseOk(counters)),
-        }
+        Ok(HttpResponseOk(
+            counters::get_counter_ids()
+                .iter()
+                .map(|id| id.to_string())
+                .collect(),
+        ))
     }
 
     async fn counter_reset(
@@ -2817,6 +2819,22 @@ impl DpdApi for DpdApiImpl {
             None,
             "not implemented for this asic".to_string(),
         ))
+    }
+
+    async fn link_prbs_get_err(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+        body: TypedBody<MsDuration>,
+    ) -> Result<HttpResponseOk<Vec<u32>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        let port_id = path.port_id;
+        let link_id = path.link_id;
+        let duration = body.into_inner();
+        switch
+            .link_prbs_get_err(port_id, link_id, duration.ms)
+            .map(HttpResponseOk)
+            .map_err(|e| e.into())
     }
 
     #[cfg(feature = "tofino_asic")]

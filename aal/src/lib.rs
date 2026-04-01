@@ -12,6 +12,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use common::ports::{PortFec, PortMedia, PortPrbsMode, PortSpeed, TxEq};
+use common::table::TableType;
 
 mod fuse;
 pub use fuse::*;
@@ -212,6 +213,13 @@ pub trait AsicOps {
         mode: PortPrbsMode,
     ) -> AsicResult<()>;
 
+    /// Get a port's PRBS error counts
+    fn port_prbs_get_err(
+        &self,
+        port_hdl: PortHdl,
+        ms: u32,
+    ) -> AsicResult<Vec<u32>>;
+
     /// "Add" a port to the ASIC.  This carves out a collection of lanes on a
     /// physical connector and instructs the ASIC to start managing them as a
     /// single logical port.
@@ -264,7 +272,7 @@ pub trait AsicOps {
 /// the intermediate representation to the ASIC-specific format expected by the
 /// underlying hardware or emulator.
 pub trait TableOps<H: AsicOps> {
-    fn new(hdl: &H, name: &str) -> AsicResult<Self>
+    fn new(hdl: &H, type_: TableType) -> AsicResult<Self>
     where
         Self: Sized;
 
