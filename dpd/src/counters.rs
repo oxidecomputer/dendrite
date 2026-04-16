@@ -50,23 +50,22 @@ pub fn get_counter_ids() -> Vec<CounterId> {
     let mut base = vec![
         CounterId::Service,
         CounterId::Ingress,
-        CounterId::Egress,
         CounterId::Packet,
         CounterId::DropPort,
         CounterId::DropReason,
+        CounterId::Forwarded,
+        CounterId::Unicast,
+        CounterId::MulticastLL,
+        CounterId::EgressDropPort,
+        CounterId::EgressDropReason,
     ];
     let mut multicast;
     #[cfg(feature = "multicast")]
     {
         multicast = vec![
-            CounterId::Multicast(MulticastCounterId::EgressDropPort),
-            CounterId::Multicast(MulticastCounterId::EgressDropReason),
-            CounterId::Multicast(MulticastCounterId::Unicast),
             CounterId::Multicast(MulticastCounterId::Multicast),
             CounterId::Multicast(MulticastCounterId::MulticastExt),
-            CounterId::Multicast(MulticastCounterId::MulticastLL),
             CounterId::Multicast(MulticastCounterId::MulticastUL),
-            CounterId::Multicast(MulticastCounterId::MulticastDrop),
         ];
     }
     #[cfg(not(feature = "multicast"))]
@@ -322,23 +321,20 @@ pub async fn get_values(
         let key = match counter_id {
             CounterId::Packet => packet_label(idx.idx),
             CounterId::Service => service_label(idx.idx as u8),
-            CounterId::Ingress | CounterId::Egress | CounterId::DropPort => {
-                port_label(switch, idx.idx).await
-            }
-            CounterId::DropReason => reason_label(idx.idx as u8)?,
-            #[cfg(feature = "multicast")]
-            CounterId::Multicast(MulticastCounterId::EgressDropPort)
-            | CounterId::Multicast(MulticastCounterId::Unicast)
-            | CounterId::Multicast(MulticastCounterId::Multicast)
-            | CounterId::Multicast(MulticastCounterId::MulticastExt)
-            | CounterId::Multicast(MulticastCounterId::MulticastLL)
-            | CounterId::Multicast(MulticastCounterId::MulticastUL)
-            | CounterId::Multicast(MulticastCounterId::MulticastDrop) => {
-                port_label(switch, idx.idx).await
-            }
-            #[cfg(feature = "multicast")]
-            CounterId::Multicast(MulticastCounterId::EgressDropReason) => {
+            CounterId::Ingress
+            | CounterId::DropPort
+            | CounterId::Forwarded
+            | CounterId::Unicast
+            | CounterId::MulticastLL
+            | CounterId::EgressDropPort => port_label(switch, idx.idx).await,
+            CounterId::DropReason | CounterId::EgressDropReason => {
                 reason_label(idx.idx as u8)?
+            }
+            #[cfg(feature = "multicast")]
+            CounterId::Multicast(MulticastCounterId::Multicast)
+            | CounterId::Multicast(MulticastCounterId::MulticastExt)
+            | CounterId::Multicast(MulticastCounterId::MulticastUL) => {
+                port_label(switch, idx.idx).await
             }
         };
 

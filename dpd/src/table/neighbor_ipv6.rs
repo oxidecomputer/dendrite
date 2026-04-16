@@ -18,7 +18,7 @@ use common::network::MacAddr;
 
 #[derive(MatchParse, Hash)]
 struct MatchKey {
-    #[match_xlate(name = "nexthop_ipv6")]
+    #[match_xlate(name = "nexthop")]
     ip: Ipv6Addr,
 }
 

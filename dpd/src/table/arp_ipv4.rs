@@ -16,7 +16,7 @@ use aal::{ActionParse, MatchParse};
 
 #[derive(MatchParse, Hash)]
 struct MatchKey {
-    #[match_xlate(name = "nexthop_ipv4")]
+    #[match_xlate(name = "nexthop")]
     ip: Ipv4Addr,
 }
 

@@ -27,7 +27,7 @@ enum IngressAction {
 
 #[derive(MatchParse, Debug, Hash)]
 struct EgressMatchKey {
-    #[match_xlate(name = "ucast_egress_port")]
+    #[match_xlate(name = "egress_port")]
     out_port: u16,
 }
 

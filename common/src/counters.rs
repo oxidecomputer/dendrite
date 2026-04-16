@@ -205,10 +205,16 @@ pub struct FecRSCounters {
 pub enum CounterId {
     Service,
     Ingress,
-    Egress,
     Packet,
     DropPort,
     DropReason,
+    Forwarded,
+    Unicast,
+    /// Link-local IPv6 multicast (ff02::/16). Not feature-gated because
+    /// link-local forwarding uses standard routing, not replication groups.
+    MulticastLL,
+    EgressDropPort,
+    EgressDropReason,
     #[cfg(feature = "multicast")]
     Multicast(MulticastCounterId),
 }
@@ -227,14 +233,9 @@ pub enum CounterId {
 )]
 #[cfg(feature = "multicast")]
 pub enum MulticastCounterId {
-    EgressDropPort,
-    EgressDropReason,
-    Unicast,
     Multicast,
     MulticastExt,
-    MulticastLL,
     MulticastUL,
-    MulticastDrop,
 }
 
 impl fmt::Display for CounterId {
@@ -245,10 +246,14 @@ impl fmt::Display for CounterId {
             match self {
                 CounterId::Service => "Service".to_string(),
                 CounterId::Ingress => "Ingress".to_string(),
-                CounterId::Egress => "Egress".to_string(),
                 CounterId::Packet => "Packet".to_string(),
                 CounterId::DropPort => "Ingress_Drop_Port".to_string(),
                 CounterId::DropReason => "Ingress_Drop_Reason".to_string(),
+                CounterId::Forwarded => "Forwarded".to_string(),
+                CounterId::Unicast => "Unicast".to_string(),
+                CounterId::MulticastLL => "Multicast_Link_Local".to_string(),
+                CounterId::EgressDropPort => "Egress_Drop_Port".to_string(),
+                CounterId::EgressDropReason => "Egress_Drop_Reason".to_string(),
                 #[cfg(feature = "multicast")]
                 CounterId::Multicast(id) => id.to_string(),
             }
@@ -263,35 +268,24 @@ impl std::str::FromStr for CounterId {
         match s.to_lowercase().replace(['_'], "").as_str() {
             "service" => Ok(CounterId::Service),
             "ingress" => Ok(CounterId::Ingress),
-            "egress" => Ok(CounterId::Egress),
             "packet" => Ok(CounterId::Packet),
             "ingressdropport" => Ok(CounterId::DropPort),
             "ingressdropreason" => Ok(CounterId::DropReason),
+            "forwarded" => Ok(CounterId::Forwarded),
+            "unicast" => Ok(CounterId::Unicast),
+            "multicastll" | "multicastlinklocal" => Ok(CounterId::MulticastLL),
+            "egressdropport" => Ok(CounterId::EgressDropPort),
+            "egressdropreason" => Ok(CounterId::EgressDropReason),
             #[cfg(feature = "multicast")]
             x => match x {
-                "egressdropport" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::EgressDropPort))
-                }
-                "egressdropreason" => Ok(CounterId::Multicast(
-                    MulticastCounterId::EgressDropReason,
-                )),
-                "unicast" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::Unicast))
-                }
                 "multicast" => {
                     Ok(CounterId::Multicast(MulticastCounterId::Multicast))
                 }
                 "multicastext" | "multicastexternal" => {
                     Ok(CounterId::Multicast(MulticastCounterId::MulticastExt))
                 }
-                "multicastll" | "multicastlinklocal" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::MulticastLL))
-                }
                 "multicastul" | "multicastunderlay" => {
                     Ok(CounterId::Multicast(MulticastCounterId::MulticastUL))
-                }
-                "multicastdrop" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::MulticastDrop))
                 }
                 x => Err(format!("No such counter: {x}")),
             },
@@ -300,6 +294,7 @@ impl std::str::FromStr for CounterId {
         }
     }
 }
+
 #[cfg(feature = "multicast")]
 impl fmt::Display for MulticastCounterId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -307,14 +302,9 @@ impl fmt::Display for MulticastCounterId {
             f,
             "{}",
             match self {
-                MulticastCounterId::EgressDropPort => "Egress_Drop_Port",
-                MulticastCounterId::EgressDropReason => "Egress_Drop_Reason",
-                MulticastCounterId::Unicast => "Unicast",
                 MulticastCounterId::Multicast => "Multicast",
                 MulticastCounterId::MulticastExt => "Multicast_External",
-                MulticastCounterId::MulticastLL => "Multicast_Link_Local",
                 MulticastCounterId::MulticastUL => "Multicast_Underlay",
-                MulticastCounterId::MulticastDrop => "Multicast_Drop",
             }
         )
     }

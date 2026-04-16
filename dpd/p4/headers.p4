@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 const bit<16> ETHERTYPE_IPV4	= 0x0800;
 const bit<16> ETHERTYPE_ARP	= 0x0806;
@@ -183,7 +183,6 @@ header geneve_opt_mcast_h {
 	bit<2> mcast_tag;
 	bit<30> reserved;
 }
-
 
 header geneve_opt_mss_h {
 	bit<32> mss;
