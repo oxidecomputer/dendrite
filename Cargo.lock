@@ -174,7 +174,7 @@ dependencies = [
  "cfg-if",
  "chrono",
  "common 0.1.0",
- "dpd-api",
+ "dpd-types",
  "lazy_static",
  "libc",
  "oximeter",
