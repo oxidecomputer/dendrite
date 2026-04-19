@@ -6,6 +6,7 @@
 
 //! Table operations for multicast source filter entries.
 
+use dpd_types::table;
 use std::{
     fmt,
     net::{Ipv4Addr, Ipv6Addr},
@@ -101,7 +102,7 @@ pub(crate) fn del_ipv4_entry(
 pub(crate) fn ipv4_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<Ipv4MatchKey, Ipv4Action>(
         TableType::McastIpv4SrcFilter,
         from_hardware,
@@ -112,7 +113,7 @@ pub(crate) fn ipv4_table_dump(
 pub(crate) fn ipv4_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<Ipv4MatchKey>(force_sync, TableType::McastIpv4SrcFilter)
 }
 
@@ -154,7 +155,7 @@ pub(crate) fn del_ipv6_entry(
 pub(crate) fn ipv6_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<Ipv6MatchKey, Ipv6Action>(
         TableType::McastIpv6SrcFilter,
         from_hardware,
@@ -165,7 +166,7 @@ pub(crate) fn ipv6_table_dump(
 pub(crate) fn ipv6_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<Ipv6MatchKey>(force_sync, TableType::McastIpv6SrcFilter)
 }
 

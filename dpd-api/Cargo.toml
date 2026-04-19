@@ -6,10 +6,7 @@ edition = "2024"
 [dependencies]
 common.workspace = true
 dpd-types.workspace = true
+dpd-types-versions.workspace = true
 dropshot.workspace = true
 dropshot-api-manager-types.workspace = true
-oxnet.workspace = true
-schemars.workspace = true
-serde.workspace = true
 transceiver-controller.workspace = true
-uuid.workspace = true

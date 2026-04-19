@@ -17,7 +17,7 @@ use std::sync::MutexGuard;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use dpd_api::LinkCreate;
+use dpd_types::link::LinkCreate;
 use dpd_types::link::LinkId;
 use dpd_types::oxstats::OximeterMetadata;
 use futures::stream::StreamExt;
@@ -402,10 +402,10 @@ impl Switch {
         &self,
         t: TableType,
         from_hardware: bool,
-    ) -> DpdResult<dpd_types::views::Table> {
+    ) -> DpdResult<dpd_types::table::Table> {
         let t = self.table_get(t)?;
 
-        Ok(dpd_types::views::Table {
+        Ok(dpd_types::table::Table {
             name: t.type_.to_string(),
             size: t.usage.size as usize,
             entries: t
@@ -419,7 +419,7 @@ impl Switch {
                 .map(|vec| {
                     vec.into_iter()
                         .map(|(key, action): (M, A)| {
-                            dpd_types::views::TableEntry::new(key, action)
+                            dpd_types::table::TableEntry::new(key, action)
                         })
                         .collect()
                 })?,
@@ -431,7 +431,7 @@ impl Switch {
         &self,
         force_sync: bool,
         t: TableType,
-    ) -> DpdResult<Vec<dpd_types::views::TableCounterEntry>> {
+    ) -> DpdResult<Vec<dpd_types::table::TableCounterEntry>> {
         let t = self.table_get(t)?;
 
         t.get_counters::<M>(&self.asic_hdl, force_sync)
@@ -444,7 +444,7 @@ impl Switch {
             .map(|vec| {
                 vec.into_iter()
                     .map(|(key, data): (M, aal::CounterData)| {
-                        dpd_types::views::TableCounterEntry::new(key, data)
+                        dpd_types::table::TableCounterEntry::new(key, data)
                     })
                     .collect()
             })

@@ -4,6 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use dpd_types::table;
 use std::convert::TryInto;
 use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -148,7 +149,7 @@ pub fn delete_ipv4_entry(
 pub fn ipv4_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<Ipv4MatchKey, Ipv4Action>(
         TableType::NatIngressIpv4,
         from_hardware,
@@ -158,7 +159,7 @@ pub fn ipv4_table_dump(
 pub fn ipv6_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<Ipv6MatchKey, Ipv6Action>(
         TableType::NatIngressIpv6,
         from_hardware,
@@ -168,14 +169,14 @@ pub fn ipv6_table_dump(
 pub fn ipv4_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<Ipv4MatchKey>(force_sync, TableType::NatIngressIpv4)
 }
 
 pub fn ipv6_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<Ipv6MatchKey>(force_sync, TableType::NatIngressIpv6)
 }
 

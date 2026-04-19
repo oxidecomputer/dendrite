@@ -28,7 +28,7 @@ use common::counters::MulticastCounterId;
 use common::table::TableType;
 
 use anyhow::Context;
-use dpd_types::views;
+use dpd_types::table::TableCounterEntry;
 
 // Counters in an indirect table are accessed by their index number rather than
 // a key.  Still, we define a key anyway to allow us to use the direct counter
@@ -297,7 +297,7 @@ pub async fn get_values(
     switch: &Arc<Switch>,
     force_sync: bool,
     counter_name: String,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<TableCounterEntry>> {
     let counter_id = counter_name.parse::<CounterId>()?;
 
     let counters = {
@@ -356,7 +356,7 @@ pub async fn get_values(
             // table.  We've already translated the index into a label, so
             // that's what we're calling the key now.
             keys.insert("label".to_string(), key);
-            entries.push(views::TableCounterEntry { keys, data });
+            entries.push(TableCounterEntry { keys, data });
         }
     }
 
