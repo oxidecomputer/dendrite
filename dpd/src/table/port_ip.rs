@@ -4,6 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use dpd_types::table;
 use std::convert::TryInto;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
@@ -317,7 +318,7 @@ pub fn ipv6_delete(s: &Switch, port: u16, ipv6: Ipv6Addr) -> DpdResult<()> {
 pub fn ipv4_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<Ipv4MatchKey, ActionV4>(
         TableType::PortAddrIpv4,
         from_hardware,
@@ -327,7 +328,7 @@ pub fn ipv4_table_dump(
 pub fn ipv6_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<Ipv6MatchKey, ActionV6>(
         TableType::PortAddrIpv6,
         from_hardware,
@@ -345,14 +346,14 @@ pub fn ipv6_table_clear(s: &Switch) -> DpdResult<()> {
 pub fn ipv4_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<Ipv4MatchKey>(force_sync, TableType::PortAddrIpv4)
 }
 
 pub fn ipv6_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<Ipv6MatchKey>(force_sync, TableType::PortAddrIpv6)
 }
 

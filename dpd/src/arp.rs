@@ -144,7 +144,7 @@ pub fn get_range_ipv4(
     switch: &Switch,
     last: Option<&Ipv4Addr>,
     mut max: u32,
-) -> DpdResult<Vec<dpd_api::ArpEntry>> {
+) -> DpdResult<Vec<dpd_types::arp::ArpEntry>> {
     if max > 32 {
         max = 32
     };
@@ -159,7 +159,7 @@ pub fn get_range_ipv4(
         .v4
         .range((lower_bound, Bound::Unbounded))
         .take(usize::try_from(max).expect("invalid usize"))
-        .map(|(ip, entry)| dpd_api::ArpEntry {
+        .map(|(ip, entry)| dpd_types::arp::ArpEntry {
             tag: entry.tag.clone(),
             ip: IpAddr::V4((*ip).into()),
             mac: entry.mac,
@@ -174,7 +174,7 @@ pub fn get_range_ipv6(
     switch: &Switch,
     last: Option<&Ipv6Addr>,
     mut max: u32,
-) -> DpdResult<Vec<dpd_api::ArpEntry>> {
+) -> DpdResult<Vec<dpd_types::arp::ArpEntry>> {
     max = std::cmp::max(max, 32);
 
     let lower_bound = match last {
@@ -187,7 +187,7 @@ pub fn get_range_ipv6(
         .v6
         .range((lower_bound, Bound::Unbounded))
         .take(usize::try_from(max).expect("invalid usize"))
-        .map(|(ip, entry)| dpd_api::ArpEntry {
+        .map(|(ip, entry)| dpd_types::arp::ArpEntry {
             tag: entry.tag.clone(),
             ip: IpAddr::V6((*ip).into()),
             mac: entry.mac,

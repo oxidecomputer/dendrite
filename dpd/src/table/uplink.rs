@@ -4,6 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use dpd_types::table;
 use std::convert::TryInto;
 
 use slog::{error, info};
@@ -116,7 +117,7 @@ pub fn uplink_clear(s: &Switch, port: u16) -> DpdResult<()> {
 pub fn egress_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<EgressMatchKey, EgressAction>(
         TableType::UplinkEgress,
         from_hardware,
@@ -126,7 +127,7 @@ pub fn egress_table_dump(
 pub fn ingress_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<IngressMatchKey, IngressAction>(
         TableType::UplinkIngress,
         from_hardware,
@@ -136,13 +137,13 @@ pub fn ingress_table_dump(
 pub fn egress_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<EgressMatchKey>(force_sync, TableType::UplinkEgress)
 }
 
 pub fn ingress_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<IngressMatchKey>(force_sync, TableType::UplinkIngress)
 }

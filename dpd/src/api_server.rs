@@ -13,19 +13,59 @@ use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
-use dpd_types::fault::Fault;
-use dpd_types::link::LinkFsmCounters;
-use dpd_types::link::LinkId;
-use dpd_types::link::LinkUpCounter;
-use dpd_types::mcast::*;
+use dpd_types::arp::{
+    ArpEntry, ArpToken, Ipv4ArpParam, Ipv4Token, Ipv6ArpParam, Ipv6Token,
+};
+use dpd_types::counters::{
+    CounterPath, CounterSync, LinkFecRSCounters, LinkPcsCounters,
+    LinkRMonCounters, LinkRMonCountersAll,
+};
+use dpd_types::fault::{Fault, FaultCondition};
+use dpd_types::link::{
+    LinkCreate, LinkFilter, LinkFsmCounters, LinkHistory, LinkId, LinkIpv4Path,
+    LinkIpv6Path, LinkPath, LinkUpCounter, LinkView, MsDuration, TfportData,
+};
+use dpd_types::loopback::{LoopbackIpv4Path, LoopbackIpv6Path};
+#[cfg(feature = "multicast")]
+use dpd_types::mcast::UnderlayMulticastIpv6;
+use dpd_types::mcast::{
+    MulticastGroupCreateExternalEntry, MulticastGroupCreateUnderlayEntry,
+    MulticastGroupExternalResponse, MulticastGroupIpParam,
+    MulticastGroupResponse, MulticastGroupTagQuery,
+    MulticastGroupUnderlayResponse, MulticastGroupUpdateExternalEntry,
+    MulticastGroupUpdateUnderlayEntry, MulticastTagPath,
+    MulticastUnderlayGroupIpParam,
+};
+use dpd_types::misc::{BuildInfo, TagPath};
+use dpd_types::nat::{
+    NatIpv4Path, NatIpv4PortPath, NatIpv4RangePath, NatIpv6Path,
+    NatIpv6PortPath, NatIpv6RangePath, NatToken,
+};
 use dpd_types::oxstats::OximeterMetadata;
+use dpd_types::port::{
+    FreeChannels, LinkSettings, PortIdPathParams, PortSettings, PortSettingsTag,
+};
 use dpd_types::port_map::BackplaneLink;
-use dpd_types::route::Ipv6Route;
-use dpd_types::route::Route;
+use dpd_types::route::{
+    AttachedSubnetToken, Ipv4RouteToken, Ipv4RouteUpdate, Ipv4Routes,
+    Ipv6Route, Ipv6RouteToken, Ipv6RouteUpdate, Ipv6Routes, Route, RoutePathV4,
+    RoutePathV6, RouteTarget, RouteTargetIpv4Path, RouteTargetIpv6Path,
+    SubnetPath,
+};
+use dpd_types::serdes::{
+    AnLtStatus, Ber, DfeAdaptationState, EncSpeed, LaneMap, RxSigInfo,
+    SerdesEye,
+};
+use dpd_types::snapshot::{
+    SnapshotCreate, SnapshotFieldScope, SnapshotResult, SnapshotScopeRequest,
+    TableDumpOptions,
+};
 use dpd_types::switch_identifiers::SwitchIdentifiers;
-use dpd_types::switch_port::Led;
-use dpd_types::switch_port::ManagementMode;
+use dpd_types::switch_port::{Led, ManagementMode, SwitchPortView};
+use dpd_types::table;
+use dpd_types::table::TableParam;
 use dpd_types::transceivers::Transceiver;
+use dpd_types_versions::{v1, v7};
 use dropshot::ClientErrorStatusCode;
 use dropshot::ClientSpecifiesVersionInHeader;
 use dropshot::EmptyScanParams;
@@ -77,7 +117,6 @@ use common::ports::PortId;
 use common::ports::QsfpPort;
 use common::ports::{Ipv4Entry, Ipv6Entry, PortPrbsMode};
 use dpd_api::*;
-use dpd_types::views;
 
 type ApiServer = dropshot::HttpServer<Arc<Switch>>;
 
@@ -534,10 +573,10 @@ impl DpdApi for DpdApiImpl {
     async fn port_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
-    ) -> Result<HttpResponseOk<views::SwitchPort>, HttpError> {
+    ) -> Result<HttpResponseOk<SwitchPortView>, HttpError> {
         let switch = rqctx.context();
         let port_id = path.into_inner().port_id;
-        Ok(HttpResponseOk(views::SwitchPort::from(
+        Ok(HttpResponseOk(SwitchPortView::from(
             &*switch
                 .switch_ports
                 .ports
@@ -820,7 +859,7 @@ impl DpdApi for DpdApiImpl {
     async fn link_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<views::Link>, HttpError> {
+    ) -> Result<HttpResponseOk<LinkView>, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
         switch
@@ -844,7 +883,7 @@ impl DpdApi for DpdApiImpl {
     async fn link_list(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
-    ) -> Result<HttpResponseOk<Vec<views::Link>>, HttpError> {
+    ) -> Result<HttpResponseOk<Vec<LinkView>>, HttpError> {
         let switch = &rqctx.context();
         let port_id = path.into_inner().port_id;
         switch.list_links(port_id).map(HttpResponseOk).map_err(HttpError::from)
@@ -853,7 +892,7 @@ impl DpdApi for DpdApiImpl {
     async fn link_list_all(
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<LinkFilter>,
-    ) -> Result<HttpResponseOk<Vec<views::Link>>, HttpError> {
+    ) -> Result<HttpResponseOk<Vec<LinkView>>, HttpError> {
         let switch = &rqctx.context();
         let filter = query.into_inner().filter;
         Ok(HttpResponseOk(switch.list_all_links(filter.as_deref())))
@@ -1285,7 +1324,7 @@ impl DpdApi for DpdApiImpl {
     async fn link_history_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<views::LinkHistory>, HttpError> {
+    ) -> Result<HttpResponseOk<LinkHistory>, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
         let port_id = path.port_id;
@@ -1862,15 +1901,9 @@ impl DpdApi for DpdApiImpl {
 
     async fn tfport_data(
         rqctx: RequestContext<Arc<Switch>>,
-    ) -> Result<HttpResponseOk<Vec<views::TfportData>>, HttpError> {
+    ) -> Result<HttpResponseOk<Vec<TfportData>>, HttpError> {
         let switch = &rqctx.context();
         Ok(HttpResponseOk(switch.all_tfport_data()))
-    }
-
-    async fn ipv4_nat_generation(
-        rqctx: RequestContext<Arc<Switch>>,
-    ) -> Result<HttpResponseOk<i64>, HttpError> {
-        Self::nat_generation(rqctx).await
     }
 
     async fn nat_generation(
@@ -1879,12 +1912,6 @@ impl DpdApi for DpdApiImpl {
         let switch = rqctx.context();
 
         Ok(HttpResponseOk(nat::get_nat_generation(switch)))
-    }
-
-    async fn ipv4_nat_trigger_update(
-        rqctx: RequestContext<Arc<Switch>>,
-    ) -> Result<HttpResponseOk<()>, HttpError> {
-        Self::nat_trigger_update(rqctx).await
     }
 
     async fn nat_trigger_update(
@@ -1912,7 +1939,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<TableDumpOptions>,
         path: Path<TableParam>,
-    ) -> Result<HttpResponseOk<views::Table>, HttpError> {
+    ) -> Result<HttpResponseOk<table::Table>, HttpError> {
         let switch: &Switch = rqctx.context();
         let table = path.into_inner().table;
         crate::table::get_entries(
@@ -1928,7 +1955,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<CounterSync>,
         path: Path<TableParam>,
-    ) -> Result<HttpResponseOk<Vec<views::TableCounterEntry>>, HttpError> {
+    ) -> Result<HttpResponseOk<Vec<table::TableCounterEntry>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let force_sync = query.into_inner().force_sync;
         let table = path.into_inner().table;
@@ -1965,7 +1992,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<CounterSync>,
         path: Path<CounterPath>,
-    ) -> Result<HttpResponseOk<Vec<views::TableCounterEntry>>, HttpError> {
+    ) -> Result<HttpResponseOk<Vec<table::TableCounterEntry>>, HttpError> {
         let switch: &Arc<Switch> = rqctx.context();
         let counter = path.into_inner().counter;
         let force_sync = query.into_inner().force_sync;
@@ -2028,7 +2055,7 @@ impl DpdApi for DpdApiImpl {
     #[allow(unused_variables)]
     async fn multicast_group_delete_v1(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<MulticastGroupIpParam>,
+        path: Path<v1::mcast::MulticastGroupIpParam>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         require_multicast!({
             let switch: &Switch = rqctx.context();
@@ -2100,10 +2127,10 @@ impl DpdApi for DpdApiImpl {
     #[allow(unused_variables)]
     async fn multicast_group_update_underlay_v1(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<dpd_api::v1::MulticastUnderlayGroupIpParam>,
-        group: TypedBody<dpd_api::v1::MulticastGroupUpdateUnderlayEntry>,
+        path: Path<v1::mcast::MulticastUnderlayGroupIpParam>,
+        group: TypedBody<v1::mcast::MulticastGroupUpdateUnderlayEntry>,
     ) -> Result<
-        HttpResponseOk<dpd_api::v1::MulticastGroupUnderlayResponse>,
+        HttpResponseOk<v1::mcast::MulticastGroupUnderlayResponse>,
         HttpError,
     > {
         require_multicast!({
@@ -2170,10 +2197,10 @@ impl DpdApi for DpdApiImpl {
     #[allow(unused_variables)]
     async fn multicast_group_update_external_v7(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<MulticastGroupIpParam>,
-        group: TypedBody<dpd_api::v7::MulticastGroupUpdateExternalEntry>,
+        path: Path<v1::mcast::MulticastGroupIpParam>,
+        group: TypedBody<v7::mcast::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<dpd_api::v7::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v7::mcast::MulticastGroupExternalResponse>,
         HttpError,
     > {
         require_multicast!({
@@ -2198,10 +2225,10 @@ impl DpdApi for DpdApiImpl {
     #[allow(unused_variables)]
     async fn multicast_group_update_external_v1(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<MulticastGroupIpParam>,
-        group: TypedBody<dpd_api::v1::MulticastGroupUpdateExternalEntry>,
+        path: Path<v1::mcast::MulticastGroupIpParam>,
+        group: TypedBody<v1::mcast::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<dpd_api::v1::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v1::mcast::MulticastGroupExternalResponse>,
         HttpError,
     > {
         require_multicast!({
@@ -2217,7 +2244,9 @@ impl DpdApi for DpdApiImpl {
                     .to_string(),
             };
 
-            mcast::modify_group_external(switch, ip, &tag, entry.into())
+            let v7_entry =
+                v7::mcast::MulticastGroupUpdateExternalEntry::from(entry);
+            mcast::modify_group_external(switch, ip, &tag, v7_entry.into())
                 .map(|resp| HttpResponseCreated(resp.into()))
                 .map_err(HttpError::from)
         })

@@ -6,49 +6,23 @@
 
 //! DPD endpoint definitions.
 
-pub mod v1;
-pub mod v11;
-pub mod v12;
-pub mod v2;
-pub mod v7;
-
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    fmt,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    str::FromStr,
-};
+use std::collections::BTreeMap;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use common::{
     attached_subnet::AttachedSubnetEntry,
-    counters::{FecRSCounters, PcsCounters, RMonCounters, RMonCountersAll},
     nat::{Ipv4Nat, Ipv6Nat},
     network::{InstanceTarget, MacAddr, NatTarget},
-    ports::{
-        Ipv4Entry, Ipv6Entry, PortFec, PortId, PortPrbsMode, PortSpeed, TxEq,
-        TxEqSwHw,
-    },
+    ports::{Ipv4Entry, Ipv6Entry, PortId, PortPrbsMode, TxEq, TxEqSwHw},
 };
-use dpd_types::{
-    fault::Fault,
-    link::{LinkFsmCounters, LinkId, LinkUpCounter},
-    mcast, oxstats,
-    port_map::BackplaneLink,
-    route::{Ipv4Route, Ipv6Route, Route},
-    switch_identifiers::SwitchIdentifiers,
-    switch_port::{Led, ManagementMode},
-    transceivers::Transceiver,
-    views,
-};
+use dpd_types::oxstats;
+use dpd_types_versions::{latest, v1, v4, v7};
 use dropshot::{
     EmptyScanParams, HttpError, HttpResponseCreated, HttpResponseDeleted,
     HttpResponseOk, HttpResponseUpdatedNoContent, PaginationParams, Path,
     Query, RequestContext, ResultsPage, TypedBody,
 };
 use dropshot_api_manager_types::api_versions;
-use oxnet::{IpNet, Ipv4Net, Ipv6Net};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use transceiver_controller::{
     Datapath, Monitors, PowerState, message::LedState,
 };
@@ -107,8 +81,8 @@ pub trait DpdApi {
     }]
     async fn ndp_list(
         rqctx: RequestContext<Self::Context>,
-        query: Query<PaginationParams<EmptyScanParams, ArpToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<ArpEntry>>, HttpError>;
+        query: Query<PaginationParams<EmptyScanParams, latest::arp::ArpToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<latest::arp::ArpEntry>>, HttpError>;
 
     /**
      * Remove all entries in the the IPv6 NDP tables.
@@ -130,8 +104,8 @@ pub trait DpdApi {
     }]
     async fn ndp_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<Ipv6ArpParam>,
-    ) -> Result<HttpResponseOk<ArpEntry>, HttpError>;
+        path: Path<latest::arp::Ipv6ArpParam>,
+    ) -> Result<HttpResponseOk<latest::arp::ArpEntry>, HttpError>;
 
     /**
      * Add an IPv6 NDP entry, mapping an IPv6 address to a MAC address.
@@ -142,7 +116,7 @@ pub trait DpdApi {
     }]
     async fn ndp_create(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<ArpEntry>,
+        update: TypedBody<latest::arp::ArpEntry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -154,7 +128,7 @@ pub trait DpdApi {
     }]
     async fn ndp_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<Ipv6ArpParam>,
+        path: Path<latest::arp::Ipv6ArpParam>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -166,8 +140,8 @@ pub trait DpdApi {
     }]
     async fn arp_list(
         rqctx: RequestContext<Self::Context>,
-        query: Query<PaginationParams<EmptyScanParams, ArpToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<ArpEntry>>, HttpError>;
+        query: Query<PaginationParams<EmptyScanParams, latest::arp::ArpToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<latest::arp::ArpEntry>>, HttpError>;
 
     /**
      * Remove all entries in the IPv4 ARP tables.
@@ -189,8 +163,8 @@ pub trait DpdApi {
     }]
     async fn arp_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<Ipv4ArpParam>,
-    ) -> Result<HttpResponseOk<ArpEntry>, HttpError>;
+        path: Path<latest::arp::Ipv4ArpParam>,
+    ) -> Result<HttpResponseOk<latest::arp::ArpEntry>, HttpError>;
 
     /**
      * Add an IPv4 ARP table entry, mapping an IPv4 address to a MAC address.
@@ -201,7 +175,7 @@ pub trait DpdApi {
     }]
     async fn arp_create(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<ArpEntry>,
+        update: TypedBody<latest::arp::ArpEntry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -213,7 +187,7 @@ pub trait DpdApi {
     }]
     async fn arp_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<Ipv4ArpParam>,
+        path: Path<latest::arp::Ipv4ArpParam>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -226,8 +200,10 @@ pub trait DpdApi {
     }]
     async fn route_ipv6_list(
         rqctx: RequestContext<Self::Context>,
-        query: Query<PaginationParams<EmptyScanParams, Ipv6RouteToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Routes>>, HttpError>;
+        query: Query<
+            PaginationParams<EmptyScanParams, latest::route::Ipv6RouteToken>,
+        >,
+    ) -> Result<HttpResponseOk<ResultsPage<latest::route::Ipv6Routes>>, HttpError>;
 
     /**
      * Get a single IPv6 route, by its IPv6 CIDR block.
@@ -238,8 +214,8 @@ pub trait DpdApi {
     }]
     async fn route_ipv6_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<RoutePathV6>,
-    ) -> Result<HttpResponseOk<Vec<Ipv6Route>>, HttpError>;
+        path: Path<latest::route::RoutePathV6>,
+    ) -> Result<HttpResponseOk<Vec<latest::route::Ipv6Route>>, HttpError>;
 
     /**
      * Route an IPv6 subnet to a link and a nexthop gateway.
@@ -253,7 +229,7 @@ pub trait DpdApi {
     }]
     async fn route_ipv6_add(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<Ipv6RouteUpdate>,
+        update: TypedBody<latest::route::Ipv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -268,7 +244,7 @@ pub trait DpdApi {
     }]
     async fn route_ipv6_set(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<Ipv6RouteUpdate>,
+        update: TypedBody<latest::route::Ipv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -280,7 +256,7 @@ pub trait DpdApi {
     }]
     async fn route_ipv6_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<RoutePathV6>,
+        path: Path<latest::route::RoutePathV6>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -292,47 +268,8 @@ pub trait DpdApi {
     }]
     async fn route_ipv6_delete_target(
         rqctx: RequestContext<Self::Context>,
-        path: Path<RouteTargetIpv6Path>,
+        path: Path<latest::route::RouteTargetIpv6Path>,
     ) -> Result<HttpResponseDeleted, HttpError>;
-
-    /**
-     * Fetch the configured IPv4 routes, mapping IPv4 CIDR blocks to the switch port
-     * used for sending out that traffic, and optionally a gateway.
-     */
-    #[endpoint {
-        method = GET,
-        path = "/route/ipv4",
-        versions = ..VERSION_V4_OVER_V6_ROUTES
-    }]
-    async fn route_ipv4_list_v1(
-        rqctx: RequestContext<Self::Context>,
-        query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<v1::Ipv4Routes>>, HttpError> {
-        let result = Self::route_ipv4_list(rqctx, query).await?.0;
-
-        let mut v2_result = Vec::default();
-        for x in result.items {
-            let mut v2_routes =
-                v1::Ipv4Routes { cidr: x.cidr, targets: Vec::default() };
-            for t in x.targets {
-                if let Route::V4(r) = &t {
-                    v2_routes.targets.push(Ipv4Route {
-                        tag: r.tag.clone(),
-                        port_id: r.port_id,
-                        link_id: r.link_id,
-                        tgt_ip: r.tgt_ip,
-                        vlan_id: r.vlan_id,
-                    });
-                }
-            }
-            v2_result.push(v2_routes);
-        }
-
-        Ok(HttpResponseOk(ResultsPage {
-            next_page: result.next_page,
-            items: v2_result,
-        }))
-    }
 
     /**
      * Fetch the configured IPv4 routes, mapping IPv4 CIDR blocks to the switch port
@@ -345,8 +282,33 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_list(
         rqctx: RequestContext<Self::Context>,
-        query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Routes>>, HttpError>;
+        query: Query<
+            PaginationParams<EmptyScanParams, latest::route::Ipv4RouteToken>,
+        >,
+    ) -> Result<HttpResponseOk<ResultsPage<latest::route::Ipv4Routes>>, HttpError>;
+
+    /**
+     * Fetch the configured IPv4 routes, mapping IPv4 CIDR blocks to the switch port
+     * used for sending out that traffic, and optionally a gateway.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/route/ipv4",
+        versions = ..VERSION_V4_OVER_V6_ROUTES
+    }]
+    async fn route_ipv4_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<
+            PaginationParams<EmptyScanParams, v1::route::Ipv4RouteToken>,
+        >,
+    ) -> Result<HttpResponseOk<ResultsPage<v1::route::Ipv4Routes>>, HttpError>
+    {
+        let page = Self::route_ipv4_list(rqctx, query).await?.0;
+        Ok(HttpResponseOk(ResultsPage {
+            next_page: page.next_page,
+            items: page.items.into_iter().map(Into::into).collect(),
+        }))
+    }
 
     /**
      * Get the configured route for the given IPv4 subnet.
@@ -358,8 +320,8 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<RoutePathV4>,
-    ) -> Result<HttpResponseOk<Vec<Route>>, HttpError>;
+        path: Path<latest::route::RoutePathV4>,
+    ) -> Result<HttpResponseOk<Vec<latest::route::Route>>, HttpError>;
 
     #[endpoint {
         method = GET,
@@ -368,18 +330,53 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_get_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<RoutePathV4>,
-    ) -> Result<HttpResponseOk<Vec<Ipv4Route>>, HttpError> {
+        path: Path<v1::route::RoutePathV4>,
+    ) -> Result<HttpResponseOk<Vec<v1::route::Ipv4Route>>, HttpError> {
         let result = Self::route_ipv4_get(rqctx, path).await?.0;
         Ok(HttpResponseOk(
             result
                 .into_iter()
-                .flat_map(|r| match r {
-                    Route::V4(r) => Some(r),
-                    _ => None,
+                .filter_map(|r| match r {
+                    latest::route::Route::V4(r) => Some(r),
+                    latest::route::Route::V6(_) => None,
                 })
                 .collect(),
         ))
+    }
+
+    /**
+     * Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).
+     *
+     * This call can be used to create a new single-path route or to add new targets
+     * to a multipath route.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/route/ipv4",
+        versions = VERSION_CONSOLIDATED_V4_ROUTES..
+    }]
+    async fn route_ipv4_add(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<latest::route::Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Route an IPv4 subnet to a link and an IPv6 nexthop gateway.
+     *
+     * This call can be used to create a new single-path route or to add new targets
+     * to a multipath route.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/route/ipv4-over-ipv6",
+        versions = VERSION_V4_OVER_V6_ROUTES..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_over_ipv6_add",
+    }]
+    async fn route_ipv4_over_ipv6_add_v4(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<v4::route::Ipv4OverIpv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::route_ipv4_add(rqctx, update.map(Into::into)).await
     }
 
     /**
@@ -396,61 +393,44 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_add_v1(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<v2::Ipv4RouteUpdate>,
+        update: TypedBody<v1::route::Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let route = update.into_inner();
-        Self::route_ipv4_add(
-            rqctx,
-            TypedBody::from(Ipv4RouteUpdate {
-                cidr: route.cidr,
-                target: RouteTarget::V4(route.target),
-                replace: route.replace,
-            }),
-        )
-        .await
+        Self::route_ipv4_add(rqctx, update.map(Into::into)).await
     }
 
     /**
      * Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).
      *
-     * This call can be used to create a new single-path route or to add new targets
-     * to a multipath route.
+     * This call can be used to create a new single-path route or to replace any
+     * existing routes with a new single-path route.
      */
     #[endpoint {
-        method = POST,
+        method = PUT,
         path = "/route/ipv4",
         versions = VERSION_CONSOLIDATED_V4_ROUTES..
     }]
-    async fn route_ipv4_add(
+    async fn route_ipv4_set(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<Ipv4RouteUpdate>,
+        update: TypedBody<latest::route::Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
      * Route an IPv4 subnet to a link and an IPv6 nexthop gateway.
      *
-     * This call can be used to create a new single-path route or to add new targets
-     * to a multipath route.
+     * This call can be used to create a new single-path route or to replace any
+     * existing routes with a new single-path route.
      */
     #[endpoint {
-        method = POST,
+        method = PUT,
         path = "/route/ipv4-over-ipv6",
         versions = VERSION_V4_OVER_V6_ROUTES..VERSION_CONSOLIDATED_V4_ROUTES,
+        operation_id = "route_ipv4_over_ipv6_set",
     }]
-    async fn route_ipv4_over_ipv6_add(
+    async fn route_ipv4_over_ipv6_set_v4(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
+        update: TypedBody<v4::route::Ipv4OverIpv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let route = update.into_inner();
-        Self::route_ipv4_add(
-            rqctx,
-            TypedBody::from(Ipv4RouteUpdate {
-                cidr: route.cidr,
-                target: RouteTarget::V6(route.target),
-                replace: route.replace,
-            }),
-        )
-        .await
+        Self::route_ipv4_set(rqctx, update.map(Into::into)).await
     }
 
     /**
@@ -467,61 +447,9 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_set_v1(
         rqctx: RequestContext<Self::Context>,
-        update: TypedBody<v2::Ipv4RouteUpdate>,
+        update: TypedBody<v1::route::Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let route = update.into_inner();
-        Self::route_ipv4_set(
-            rqctx,
-            TypedBody::from(Ipv4RouteUpdate {
-                cidr: route.cidr,
-                target: RouteTarget::V4(route.target),
-                replace: route.replace,
-            }),
-        )
-        .await
-    }
-
-    /**
-     * Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).
-     *
-     * This call can be used to create a new single-path route or to replace any
-     * existing routes with a new single-path route.
-     */
-    #[endpoint {
-        method = PUT,
-        path = "/route/ipv4",
-        versions = VERSION_CONSOLIDATED_V4_ROUTES..
-    }]
-    async fn route_ipv4_set(
-        rqctx: RequestContext<Self::Context>,
-        update: TypedBody<Ipv4RouteUpdate>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
-
-    /**
-     * Route an IPv4 subnet to a link and an IPv6 nexthop gateway.
-     *
-     * This call can be used to create a new single-path route or to replace any
-     * existing routes with a new single-path route.
-     */
-    #[endpoint {
-        method = PUT,
-        path = "/route/ipv4-over-ipv6",
-        versions = VERSION_V4_OVER_V6_ROUTES..VERSION_CONSOLIDATED_V4_ROUTES,
-    }]
-    async fn route_ipv4_over_ipv6_set(
-        rqctx: RequestContext<Self::Context>,
-        update: TypedBody<Ipv4OverIpv6RouteUpdate>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let route = update.into_inner();
-        Self::route_ipv4_set(
-            rqctx,
-            TypedBody::from(Ipv4RouteUpdate {
-                cidr: route.cidr,
-                target: RouteTarget::V6(route.target),
-                replace: route.replace,
-            }),
-        )
-        .await
+        Self::route_ipv4_set(rqctx, update.map(Into::into)).await
     }
 
     /**
@@ -533,7 +461,20 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<RoutePathV4>,
+        path: Path<latest::route::RoutePathV4>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /**
+     * Remove a single target for the given IPv4 subnet (IPv4 or IPv6 next hop)
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}",
+        versions = VERSION_CONSOLIDATED_V4_ROUTES..
+    }]
+    async fn route_ipv4_delete_target(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouteTargetIpv4Path>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -547,33 +488,10 @@ pub trait DpdApi {
     }]
     async fn route_ipv4_delete_target_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<v2::RouteTargetIpv4Path>,
+        path: Path<v1::route::RouteTargetIpv4Path>,
     ) -> Result<HttpResponseDeleted, HttpError> {
-        let p = path.into_inner();
-        Self::route_ipv4_delete_target(
-            rqctx,
-            Path::from(RouteTargetIpv4Path {
-                cidr: p.cidr,
-                port_id: p.port_id,
-                link_id: p.link_id,
-                tgt_ip: IpAddr::V4(p.tgt_ip),
-            }),
-        )
-        .await
+        Self::route_ipv4_delete_target(rqctx, path.map(Into::into)).await
     }
-
-    /**
-     * Remove a single target for the given IPv4 subnet (IPv4 or IPv6 next hop)
-     */
-    #[endpoint {
-        method = DELETE,
-        path = "/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}",
-        versions = VERSION_CONSOLIDATED_V4_ROUTES..
-    }]
-    async fn route_ipv4_delete_target(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<RouteTargetIpv4Path>,
-    ) -> Result<HttpResponseDeleted, HttpError>;
 
     /// List all switch ports on the system.
     #[endpoint {
@@ -596,13 +514,19 @@ pub trait DpdApi {
     }]
     async fn channels_list(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<FreeChannels>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<latest::port::FreeChannels>>, HttpError>;
 
     /// Get the set of available channels for all ports.
     ///
     /// This returns the unused MAC channels for each physical switch port. This can
     /// be used to determine how many additional links can be crated on a physical
     /// switch port.
+    //
+    // TODO: `FreeChannels` is unchanged across versions, so this split may be
+    // unnecessary — the rationale for gating the endpoint at
+    // `VERSION_MCAST_STRICT_UNDERLAY` is not obvious from the code alone.
+    // Revisit in a follow-up to either document the reason or collapse back to
+    // a single `channels_list` endpoint.
     #[endpoint {
         method = GET,
         path = "/channels",
@@ -611,7 +535,7 @@ pub trait DpdApi {
     }]
     async fn channels_list_v1(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<FreeChannels>>, HttpError> {
+    ) -> Result<HttpResponseOk<Vec<v1::port::FreeChannels>>, HttpError> {
         Self::channels_list(rqctx).await
     }
 
@@ -622,8 +546,8 @@ pub trait DpdApi {
     }]
     async fn port_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
-    ) -> Result<HttpResponseOk<views::SwitchPort>, HttpError>;
+        path: Path<latest::port::PortIdPathParams>,
+    ) -> Result<HttpResponseOk<latest::switch_port::SwitchPortView>, HttpError>;
 
     /// Return the current management mode of a QSFP switch port.
     #[endpoint {
@@ -632,8 +556,8 @@ pub trait DpdApi {
     }]
     async fn management_mode_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
-    ) -> Result<HttpResponseOk<ManagementMode>, HttpError>;
+        path: Path<latest::port::PortIdPathParams>,
+    ) -> Result<HttpResponseOk<latest::switch_port::ManagementMode>, HttpError>;
 
     /// Set the current management mode of a QSFP switch port.
     #[endpoint {
@@ -642,8 +566,8 @@ pub trait DpdApi {
     }]
     async fn management_mode_set(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
-        body: TypedBody<ManagementMode>,
+        path: Path<latest::port::PortIdPathParams>,
+        body: TypedBody<latest::switch_port::ManagementMode>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Return the current state of the attention LED on a front-facing QSFP port.
@@ -653,8 +577,8 @@ pub trait DpdApi {
     }]
     async fn led_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
-    ) -> Result<HttpResponseOk<Led>, HttpError>;
+        path: Path<latest::port::PortIdPathParams>,
+    ) -> Result<HttpResponseOk<latest::switch_port::Led>, HttpError>;
 
     /// Override the current state of the attention LED on a front-facing QSFP port.
     ///
@@ -672,7 +596,7 @@ pub trait DpdApi {
     }]
     async fn led_set(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
+        path: Path<latest::port::PortIdPathParams>,
         body: TypedBody<LedState>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -687,7 +611,10 @@ pub trait DpdApi {
     }]
     async fn backplane_map(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<BTreeMap<PortId, BackplaneLink>>, HttpError>;
+    ) -> Result<
+        HttpResponseOk<BTreeMap<PortId, latest::port_map::BackplaneLink>>,
+        HttpError,
+    >;
 
     /// Return the backplane mapping for a single switch port.
     #[endpoint {
@@ -696,8 +623,8 @@ pub trait DpdApi {
     }]
     async fn port_backplane_link(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
-    ) -> Result<HttpResponseOk<BackplaneLink>, HttpError>;
+        path: Path<latest::port::PortIdPathParams>,
+    ) -> Result<HttpResponseOk<latest::port_map::BackplaneLink>, HttpError>;
 
     /// Return the state of all attention LEDs on the Sidecar QSFP ports.
     #[endpoint {
@@ -706,7 +633,10 @@ pub trait DpdApi {
     }]
     async fn leds_list(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<BTreeMap<PortId, Led>>, HttpError>;
+    ) -> Result<
+        HttpResponseOk<BTreeMap<PortId, latest::switch_port::Led>>,
+        HttpError,
+    >;
 
     /// Set the LED policy to automatic.
     ///
@@ -718,7 +648,7 @@ pub trait DpdApi {
     }]
     async fn led_set_auto(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
+        path: Path<latest::port::PortIdPathParams>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Return information about all QSFP transceivers.
@@ -728,7 +658,10 @@ pub trait DpdApi {
     }]
     async fn transceivers_list(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<BTreeMap<PortId, Transceiver>>, HttpError>;
+    ) -> Result<
+        HttpResponseOk<BTreeMap<PortId, latest::transceivers::Transceiver>>,
+        HttpError,
+    >;
 
     /// Return the information about a port's transceiver.
     ///
@@ -744,8 +677,8 @@ pub trait DpdApi {
     }]
     async fn transceiver_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
-    ) -> Result<HttpResponseOk<Transceiver>, HttpError>;
+        path: Path<latest::port::PortIdPathParams>,
+    ) -> Result<HttpResponseOk<latest::transceivers::Transceiver>, HttpError>;
 
     /// Effect a module-level reset of a QSFP transceiver.
     ///
@@ -757,7 +690,7 @@ pub trait DpdApi {
     }]
     async fn transceiver_reset(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
+        path: Path<latest::port::PortIdPathParams>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Control the power state of a transceiver.
@@ -767,7 +700,7 @@ pub trait DpdApi {
     }]
     async fn transceiver_power_set(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
+        path: Path<latest::port::PortIdPathParams>,
         state: TypedBody<PowerState>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -778,7 +711,7 @@ pub trait DpdApi {
     }]
     async fn transceiver_power_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
+        path: Path<latest::port::PortIdPathParams>,
     ) -> Result<HttpResponseOk<PowerState>, HttpError>;
 
     /// Fetch the monitored environmental information for the provided transceiver.
@@ -788,7 +721,7 @@ pub trait DpdApi {
     }]
     async fn transceiver_monitors_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
+        path: Path<latest::port::PortIdPathParams>,
     ) -> Result<HttpResponseOk<Monitors>, HttpError>;
 
     /// Fetch the state of the datapath for the provided transceiver.
@@ -798,7 +731,7 @@ pub trait DpdApi {
     }]
     async fn transceiver_datapath_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
+        path: Path<latest::port::PortIdPathParams>,
     ) -> Result<HttpResponseOk<Datapath>, HttpError>;
 
     /// Create a link on a switch port.
@@ -812,22 +745,10 @@ pub trait DpdApi {
     }]
     async fn link_create(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
-        params: TypedBody<LinkCreate>,
-    ) -> Result<HttpResponseCreated<LinkId>, HttpError>;
+        path: Path<latest::port::PortIdPathParams>,
+        params: TypedBody<latest::link::LinkCreate>,
+    ) -> Result<HttpResponseCreated<latest::link::LinkId>, HttpError>;
 
-    /// Get an existing link by ID.
-    #[endpoint {
-        method = GET,
-        versions = ..VERSION_PRBS_ERROR_TRACKING,
-        path = "/ports/{port_id}/links/{link_id}"
-    }]
-    async fn link_get_v12(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<v12::Link>, HttpError> {
-        Self::link_get(rqctx, path).await.map(|resp| resp.map(Into::into))
-    }
     /// Get an existing link by ID.
     #[endpoint {
         method = GET,
@@ -836,8 +757,22 @@ pub trait DpdApi {
     }]
     async fn link_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<views::Link>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<latest::link::LinkView>, HttpError>;
+
+    /// Get an existing link by ID.
+    #[endpoint {
+        method = GET,
+        versions = ..VERSION_PRBS_ERROR_TRACKING,
+        path = "/ports/{port_id}/links/{link_id}",
+        operation_id = "link_get",
+    }]
+    async fn link_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<v1::link::LinkView>, HttpError> {
+        Self::link_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+    }
 
     /// Delete a link from a switch port.
     #[endpoint {
@@ -846,25 +781,8 @@ pub trait DpdApi {
     }]
     async fn link_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseDeleted, HttpError>;
-
-    /// List the links within a single switch port.
-    #[endpoint {
-        method = GET,
-        versions = ..VERSION_PRBS_ERROR_TRACKING,
-        path = "/ports/{port_id}/links",
-    }]
-    async fn link_list_v12(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
-    ) -> Result<HttpResponseOk<Vec<v12::Link>>, HttpError> {
-        Self::link_list(rqctx, path).await.map(|resp| {
-            resp.map(|list| {
-                list.into_iter().map(Into::into).collect::<Vec<v12::Link>>()
-            })
-        })
-    }
 
     /// List the links within a single switch port.
     #[endpoint {
@@ -874,25 +792,29 @@ pub trait DpdApi {
     }]
     async fn link_list(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
-    ) -> Result<HttpResponseOk<Vec<views::Link>>, HttpError>;
+        path: Path<latest::port::PortIdPathParams>,
+    ) -> Result<HttpResponseOk<Vec<latest::link::LinkView>>, HttpError>;
 
-    /// List all links, on all switch ports.
+    /// List the links within a single switch port.
     #[endpoint {
         method = GET,
         versions = ..VERSION_PRBS_ERROR_TRACKING,
-        path = "/links",
+        path = "/ports/{port_id}/links",
+        operation_id = "link_list",
     }]
-    async fn link_list_all_v12(
+    async fn link_list_v1(
         rqctx: RequestContext<Self::Context>,
-        query: Query<LinkFilter>,
-    ) -> Result<HttpResponseOk<Vec<v12::Link>>, HttpError> {
-        Self::link_list_all(rqctx, query).await.map(|resp| {
+        path: Path<v1::port::PortIdPathParams>,
+    ) -> Result<HttpResponseOk<Vec<v1::link::LinkView>>, HttpError> {
+        Self::link_list(rqctx, path).await.map(|resp| {
             resp.map(|list| {
-                list.into_iter().map(Into::into).collect::<Vec<v12::Link>>()
+                list.into_iter()
+                    .map(Into::into)
+                    .collect::<Vec<v1::link::LinkView>>()
             })
         })
     }
+
     /// List all links, on all switch ports.
     #[endpoint {
         method = GET,
@@ -901,8 +823,28 @@ pub trait DpdApi {
     }]
     async fn link_list_all(
         rqctx: RequestContext<Self::Context>,
-        query: Query<LinkFilter>,
-    ) -> Result<HttpResponseOk<Vec<views::Link>>, HttpError>;
+        query: Query<latest::link::LinkFilter>,
+    ) -> Result<HttpResponseOk<Vec<latest::link::LinkView>>, HttpError>;
+
+    /// List all links, on all switch ports.
+    #[endpoint {
+        method = GET,
+        versions = ..VERSION_PRBS_ERROR_TRACKING,
+        path = "/links",
+        operation_id = "link_list_all",
+    }]
+    async fn link_list_all_v1(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<v1::link::LinkFilter>,
+    ) -> Result<HttpResponseOk<Vec<v1::link::LinkView>>, HttpError> {
+        Self::link_list_all(rqctx, query).await.map(|resp| {
+            resp.map(|list| {
+                list.into_iter()
+                    .map(Into::into)
+                    .collect::<Vec<v1::link::LinkView>>()
+            })
+        })
+    }
 
     /// Return whether the link is enabled.
     #[endpoint {
@@ -911,7 +853,7 @@ pub trait DpdApi {
     }]
     async fn link_enabled_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError>;
 
     /// Enable or disable a link.
@@ -921,7 +863,7 @@ pub trait DpdApi {
     }]
     async fn link_enabled_set(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
         body: TypedBody<bool>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -932,7 +874,7 @@ pub trait DpdApi {
     }]
     async fn link_ipv6_enabled_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError>;
 
     /// Set whether a port is configured to act as an IPv6 endpoint
@@ -942,7 +884,7 @@ pub trait DpdApi {
     }]
     async fn link_ipv6_enabled_set(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
         body: TypedBody<bool>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -960,7 +902,7 @@ pub trait DpdApi {
     }]
     async fn link_kr_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError>;
 
     /// Enable or disable a link.
@@ -970,7 +912,7 @@ pub trait DpdApi {
     }]
     async fn link_kr_set(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
         body: TypedBody<bool>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -982,7 +924,7 @@ pub trait DpdApi {
     }]
     async fn link_autoneg_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError>;
 
     /// Set whether a port is configured to use autonegotation with its peer link.
@@ -992,27 +934,9 @@ pub trait DpdApi {
     }]
     async fn link_autoneg_set(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
         body: TypedBody<bool>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
-
-    /// Set a link's PRBS speed and mode.
-    #[endpoint {
-        method = PUT,
-        versions = ..VERSION_PRBS_ERROR_TRACKING,
-        path = "/ports/{port_id}/links/{link_id}/prbs",
-    }]
-    async fn link_prbs_set_v12(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-        body: TypedBody<v12::PortPrbsMode>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let mode = PortPrbsMode::try_from(body.into_inner()).map_err(|e| {
-            HttpError::for_bad_request(None, format!("bad PRBS mode: {e}"))
-        })?;
-
-        Self::link_prbs_set(rqctx, path, TypedBody::from(mode)).await
-    }
 
     /// Set a link's PRBS speed and mode.
     #[endpoint {
@@ -1022,25 +946,27 @@ pub trait DpdApi {
     }]
     async fn link_prbs_set(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
         body: TypedBody<PortPrbsMode>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /// Return the link's PRBS speed and mode.
-    ///
-    /// During link training, a pseudorandom bit sequence (PRBS) is used to allow
-    /// each side to synchronize their clocks and set various parameters on the
-    /// underlying circuitry (such as filter gains).
+    /// Set a link's PRBS speed and mode.
     #[endpoint {
-        method = GET,
+        method = PUT,
         versions = ..VERSION_PRBS_ERROR_TRACKING,
         path = "/ports/{port_id}/links/{link_id}/prbs",
+        operation_id = "link_prbs_set",
     }]
-    async fn link_prbs_get_v12(
+    async fn link_prbs_set_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<v12::PortPrbsMode>, HttpError> {
-        Self::link_prbs_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+        path: Path<v1::link::LinkPath>,
+        body: TypedBody<v1::port::PortPrbsMode>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let mode = PortPrbsMode::try_from(body.into_inner()).map_err(|e| {
+            HttpError::for_bad_request(None, format!("bad PRBS mode: {e}"))
+        })?;
+
+        Self::link_prbs_set(rqctx, path, TypedBody::from(mode)).await
     }
 
     /// Return the link's PRBS speed and mode.
@@ -1055,8 +981,26 @@ pub trait DpdApi {
     }]
     async fn link_prbs_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<PortPrbsMode>, HttpError>;
+
+    /// Return the link's PRBS speed and mode.
+    ///
+    /// During link training, a pseudorandom bit sequence (PRBS) is used to allow
+    /// each side to synchronize their clocks and set various parameters on the
+    /// underlying circuitry (such as filter gains).
+    #[endpoint {
+        method = GET,
+        versions = ..VERSION_PRBS_ERROR_TRACKING,
+        path = "/ports/{port_id}/links/{link_id}/prbs",
+        operation_id = "link_prbs_get",
+    }]
+    async fn link_prbs_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<v1::port::PortPrbsMode>, HttpError> {
+        Self::link_prbs_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+    }
 
     /// Return whether a link is up.
     #[endpoint {
@@ -1065,7 +1009,7 @@ pub trait DpdApi {
     }]
     async fn link_linkup_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError>;
 
     /// Return any fault currently set on this link
@@ -1075,8 +1019,8 @@ pub trait DpdApi {
     }]
     async fn link_fault_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<FaultCondition>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<latest::fault::FaultCondition>, HttpError>;
 
     /// Clear any fault currently set on this link
     #[endpoint {
@@ -1085,7 +1029,7 @@ pub trait DpdApi {
     }]
     async fn link_fault_clear(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /// Inject a fault on this link
@@ -1095,7 +1039,7 @@ pub trait DpdApi {
     }]
     async fn link_fault_inject(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
         entry: TypedBody<String>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -1106,8 +1050,8 @@ pub trait DpdApi {
     }]
     async fn link_ipv4_list(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-        query: Query<PaginationParams<EmptyScanParams, Ipv4Token>>,
+        path: Path<latest::link::LinkPath>,
+        query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv4Token>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv4Entry>>, HttpError>;
 
     /// Add an IPv4 address to a link.
@@ -1117,7 +1061,7 @@ pub trait DpdApi {
     }]
     async fn link_ipv4_create(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
         entry: TypedBody<Ipv4Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -1128,7 +1072,7 @@ pub trait DpdApi {
     }]
     async fn link_ipv4_reset(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Remove an IPv4 address from a link.
@@ -1138,7 +1082,7 @@ pub trait DpdApi {
     }]
     async fn link_ipv4_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkIpv4Path>,
+        path: Path<latest::link::LinkIpv4Path>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /// List the IPv6 addresses associated with a link.
@@ -1148,8 +1092,8 @@ pub trait DpdApi {
     }]
     async fn link_ipv6_list(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-        query: Query<PaginationParams<EmptyScanParams, Ipv6Token>>,
+        path: Path<latest::link::LinkPath>,
+        query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv6Token>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv6Entry>>, HttpError>;
 
     /// Add an IPv6 address to a link.
@@ -1159,7 +1103,7 @@ pub trait DpdApi {
     }]
     async fn link_ipv6_create(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
         entry: TypedBody<Ipv6Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -1170,7 +1114,7 @@ pub trait DpdApi {
     }]
     async fn link_ipv6_reset(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Remove an IPv6 address from a link.
@@ -1180,7 +1124,7 @@ pub trait DpdApi {
     }]
     async fn link_ipv6_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkIpv6Path>,
+        path: Path<latest::link::LinkIpv6Path>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /// Get a link's MAC address.
@@ -1190,7 +1134,7 @@ pub trait DpdApi {
     }]
     async fn link_mac_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<MacAddr>, HttpError>;
 
     /// Set a link's MAC address.
@@ -1204,7 +1148,7 @@ pub trait DpdApi {
     }]
     async fn link_mac_set(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
         body: TypedBody<MacAddr>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -1212,11 +1156,12 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/nat_only",
-	versions = ..VERSION_UPLINK_PORTS
+        versions = ..VERSION_UPLINK_PORTS,
+        operation_id = "link_nat_only_get",
     }]
-    async fn link_nat_only_get(
+    async fn link_nat_only_get_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<v1::link::LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError> {
         Self::link_uplink_get(rqctx, path).await
     }
@@ -1225,22 +1170,23 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/uplink",
-	versions = VERSION_UPLINK_PORTS..
+        versions = VERSION_UPLINK_PORTS..,
     }]
     async fn link_uplink_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError>;
 
     /// Set whether a port is configured to use drop non-nat traffic
     #[endpoint {
         method = PUT,
         path = "/ports/{port_id}/links/{link_id}/nat_only",
-	versions = ..VERSION_UPLINK_PORTS
+        versions = ..VERSION_UPLINK_PORTS,
+        operation_id = "link_nat_only_set",
     }]
-    async fn link_nat_only_set(
+    async fn link_nat_only_set_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<v1::link::LinkPath>,
         body: TypedBody<bool>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         Self::link_uplink_set(rqctx, path, body).await
@@ -1250,11 +1196,11 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/ports/{port_id}/links/{link_id}/uplink",
-	versions = VERSION_UPLINK_PORTS..
+        versions = VERSION_UPLINK_PORTS..,
     }]
     async fn link_uplink_set(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
         body: TypedBody<bool>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -1262,29 +1208,28 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/history",
-        versions = ..VERSION_WALLCLOCK_HISTORY
+        versions = VERSION_WALLCLOCK_HISTORY..,
     }]
-    async fn link_history_get_v11(
+    async fn link_history_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<v11::LinkHistory>, HttpError> {
-        let history = Self::link_history_get(rqctx, path).await?.0;
-        Ok(HttpResponseOk(v11::LinkHistory {
-            timestamp: history.relative,
-            events: history.events,
-        }))
-    }
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<latest::link::LinkHistory>, HttpError>;
 
     /// Get the event history for the given link.
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/history",
-        versions = VERSION_WALLCLOCK_HISTORY..
+        versions = ..VERSION_WALLCLOCK_HISTORY,
+        operation_id = "link_history_get",
     }]
-    async fn link_history_get(
+    async fn link_history_get_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<views::LinkHistory>, HttpError>;
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<v1::link::LinkHistory>, HttpError> {
+        Self::link_history_get(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
 
     /**
      * Get loopback IPv4 addresses.
@@ -1318,7 +1263,7 @@ pub trait DpdApi {
     }]
     async fn loopback_ipv4_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LoopbackIpv4Path>,
+        path: Path<latest::loopback::LoopbackIpv4Path>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -1353,7 +1298,7 @@ pub trait DpdApi {
     }]
     async fn loopback_ipv6_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LoopbackIpv6Path>,
+        path: Path<latest::loopback::LoopbackIpv6Path>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -1365,7 +1310,7 @@ pub trait DpdApi {
     }]
     async fn nat_ipv6_addresses_list(
         rqctx: RequestContext<Self::Context>,
-        query: Query<PaginationParams<EmptyScanParams, Ipv6Token>>,
+        query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv6Token>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv6Addr>>, HttpError>;
 
     /**
@@ -1377,8 +1322,8 @@ pub trait DpdApi {
     }]
     async fn nat_ipv6_list(
         rqctx: RequestContext<Self::Context>,
-        path: Path<NatIpv6Path>,
-        query: Query<PaginationParams<EmptyScanParams, NatToken>>,
+        path: Path<latest::nat::NatIpv6Path>,
+        query: Query<PaginationParams<EmptyScanParams, latest::nat::NatToken>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv6Nat>>, HttpError>;
 
     /**
@@ -1391,7 +1336,7 @@ pub trait DpdApi {
     }]
     async fn nat_ipv6_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<NatIpv6PortPath>,
+        path: Path<latest::nat::NatIpv6PortPath>,
     ) -> Result<HttpResponseOk<NatTarget>, HttpError>;
 
     /**
@@ -1413,7 +1358,7 @@ pub trait DpdApi {
     }]
     async fn nat_ipv6_create(
         rqctx: RequestContext<Self::Context>,
-        path: Path<NatIpv6RangePath>,
+        path: Path<latest::nat::NatIpv6RangePath>,
         target: TypedBody<NatTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -1426,7 +1371,7 @@ pub trait DpdApi {
     }]
     async fn nat_ipv6_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<NatIpv6PortPath>,
+        path: Path<latest::nat::NatIpv6PortPath>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -1449,7 +1394,7 @@ pub trait DpdApi {
     }]
     async fn nat_ipv4_addresses_list(
         rqctx: RequestContext<Self::Context>,
-        query: Query<PaginationParams<EmptyScanParams, Ipv4Token>>,
+        query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv4Token>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv4Addr>>, HttpError>;
 
     /**
@@ -1461,8 +1406,8 @@ pub trait DpdApi {
     }]
     async fn nat_ipv4_list(
         rqctx: RequestContext<Self::Context>,
-        path: Path<NatIpv4Path>,
-        query: Query<PaginationParams<EmptyScanParams, NatToken>>,
+        path: Path<latest::nat::NatIpv4Path>,
+        query: Query<PaginationParams<EmptyScanParams, latest::nat::NatToken>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv4Nat>>, HttpError>;
 
     /**
@@ -1474,7 +1419,7 @@ pub trait DpdApi {
     }]
     async fn nat_ipv4_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<NatIpv4PortPath>,
+        path: Path<latest::nat::NatIpv4PortPath>,
     ) -> Result<HttpResponseOk<NatTarget>, HttpError>;
 
     /**
@@ -1496,7 +1441,7 @@ pub trait DpdApi {
     }]
     async fn nat_ipv4_create(
         rqctx: RequestContext<Self::Context>,
-        path: Path<NatIpv4RangePath>,
+        path: Path<latest::nat::NatIpv4RangePath>,
         target: TypedBody<NatTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -1509,7 +1454,7 @@ pub trait DpdApi {
     }]
     async fn nat_ipv4_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<NatIpv4PortPath>,
+        path: Path<latest::nat::NatIpv4PortPath>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -1529,11 +1474,16 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/attached_subnet",
-	versions = VERSION_ATTACHED_SUBNETS..,
+        versions = VERSION_ATTACHED_SUBNETS..,
     }]
     async fn attached_subnet_list(
         rqctx: RequestContext<Self::Context>,
-        query: Query<PaginationParams<EmptyScanParams, AttachedSubnetToken>>,
+        query: Query<
+            PaginationParams<
+                EmptyScanParams,
+                latest::route::AttachedSubnetToken,
+            >,
+        >,
     ) -> Result<HttpResponseOk<ResultsPage<AttachedSubnetEntry>>, HttpError>;
 
     /**
@@ -1542,11 +1492,11 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/attached_subnet/{subnet}",
-	versions = VERSION_ATTACHED_SUBNETS..,
+        versions = VERSION_ATTACHED_SUBNETS..,
     }]
     async fn attached_subnet_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<SubnetPath>,
+        path: Path<latest::route::SubnetPath>,
     ) -> Result<HttpResponseOk<InstanceTarget>, HttpError>;
 
     /**
@@ -1559,11 +1509,11 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/attached_subnet/{subnet}",
-	versions = VERSION_ATTACHED_SUBNETS..,
+        versions = VERSION_ATTACHED_SUBNETS..,
     }]
     async fn attached_subnet_create(
         rqctx: RequestContext<Self::Context>,
-        path: Path<SubnetPath>,
+        path: Path<latest::route::SubnetPath>,
         target: TypedBody<InstanceTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -1573,11 +1523,11 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/attached_subnet/{subnet}",
-	versions = VERSION_ATTACHED_SUBNETS..,
+        versions = VERSION_ATTACHED_SUBNETS..,
     }]
     async fn attached_subnet_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<SubnetPath>,
+        path: Path<latest::route::SubnetPath>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -1586,7 +1536,7 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/attached_subnet",
-	versions = VERSION_ATTACHED_SUBNETS..,
+        versions = VERSION_ATTACHED_SUBNETS..,
     }]
     async fn attached_subnet_reset(
         rqctx: RequestContext<Self::Context>,
@@ -1607,7 +1557,7 @@ pub trait DpdApi {
     }]
     async fn reset_all_tagged(
         rqctx: RequestContext<Self::Context>,
-        path: Path<TagPath>,
+        path: Path<latest::misc::TagPath>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Clear all settings.
@@ -1630,7 +1580,7 @@ pub trait DpdApi {
     }]
     async fn link_up_counters_list(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<LinkUpCounter>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<latest::link::LinkUpCounter>>, HttpError>;
 
     /// Get the LinkUp counters for the given link.
     #[endpoint {
@@ -1639,8 +1589,8 @@ pub trait DpdApi {
     }]
     async fn link_up_counters_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<LinkUpCounter>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<latest::link::LinkUpCounter>, HttpError>;
 
     /// Get the autonegotiation FSM counters for the given link.
     #[endpoint {
@@ -1649,8 +1599,8 @@ pub trait DpdApi {
     }]
     async fn link_fsm_counters_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<LinkFsmCounters>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<latest::link::LinkFsmCounters>, HttpError>;
 
     /// Return detailed build information about the `dpd` server itself.
     #[endpoint {
@@ -1659,7 +1609,7 @@ pub trait DpdApi {
     }]
     async fn build_info(
         _rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<BuildInfo>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::misc::BuildInfo>, HttpError>;
 
     /**
      * Return the version of the `dpd` server itself.
@@ -1709,10 +1659,10 @@ pub trait DpdApi {
     }]
     async fn port_settings_apply(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
-        body: TypedBody<PortSettings>,
-    ) -> Result<HttpResponseOk<PortSettings>, HttpError>;
+        path: Path<latest::port::PortIdPathParams>,
+        query: Query<latest::port::PortSettingsTag>,
+        body: TypedBody<latest::port::PortSettings>,
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
 
     /**
      * Clear port settings atomically.
@@ -1723,9 +1673,9 @@ pub trait DpdApi {
     }]
     async fn port_settings_clear(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
-    ) -> Result<HttpResponseOk<PortSettings>, HttpError>;
+        path: Path<latest::port::PortIdPathParams>,
+        query: Query<latest::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
 
     /**
      * Get port settings atomically.
@@ -1736,9 +1686,9 @@ pub trait DpdApi {
     }]
     async fn port_settings_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
-    ) -> Result<HttpResponseOk<PortSettings>, HttpError>;
+        path: Path<latest::port::PortIdPathParams>,
+        query: Query<latest::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
 
     /// Get switch identifiers.
     ///
@@ -1751,7 +1701,10 @@ pub trait DpdApi {
     }]
     async fn switch_identifiers(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<SwitchIdentifiers>, HttpError>;
+    ) -> Result<
+        HttpResponseOk<latest::switch_identifiers::SwitchIdentifiers>,
+        HttpError,
+    >;
 
     /// Get switch identifiers.
     ///
@@ -1765,7 +1718,10 @@ pub trait DpdApi {
     }]
     async fn switch_identifiers_v1(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<v1::SwitchIdentifiers>, HttpError> {
+    ) -> Result<
+        HttpResponseOk<v1::switch_identifiers::SwitchIdentifiers>,
+        HttpError,
+    > {
         let result = Self::switch_identifiers(rqctx).await?.0;
         Ok(HttpResponseOk(result.into()))
     }
@@ -1780,19 +1736,7 @@ pub trait DpdApi {
     }]
     async fn tfport_data(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<views::TfportData>>, HttpError>;
-
-    /**
-     * Get NATv4 generation number
-     */
-    #[endpoint {
-        method = GET,
-        path = "/rpw/nat/ipv4/gen",
-        versions = ..VERSION_DUAL_STACK_NAT_WORKFLOW
-    }]
-    async fn ipv4_nat_generation(
-        rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<i64>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<latest::link::TfportData>>, HttpError>;
 
     /**
      * Get NAT generation number
@@ -1807,16 +1751,19 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<i64>, HttpError>;
 
     /**
-     * Trigger NATv4 Reconciliation
+     * Get NATv4 generation number
      */
     #[endpoint {
-        method = POST,
-        path = "/rpw/nat/ipv4/trigger",
-        versions = ..VERSION_DUAL_STACK_NAT_WORKFLOW
+        method = GET,
+        path = "/rpw/nat/ipv4/gen",
+        versions = ..VERSION_DUAL_STACK_NAT_WORKFLOW,
+        operation_id = "ipv4_nat_generation",
     }]
-    async fn ipv4_nat_trigger_update(
+    async fn ipv4_nat_generation_v1(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<()>, HttpError>;
+    ) -> Result<HttpResponseOk<i64>, HttpError> {
+        Self::nat_generation(rqctx).await
+    }
 
     /**
      * Trigger NAT Reconciliation
@@ -1829,6 +1776,21 @@ pub trait DpdApi {
     async fn nat_trigger_update(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseOk<()>, HttpError>;
+
+    /**
+     * Trigger NATv4 Reconciliation
+     */
+    #[endpoint {
+        method = POST,
+        path = "/rpw/nat/ipv4/trigger",
+        versions = ..VERSION_DUAL_STACK_NAT_WORKFLOW,
+        operation_id = "ipv4_nat_trigger_update",
+    }]
+    async fn ipv4_nat_trigger_update_v1(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<()>, HttpError> {
+        Self::nat_trigger_update(rqctx).await
+    }
 
     /**
      * Get the list of P4 tables
@@ -1853,9 +1815,9 @@ pub trait DpdApi {
     }]
     async fn table_dump(
         rqctx: RequestContext<Self::Context>,
-        query: Query<TableDumpOptions>,
-        path: Path<TableParam>,
-    ) -> Result<HttpResponseOk<views::Table>, HttpError>;
+        query: Query<latest::snapshot::TableDumpOptions>,
+        path: Path<latest::table::TableParam>,
+    ) -> Result<HttpResponseOk<latest::table::Table>, HttpError>;
 
     /**
      * Get the contents of a single P4 table.
@@ -1870,11 +1832,13 @@ pub trait DpdApi {
     }]
     async fn table_dump_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<TableParam>,
-    ) -> Result<HttpResponseOk<views::Table>, HttpError> {
+        path: Path<v1::table::TableParam>,
+    ) -> Result<HttpResponseOk<v1::table::Table>, HttpError> {
         Self::table_dump(
             rqctx,
-            Query::from(TableDumpOptions { from_hardware: false }),
+            Query::from(latest::snapshot::TableDumpOptions {
+                from_hardware: false,
+            }),
             path,
         )
         .await
@@ -1891,9 +1855,9 @@ pub trait DpdApi {
     }]
     async fn table_counters(
         rqctx: RequestContext<Self::Context>,
-        query: Query<CounterSync>,
-        path: Path<TableParam>,
-    ) -> Result<HttpResponseOk<Vec<views::TableCounterEntry>>, HttpError>;
+        query: Query<latest::counters::CounterSync>,
+        path: Path<latest::table::TableParam>,
+    ) -> Result<HttpResponseOk<Vec<latest::table::TableCounterEntry>>, HttpError>;
 
     /**
      * Get a list of all the available p4-defined counters.
@@ -1917,7 +1881,7 @@ pub trait DpdApi {
     }]
     async fn counter_reset(
         rqctx: RequestContext<Self::Context>,
-        path: Path<CounterPath>,
+        path: Path<latest::counters::CounterPath>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -1931,9 +1895,9 @@ pub trait DpdApi {
     }]
     async fn counter_get(
         rqctx: RequestContext<Self::Context>,
-        query: Query<CounterSync>,
-        path: Path<CounterPath>,
-    ) -> Result<HttpResponseOk<Vec<views::TableCounterEntry>>, HttpError>;
+        query: Query<latest::counters::CounterSync>,
+        path: Path<latest::counters::CounterPath>,
+    ) -> Result<HttpResponseOk<Vec<latest::table::TableCounterEntry>>, HttpError>;
 
     /**
      * Create an external-only multicast group configuration.
@@ -1949,9 +1913,9 @@ pub trait DpdApi {
     }]
     async fn multicast_group_create_external(
         rqctx: RequestContext<Self::Context>,
-        group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
+        group: TypedBody<latest::mcast::MulticastGroupCreateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<mcast::MulticastGroupExternalResponse>,
+        HttpResponseCreated<latest::mcast::MulticastGroupExternalResponse>,
         HttpError,
     >;
 
@@ -1964,9 +1928,9 @@ pub trait DpdApi {
     }]
     async fn multicast_group_create_external_v7(
         rqctx: RequestContext<Self::Context>,
-        group: TypedBody<mcast::MulticastGroupCreateExternalEntry>,
+        group: TypedBody<v7::mcast::MulticastGroupCreateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<v7::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v7::mcast::MulticastGroupExternalResponse>,
         HttpError,
     > {
         Self::multicast_group_create_external(rqctx, group)
@@ -1989,14 +1953,17 @@ pub trait DpdApi {
     }]
     async fn multicast_group_create_external_v1(
         rqctx: RequestContext<Self::Context>,
-        group: TypedBody<v1::MulticastGroupCreateExternalEntry>,
+        group: TypedBody<v1::mcast::MulticastGroupCreateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<v1::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v1::mcast::MulticastGroupExternalResponse>,
         HttpError,
     > {
-        Self::multicast_group_create_external(rqctx, group.map(Into::into))
-            .await
-            .map(|resp| resp.map(Into::into))
+        Self::multicast_group_create_external_v7(
+            rqctx,
+            group.map(Into::into),
+        )
+        .await
+        .map(|resp| resp.map(Into::into))
     }
 
     /// Create an underlay (internal) multicast group configuration.
@@ -2007,9 +1974,9 @@ pub trait DpdApi {
     }]
     async fn multicast_group_create_underlay(
         rqctx: RequestContext<Self::Context>,
-        group: TypedBody<mcast::MulticastGroupCreateUnderlayEntry>,
+        group: TypedBody<latest::mcast::MulticastGroupCreateUnderlayEntry>,
     ) -> Result<
-        HttpResponseCreated<mcast::MulticastGroupUnderlayResponse>,
+        HttpResponseCreated<latest::mcast::MulticastGroupUnderlayResponse>,
         HttpError,
     >;
 
@@ -2028,16 +1995,17 @@ pub trait DpdApi {
     }]
     async fn multicast_group_create_underlay_v1(
         rqctx: RequestContext<Self::Context>,
-        group: TypedBody<v1::MulticastGroupCreateUnderlayEntry>,
+        group: TypedBody<v1::mcast::MulticastGroupCreateUnderlayEntry>,
     ) -> Result<
-        HttpResponseCreated<v1::MulticastGroupUnderlayResponse>,
+        HttpResponseCreated<v1::mcast::MulticastGroupUnderlayResponse>,
         HttpError,
     > {
         let v4_body = group
             .try_map(|entry| {
-                let group_ip =
-                    mcast::UnderlayMulticastIpv6::try_from(entry.group_ip)?;
-                Ok(mcast::MulticastGroupCreateUnderlayEntry {
+                let group_ip = latest::mcast::UnderlayMulticastIpv6::try_from(
+                    entry.group_ip,
+                )?;
+                Ok(latest::mcast::MulticastGroupCreateUnderlayEntry {
                     group_ip,
                     tag: entry.tag,
                     members: entry.members,
@@ -2062,13 +2030,17 @@ pub trait DpdApi {
     }]
     async fn multicast_group_delete(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastGroupIpParam>,
-        query: Query<MulticastGroupTagQuery>,
+        path: Path<latest::mcast::MulticastGroupIpParam>,
+        query: Query<latest::mcast::MulticastGroupTagQuery>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
      * Delete a multicast group configuration by IP address.
      */
+    // This is a required method because the latest version requires a
+    // `MulticastGroupTagQuery` query parameter for tag validation, which
+    // the v1 endpoint does not have. There is no sensible default tag to
+    // synthesize, so the implementation must handle this case directly.
     #[endpoint {
         method = DELETE,
         path = "/multicast/groups/{group_ip}",
@@ -2077,7 +2049,7 @@ pub trait DpdApi {
     }]
     async fn multicast_group_delete_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastGroupIpParam>,
+        path: Path<v1::mcast::MulticastGroupIpParam>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -2101,8 +2073,8 @@ pub trait DpdApi {
     }]
     async fn multicast_group_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastGroupIpParam>,
-    ) -> Result<HttpResponseOk<mcast::MulticastGroupResponse>, HttpError>;
+        path: Path<latest::mcast::MulticastGroupIpParam>,
+    ) -> Result<HttpResponseOk<latest::mcast::MulticastGroupResponse>, HttpError>;
 
     /// Get the multicast group configuration for a given group IP address.
     #[endpoint {
@@ -2113,8 +2085,9 @@ pub trait DpdApi {
     }]
     async fn multicast_group_get_v7(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastGroupIpParam>,
-    ) -> Result<HttpResponseOk<v7::MulticastGroupResponse>, HttpError> {
+        path: Path<v1::mcast::MulticastGroupIpParam>,
+    ) -> Result<HttpResponseOk<v7::mcast::MulticastGroupResponse>, HttpError>
+    {
         Self::multicast_group_get(rqctx, path)
             .await
             .map(|resp| resp.map(Into::into))
@@ -2131,9 +2104,10 @@ pub trait DpdApi {
     }]
     async fn multicast_group_get_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastGroupIpParam>,
-    ) -> Result<HttpResponseOk<v1::MulticastGroupResponse>, HttpError> {
-        Self::multicast_group_get(rqctx, path)
+        path: Path<v1::mcast::MulticastGroupIpParam>,
+    ) -> Result<HttpResponseOk<v1::mcast::MulticastGroupResponse>, HttpError>
+    {
+        Self::multicast_group_get_v7(rqctx, path)
             .await
             .map(|resp| resp.map(Into::into))
     }
@@ -2146,8 +2120,11 @@ pub trait DpdApi {
     }]
     async fn multicast_group_get_underlay(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastUnderlayGroupIpParam>,
-    ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
+        path: Path<latest::mcast::MulticastUnderlayGroupIpParam>,
+    ) -> Result<
+        HttpResponseOk<latest::mcast::MulticastGroupUnderlayResponse>,
+        HttpError,
+    >;
 
     /**
      * Get an underlay (internal) multicast group configuration by admin-scoped
@@ -2164,12 +2141,16 @@ pub trait DpdApi {
     }]
     async fn multicast_group_get_underlay_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<v1::MulticastUnderlayGroupIpParam>,
-    ) -> Result<HttpResponseOk<v1::MulticastGroupUnderlayResponse>, HttpError>
-    {
+        path: Path<v1::mcast::MulticastUnderlayGroupIpParam>,
+    ) -> Result<
+        HttpResponseOk<v1::mcast::MulticastGroupUnderlayResponse>,
+        HttpError,
+    > {
         let v4_path = path.try_map(|p| {
-            mcast::UnderlayMulticastIpv6::try_from(p.group_ip)
-                .map(|group_ip| MulticastUnderlayGroupIpParam { group_ip })
+            latest::mcast::UnderlayMulticastIpv6::try_from(p.group_ip)
+                .map(|group_ip| latest::mcast::MulticastUnderlayGroupIpParam {
+                    group_ip,
+                })
                 .map_err(|e| {
                     HttpError::for_bad_request(
                         None,
@@ -2193,10 +2174,13 @@ pub trait DpdApi {
     }]
     async fn multicast_group_update_underlay(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastUnderlayGroupIpParam>,
-        query: Query<MulticastGroupTagQuery>,
-        group: TypedBody<mcast::MulticastGroupUpdateUnderlayEntry>,
-    ) -> Result<HttpResponseOk<mcast::MulticastGroupUnderlayResponse>, HttpError>;
+        path: Path<latest::mcast::MulticastUnderlayGroupIpParam>,
+        query: Query<latest::mcast::MulticastGroupTagQuery>,
+        group: TypedBody<latest::mcast::MulticastGroupUpdateUnderlayEntry>,
+    ) -> Result<
+        HttpResponseOk<latest::mcast::MulticastGroupUnderlayResponse>,
+        HttpError,
+    >;
 
     /**
      * Update an underlay (internal) multicast group configuration for a given
@@ -2205,6 +2189,10 @@ pub trait DpdApi {
      * Underlay groups are used for admin-scoped IPv6 multicast traffic that
      * requires replication infrastructure with external and underlay members.
      */
+    // Required method: the latest version requires a `MulticastGroupTagQuery`
+    // query parameter that v1 does not have. When the tag is absent from the
+    // request body, the implementation must look up the existing group's tag
+    // via `Self::Context`, which is not available in a provided method.
     #[endpoint {
         method = PUT,
         path = "/multicast/underlay-groups/{group_ip}",
@@ -2213,9 +2201,12 @@ pub trait DpdApi {
     }]
     async fn multicast_group_update_underlay_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<v1::MulticastUnderlayGroupIpParam>,
-        group: TypedBody<v1::MulticastGroupUpdateUnderlayEntry>,
-    ) -> Result<HttpResponseOk<v1::MulticastGroupUnderlayResponse>, HttpError>;
+        path: Path<v1::mcast::MulticastUnderlayGroupIpParam>,
+        group: TypedBody<v1::mcast::MulticastGroupUpdateUnderlayEntry>,
+    ) -> Result<
+        HttpResponseOk<v1::mcast::MulticastGroupUnderlayResponse>,
+        HttpError,
+    >;
 
     /**
      * Update an external-only multicast group configuration for a given group IP address.
@@ -2232,16 +2223,23 @@ pub trait DpdApi {
     }]
     async fn multicast_group_update_external(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastGroupIpParam>,
-        query: Query<MulticastGroupTagQuery>,
-        group: TypedBody<mcast::MulticastGroupUpdateExternalEntry>,
-    ) -> Result<HttpResponseOk<mcast::MulticastGroupExternalResponse>, HttpError>;
+        path: Path<latest::mcast::MulticastGroupIpParam>,
+        query: Query<latest::mcast::MulticastGroupTagQuery>,
+        group: TypedBody<latest::mcast::MulticastGroupUpdateExternalEntry>,
+    ) -> Result<
+        HttpResponseOk<latest::mcast::MulticastGroupExternalResponse>,
+        HttpError,
+    >;
 
     /**
      * Update an external-only multicast group configuration.
      *
      * Tags are optional for backward compatibility.
      */
+    // Required method: the latest version requires a `MulticastGroupTagQuery`
+    // query parameter that v7 does not have. When the tag is absent from the
+    // request body, the implementation must look up the existing group's tag
+    // via `Self::Context`, which is not available in a provided method.
     #[endpoint {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",
@@ -2250,10 +2248,10 @@ pub trait DpdApi {
     }]
     async fn multicast_group_update_external_v7(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastGroupIpParam>,
-        group: TypedBody<v7::MulticastGroupUpdateExternalEntry>,
+        path: Path<v1::mcast::MulticastGroupIpParam>,
+        group: TypedBody<v7::mcast::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<v7::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v7::mcast::MulticastGroupExternalResponse>,
         HttpError,
     >;
 
@@ -2263,6 +2261,7 @@ pub trait DpdApi {
      * External-only groups are used for IPv4 and non-admin-scoped IPv6
      * multicast traffic that doesn't require replication infrastructure.
      */
+    // Required method: same reason as `multicast_group_update_external_v7`.
     #[endpoint {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",
@@ -2271,10 +2270,10 @@ pub trait DpdApi {
     }]
     async fn multicast_group_update_external_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastGroupIpParam>,
-        group: TypedBody<v1::MulticastGroupUpdateExternalEntry>,
+        path: Path<v1::mcast::MulticastGroupIpParam>,
+        group: TypedBody<v1::mcast::MulticastGroupUpdateExternalEntry>,
     ) -> Result<
-        HttpResponseCreated<v1::MulticastGroupExternalResponse>,
+        HttpResponseCreated<v1::mcast::MulticastGroupExternalResponse>,
         HttpError,
     >;
 
@@ -2289,10 +2288,13 @@ pub trait DpdApi {
     async fn multicast_groups_list(
         rqctx: RequestContext<Self::Context>,
         query_params: Query<
-            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+            PaginationParams<
+                EmptyScanParams,
+                latest::mcast::MulticastGroupIpParam,
+            >,
         >,
     ) -> Result<
-        HttpResponseOk<ResultsPage<mcast::MulticastGroupResponse>>,
+        HttpResponseOk<ResultsPage<latest::mcast::MulticastGroupResponse>>,
         HttpError,
     >;
 
@@ -2306,10 +2308,10 @@ pub trait DpdApi {
     async fn multicast_groups_list_v7(
         rqctx: RequestContext<Self::Context>,
         query_params: Query<
-            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+            PaginationParams<EmptyScanParams, v1::mcast::MulticastGroupIpParam>,
         >,
     ) -> Result<
-        HttpResponseOk<ResultsPage<v7::MulticastGroupResponse>>,
+        HttpResponseOk<ResultsPage<v7::mcast::MulticastGroupResponse>>,
         HttpError,
     > {
         let HttpResponseOk(page) =
@@ -2332,14 +2334,14 @@ pub trait DpdApi {
     async fn multicast_groups_list_v1(
         rqctx: RequestContext<Self::Context>,
         query_params: Query<
-            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+            PaginationParams<EmptyScanParams, v1::mcast::MulticastGroupIpParam>,
         >,
     ) -> Result<
-        HttpResponseOk<ResultsPage<v1::MulticastGroupResponse>>,
+        HttpResponseOk<ResultsPage<v1::mcast::MulticastGroupResponse>>,
         HttpError,
     > {
         let HttpResponseOk(page) =
-            Self::multicast_groups_list(rqctx, query_params).await?;
+            Self::multicast_groups_list_v7(rqctx, query_params).await?;
         Ok(HttpResponseOk(ResultsPage {
             items: page.items.into_iter().map(Into::into).collect(),
             next_page: page.next_page,
@@ -2360,12 +2362,15 @@ pub trait DpdApi {
     }]
     async fn multicast_groups_list_by_tag(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastTagPath>,
+        path: Path<latest::mcast::MulticastTagPath>,
         query_params: Query<
-            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+            PaginationParams<
+                EmptyScanParams,
+                latest::mcast::MulticastGroupIpParam,
+            >,
         >,
     ) -> Result<
-        HttpResponseOk<ResultsPage<mcast::MulticastGroupResponse>>,
+        HttpResponseOk<ResultsPage<latest::mcast::MulticastGroupResponse>>,
         HttpError,
     >;
 
@@ -2378,12 +2383,12 @@ pub trait DpdApi {
     }]
     async fn multicast_groups_list_by_tag_v7(
         rqctx: RequestContext<Self::Context>,
-        path: Path<TagPath>,
+        path: Path<v1::misc::TagPath>,
         query_params: Query<
-            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+            PaginationParams<EmptyScanParams, v1::mcast::MulticastGroupIpParam>,
         >,
     ) -> Result<
-        HttpResponseOk<ResultsPage<v7::MulticastGroupResponse>>,
+        HttpResponseOk<ResultsPage<v7::mcast::MulticastGroupResponse>>,
         HttpError,
     > {
         let HttpResponseOk(page) = Self::multicast_groups_list_by_tag(
@@ -2409,17 +2414,17 @@ pub trait DpdApi {
     }]
     async fn multicast_groups_list_by_tag_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<TagPath>,
+        path: Path<v1::misc::TagPath>,
         query_params: Query<
-            PaginationParams<EmptyScanParams, MulticastGroupIpParam>,
+            PaginationParams<EmptyScanParams, v1::mcast::MulticastGroupIpParam>,
         >,
     ) -> Result<
-        HttpResponseOk<ResultsPage<v1::MulticastGroupResponse>>,
+        HttpResponseOk<ResultsPage<v1::mcast::MulticastGroupResponse>>,
         HttpError,
     > {
-        let HttpResponseOk(page) = Self::multicast_groups_list_by_tag(
+        let HttpResponseOk(page) = Self::multicast_groups_list_by_tag_v7(
             rqctx,
-            path.map(Into::into),
+            path,
             query_params,
         )
         .await?;
@@ -2444,7 +2449,7 @@ pub trait DpdApi {
     }]
     async fn multicast_reset_by_tag(
         rqctx: RequestContext<Self::Context>,
-        path: Path<MulticastTagPath>,
+        path: Path<latest::mcast::MulticastTagPath>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
@@ -2458,7 +2463,7 @@ pub trait DpdApi {
     }]
     async fn multicast_reset_by_tag_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<TagPath>,
+        path: Path<v1::misc::TagPath>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         Self::multicast_reset_by_tag(rqctx, path.map(Into::into)).await
     }
@@ -2482,6 +2487,8 @@ pub trait DpdApi {
     /**
      * Delete all multicast groups (and associated routes) without a tag.
      */
+    // Required method: the latest version always returns 410 Gone, while v1
+    // actually deletes untagged groups. The semantic behavior is different.
     #[endpoint {
         method = DELETE,
         path = "/multicast/untagged",
@@ -2501,7 +2508,7 @@ pub trait DpdApi {
     }]
     async fn pcs_counters_list(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<LinkPcsCounters>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<latest::counters::LinkPcsCounters>>, HttpError>;
 
     /**
      * Get the Physical Coding Sublayer (PCS) counters for the given link.
@@ -2512,8 +2519,8 @@ pub trait DpdApi {
     }]
     async fn pcs_counters_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<LinkPcsCounters>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<latest::counters::LinkPcsCounters>, HttpError>;
 
     /**
      * Get the FEC RS counters for all links.
@@ -2524,7 +2531,10 @@ pub trait DpdApi {
     }]
     async fn fec_rs_counters_list(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<LinkFecRSCounters>>, HttpError>;
+    ) -> Result<
+        HttpResponseOk<Vec<latest::counters::LinkFecRSCounters>>,
+        HttpError,
+    >;
 
     /**
      * Get the FEC RS counters for the given link.
@@ -2535,8 +2545,8 @@ pub trait DpdApi {
     }]
     async fn fec_rs_counters_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<LinkFecRSCounters>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<latest::counters::LinkFecRSCounters>, HttpError>;
 
     /**
      * Get the most relevant subset of traffic counters for the given link.
@@ -2547,8 +2557,8 @@ pub trait DpdApi {
     }]
     async fn rmon_counters_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<LinkRMonCounters>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<latest::counters::LinkRMonCounters>, HttpError>;
 
     /**
      * Get the full set of traffic counters for the given link.
@@ -2559,8 +2569,8 @@ pub trait DpdApi {
     }]
     async fn rmon_counters_get_all(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<LinkRMonCountersAll>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<latest::counters::LinkRMonCountersAll>, HttpError>;
 
     /**
      * Get the logical->physical mappings for each lane in this port
@@ -2571,8 +2581,8 @@ pub trait DpdApi {
     }]
     async fn lane_map_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<LaneMap>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<latest::serdes::LaneMap>, HttpError>;
 
     /**
      * Get the per-lane tx eq settings for each lane on this link
@@ -2583,7 +2593,7 @@ pub trait DpdApi {
     }]
     async fn link_tx_eq_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<Vec<TxEqSwHw>>, HttpError>;
 
     /**
@@ -2595,7 +2605,7 @@ pub trait DpdApi {
     }]
     async fn link_tx_eq_set(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
+        path: Path<latest::link::LinkPath>,
         args: TypedBody<TxEq>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
@@ -2608,8 +2618,8 @@ pub trait DpdApi {
     }]
     async fn link_rx_sig_info_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<Vec<RxSigInfo>>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<latest::serdes::RxSigInfo>>, HttpError>;
 
     /**
      * Get the per-lane adaptation counts for each lane on this link
@@ -2620,8 +2630,11 @@ pub trait DpdApi {
     }]
     async fn link_rx_adapt_count_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<Vec<DfeAdaptationState>>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<
+        HttpResponseOk<Vec<latest::serdes::DfeAdaptationState>>,
+        HttpError,
+    >;
 
     /**
      * Get the per-lane eye measurements for each lane on this link
@@ -2632,8 +2645,8 @@ pub trait DpdApi {
     }]
     async fn link_eye_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<Vec<SerdesEye>>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<latest::serdes::SerdesEye>>, HttpError>;
 
     /**
      * Get the per-lane speed and encoding for each lane on this link
@@ -2644,8 +2657,8 @@ pub trait DpdApi {
     }]
     async fn link_enc_speed_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<Vec<EncSpeed>>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<latest::serdes::EncSpeed>>, HttpError>;
 
     /**
      * Get the per-lane AN/LT status for each lane on this link
@@ -2656,8 +2669,8 @@ pub trait DpdApi {
     }]
     async fn link_an_lt_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<AnLtStatus>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<latest::serdes::AnLtStatus>, HttpError>;
 
     /**
      * Return the estimated bit-error rate (BER) for a link.
@@ -2668,8 +2681,8 @@ pub trait DpdApi {
     }]
     async fn link_ber_get(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<Ber>, HttpError>;
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<latest::serdes::Ber>, HttpError>;
 
     /**
      * Return the measured bit-error rate for a link with an active PRBS
@@ -2682,8 +2695,8 @@ pub trait DpdApi {
     }]
     async fn link_prbs_get_err(
         rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-        body: TypedBody<MsDuration>,
+        path: Path<latest::link::LinkPath>,
+        body: TypedBody<latest::link::MsDuration>,
     ) -> Result<HttpResponseOk<Vec<u32>>, HttpError>;
 
     /// Capture a PHV snapshot: create snapshot, set triggers, arm, wait
@@ -2695,8 +2708,8 @@ pub trait DpdApi {
     }]
     async fn snapshot_capture(
         rqctx: RequestContext<Self::Context>,
-        body: TypedBody<SnapshotCreate>,
-    ) -> Result<HttpResponseOk<SnapshotResult>, HttpError>;
+        body: TypedBody<latest::snapshot::SnapshotCreate>,
+    ) -> Result<HttpResponseOk<latest::snapshot::SnapshotResult>, HttpError>;
 
     /// Check which fields are in scope at a given stage.
     #[endpoint {
@@ -2706,1048 +2719,9 @@ pub trait DpdApi {
     }]
     async fn snapshot_scope(
         rqctx: RequestContext<Self::Context>,
-        body: TypedBody<SnapshotScopeRequest>,
-    ) -> Result<HttpResponseOk<Vec<SnapshotFieldScope>>, HttpError>;
-}
-
-/// Duration in milliseconds
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct MsDuration {
-    /// Duration in milliseconds
-    pub ms: u32,
-}
-
-/// Parameter used to create a port.
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct PortCreateParams {
-    /// The name of the port. This should be a string like `"3:0"`.
-    pub name: String,
-    /// The speed at which to configure the port.
-    pub speed: PortSpeed,
-    /// The forward error-correction scheme for the port.
-    pub fec: PortFec,
-}
-
-/// Represents the free MAC channels on a single physical port.
-#[derive(Deserialize, Serialize, JsonSchema, Debug)]
-pub struct FreeChannels {
-    /// The switch port.
-    pub port_id: PortId,
-    /// The Tofino connector for this port.
-    ///
-    /// This describes the set of electrical connections representing this port
-    /// object, which are defined by the pinout and board design of the Sidecar.
-    pub connector: String,
-    /// The set of available channels (lanes) on this connector.
-    pub channels: Vec<u8>,
-}
-
-/// Represents the mapping of an IP address to a MAC address.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct ArpEntry {
-    /// A tag used to associate this entry with a client.
-    pub tag: String,
-    /// The IP address for the entry.
-    pub ip: IpAddr,
-    /// The MAC address to which `ip` maps.
-    pub mac: MacAddr,
-    /// The time the entry was updated
-    pub update: String,
-}
-
-/// Represents a specific egress port and nexthop target.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub enum RouteTarget {
-    V4(Ipv4Route),
-    V6(Ipv6Route),
-}
-
-impl From<&Ipv4Route> for RouteTarget {
-    fn from(route: &Ipv4Route) -> RouteTarget {
-        RouteTarget::V4(route.clone())
-    }
-}
-
-impl From<Ipv4Route> for RouteTarget {
-    fn from(route: Ipv4Route) -> RouteTarget {
-        RouteTarget::V4(route)
-    }
-}
-
-impl From<&Ipv6Route> for RouteTarget {
-    fn from(route: &Ipv6Route) -> RouteTarget {
-        RouteTarget::V6(route.clone())
-    }
-}
-
-impl From<Ipv6Route> for RouteTarget {
-    fn from(route: Ipv6Route) -> RouteTarget {
-        RouteTarget::V6(route)
-    }
-}
-
-impl TryFrom<RouteTarget> for Ipv4Route {
-    type Error = HttpError;
-
-    fn try_from(target: RouteTarget) -> Result<Self, Self::Error> {
-        match target {
-            RouteTarget::V4(route) => Ok(route),
-            _ => Err(dropshot::HttpError::for_bad_request(
-                None,
-                "expected an IPv4 route target".to_string(),
-            )),
-        }
-    }
-}
-
-impl TryFrom<RouteTarget> for Ipv6Route {
-    type Error = HttpError;
-
-    fn try_from(target: RouteTarget) -> Result<Self, Self::Error> {
-        match target {
-            RouteTarget::V6(route) => Ok(route),
-            _ => Err(dropshot::HttpError::for_bad_request(
-                None,
-                "expected an IPv6 route target".to_string(),
-            )),
-        }
-    }
-}
-
-/// Represents a new or replacement mapping of an IPv4 subnet to a single
-/// RouteTarget nexthop target, which may be either IPv4 or IPv6.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct Ipv4RouteUpdate {
-    /// Traffic destined for any address within the CIDR block is routed using
-    /// this information.
-    pub cidr: Ipv4Net,
-    /// A single Route associated with this CIDR
-    pub target: RouteTarget,
-    /// Should this route replace any existing route?  If a route exists and
-    /// this parameter is false, then the call will fail.
-    pub replace: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct Ipv4OverIpv6RouteUpdate {
-    /// Traffic destined for any address within the CIDR block is routed using
-    /// this information.
-    pub cidr: Ipv4Net,
-    /// A single Route associated with this CIDR
-    pub target: Ipv6Route,
-    /// Should this route replace any existing route?  If a route exists and
-    /// this parameter is false, then the call will fail.
-    pub replace: bool,
-}
-
-/// Represents a new or replacement mapping of a subnet to a single IPv6
-/// RouteTarget nexthop target.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct Ipv6RouteUpdate {
-    /// Traffic destined for any address within the CIDR block is routed using
-    /// this information.
-    pub cidr: Ipv6Net,
-    /// A single RouteTarget associated with this CIDR
-    pub target: Ipv6Route,
-    /// Should this route replace any existing route?  If a route exists and
-    /// this parameter is false, then the call will fail.
-    pub replace: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct Ipv4Routes {
-    /// Traffic destined for any address within the CIDR block is routed using
-    /// this information.
-    pub cidr: Ipv4Net,
-    /// All RouteTargets associated with this CIDR
-    pub targets: Vec<Route>,
-}
-
-/// Represents all mappings of an IPv6 subnet to a its nexthop target(s).
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct Ipv6Routes {
-    /// Traffic destined for any address within the CIDR block is routed using
-    /// this information.
-    pub cidr: Ipv6Net,
-    /// All RouteTargets associated with this CIDR
-    pub targets: Vec<Ipv6Route>,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct Ipv6ArpParam {
-    pub ip: Ipv6Addr,
-}
-
-/**
- * Represents a cursor into a paginated request for the contents of an ARP table
- */
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct ArpToken {
-    pub ip: IpAddr,
-}
-
-/**
- * Represents a potential fault condtion on a link
- */
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct FaultCondition {
-    pub fault: Option<Fault>,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct Ipv4ArpParam {
-    pub ip: Ipv4Addr,
-}
-
-/**
- * Represents a cursor into a paginated request for the contents of an
- * Ipv4-indexed table.
- */
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct Ipv4Token {
-    pub ip: Ipv4Addr,
-}
-
-/**
- * Represents a cursor into a paginated request for the contents of an
- * IPv6-indexed table.
- */
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct Ipv6Token {
-    pub ip: Ipv6Addr,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct RoutePathV4 {
-    /// The IPv4 subnet in CIDR notation whose route entry is returned.
-    pub cidr: Ipv4Net,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct SubnetPath {
-    /// The external subnet in CIDR notation being managed
-    pub subnet: IpNet,
-}
-
-/// Represents a single subnet->target route entry with an IPv4 or IPv6
-/// next hop.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct RouteTargetIpv4Path {
-    /// The subnet being routed
-    pub cidr: Ipv4Net,
-    /// The switch port to which packets should be sent
-    pub port_id: PortId,
-    /// The link to which packets should be sent
-    pub link_id: LinkId,
-    /// The next hop in the route (IPv4 or IPv6)
-    pub tgt_ip: IpAddr,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct RoutePathV6 {
-    /// The IPv6 subnet in CIDR notation whose route entry is returned.
-    pub cidr: Ipv6Net,
-}
-
-/// Represents a single subnet->target route entry
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct RouteTargetIpv6Path {
-    /// The subnet being routed
-    pub cidr: Ipv6Net,
-    /// The switch port to which packets should be sent
-    pub port_id: PortId,
-    /// The link to which packets should be sent
-    pub link_id: LinkId,
-    /// The next hop in the IPv4 route
-    pub tgt_ip: Ipv6Addr,
-}
-
-/**
- * Represents a cursor into a paginated request for the contents of the
- * subnet routing table.  Because we don't (yet) support filtering or arbitrary
- * sorting, it is sufficient to track the last mac address reported.
- */
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct Ipv4RouteToken {
-    pub cidr: Ipv4Net,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct Ipv6RouteToken {
-    pub cidr: Ipv6Net,
-}
-
-/**
- * Represents a cursor into a paginated request for the contents of the
- * external subnets table.
- */
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct AttachedSubnetToken {
-    pub cidr: IpNet,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct PortIpv4Path {
-    pub port: String,
-    pub ipv4: Ipv4Addr,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct PortIpv6Path {
-    pub port: String,
-    pub ipv6: Ipv6Addr,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct LoopbackIpv4Path {
-    pub ipv4: Ipv4Addr,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct LoopbackIpv6Path {
-    pub ipv6: Ipv6Addr,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct NatIpv6Path {
-    pub ipv6: Ipv6Addr,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct NatIpv6PortPath {
-    pub ipv6: Ipv6Addr,
-    pub low: u16,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct NatIpv6RangePath {
-    pub ipv6: Ipv6Addr,
-    pub low: u16,
-    pub high: u16,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct NatIpv4Path {
-    pub ipv4: Ipv4Addr,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct NatIpv4PortPath {
-    pub ipv4: Ipv4Addr,
-    pub low: u16,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct NatIpv4RangePath {
-    pub ipv4: Ipv4Addr,
-    pub low: u16,
-    pub high: u16,
-}
-
-/**
- * Represents a cursor into a paginated request for all NAT data.
- */
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct NatToken {
-    pub port: u16,
-}
-
-/**
- * Represents a cursor into a paginated request for all port data.  Because we
- * don't (yet) support filtering or arbitrary sorting, it is sufficient to
- * track the last port returned.
- */
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct PortToken {
-    pub port: u16,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct PortIdPathParams {
-    /// The switch port on which to operate.
-    pub port_id: PortId,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct PortSettingsTag {
-    /// Restrict operations on this port to the provided tag.
-    pub tag: Option<String>,
-}
-
-/// Identifies a logical link on a physical port.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct LinkPath {
-    /// The switch port on which to operate.
-    pub port_id: PortId,
-    /// The link in the switch port on which to operate.
-    pub link_id: LinkId,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct LinkIpv4Path {
-    /// The switch port on which to operate.
-    pub port_id: PortId,
-    /// The link in the switch port on which to operate.
-    pub link_id: LinkId,
-    /// The IPv4 address on which to operate.
-    pub address: Ipv4Addr,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct LinkIpv6Path {
-    /// The switch port on which to operate.
-    pub port_id: PortId,
-    /// The link in the switch port on which to operate.
-    pub link_id: LinkId,
-    /// The IPv6 address on which to operate.
-    pub address: Ipv6Addr,
-}
-
-/// Parameters used to create a link on a switch port.
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub struct LinkCreate {
-    /// The first lane of the port to use for the new link
-    pub lane: Option<LinkId>,
-    /// The requested speed of the link.
-    pub speed: PortSpeed,
-    /// The requested forward-error correction method.  If this is None, the
-    /// standard FEC for the underlying media will be applied if it can be
-    /// determined.
-    pub fec: Option<PortFec>,
-    /// Whether the link is configured to autonegotiate with its peer during
-    /// link training.
-    ///
-    /// This is generally only true for backplane links, and defaults to
-    /// `false`.
-    #[serde(default)]
-    pub autoneg: bool,
-    /// Whether the link is configured in KR mode, an electrical specification
-    /// generally only true for backplane link.
-    ///
-    /// This defaults to `false`.
-    #[serde(default)]
-    pub kr: bool,
-
-    /// Transceiver equalization adjustment parameters.
-    /// This defaults to `None`.
-    #[serde(default)]
-    pub tx_eq: Option<TxEq>,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
-pub struct LinkFilter {
-    /// Filter links to those whose name contains the provided string.
-    ///
-    /// If not provided, then all links are returned.
-    pub filter: Option<String>,
-}
-
-/// Path parameter for tag-based operations.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct TagPath {
-    pub tag: String,
-}
-
-/// Detailed build information about `dpd`.
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct BuildInfo {
-    pub version: String,
-    pub git_sha: String,
-    pub git_commit_timestamp: String,
-    pub git_branch: String,
-    pub rustc_semver: String,
-    pub rustc_channel: String,
-    pub rustc_host_triple: String,
-    pub rustc_commit_sha: String,
-    pub cargo_triple: String,
-    pub debug: bool,
-    pub opt_level: u8,
-    pub sde_commit_sha: String,
-}
-
-/// A port settings transaction object. When posted to the
-/// `/port-settings/{port_id}` API endpoint, these settings will be applied
-/// holistically, and to the extent possible atomically to a given port.
-#[derive(Default, Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct PortSettings {
-    /// The link settings to apply to the port on a per-link basis. Any links
-    /// not in this map that are resident on the switch port will be removed.
-    /// Any links that are in this map that are not resident on the switch port
-    /// will be added. Any links that are resident on the switch port and in
-    /// this map, and are different, will be modified. Links are indexed by
-    /// spatial index within the port.
-    pub links: HashMap<u8, LinkSettings>,
-}
-
-/// An object with link settings used in concert with [`PortSettings`].
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct LinkSettings {
-    pub params: LinkCreate,
-    pub addrs: HashSet<IpAddr>,
-}
-
-/// An object with IPv4 route settings used in concert with [`PortSettings`].
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct RouteSettingsV4 {
-    pub link_id: u8,
-    pub nexthop: Ipv4Addr,
-}
-
-/// An object with IPV6 route settings used in concert with [`PortSettings`].
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct RouteSettingsV6 {
-    pub link_id: u8,
-    pub nexthop: Ipv6Addr,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct CounterSync {
-    /// Force a sync of the counters from the ASIC to memory, even if the
-    /// default refresh timeout hasn't been reached.
-    pub force_sync: bool,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct TableParam {
-    pub table: String,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct TableDumpOptions {
-    pub from_hardware: bool,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct CounterPath {
-    pub counter: String,
-}
-
-/// Used to identify a multicast group by IP address, the main
-/// identifier for a multicast group.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct MulticastGroupIpParam {
-    pub group_ip: IpAddr,
-}
-
-/// Tag for identifying and authorizing multicast group operations.
-///
-/// Tag format: 1 to 80 ASCII bytes containing alphanumeric characters,
-/// hyphens, underscores, colons, or periods. Default format is
-/// `{uuid}:{group_ip}`.
-#[derive(
-    Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
-)]
-pub struct MulticastTag(
-    #[schemars(
-        length(min = 1, max = 80),
-        regex(pattern = r"^[a-zA-Z0-9_.:-]+$")
-    )]
-    pub String,
-);
-
-impl AsRef<str> for MulticastTag {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<MulticastTag> for String {
-    fn from(tag: MulticastTag) -> Self {
-        tag.0
-    }
-}
-
-impl From<String> for MulticastTag {
-    fn from(tag: String) -> Self {
-        MulticastTag(tag)
-    }
-}
-
-/// Maximum length for multicast tags.
-pub const MAX_TAG_LENGTH: usize = 80;
-
-/// Error parsing a multicast tag from a string.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MulticastTagParseError(String);
-
-impl fmt::Display for MulticastTagParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::error::Error for MulticastTagParseError {}
-
-impl FromStr for MulticastTag {
-    type Err = MulticastTagParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.is_empty() {
-            return Err(MulticastTagParseError(
-                "tag cannot be empty".to_string(),
-            ));
-        }
-        if s.len() > MAX_TAG_LENGTH {
-            return Err(MulticastTagParseError(format!(
-                "tag cannot exceed {MAX_TAG_LENGTH} bytes"
-            )));
-        }
-        if !s.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'.')
-        }) {
-            return Err(MulticastTagParseError(
-                "tag must contain only ASCII alphanumeric characters, hyphens, \
-                 underscores, colons, or periods"
-                    .to_string(),
-            ));
-        }
-        Ok(MulticastTag(s.to_string()))
-    }
-}
-
-/// Path parameter for multicast tag-based operations.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct MulticastTagPath {
-    pub tag: MulticastTag,
-}
-
-impl From<TagPath> for MulticastTagPath {
-    fn from(path: TagPath) -> Self {
-        Self { tag: path.tag.into() }
-    }
-}
-
-/// Tag for multicast group validation.
-///
-/// All groups have tags (auto-generated at creation if not provided).
-/// The provided tag must match the group's existing tag.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct MulticastGroupTagQuery {
-    /// Tag that must match the group's existing tag.
-    pub tag: MulticastTag,
-}
-
-/// Used to identify an underlay multicast group by IPv6 address within
-/// the underlay multicast subnet (ff04::/64).
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct MulticastUnderlayGroupIpParam {
-    pub group_ip: mcast::UnderlayMulticastIpv6,
-}
-
-/// Used to identify a multicast group by ID.
-///
-/// If not provided, it will return all multicast groups.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct MulticastGroupIdParam {
-    pub group_id: Option<mcast::MulticastGroupId>,
-}
-
-/// The Physical Coding Sublayer (PCS) counters for a specific link.
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct LinkPcsCounters {
-    /// The switch port ID.
-    pub port_id: PortId,
-    /// The link ID.
-    pub link_id: LinkId,
-    /// The PCS counter data.
-    pub counters: PcsCounters,
-}
-
-/// The FEC counters for a specific link, including its link ID.
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct LinkFecRSCounters {
-    /// The switch port ID.
-    pub port_id: PortId,
-    /// The link ID.
-    pub link_id: LinkId,
-    /// The FEC counter data.
-    pub counters: FecRSCounters,
-}
-
-/// The RMON counters (traffic counters) for a specific link.
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct LinkRMonCounters {
-    /// The switch port ID.
-    pub port_id: PortId,
-    /// The link ID.
-    pub link_id: LinkId,
-    /// The RMON counter data.
-    pub counters: RMonCounters,
-}
-
-/// The complete RMON counters (traffic counters) for a specific link.
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct LinkRMonCountersAll {
-    /// The switch port ID.
-    pub port_id: PortId,
-    /// The link ID.
-    pub link_id: LinkId,
-    /// The RMON counter data.
-    pub counters: RMonCountersAll,
-}
-
-/// Mapping of the logical lanes in a link to their physical instantiation in
-/// the MAC/serdes interface.
-//
-// For each lane assigned to the port, this captures the mac block, the logical
-// lane within the mac block, the physical rx and tx lanes, and the polarity of
-// each.  All of these values are determined by the physical layout of the
-// board, should be identical across all sidecars with the same board revision,
-// and shouldn't change from run to run.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct LaneMap {
-    /// MAC block in the tofino ASIC
-    pub mac_block: u32,
-    /// logical lane within the mac block for each lane
-    pub logical_lane: Vec<u32>,
-    /// Rx logical->physical mapping
-    pub rx_phys: Vec<u32>,
-    /// Tx logical->physical mapping
-    pub tx_phys: Vec<u32>,
-    /// Rx polarity
-    pub rx_polarity: Vec<Polarity>,
-    /// Tx polarity
-    pub tx_polarity: Vec<Polarity>,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub enum Polarity {
-    Normal,
-    Inverted,
-}
-
-impl From<bool> for Polarity {
-    fn from(p: bool) -> Self {
-        match p {
-            true => Polarity::Inverted,
-            false => Polarity::Normal,
-        }
-    }
-}
-
-/// Per-lane Rx signal information
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct RxSigInfo {
-    /// Rx signal detected
-    pub sig_detect: bool,
-    /// CDR lock achieved
-    pub phy_ready: bool,
-    /// Apparent PPM difference between local and remote
-    pub ppm: i32,
-}
-
-/// Rx DFE adaptation information
-#[derive(Default, Deserialize, Serialize, JsonSchema)]
-pub struct DfeAdaptationState {
-    /// DFE complete
-    pub adapt_done: bool,
-    /// Total DFE attempts
-    pub adapt_cnt: u32,
-    /// DFE attempts since the last read
-    pub readapt_cnt: u32,
-    /// Times the signal was lost since the last read
-    pub link_lost_cnt: u32,
-}
-
-/// Eye height(s) for a single lane in mv
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub enum SerdesEye {
-    Nrz(f32),
-    Pam4 { eye1: f32, eye2: f32, eye3: f32 },
-}
-
-/// Signal encoding
-#[derive(PartialEq, Deserialize, Serialize, JsonSchema)]
-pub enum LaneEncoding {
-    /// Pulse Amplitude Modulation 4-level
-    Pam4,
-    /// Non-Return-to-Zero encoding
-    Nrz,
-    /// No encoding selected
-    None,
-}
-
-/// Signal speed and encoding for a single lane
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct EncSpeed {
-    pub encoding: LaneEncoding,
-    pub gigabits: u32,
-}
-
-/// State of a single lane during autonegotiation
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct AnStatus {
-    /// Can the link partner perform AN?
-    pub lp_an_ability: bool,
-    /// Allegedly: is the link up?  In practice, this always seems to be false?
-    /// TODO: investigate this
-    pub link_status: bool,
-    /// Are we capable of AN?
-    pub an_ability: bool,
-    /// Remote fault detected
-    pub remote_fault: bool,
-    /// Is autonegotiation complete?
-    pub an_complete: bool,
-    /// has a base page been received?
-    pub page_rcvd: bool,
-    /// Is extended page format supported?
-    pub ext_np_status: bool,
-    /// A fault has been detected via the parallel detection function
-    pub parallel_detect_fault: bool,
-}
-
-/// Link-training status for a single lane
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct LtStatus {
-    /// Readout for frame lock state
-    pub readout_state: u32,
-    /// Frame lock state
-    pub frame_lock: bool,
-    /// Local training finished
-    pub rx_trained: bool,
-    /// Training state readout
-    pub readout_training_state: u32,
-    /// Link training failed
-    pub training_failure: bool,
-    /// TX control to send training pattern
-    pub tx_training_data_en: bool,
-    /// Signal detect for PCS
-    pub sig_det: bool,
-    /// State machine readout for training arbiter
-    pub readout_txstate: u32,
-}
-
-/// A collection of the data involved in the autonegiation/link-training process
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct AnLtStatus {
-    /// The base and extended pages received from the link partner
-    pub lp_pages: LpPages,
-    /// The per-lane status
-    pub lanes: Vec<LaneStatus>,
-}
-
-/// Set of AN pages sent by our link partner
-#[derive(Default, Deserialize, Serialize, JsonSchema)]
-pub struct LpPages {
-    pub base_page: u64,
-    pub next_page1: u64,
-    pub next_page2: u64,
-}
-
-/// The combined status of a lane, with respect to the autonegotiation /
-/// link-training process.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct LaneStatus {
-    /// Has a lane successfully completed autoneg and link training?
-    pub lane_done: bool,
-    /// Detailed autonegotiation status
-    pub lane_an_status: AnStatus,
-    /// Detailed link-training status
-    pub lane_lt_status: LtStatus,
-}
-
-/// Reports the bit-error rate (BER) for a link.
-#[derive(Clone, Deserialize, JsonSchema, PartialEq, Serialize)]
-pub struct Ber {
-    /// Counters of symbol errors per-lane.
-    pub symbol_errors: Vec<u64>,
-    /// Estimated BER per-lane.
-    pub ber: Vec<f32>,
-    /// Aggregate BER on the link.
-    pub total_ber: f32,
-}
-
-// --- Snapshot types ---
-
-/// Direction of a PHV snapshot.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub enum SnapshotDirection {
-    /// Take snapshot of ingress pipeline
-    Ingress,
-    /// Take snapshot of egress pipeline
-    Egress,
-}
-
-/// A trigger field for a snapshot, with hex-encoded value and mask.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SnapshotTrigger {
-    /// Name of the field to capture.
-    ///
-    /// Must match what's in the phv ingress or phv egress section of
-    /// /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa.
-    pub field: String,
-    /// Hex-encoded value (e.g. "0x112233445566")
-    pub value: String,
-    /// Hex-encoded mask (e.g. "0xffffffffffff")
-    pub mask: String,
-}
-
-/// Request body for creating and capturing a PHV snapshot.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SnapshotCreate {
-    /// Index of the pipeline to capture. Typically this will be 0 through 3.
-    /// Different ports map to different pipelines.
-    pub pipe: u32,
-    /// Tofino hardware stage to start capturing at.
-    ///
-    /// See /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa to get a sense of
-    /// stage layout.
-    pub start_stage: u8,
-    /// Tofino hardware stage to stop capturing at.
-    ///
-    /// See /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa to get a sense of
-    /// stage layout.
-    pub end_stage: u8,
-    /// Whether to capture on the ingress or egress pipeline.
-    pub dir: SnapshotDirection,
-    /// Fields and masks to use as snapshot trigger. Triggers are combined as
-    /// a logical `and`.
-    pub triggers: Vec<SnapshotTrigger>,
-    /// Field names to decode from the capture.
-    pub fields: Vec<String>,
-    /// Timeout in seconds to wait for trigger.
-    pub timeout_secs: u64,
-}
-
-/// Table hit/miss result from a snapshot capture.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SnapshotTableResult {
-    /// Name of the table
-    pub name: String,
-    /// Whether the match lookup found a matching entry.
-    ///
-    /// Only meaningful when `executed` is true and `inhibited` is false.
-    /// The absence of `hit` does not necessarily mean that a lookup was
-    /// attempted. It simply means there was no hit, which could mean no lookup
-    /// was attempted or that the table's gateway inhibited it.
-    pub hit: bool,
-    /// Whether the table's gateway inhibited the match lookup from
-    /// proceeding. Gateways are conditional guards attached to tables that
-    /// can skip the lookup entirely. When inhibited, `hit` and
-    /// `match_hit_address` will be 0. Only applicable to tables that have
-    /// an attached gateway.
-    pub inhibited: bool,
-    /// Whether the table was active in this stage. This is the primary
-    /// gate: if a table was not executed, `hit`, `inhibited`, and
-    /// `match_hit_address` are all meaningless (zeroed by the SDE).
-    pub executed: bool,
-    /// The physical address of the entry that matched, sourced from the
-    /// exact-match or TCAM hit-address register depending on table type.
-    /// Zero when the table was not executed or was inhibited.
-    pub match_hit_address: u32,
-}
-
-/// Per-stage result from a snapshot capture.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SnapshotStageResult {
-    /// The index of the stage this result came from.
-    pub stage_id: u8,
-    /// Whether this stage's own PHV match criteria fired the snapshot.
-    /// This is the primary trigger: the PHV contents at this stage matched
-    /// the key/mask programmed via the snapshot trigger configuration.
-    pub local_stage_trigger: bool,
-    /// Whether the snapshot was triggered because the previous stage was
-    /// already triggered and propagated its trigger signal forward. A
-    /// `prev_stage_trigger` with no `local_stage_trigger` means this stage
-    /// did not match the trigger criteria itself -- it was captured solely
-    /// because an adjacent stage matched.
-    pub prev_stage_trigger: bool,
-    /// Whether the snapshot was triggered by the timer mechanism rather
-    /// than a PHV field match. Useful for capturing pipeline state at a
-    /// specific time regardless of packet contents.
-    pub timer_trigger: bool,
-    /// The P4 table name that the MAU pipeline selected for execution in
-    /// the following stage after processing this one.
-    pub next_table: String,
-    /// Datapath error detected in the ingress pipeline at capture time.
-    /// Only reported on Tofino 2+; always false on Tofino 1.
-    pub ingress_dp_error: bool,
-    /// Datapath error detected in the egress pipeline at capture time.
-    /// Only reported on Tofino 2+; always false on Tofino 1.
-    pub egress_dp_error: bool,
-    /// Tables captured in the result.
-    pub tables: Vec<SnapshotTableResult>,
-    /// Fields captured in the result.
-    pub fields: Vec<SnapshotFieldValue>,
-}
-
-/// A decoded field value from a snapshot capture.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SnapshotFieldValue {
-    /// Name of the field.
-    pub name: String,
-    /// None if the field is not valid at this stage.
-    pub value: Option<String>,
-}
-
-/// Result of a snapshot capture operation.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SnapshotResult {
-    /// Stages captured in the result.
-    pub stages: Vec<SnapshotStageResult>,
-}
-
-/// Request body for checking field scope at a given stage.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SnapshotScopeRequest {
-    /// Pipeline index to check.
-    pub pipe: u32,
-    /// Stage index.
-    pub stage: u8,
-    /// Whether to check the ingress or egress pipeline.
-    pub dir: SnapshotDirection,
-    /// Fields to check.
-    pub fields: Vec<String>,
-    /// If true, check trigger scope; otherwise check capture scope.
-    pub trigger: bool,
-}
-
-/// Whether a field is in scope at a given stage.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SnapshotFieldScope {
-    /// Field name
-    pub field: String,
-    /// Whether or not the field is in scope.
-    pub in_scope: bool,
-}
-
-/// Request body for dumping table entries.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TableDumpRequest {
-    /// Fully-qualified P4 table name (e.g. "Ingress.services.service").
-    pub table_name: String,
-    /// If true, read entries from ASIC hardware via indirect register
-    /// reads instead of the SDE's software shadow.
-    pub from_hw: bool,
-}
-
-/// A key field from a table entry dump.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TableDumpKeyField {
-    /// Name of the field
-    pub name: String,
-    /// Key value
-    pub value: String,
-    /// For ternary fields: the mask.  For LPM: the prefix length.
-    pub mask: Option<String>,
-}
-
-/// A single entry from a table dump.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TableDumpEntry {
-    /// Action associated with an entry.
-    pub action: String,
-    /// Match fields for an entry.
-    pub match_fields: Vec<TableDumpKeyField>,
-}
-
-/// Result of a table dump operation.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TableDumpResult {
-    /// Name of the table.
-    pub table_name: String,
-    /// Number of entries in the table.
-    pub num_entries: usize,
-    /// Table entries.
-    pub entries: Vec<TableDumpEntry>,
+        body: TypedBody<latest::snapshot::SnapshotScopeRequest>,
+    ) -> Result<
+        HttpResponseOk<Vec<latest::snapshot::SnapshotFieldScope>>,
+        HttpError,
+    >;
 }

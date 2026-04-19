@@ -4,13 +4,17 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use std::net::{Ipv4Addr, Ipv6Addr};
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct LinkHistory {
-    /// The timestamp in milliseconds at which this history was collected
-    pub timestamp: i64,
-    /// The set of historical events recorded
-    pub events: Vec<dpd_types::views::LinkEvent>,
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct LoopbackIpv4Path {
+    pub ipv4: Ipv4Addr,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct LoopbackIpv6Path {
+    pub ipv6: Ipv6Addr,
 }

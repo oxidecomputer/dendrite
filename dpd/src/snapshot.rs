@@ -16,7 +16,7 @@ pub(crate) async fn capture(
     switch: &Switch,
     req: SnapshotCreate,
 ) -> Result<SnapshotResult, DpdError> {
-    use dpd_api::SnapshotDirection;
+    use dpd_types::snapshot::SnapshotDirection;
 
     let hdl = &switch.asic_hdl;
 
@@ -108,7 +108,7 @@ pub(crate) async fn capture(
 
             let mut fields = Vec::new();
             for field_name in &req.fields {
-                use dpd_api::SnapshotFieldValue;
+                use dpd_types::snapshot::SnapshotFieldValue;
 
                 let val = snapshot::snapshot_decode_field(
                     hdl,

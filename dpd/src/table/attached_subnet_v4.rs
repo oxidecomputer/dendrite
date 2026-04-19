@@ -4,6 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use dpd_types::table;
 use std::convert::TryInto;
 use std::net::Ipv6Addr;
 
@@ -56,7 +57,7 @@ pub fn delete_entry(s: &Switch, subnet: Ipv4Net) -> DpdResult<()> {
     s.table_entry_del(TableType::AttachedSubnetIpv4, &match_key)
 }
 
-pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
+pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<table::Table> {
     s.table_dump::<AttachedSubnetV4MatchKey, AttachedSubnetV4Action>(
         TableType::AttachedSubnetIpv4,
         from_hardware,
@@ -66,7 +67,7 @@ pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
 pub fn counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<AttachedSubnetV4MatchKey>(
         force_sync,
         TableType::AttachedSubnetIpv4,
