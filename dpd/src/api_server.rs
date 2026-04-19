@@ -2247,7 +2247,10 @@ impl DpdApi for DpdApiImpl {
             let v7_entry =
                 v7::mcast::MulticastGroupUpdateExternalEntry::from(entry);
             mcast::modify_group_external(switch, ip, &tag, v7_entry.into())
-                .map(|resp| HttpResponseCreated(resp.into()))
+                .map(|resp| {
+                    let v7_resp = v7::mcast::MulticastGroupExternalResponse::from(resp);
+                    HttpResponseCreated(v7_resp.into())
+                })
                 .map_err(HttpError::from)
         })
     }
