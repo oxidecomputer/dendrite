@@ -92,7 +92,9 @@ pub(crate) async fn capture(
         // Build stage results with decoded fields.
         let mut stages = Vec::new();
         for ctrl in &cap.ctrls {
-            use dpd_types::snapshot::{SnapshotStageResult, SnapshotTableResult};
+            use dpd_types::snapshot::{
+                SnapshotStageResult, SnapshotTableResult,
+            };
 
             let tables = ctrl
                 .tables

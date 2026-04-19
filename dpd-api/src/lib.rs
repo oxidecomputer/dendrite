@@ -1958,12 +1958,9 @@ pub trait DpdApi {
         HttpResponseCreated<v1::mcast::MulticastGroupExternalResponse>,
         HttpError,
     > {
-        Self::multicast_group_create_external_v7(
-            rqctx,
-            group.map(Into::into),
-        )
-        .await
-        .map(|resp| resp.map(Into::into))
+        Self::multicast_group_create_external_v7(rqctx, group.map(Into::into))
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /// Create an underlay (internal) multicast group configuration.
@@ -2422,12 +2419,9 @@ pub trait DpdApi {
         HttpResponseOk<ResultsPage<v1::mcast::MulticastGroupResponse>>,
         HttpError,
     > {
-        let HttpResponseOk(page) = Self::multicast_groups_list_by_tag_v7(
-            rqctx,
-            path,
-            query_params,
-        )
-        .await?;
+        let HttpResponseOk(page) =
+            Self::multicast_groups_list_by_tag_v7(rqctx, path, query_params)
+                .await?;
         Ok(HttpResponseOk(ResultsPage {
             items: page.items.into_iter().map(Into::into).collect(),
             next_page: page.next_page,
