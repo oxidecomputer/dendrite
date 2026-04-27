@@ -7,19 +7,29 @@
 use std::{thread::sleep, time::Duration};
 
 use crate::tofino_asic::{
-    BF_INVALID_ARG, BF_SUCCESS,
+    BF_SUCCESS,
     bf_wrapper::bf_error_str,
     genpd::{
-        bf_dev_id_t, bf_err_interrupt_handling_mode_set, bf_subdev_id_t,
-        lld_dump_new_ints, lld_enable_all_ints, lld_int_poll,
-        pipe_mgr_is_device_locked, pipe_mgr_tcam_scrub_timer_set,
+        bf_dev_id_t, pipe_mgr_is_device_locked, pipe_mgr_tcam_scrub_timer_set,
     },
 };
 use slog::{Logger, info, warn};
 
 const DEV_ID: bf_dev_id_t = 0;
-const SUBDEV_ID: bf_subdev_id_t = 0;
 const INTERVAL: Duration = Duration::from_secs(5);
+
+// Interrupt monitoring requires a sufficiently new tofino driver.
+pub fn interrupts_supported() -> aal::AsicResult<bool> {
+    let v = tofino::get_driver_version("/dev/tofino/1").map_err(|e| {
+        aal::AsicError::Synthetic(format!(
+            "unable to get driver version: {e:?}"
+        ))
+    })?;
+    if v.major > 1 || v.minor >= 2 {
+        return Ok(true);
+    }
+    Ok(false)
+}
 
 /// Monitoring interrupts requires a number of precursory steps to set things up
 /// in the SDE and on the ASIC. The `monitor_interrupts` function is designed as
@@ -44,10 +54,12 @@ pub fn monitor_interrupts(log: Logger) -> ! {
 
     wait_for_unlock(&log);
     enable_tcam_scrub(&log);
-    set_interrupt_handling_mode(&log);
-    enable_lld_interrupts(&log);
 
-    monitoring_loop(&log)
+    loop {
+        if let Err(e) = intr::interrupt_monitor(&log) {
+            slog::error!(log, "interrupt monitor failed: {e:?}");
+        }
+    }
 }
 
 fn wait_for_unlock(log: &Logger) {
@@ -77,55 +89,5 @@ fn enable_tcam_scrub(log: &Logger) {
             "error" => bf_error_str(rc)
         );
         sleep(INTERVAL)
-    }
-}
-
-fn set_interrupt_handling_mode(log: &Logger) {
-    loop {
-        let rc = unsafe { bf_err_interrupt_handling_mode_set(DEV_ID, true) };
-        if rc == BF_SUCCESS {
-            info!(log, "interrupt handling mode set");
-            break;
-        }
-        warn!(
-            log,
-            "failed to set interrupt handling mode";
-            "error" => bf_error_str(rc)
-        );
-        sleep(INTERVAL);
-    }
-}
-
-fn enable_lld_interrupts(log: &Logger) {
-    loop {
-        let rc = unsafe { lld_enable_all_ints(DEV_ID, SUBDEV_ID) };
-        if rc == BF_SUCCESS {
-            info!(log, "enabled lld interrupts");
-            break;
-        }
-        warn!(
-            log,
-            "failed to enable lld interrupts";
-            "error" => bf_error_str(rc)
-        );
-        sleep(INTERVAL);
-    }
-}
-
-fn monitoring_loop(log: &Logger) -> ! {
-    loop {
-        let rc = unsafe { lld_int_poll(DEV_ID, SUBDEV_ID, true) };
-        if rc != BF_SUCCESS {
-            warn!(log, "lld_int_poll: {}", bf_error_str(rc));
-        }
-
-        let rc = unsafe { lld_dump_new_ints(DEV_ID, SUBDEV_ID) };
-        // BF_INVALID_ARG means interrupts were found and dumped (yes, really)
-        // BF_SUCCESS means no new interrupts
-        // Anything else is an actual error
-        if rc != BF_SUCCESS && rc != BF_INVALID_ARG {
-            warn!(log, "lld_dump_new_ints: {}", bf_error_str(rc));
-        }
-        sleep(INTERVAL);
     }
 }

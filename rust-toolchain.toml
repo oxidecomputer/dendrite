@@ -1,5 +1,4 @@
 [toolchain]
-# We choose a specific toolchain (rather than "stable") for repeatability.  The
-# intent is to keep this up-to-date with recently-released stable Rust.
-channel = "1.90.0"
 profile = "default"
+# We need to use a nightly toolchain because Bitset uses generic_const_exprs.
+channel = "nightly-2026-05-20"

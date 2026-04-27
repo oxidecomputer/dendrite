@@ -11,12 +11,13 @@ members = [
 	"dpd-types",
 	"dpd-types/versions",
 	"dropshot-apis",
+	"intr",
 	"packet",
 	"pcap",
 	"swadm",
 	"tfportd",
 	"uplinkd",
-	"xtask",
+	"xtask", "intr",
 ]
 
 resolver = "2"
@@ -38,11 +39,12 @@ dpd-client = { path = "dpd-client" }
 dpd-types = { path = "dpd-types" }
 dpd-types-versions = { path = "dpd-types/versions" }
 common = { path = "common" }
+intr = { path = "intr" }
 packet = { path = "packet" }
 pcap = { path = "pcap" }
 
 # oxide dependencies from github
-scuffle = { git = "https://github.com/oxidecomputer/scuffle", version = "0.1.0", features = ["smf-by-instance"] }
+bitset = { git = "https://github.com/oxidecomputer/bitset", branch = "main"}
 internal-dns-resolver = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 internal-dns-types = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 ispf = { git = "https://github.com/oxidecomputer/ispf" }
@@ -56,14 +58,17 @@ oximeter-producer = { git = "https://github.com/oxidecomputer/omicron", branch =
 oximeter-instruments = { git = "https://github.com/oxidecomputer/omicron", branch = "main", default-features = false, features = ["kstat"] }
 oxnet = { version = "0.1.4", default-features = false, features = ["schemars", "serde"] }
 propolis = { git = "https://github.com/oxidecomputer/propolis" }
+regs = { git = "https://github.com/oxidecomputer/tofino", branch = "atype" }
+rust_rpi = { git = "https://github.com/oxidecomputer/rsf", branch = "associated_types" }
+scuffle = { git = "https://github.com/oxidecomputer/scuffle", version = "0.1.0", features = ["smf-by-instance"] }
 smf = { git = "https://github.com/illumos/smf-rs" }
 softnpu-lib = { git = "https://github.com/oxidecomputer/softnpu" , package = "softnpu" , branch = "main"}
-tofino = { git = "https://github.com/oxidecomputer/tofino", branch = "main" }
+tofino = { git = "https://github.com/oxidecomputer/tofino", branch = "atype" }
 transceiver-controller = { git = "https://github.com/oxidecomputer/transceiver-control", branch = "main" }
 
 # public dependencies from crates.io
 anyhow = "1.0"
-bytes = "1.6"
+bytes = "1.11"
 camino = { version = "1.1", features = ["serde1"] }
 cfg-if = "1"
 chrono = "0.4"

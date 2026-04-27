@@ -67,6 +67,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "annotate-snippets"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "710e8eae58854cdc1790fcb56cca04d712a17be849eeb81da2a724bf4bae2bc4"
+dependencies = [
+ "anstyle",
+ "unicode-width 0.2.1",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -175,6 +185,7 @@ dependencies = [
  "chrono",
  "common 0.1.0",
  "dpd-types",
+ "intr",
  "lazy_static",
  "libc",
  "oximeter",
@@ -190,7 +201,7 @@ dependencies = [
  "softnpu 0.2.0 (git+https://github.com/oxidecomputer/softnpu?branch=main)",
  "strum 0.27.2",
  "thiserror 1.0.69",
- "tofino 0.1.0 (git+https://github.com/oxidecomputer/tofino?branch=main)",
+ "tofino 0.1.0 (git+https://github.com/oxidecomputer/tofino?branch=atype)",
  "tokio",
  "transceiver-controller",
  "uuid",
@@ -467,6 +478,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "bitset"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/bitset?branch=main#11eb609ae2f02ec2cb116f84210b5655b26924a1"
+dependencies = [
+ "bitset-macro",
+ "seq-macro",
+]
+
+[[package]]
+name = "bitset-macro"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/bitset?branch=main#11eb609ae2f02ec2cb116f84210b5655b26924a1"
+dependencies = [
+ "proc-macro2",
+ "quote",
 ]
 
 [[package]]
@@ -1057,6 +1086,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
 
 [[package]]
+name = "convert_case"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "cookie"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1470,7 +1508,7 @@ version = "0.99.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6edb4b64a43d977b8e99788fe3a04d483834fba1215a7e02caa415b626497f7f"
 dependencies = [
- "convert_case",
+ "convert_case 0.4.0",
  "proc-macro2",
  "quote",
  "rustc_version 0.4.1",
@@ -3118,7 +3156,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "macaddr",
- "nix",
+ "nix 0.30.1",
  "omicron-common",
  "omicron-uuid-kinds",
  "omicron-workspace-hack",
@@ -3279,6 +3317,26 @@ name = "internet-checksum"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc6d6206008e25125b1f97fbe5d309eb7b85141cf9199d52dbd3729a1584dd16"
+
+[[package]]
+name = "intr"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bindgen",
+ "bitset",
+ "cc",
+ "clap",
+ "libc",
+ "regs",
+ "rust_rpi",
+ "slog",
+ "slog-async",
+ "slog-term",
+ "strum 0.27.2",
+ "thiserror 1.0.69",
+ "tofino 0.1.0 (git+https://github.com/oxidecomputer/tofino?branch=atype)",
+]
 
 [[package]]
 name = "ipconfig"
@@ -3470,9 +3528,9 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"
-version = "0.2.183"
+version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
+checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libdlpi-sys"
@@ -4061,6 +4119,18 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "memoffset",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.11.1",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
 ]
 
 [[package]]
@@ -5822,6 +5892,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "regs"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/tofino?branch=atype#e31a85ead919f0aacd3907cc65896c4cc83e7479"
+dependencies = [
+ "anyhow",
+ "bitset",
+ "cc",
+ "rsf",
+ "rust_rpi",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.12.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5946,6 +6028,38 @@ dependencies = [
  "untrusted 0.9.0",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "rsf"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/rsf?branch=associated_types#f99d66f091f3e20bdb93f2a55dcce32e361c3a33"
+dependencies = [
+ "annotate-snippets",
+ "anyhow",
+ "bitset",
+ "bitset-macro",
+ "camino",
+ "camino-tempfile",
+ "clap",
+ "colored",
+ "convert_case 0.8.0",
+ "expectorate",
+ "iddqd",
+ "num_enum 0.7.5",
+ "petgraph 0.8.2",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.117",
+ "thiserror 2.0.18",
+ "winnow 0.7.14",
+]
+
+[[package]]
+name = "rust_rpi"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/rsf?branch=associated_types#f99d66f091f3e20bdb93f2a55dcce32e361c3a33"
 
 [[package]]
 name = "rustc-hash"
@@ -6295,6 +6409,12 @@ dependencies = [
  "serde",
  "serde_core",
 ]
+
+[[package]]
+name = "seq-macro"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bc711410fbe7399f390ca1c3b60ad0f53f80e95c5eb935e52268a0e2cd49acc"
 
 [[package]]
 name = "serde"
@@ -6844,7 +6964,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -7457,11 +7577,13 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tofino"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/tofino?branch=main#d13f3e2dbe59ff8deb2b73156665ae3035f53da1"
+source = "git+https://github.com/oxidecomputer/tofino?branch=atype#3c056f1dba60ae9261535c1f25248e57bdac1a48"
 dependencies = [
  "anyhow",
  "cc",
  "illumos-devinfo",
+ "libc",
+ "nix 0.31.3",
 ]
 
 [[package]]
@@ -7868,7 +7990,7 @@ dependencies = [
  "clap",
  "hubpack",
  "itertools 0.14.0",
- "nix",
+ "nix 0.30.1",
  "schemars 0.8.22",
  "serde",
  "slog",
