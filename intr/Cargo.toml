@@ -1,0 +1,23 @@
+[package]
+name = "intr"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common.workspace = true
+
+anyhow.workspace = true
+libc.workspace = true
+regs.workspace = true
+rust_rpi.workspace = true
+slog.workspace = true
+slog-term.workspace = true
+slog-async.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+tofino.workspace = true
+
+[build-dependencies]
+cc = "1.2"
+bindgen = "0.72"
+anyhow = "1.0"

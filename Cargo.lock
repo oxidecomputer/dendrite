@@ -67,6 +67,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "annotate-snippets"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "710e8eae58854cdc1790fcb56cca04d712a17be849eeb81da2a724bf4bae2bc4"
+dependencies = [
+ "anstyle",
+ "unicode-width 0.2.1",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -190,7 +200,7 @@ dependencies = [
  "softnpu 0.2.0 (git+https://github.com/oxidecomputer/softnpu?branch=main)",
  "strum 0.27.2",
  "thiserror 1.0.69",
- "tofino 0.1.0 (git+https://github.com/oxidecomputer/tofino?branch=main)",
+ "tofino 0.1.0 (git+https://github.com/oxidecomputer/tofino?branch=atype)",
  "tokio",
  "transceiver-controller",
  "uuid",
@@ -467,6 +477,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2261d10cca569e4643e526d8dc2e62e433cc8aba21ab764233731f8d369bf394"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "bitset"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/bitset?branch=main#11eb609ae2f02ec2cb116f84210b5655b26924a1"
+dependencies = [
+ "bitset-macro",
+ "seq-macro",
+]
+
+[[package]]
+name = "bitset-macro"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/bitset?branch=main#11eb609ae2f02ec2cb116f84210b5655b26924a1"
+dependencies = [
+ "proc-macro2",
+ "quote",
 ]
 
 [[package]]
@@ -1057,6 +1085,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
 
 [[package]]
+name = "convert_case"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "cookie"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1470,7 +1507,7 @@ version = "0.99.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6edb4b64a43d977b8e99788fe3a04d483834fba1215a7e02caa415b626497f7f"
 dependencies = [
- "convert_case",
+ "convert_case 0.4.0",
  "proc-macro2",
  "quote",
  "rustc_version 0.4.1",
@@ -3268,6 +3305,25 @@ name = "internet-checksum"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc6d6206008e25125b1f97fbe5d309eb7b85141cf9199d52dbd3729a1584dd16"
+
+[[package]]
+name = "intr"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bindgen",
+ "cc",
+ "common 0.1.0",
+ "libc",
+ "regs",
+ "rust_rpi",
+ "slog",
+ "slog-async",
+ "slog-term",
+ "strum 0.27.2",
+ "thiserror 1.0.69",
+ "tofino 0.1.0 (git+https://github.com/oxidecomputer/tofino?branch=atype)",
+]
 
 [[package]]
 name = "ipconfig"
@@ -5822,6 +5878,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "regs"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/tofino?branch=atype#f553cb09ced0e97b7be7c61e518d99378d5db96f"
+dependencies = [
+ "anyhow",
+ "bitset",
+ "cc",
+ "rsf",
+ "rust_rpi",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.12.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5946,6 +6014,37 @@ dependencies = [
  "untrusted 0.9.0",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "rsf"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/rsf?branch=associated_types#71a7c7d55b6546b3b77d1fca0a4c6e3c0ae7f485"
+dependencies = [
+ "annotate-snippets",
+ "anyhow",
+ "bitset",
+ "bitset-macro",
+ "camino",
+ "camino-tempfile",
+ "clap",
+ "colored",
+ "convert_case 0.8.0",
+ "expectorate",
+ "num_enum 0.7.5",
+ "petgraph 0.8.2",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.117",
+ "thiserror 2.0.18",
+ "winnow 0.7.14",
+]
+
+[[package]]
+name = "rust_rpi"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/rsf?branch=associated_types#71a7c7d55b6546b3b77d1fca0a4c6e3c0ae7f485"
 
 [[package]]
 name = "rustc-hash"
@@ -6281,6 +6380,12 @@ dependencies = [
  "serde",
  "serde_core",
 ]
+
+[[package]]
+name = "seq-macro"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bc711410fbe7399f390ca1c3b60ad0f53f80e95c5eb935e52268a0e2cd49acc"
 
 [[package]]
 name = "serde"
@@ -7442,7 +7547,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tofino"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/tofino?branch=main#d13f3e2dbe59ff8deb2b73156665ae3035f53da1"
+source = "git+https://github.com/oxidecomputer/tofino?branch=atype#f553cb09ced0e97b7be7c61e518d99378d5db96f"
 dependencies = [
  "anyhow",
  "cc",
@@ -7452,7 +7557,7 @@ dependencies = [
 [[package]]
 name = "tofino"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/tofino#7e56ab6e9a64ebae27cd97cd6e10ebf2cfdc3a33"
+source = "git+https://github.com/oxidecomputer/tofino#e25e52991785039e967fd8fe7d86554d976e6d4b"
 dependencies = [
  "anyhow",
  "cc",

@@ -10,12 +10,13 @@ members = [
 	"dpd-client",
 	"dpd-types",
 	"dropshot-apis",
+	"intr",
 	"packet",
 	"pcap",
 	"swadm",
 	"tfportd",
 	"uplinkd",
-	"xtask",
+	"xtask", "intr",
 ]
 
 resolver = "2"
@@ -53,9 +54,11 @@ oximeter-producer = { git = "https://github.com/oxidecomputer/omicron", branch =
 oximeter-instruments = { git = "https://github.com/oxidecomputer/omicron", branch = "main", default-features = false, features = ["kstat"] }
 oxnet = { version = "0.1.4", default-features = false, features = ["schemars", "serde"] }
 propolis = { git = "https://github.com/oxidecomputer/propolis" }
+regs = { git = "https://github.com/oxidecomputer/tofino", branch = "atype" }
+rust_rpi = { git = "https://github.com/oxidecomputer/rsf", branch = "associated_types" }
 smf = { git = "https://github.com/illumos/smf-rs" }
 softnpu-lib = { git = "https://github.com/oxidecomputer/softnpu" , package = "softnpu" , branch = "main"}
-tofino = { git = "https://github.com/oxidecomputer/tofino", branch = "main" }
+tofino = { git = "https://github.com/oxidecomputer/tofino", branch = "atype" }
 transceiver-controller = { git = "https://github.com/oxidecomputer/transceiver-control", branch = "main" }
 
 # public dependencies from crates.io
