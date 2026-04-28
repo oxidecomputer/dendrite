@@ -51,6 +51,16 @@ impl Tofino {
         let rpi = regs::Client::default();
         Ok(Tofino { rpi, pci })
     }
+
+    pub fn read_register(&self, addr: u32) -> IntrResult<u32> {
+        self.pci.read4(addr).map_err(|e| IntrError::Asic(format!("{e:?}")))
+    }
+
+    pub fn write_register(&self, addr: u32, val: u32) -> IntrResult<()> {
+        self.pci
+            .write4(addr, val)
+            .map_err(|e| IntrError::Asic(format!("{e:?}")))
+    }
 }
 
 impl Platform<u32, u32> for Tofino {
@@ -154,30 +164,94 @@ impl ShadowInterrupt {
     }
 }
 
-trait InterruptGroupStatus {
-    fn read(&self, tofino: &Tofino) -> IntrResult<u32>;
+struct InterruptGroup {
+    status_reg_addr: u32,
+    enable_reg_addr: u32,
+    pub stat: u32,
+    pub enable: u32,
+    pub interrupts: Vec<Interrupt>,
 }
 
-struct InterruptGroup<'a> {
-    pub interrupts: Vec<&'a dyn Interrupt>,
+impl InterruptGroup {
+    pub fn new(
+        status_reg: impl RegisterInstance<u32, u32>,
+        enable_reg: impl RegisterInstance<u32, u32>,
+        interrupts: Vec<Interrupt>,
+    ) -> Self {
+        InterruptGroup {
+            status_reg_addr: status_reg.addr(),
+            enable_reg_addr: enable_reg.addr(),
+            stat: 0,
+            enable: 0,
+            interrupts,
+        }
+    }
+
+    pub fn read_status(&mut self, tf: &Tofino) -> IntrResult<()> {
+        self.stat = tf.read_register(self.status_reg_addr)?;
+        Ok(())
+    }
+    pub fn write_status(&self, tf: &Tofino) -> IntrResult<()> {
+        tf.write_register(self.status_reg_addr, self.stat)
+    }
+    pub fn read_enable(&mut self, tf: &Tofino) -> IntrResult<()> {
+        self.enable = tf.read_register(self.enable_reg_addr)?;
+        Ok(())
+    }
+    pub fn write_enable(&self, tf: &Tofino) -> IntrResult<()> {
+        tf.write_register(self.enable_reg_addr, self.enable)
+    }
+
+    pub fn enable_interrupts(&mut self) {
+        for interrupt in &self.interrupts {
+            (interrupt.set_enable)(&mut self.enable, true)
+        }
+    }
+
+    pub fn disable_interrupts(&mut self) {
+        for interrupt in &self.interrupts {
+            (interrupt.set_enable)(&mut self.enable, false)
+        }
+    }
 }
 
-trait Interrupt {
-    fn enable(&self, tofino: &Tofino) -> IntrResult<()>;
-    fn disable(&self, tofino: &Tofino) -> IntrResult<()>;
-    fn set(&self, tofino: &Tofino) -> IntrResult<()>;
-    fn name(&self) -> String;
-    fn check_and_process(
-        &self,
-        tofino: &Tofino,
-        status: u32,
-    ) -> IntrResult<bool>;
+struct Interrupt {
+    pub name: &'static str,
+    pub set_enable: fn(&mut u32, bool),
+    pub get_status: fn(&mut u32) -> bool,
+    pub set_status: fn(&mut u32, bool),
+    pub process: fn(tofino: &Tofino) -> bool,
 }
 
-struct PbcPbusIntr0;
-
-fn build_interrupt_map() -> BTreeMap<u32, Vec<InterruptGroup<'static>>> {
-    BTreeMap::new()
+fn build_interrupt_map(tf: &Tofino) -> BTreeMap<u32, Vec<InterruptGroup>> {
+    let ds = tf.rpi.device_select();
+    let pipes = tf.rpi.pipes(0).unwrap();
+    let r = Interrupt {
+        name: "PcieRxreqbufEccDual",
+        set_enable: |x, v| {
+            let mut e = regs::PcieIntrEn0::from(*x);
+            e.set_rxreqbuf_ecc_dual(v.into());
+            *x = e.into();
+        },
+        get_status: |x| {
+            let s = regs::PcieIntrStat::from(*x);
+            s.get_rxreqbuf_ecc_dual().into()
+        },
+        set_status: |x, v| {
+            let mut s = regs::PcieIntrEn0::from(*x);
+            s.set_rxreqbuf_ecc_dual(v.into());
+            *x = s.into();
+        },
+        process: |tf| true,
+    };
+    let g = InterruptGroup::new(
+        pipes.mau(0).unwrap().tcams().intr_enable_0_mau_tcam_array(),
+        pipes.mau(0).unwrap().tcams().intr_status_mau_tcam_array(),
+        vec![r],
+    );
+    let mut m = BTreeMap::new();
+    m.insert(256u32, vec![g]);
+    m
 }
 
 pub fn main() -> IntrResult<()> {
@@ -192,23 +266,13 @@ pub fn main() -> IntrResult<()> {
         }
     };
 
-    let mut imap = build_interrupt_map();
+    let mut imap = build_interrupt_map(&tf);
     let mut shadow = ShadowInterrupt::new(&tf);
 
-    for (num, groups) in imap.iter() {
-        for group in groups {
-            for interrupt in &group.interrupts {
-                if let Err(e) = interrupt.enable(&tf) {
-                    error!(
-                        log,
-                        "Failed to enable interrupt {}: {:?}",
-                        interrupt.name(),
-                        e
-                    );
-                    continue;
-                }
-                shadow.set_mask_bit(*num as u32)?;
-            }
+    for (num, groups) in imap.iter_mut() {
+        shadow.set_mask_bit(*num as u32)?;
+        for group in groups.iter_mut() {
+            group.enable_interrupts();
         }
     }
     shadow.write_mask(&tf)?;
