@@ -41,6 +41,7 @@ packet = { path = "packet" }
 pcap = { path = "pcap" }
 
 # oxide dependencies from github
+bitset = { git = "https://github.com/oxidecomputer/bitset", branch = "main"}
 internal-dns-resolver = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 internal-dns-types = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 ispf = { git = "https://github.com/oxidecomputer/ispf" }

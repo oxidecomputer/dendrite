@@ -4,9 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-common.workspace = true
-
 anyhow.workspace = true
+bitset.workspace = true
 libc.workspace = true
 regs.workspace = true
 rust_rpi.workspace = true

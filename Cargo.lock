@@ -3312,8 +3312,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bindgen",
+ "bitset",
  "cc",
- "common 0.1.0",
  "libc",
  "regs",
  "rust_rpi",

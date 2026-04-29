@@ -10,8 +10,7 @@
 use std::collections::BTreeMap;
 use std::{thread::sleep, time::Duration};
 
-use slog::error;
-use slog::info;
+use slog::{Drain, debug, error, info, o};
 
 use regs;
 use rust_rpi::Platform;
@@ -213,51 +212,135 @@ impl InterruptGroup {
             (interrupt.set_enable)(&mut self.enable, false)
         }
     }
+
+    pub fn process_interrupts(&mut self, tf: &Tofino, log: &slog::Logger) {
+        let mut stat = self.stat;
+        let mut triggered = 0;
+        for i in &self.interrupts {
+            let name = i.name;
+            if (i.get_status)(stat) {
+                debug!(log, "handling {name}");
+                triggered += 1;
+            }
+            match (i.process)(&tf, stat) {
+                Ok(true) => info!(log, "handled {name}"),
+                Ok(false) => {}
+                Err(e) => error!(log, "failed to handle {name}: {e:?}"),
+            }
+        }
+        if triggered > 0 {
+            self.write_status(tf);
+        }
+    }
 }
 
 struct Interrupt {
     pub name: &'static str,
     pub set_enable: fn(&mut u32, bool),
-    pub get_status: fn(&mut u32) -> bool,
+    pub get_status: fn(u32) -> bool,
     pub set_status: fn(&mut u32, bool),
-    pub process: fn(tofino: &Tofino) -> bool,
+    pub process: fn(tofino: &Tofino, status: u32) -> IntrResult<bool>,
 }
 
+// macro_rules! interrupt {
+//     ($enable_reg:ident,
+//         $status_reg:ident,
+//         $iname:ident,
+//         $get_fn:ident,
+//         $set_fn:ident,
+//     ) => {
+//         Interrupt {
+//             name: stringify!($iname),
+//             set_enable: |x, v| {
+//                 let mut e = regs::$enable_reg::from(*x);
+//                 e.$set_fn(v.into());
+//                 *x = e.into();
+//             },
+//             get_status: |x| {
+//                 let s = regs::$status_reg::from(*x);
+//                 s.$get_fn().into()
+//             },
+//             set_status: |x, v| {
+//                 let mut s = regs::$status_reg::from(*x);
+//                 s.$set_fn(v.into());
+//                 *x = s.into();
+//             },
+//             process: |tf| true,
+//         }
+//     };
+// }
+
+mod tcam_intr {
+    use bitset::BitSet;
+    use regs::IntrEnable0MauTcamArray;
+    use regs::IntrStatusMauTcamArray;
+
+    use crate::Tofino;
+
+    fn set_enable(ena_raw: &mut u32, v: bool) {
+        if v {
+            let mut ena: IntrEnable0MauTcamArray = (*ena_raw).into();
+            ena.set_tcam_logical_channel_err(BitSet::<4>::max());
+            ena.set_tcam_sbe(BitSet::<12>::max());
+            *ena_raw = ena.into();
+        } else {
+            *ena_raw = 0;
+        }
+    }
+    fn set_status(status_raw: &mut u32, v: bool) {
+        if v {
+            let mut status: IntrStatusMauTcamArray = (*status_raw).into();
+            status.set_tcam_logical_channel_err(BitSet::<4>::max());
+            status.set_tcam_sbe(BitSet::<12>::max());
+            *status_raw = status.into();
+        } else {
+            *status_raw = 0;
+        }
+    }
+    fn get_status(status_raw: u32) -> bool {
+        let status: IntrStatusMauTcamArray = status_raw.into();
+        u8::from(status.get_tcam_logical_channel_err()) != 0
+            || u16::from(status.get_tcam_sbe()) != 0
+    }
+
+    fn process(tf: &Tofino, status_raw: u32) -> super::IntrResult<bool> {
+        Ok(get_status(status_raw))
+    }
+
+    pub fn new() -> super::Interrupt {
+        super::Interrupt {
+            name: "tcam_intr",
+            set_enable: set_enable,
+            get_status: get_status,
+            set_status: set_status,
+            process: process,
+        }
+    }
+}
 fn build_interrupt_map(tf: &Tofino) -> BTreeMap<u32, Vec<InterruptGroup>> {
     let ds = tf.rpi.device_select();
     let pipes = tf.rpi.pipes(0).unwrap();
-    let r = Interrupt {
-        name: "PcieRxreqbufEccDual",
-        set_enable: |x, v| {
-            let mut e = regs::PcieIntrEn0::from(*x);
-            e.set_rxreqbuf_ecc_dual(v.into());
-            *x = e.into();
-        },
-        get_status: |x| {
-            let s = regs::PcieIntrStat::from(*x);
-            s.get_rxreqbuf_ecc_dual().into()
-        },
-        set_status: |x, v| {
-            let mut s = regs::PcieIntrEn0::from(*x);
-            s.set_rxreqbuf_ecc_dual(v.into());
-            *x = s.into();
-        },
-        process: |tf| true,
-    };
     let g = InterruptGroup::new(
         pipes.mau(0).unwrap().tcams().intr_enable_0_mau_tcam_array(),
         pipes.mau(0).unwrap().tcams().intr_status_mau_tcam_array(),
-        vec![r],
+        vec![tcam_intr::new()],
     );
     let mut m = BTreeMap::new();
     m.insert(256u32, vec![g]);
     m
 }
 
+fn log_init() -> anyhow::Result<slog::Logger> {
+    let drain = {
+        let decorator = slog_term::TermDecorator::new().build();
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        slog_async::Async::new(drain).chan_size(32768).build().fuse()
+    };
+    Ok(slog::Logger::root(drain, o!()))
+}
+
 pub fn main() -> IntrResult<()> {
-    let log =
-        common::logging::init("intr", &None, common::logging::LogFormat::Human)
-            .map_err(|e| IntrError::from(e))?;
+    let log = log_init().map_err(|e| IntrError::from(e))?;
 
     let tf = match Tofino::new() {
         Ok(t) => t,
@@ -272,6 +355,11 @@ pub fn main() -> IntrResult<()> {
     for (num, groups) in imap.iter_mut() {
         shadow.set_mask_bit(*num as u32)?;
         for group in groups.iter_mut() {
+            if let Err(e) = group.read_status(&tf) {
+                error!(log, "failed to read interrupt status: {e:?}");
+                continue;
+            }
+
             group.enable_interrupts();
         }
     }
@@ -303,6 +391,16 @@ pub fn main() -> IntrResult<()> {
         info!(log, "global {c:?}");
         shadow.read_set(&tf)?;
 
+        for (num, groups) in imap.iter_mut() {
+            if shadow.get_bit(*num as u32).expect(
+                "range error would have been caught when enabling interrupts",
+            ) {
+                for group in groups.iter_mut() {
+                    group.enable_interrupts();
+                }
+            }
+        }
+        shadow.write_mask(&tf)?;
         sleep(INTERVAL);
     }
 }
