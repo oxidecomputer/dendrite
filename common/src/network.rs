@@ -129,6 +129,11 @@ impl MacAddr {
             self.a[5],
         ]
     }
+
+    /// Return the bytes of the MAC as a slice.
+    pub const fn as_slice(&self) -> &[u8] {
+        self.a.as_slice()
+    }
 }
 
 #[derive(Error, Debug, Clone)]
