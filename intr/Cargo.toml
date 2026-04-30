@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow.workspace = true
 bitset.workspace = true
+clap.workspace = true
 libc.workspace = true
 regs.workspace = true
 rust_rpi.workspace = true
