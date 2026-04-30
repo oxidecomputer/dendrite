@@ -927,7 +927,7 @@ version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fde0e0ec90c9dfb3b4b1a0891a7dcd0e2bffde2f7efed5fe7c9bb00e5bfb915e"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1308,9 +1308,9 @@ dependencies = [
 
 [[package]]
 name = "daft"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce0bf145758082da552af574185d4726000cd4b6e017d7966c99e7b2a5a086ce"
+checksum = "b6a26f1f0a7934549bf8d8448d9da072c31f14e1e407b6cbacfdc07b3777988e"
 dependencies = [
  "daft-derive",
  "newtype-uuid",
@@ -1321,9 +1321,9 @@ dependencies = [
 
 [[package]]
 name = "daft-derive"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ad40aef90652e771af668d28abcc3ef35fd0d39438706a76a61588cf8e8e84a"
+checksum = "27c6a4a4003df965e441d13b2a7044efa44334b567c984701f8a2773f815c5e2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1587,6 +1587,7 @@ dependencies = [
  "aal_macros",
  "anyhow",
  "asic",
+ "bytes",
  "cfg-if",
  "chrono",
  "clap",
@@ -2903,7 +2904,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "system-configuration",
  "tokio",
  "tower-layer",
@@ -3024,9 +3025,9 @@ dependencies = [
 
 [[package]]
 name = "iddqd"
-version = "0.3.17"
+version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b215e67ed1d1a4b1702acd787c487d16e4c977c5dcbcc4587bdb5ea26b6ce06"
+checksum = "616230c7d641ef971a3a5bfcc654c6b7524ab9c9fb665693c6a397dba9a14aca"
 dependencies = [
  "allocator-api2",
  "daft",
@@ -3628,9 +3629,9 @@ checksum = "d26c52dbd32dccf2d10cac7725f8eae5296885fb5703b261f7d0a0739ec807ab"
 
 [[package]]
 name = "linux-raw-sys"
-version = "0.11.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df1d3c3b53da64cf5760482273a98e575c651a67eec7f77df96b5b642de8f039"
+checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "litemap"
@@ -5592,7 +5593,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.32",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -5629,7 +5630,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -5986,14 +5987,14 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.2"
+version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd15f8a2c5551a84d56efdc1cd049089e409ac19a3072d5037a17fd70719ff3e"
+checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
 dependencies = [
  "bitflags 2.9.4",
  "errno",
  "libc",
- "linux-raw-sys 0.11.0",
+ "linux-raw-sys 0.12.1",
  "windows-sys 0.61.0",
 ]
 
@@ -7183,14 +7184,14 @@ dependencies = [
 
 [[package]]
 name = "tempfile"
-version = "3.23.0"
+version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d31c77bdf42a745371d260a26ca7163f1e0924b64afa0b688e61b5a9fa02f16"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
  "getrandom 0.3.3",
  "once_cell",
- "rustix 1.1.2",
+ "rustix 1.1.4",
  "windows-sys 0.61.0",
 ]
 
@@ -7209,7 +7210,7 @@ version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60b8cb979cb11c32ce1603f8137b22262a9d131aaa5c37b5678025f22b8becd0"
 dependencies = [
- "rustix 1.1.2",
+ "rustix 1.1.4",
  "windows-sys 0.60.2",
 ]
 
@@ -7266,6 +7267,7 @@ dependencies = [
  "dpd-client 0.1.0",
  "futures",
  "http",
+ "iddqd",
  "internet-checksum",
  "ispf",
  "kstat-rs",
@@ -8677,7 +8679,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -9067,7 +9069,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
- "rustix 1.1.2",
+ "rustix 1.1.4",
 ]
 
 [[package]]

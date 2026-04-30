@@ -2900,7 +2900,7 @@ fn path_to_qsfp(path: Path<PortIdPathParams>) -> Result<QsfpPort, HttpError> {
     }
 }
 
-fn build_info() -> BuildInfo {
+pub(crate) fn build_info() -> BuildInfo {
     BuildInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         git_sha: env!("VERGEN_GIT_SHA").to_string(),

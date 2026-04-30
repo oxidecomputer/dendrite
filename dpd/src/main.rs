@@ -59,6 +59,7 @@ mod arp;
 mod attached_subnet;
 mod config;
 mod counters;
+mod duid;
 mod fault;
 mod freemap;
 mod link;
@@ -411,9 +412,11 @@ impl Switch {
             entries: t
                 .get_entries::<M, A>(&self.asic_hdl, from_hardware)
                 .map_err(|e| {
-                    error!(self.log, "failed to get table contents";
-	            "table" => t.type_.to_string(),
-		    "error" => %e);
+                    error!(
+                        self.log, "failed to get table contents";
+                        "table" => t.type_.to_string(),
+                        "error" => %e
+                    );
                     e
                 })
                 .map(|vec| {
@@ -436,9 +439,11 @@ impl Switch {
 
         t.get_counters::<M>(&self.asic_hdl, force_sync)
             .map_err(|e| {
-                error!(self.log, "failed to get counter data";
-	            "table" => t.type_.to_string(),
-		    "error" => %e);
+                error!(
+                   self.log, "failed to get counter data";
+                   "table" => t.type_.to_string(),
+                   "error" => %e
+                );
                 e
             })
             .map(|vec| {
@@ -701,9 +706,9 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
     // If there has been no base mac address configured via SMF or the command
     // line, then we need to fetch it from the SP (for real sidecars) or just
     // make one up (everywhere else).
-    let skip_cpu_link = match config_base_mac {
-        Some(base_mac) => {
-            let base_mac = BaseMac::Permanent(base_mac);
+    let (skip_cpu_link, base_mac) = match config_base_mac {
+        Some(config_mac) => {
+            let base_mac = BaseMac::Permanent(config_mac);
             debug!(
                 switch.log,
                 "permanent base MAC address already set, it will be kept";
@@ -711,10 +716,19 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
             );
             let mut mgr = switch.mac_mgmt.lock().unwrap();
             assert_eq!(mgr.set_base_mac(base_mac)?, None);
-            false
+            (false, config_mac)
         }
-        None => switch.set_base_mac_address(&autoconfig_links).await?,
+        None => {
+            let base_mac =
+                switch.set_base_mac_address(&autoconfig_links).await?;
+            (true, base_mac)
+        }
     };
+
+    // Write our DHCPv6 unique ID to disk, based on the base MAC address.
+    let duid_log = switch.log.new(slog::o!("unit" => "duid-writer"));
+    let duid_task =
+        tokio::task::spawn(duid::ensure_duid_file_exists(duid_log, base_mac));
 
     if let Some(auto_conf) = &autoconfig_links {
         // If we've created the link on the CPU port above, to fetch the MAC
@@ -780,6 +794,7 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
     api_server_manager
         .await
         .expect("while shutting down the api_server_manager");
+    duid_task.await?;
 
     info!(switch.log, "shutting down switch driver");
     switch.asic_hdl.fini();
@@ -788,7 +803,6 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
 
     Ok(())
 }
-
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -802,7 +816,11 @@ async fn run_dpd(opt: Opt) -> anyhow::Result<()> {
 
     let log =
         common::logging::init("dpd", &config.log_file, config.log_format)?;
-    info!(log, "dpd config: {config:#?}");
+    info!(
+        log, "starting dpd";
+        "config" => ?config,
+        "build_info" => ?api_server::build_info(),
+    );
 
     let p4_name =
         std::env::var("P4_NAME").unwrap_or_else(|_| String::from("sidecar"));

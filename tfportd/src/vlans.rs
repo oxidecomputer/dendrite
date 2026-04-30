@@ -11,19 +11,27 @@ use std::net::Ipv6Addr;
 use anyhow::Context;
 use anyhow::anyhow;
 use anyhow::bail;
+use iddqd::IdOrdItem;
+use iddqd::IdOrdMap;
+use iddqd::id_upcast;
 use serde::Deserialize;
 use slog::error;
 use slog::info;
+use slog::warn;
 
 use crate::Global;
 use crate::linklocal;
 use crate::oxstats::link;
 use common::illumos;
 
+/// An entry in the `port_map.csv` file provided at program startup.
 #[derive(Debug, Deserialize)]
 struct PortMapEntry {
+    /// The VSC7448 port number.
     port: u16,
+    /// A human-friendly string naming the logical partner on the link.
     _link_partner: String,
+    /// The name of the VLAN object to be created mapping to the link partner.
     vlan_name: String,
 }
 
@@ -34,9 +42,11 @@ pub struct Vlan {
     pub name: String,
 }
 
-/// The information illumos maintains about a single vlan
+/// The information illumos maintains about a single VLAN
 #[derive(Debug)]
 pub struct VlanInfo {
+    /// The name of the VLAN device.
+    pub name: String,
     /// VLAN ID
     pub vid: u16,
     /// index of the interface created by `ipadm`
@@ -45,18 +55,35 @@ pub struct VlanInfo {
     pub link_local: Option<Ipv6Addr>,
 }
 
+impl VlanInfo {
+    /// Return true if this VLAN should allow DHCPv6 autoconfiguration.
+    fn supports_dhcp(&self) -> bool {
+        self.name.starts_with("techport")
+    }
+}
+
+impl IdOrdItem for VlanInfo {
+    type Key<'a> = &'a str;
+
+    fn key(&self) -> Self::Key<'_> {
+        &self.name
+    }
+
+    id_upcast!();
+}
+
 /// Get the list of vlans created on top of a tfport
-async fn vlans_get(tfport: &str) -> anyhow::Result<BTreeMap<String, VlanInfo>> {
+async fn vlans_get(tfport: &str) -> anyhow::Result<IdOrdMap<VlanInfo>> {
     let link_locals = linklocal::get_all().await?;
     let lines =
         illumos::dladm(&["show-vlan", "-p", "-o", "link,vid,over"]).await?;
 
     // Iterate over the dladm output, extracting the vlan name and vid from each
     // line.  For each vlan created on top of this tfport, add an entry to the
-    // BTreeMap with the network configuration for each one.
-    let mut rval = BTreeMap::new();
+    // map with the network configuration for each one.
+    let mut rval = IdOrdMap::new();
     for vlan in lines {
-        let fields: Vec<String> = vlan.split(':').map(str::to_string).collect();
+        let fields: Vec<_> = vlan.split(':').collect();
         if fields.len() != 3 {
             bail!("show-vlan returned invalid result: {vlan}");
         }
@@ -68,7 +95,11 @@ async fn vlans_get(tfport: &str) -> anyhow::Result<BTreeMap<String, VlanInfo>> {
         let vid = fields[1].parse::<u16>().context("invalid vlan_id")?;
         let ifindex = crate::netsupport::get_ifindex(&link);
         let link_local = link_locals.get(&link).copied();
-        rval.insert(link, VlanInfo { vid, ifindex, link_local });
+        let vlan = VlanInfo { name: link, vid, ifindex, link_local };
+
+        // NOTE: We previously used a BTreeMap here, and ignored any duplicates.
+        // Keep the same behavior, ignoring the error.
+        let _ = rval.insert_overwrite(vlan);
     }
     Ok(rval)
 }
@@ -92,7 +123,8 @@ pub async fn vlans_cleanup(g: &Global, tfport: &str) -> anyhow::Result<()> {
         .await
         .map_err(|e| anyhow!("failed to get vlan list for {tfport}: {e:?}"))?;
 
-    for (name, vlan) in &vlans {
+    for vlan in &vlans {
+        let name = &vlan.name;
         let vid = vlan.vid;
         match vlan_delete(g, name).await {
             Ok(_) => info!(g.log, "deleted vlan {vid}:{name} on {tfport}"),
@@ -117,14 +149,17 @@ pub async fn ensure_vlans(g: &Global, link: &str) -> anyhow::Result<()> {
     // links that should be created and/or deleted.  We start by pessimistically
     // assuming that each vlan needs to be deleted, removing them from the
     // to_delete list if we find them on the "expected" list below.
-    let mut to_delete =
-        existing_vlans.keys().cloned().collect::<BTreeSet<String>>();
+    let mut to_delete = existing_vlans
+        .iter()
+        .map(|vlan| vlan.name.to_string())
+        .collect::<BTreeSet<_>>();
     for expected_vlan in &g.vlans {
-        if let Some(current_vlan) = existing_vlans.get(&expected_vlan.name)
+        if let Some(current_vlan) =
+            existing_vlans.get(expected_vlan.name.as_str())
             && current_vlan.vid == expected_vlan.vid
         {
             // This vlan has the right name and ID, so we leave it alone
-            let _ = to_delete.remove(&expected_vlan.name);
+            let _ = to_delete.remove(expected_vlan.name.as_str());
             continue;
         }
         to_create.insert(expected_vlan.name.to_string(), expected_vlan.vid);
@@ -135,7 +170,7 @@ pub async fn ensure_vlans(g: &Global, link: &str) -> anyhow::Result<()> {
         if let Err(e) = vlan_delete(g, name).await {
             error!(g.log, "failed to delete vlan {name}: {e:?}");
         }
-        let _ = existing_vlans.remove(name);
+        let _ = existing_vlans.remove(name.as_str());
     }
 
     // Create any missing vlans
@@ -143,16 +178,28 @@ pub async fn ensure_vlans(g: &Global, link: &str) -> anyhow::Result<()> {
         match illumos::vlan_create(link, vid, &name).await {
             Ok(()) => {
                 info!(g.log, "created vlan {vid}:{name} on {link}");
-                existing_vlans.insert(
-                    name.to_string(),
-                    VlanInfo { vid, ifindex: None, link_local: None },
-                );
+                let vlan = VlanInfo {
+                    name: name.clone(),
+                    vid,
+                    ifindex: None,
+                    link_local: None,
+                };
+                // NOTE: We previously used a BTreeMap here, and ignored any duplicates.
+                // Keep the same behavior, logging an error.
+                if let Some(old) = existing_vlans.insert_overwrite(vlan) {
+                    warn!(
+                        &g.log,
+                        "overwriting duplicate VLAN for tfport";
+                        "tfport" => link,
+                        "vlan" => old.name,
+                        "vid" => old.vid,
+                    );
+                }
 
                 // Once the vlan is created, we can track it as a potential
                 // network link.
-                if let Err(e) = g
-                    .link_tracker
-                    .track_link(name.to_string(), link::ModelType::Vlan)
+                if let Err(e) =
+                    g.link_tracker.track_link(&name, link::ModelType::Vlan)
                 {
                     error!(g.log, "failed to track vlan {name}: {e:?}");
                 }
@@ -165,38 +212,39 @@ pub async fn ensure_vlans(g: &Global, link: &str) -> anyhow::Result<()> {
 
     // Iterate over all of the vlans (old and new) and ensure that they have a
     // link-local address.
-    for (name, info) in existing_vlans.iter_mut() {
+    for mut info in existing_vlans.iter_mut() {
         // If the interface exists but the address doesn't, we need to remove the
         // interface before creating the link-local address due to stlouis#531.
         if info.link_local.is_none()
             && info.ifindex.is_some()
-            && illumos::iface_remove(name).await.is_ok()
+            && illumos::iface_remove(&info.name).await.is_ok()
         {
             info.ifindex = None;
         }
         if info.ifindex.is_none() {
-            match illumos::iface_ensure(name).await {
+            match illumos::iface_ensure(&info.name).await {
                 Ok(()) => {
-                    slog::debug!(g.log, "created interface for vlan: {name}")
+                    slog::debug!(
+                        g.log,
+                        "created interface for vlan: {}",
+                        &info.name
+                    )
                 }
                 Err(e) => {
                     slog::error!(
                         g.log,
-                        "failed to create interface for vlan: {name}: {e}"
+                        "failed to create interface for vlan: {}: {e}",
+                        &info.name,
                     );
                     continue;
                 }
             }
         }
         if info.link_local.is_none() {
-            match linklocal::create(g, name).await {
-                Ok(()) => {
-                    slog::debug!(g.log, "created link-local for vlan: {name}")
-                }
-                Err(e) => slog::error!(
-                    g.log,
-                    "failed to create link-local for vlan: {name}: {e}"
-                ),
+            if info.supports_dhcp() {
+                let _ = linklocal::create_with_dhcpv6(g, &info.name).await;
+            } else {
+                let _ = linklocal::create(g, &info.name).await;
             }
         }
     }

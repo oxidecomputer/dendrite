@@ -175,7 +175,10 @@ pub fn build(
     args.push(app_path);
     println!("op: {args:?}");
 
-    let out = Command::new(&p4c_path).args(&args).output()?;
+    let out = Command::new(&p4c_path)
+        .args(&args)
+        .output()
+        .with_context(|| format!("opening '{p4c_path}'"))?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if !out.status.success() {
@@ -201,10 +204,13 @@ pub fn build(
     // When copying the firmware from an SDE repo, we have to pull it from the
     // 'install' directory.  When copying from an installed SDE package, that's
     // already been done for us.
+    /*
     let fw_dir = match sde_location.starts_with("/opt") {
         true => sde_location.clone(),
         false => format!("{sde_location}/install"),
     };
+    */
+    let fw_dir = sde_location.clone();
 
     // Copy the serdes firmware blobs
     let fw_stub = "share/tofino_sds_fw/credo/firmware".to_string();

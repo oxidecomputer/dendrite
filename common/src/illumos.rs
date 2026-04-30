@@ -14,6 +14,11 @@ pub mod smf;
 
 type Result<T> = std::result::Result<T, IllumosError>;
 
+/// The suffix for the addrobj name for IPv6 link-local addresses on each tfport.
+///
+/// E.g., all IPv6 addresses are named like `tfportrear0_0/ll`.
+pub const IPV6_LINK_LOCAL_NAME: &str = "ll";
+
 #[derive(Debug, PartialEq, thiserror::Error)]
 pub enum IllumosError {
     /// This error indicates that the requested command wasn't able to run
@@ -148,9 +153,8 @@ pub async fn address_add(
 
     let addr: oxnet::IpNet = addr.into();
     if addr.is_ipv6() {
-        let tag = "ll";
-        if !address_exists(iface, tag).await? {
-            linklocal_add(iface, tag).await?;
+        if !address_exists(iface, IPV6_LINK_LOCAL_NAME).await? {
+            linklocal_add(iface, IPV6_LINK_LOCAL_NAME).await?;
         }
     }
 
@@ -169,6 +173,21 @@ pub async fn linklocal_add(iface: &str, tag: &str) -> Result<()> {
     let addr_obj = format!("{iface}/{tag}");
 
     ipadm_quiet(&["create-addr", "-t", "-T", "addrconf", &addr_obj]).await
+}
+
+/// Add link-local and DHCPv6 addresses to an existing link.
+pub async fn linklocal_add_with_dhcpv6(iface: &str, tag: &str) -> Result<()> {
+    let addr_obj = format!("{iface}/{tag}");
+    ipadm_quiet(&[
+        "create-addr",
+        "-t",
+        "-T",
+        "addrconf",
+        "-p",
+        "stateful=yes,stateless=no",
+        &addr_obj,
+    ])
+    .await
 }
 
 /// Create a vlan link on top of the specified link
