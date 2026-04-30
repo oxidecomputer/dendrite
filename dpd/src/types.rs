@@ -12,7 +12,6 @@ use common::SmfError;
 use common::ports::PortId;
 use common::ports::QsfpPort;
 use dpd_types::link::LinkId;
-use slog::error;
 use std::{convert, net::IpAddr};
 use transceiver_controller::Error as TransceiverError;
 

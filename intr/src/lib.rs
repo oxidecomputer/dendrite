@@ -12,7 +12,6 @@ use std::{thread::sleep, time::Duration};
 
 use slog::{debug, error, info};
 
-use regs;
 use rust_rpi::Platform;
 use rust_rpi::RegisterInstance;
 
@@ -46,7 +45,7 @@ pub struct Tofino {
 impl Tofino {
     pub fn new() -> IntrResult<Self> {
         let pci = tofino::pci::Pci::new("/dev/tofino/1", tofino::REGISTER_SIZE)
-            .map_err(|e| IntrError::from(e))?;
+            .map_err(IntrError::from)?;
         let rpi = regs::Client::default();
         Ok(Tofino { rpi, pci })
     }
@@ -166,12 +165,14 @@ impl ShadowInterrupt {
 
     pub fn set_mask_bit(&mut self, bit: u32) -> IntrResult<()> {
         let (byte, bit) = Self::bit_to_idx(bit)?;
-        Ok(self.mask[byte] |= 1 << bit)
+        self.mask[byte] |= 1 << bit;
+        Ok(())
     }
 
     pub fn clear_mask_bit(&mut self, bit: u32) -> IntrResult<()> {
         let (byte, bit) = Self::bit_to_idx(bit)?;
-        Ok(self.mask[byte] &= !(1 << bit))
+        self.mask[byte] &= !(1 << bit);
+        Ok(())
     }
 }
 
@@ -243,7 +244,7 @@ impl InterruptGroup {
                 debug!(log, "handling {name}");
                 triggered += 1;
             }
-            match (i.process)(&tf, stat) {
+            match (i.process)(tf, stat) {
                 Ok(true) => info!(log, "handled {name}"),
                 Ok(false) => {}
                 Err(e) => error!(log, "failed to handle {name}: {e:?}"),
@@ -267,6 +268,7 @@ struct Interrupt {
     pub name: &'static str,
     pub set_enable: fn(&mut u32, bool),
     pub get_status: fn(u32) -> bool,
+    #[allow(dead_code)]
     pub set_status: fn(&mut u32, bool),
     pub process: fn(tofino: &Tofino, status: u32) -> IntrResult<bool>,
 }
@@ -339,10 +341,10 @@ mod tcam_intr {
     pub fn new() -> Interrupt {
         Interrupt {
             name: "tcam_intr",
-            set_enable: set_enable,
-            get_status: get_status,
-            set_status: set_status,
-            process: process,
+            set_enable,
+            get_status,
+            set_status,
+            process,
         }
     }
 }
@@ -372,7 +374,7 @@ pub fn interrupt_monitor(log: &slog::Logger) -> IntrResult<()> {
     debug!(log, "initial mask: {:?}", shadow.mask);
 
     for (num, groups) in imap.iter_mut() {
-        shadow.clear_mask_bit(*num as u32)?;
+        shadow.clear_mask_bit(*num)?;
         for group in groups.iter_mut() {
             if let Err(e) = group.read_status(&tf) {
                 error!(log, "failed to read interrupt status: {e:?}");
@@ -411,10 +413,13 @@ pub fn interrupt_monitor(log: &slog::Logger) -> IntrResult<()> {
 
         for (num, groups) in imap.iter_mut() {
             for group in groups.iter_mut() {
-                group.read_status(&tf);
+                if let Err(e) = group.read_status(&tf) {
+                    error!(log, "Failed to read status register: {e:?}");
+                    continue;
+                }
                 debug!(log, "  group stat {}", group.stat)
             }
-            if shadow.get_bit(*num as u32).expect(
+            if shadow.get_bit(*num).expect(
                 "range error would have been caught when enabling interrupts",
             ) {
                 for group in groups.iter_mut() {
