@@ -42,6 +42,7 @@ packet = { path = "packet" }
 pcap = { path = "pcap" }
 
 # oxide dependencies from github
+scuffle = { git = "https://github.com/oxidecomputer/scuffle", version = "0.1.0", features = ["smf-by-instance"] }
 internal-dns-resolver = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 internal-dns-types = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 ispf = { git = "https://github.com/oxidecomputer/ispf" }
@@ -78,6 +79,7 @@ expectorate = "1"
 futures = "0.3"
 http = "1.4.0"
 humantime = "2.3"
+iddqd = "0.3.18"
 kstat-rs = "0.2.4"
 lazy_static = "1.5"
 libc = "0.2"
