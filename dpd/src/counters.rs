@@ -198,6 +198,7 @@ enum DropReason {
     GeneveOptionsTooLong,
     GeneveOptionMalformed,
     GeneveOptionUnknown,
+    DropSctp,
 }
 
 impl TryFrom<u8> for DropReason {
@@ -232,6 +233,7 @@ impl TryFrom<u8> for DropReason {
             24 => Ok(DropReason::GeneveOptionsTooLong),
             25 => Ok(DropReason::GeneveOptionMalformed),
             26 => Ok(DropReason::GeneveOptionUnknown),
+            27 => Ok(DropReason::DropSctp),
             x => Err(format!("Unrecognized drop reason: {x}")),
         }
     }
@@ -278,6 +280,7 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
             "geneve_option_malformed".to_string()
         }
         DropReason::GeneveOptionUnknown => "geneve_option_unknown".to_string(),
+        DropReason::DropSctp => "drop_sctp".to_string(),
     };
     Ok(Some(label))
 }
