@@ -6687,6 +6687,100 @@ async fn test_source_filter_update_to_any() -> TestResult {
         "After update with Any, should have only 1 entry (the /0)"
     );
 
+    // Re-narrow to specific sources for a (S,G) -> (*,G) transition, which is
+    // exercised below with `sources: None`.
+    let narrow_entry = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
+        sources: Some(vec![
+            types::IpSrc::Exact("192.168.1.1".parse().unwrap()),
+            types::IpSrc::Exact("192.168.1.2".parse().unwrap()),
+        ]),
+    };
+
+    let narrowed = switch
+        .client
+        .multicast_group_update_external(
+            &external_group_ip,
+            &make_tag(TEST_TAG),
+            &narrow_entry,
+        )
+        .await
+        .expect("Should re-narrow external group sources")
+        .into_inner();
+
+    assert_eq!(
+        narrowed.sources.as_deref().map(<[_]>::len),
+        Some(2),
+        "Re-narrow should restore 2 specific sources"
+    );
+
+    let after_narrow_table = switch
+        .client
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
+        .await
+        .expect("Should dump table after re-narrow");
+
+    assert_eq!(
+        after_narrow_table.entries.len(),
+        baseline_count + 2,
+        "Re-narrow should restore 2 specific entries"
+    );
+
+    // Widen via `sources: None`. This is the path Omicron's RPW takes for ASM
+    // groups when an "any source" member joins.
+    let widen_entry = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::InternalForwarding {
+            nat_target: Some(nat_target.clone()),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
+        sources: None,
+    };
+
+    let widened = switch
+        .client
+        .multicast_group_update_external(
+            &external_group_ip,
+            &make_tag(TEST_TAG),
+            &widen_entry,
+        )
+        .await
+        .expect("Should widen external group sources to None")
+        .into_inner();
+
+    assert_eq!(
+        widened.sources, None,
+        "sources: None must clear the in-memory record"
+    );
+
+    // Round-trip via GET to confirm the stored representation matches.
+    let fetched = switch
+        .client
+        .multicast_group_get(&external_group_ip)
+        .await
+        .expect("Should get external group")
+        .into_inner();
+
+    assert_eq!(
+        get_sources(&fetched),
+        None,
+        "GET after widen-via-None must agree with the update response"
+    );
+
+    let after_widen_table = switch
+        .client
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
+        .await
+        .expect("Should dump table after widen-via-None");
+
+    assert_eq!(
+        after_widen_table.entries.len(),
+        baseline_count + 1,
+        "After widen with None, should have only the /0 entry"
+    );
+
     // Cleanup in correct order: external first, then internal
     cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
     cleanup_test_group(switch, internal_group_ip, TEST_TAG).await

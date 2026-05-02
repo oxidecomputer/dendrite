@@ -5,6 +5,7 @@ authors = ["nils <nils@oxide.computer>"]
 edition = "2024"
 
 [features]
+default = ["multicast"]
 multicast = ["aal/multicast", "asic/multicast"]
 tofino_asic = ["asic/tofino_asic"]
 tofino_stub = ["asic/tofino_stub"]

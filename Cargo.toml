@@ -52,9 +52,9 @@ oximeter = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 oximeter-producer = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 oximeter-instruments = { git = "https://github.com/oxidecomputer/omicron", branch = "main", default-features = false, features = ["kstat"] }
 oxnet = { version = "0.1.4", default-features = false, features = ["schemars", "serde"] }
-propolis = { git = "https://github.com/oxidecomputer/propolis" }
+propolis = { git = "https://github.com/oxidecomputer/propolis", branch = "zl/multicast" }
 smf = { git = "https://github.com/illumos/smf-rs" }
-softnpu-lib = { git = "https://github.com/oxidecomputer/softnpu" , package = "softnpu" , branch = "main"}
+softnpu-lib = { git = "https://github.com/oxidecomputer/softnpu" , package = "softnpu" , branch = "zl/multicast"}
 tofino = { git = "https://github.com/oxidecomputer/tofino", branch = "main" }
 transceiver-controller = { git = "https://github.com/oxidecomputer/transceiver-control", branch = "main" }
 
@@ -82,7 +82,7 @@ libc = "0.2"
 mockall = "0.13.1"
 omicron-zone-package = "0.12"
 openssl = "0.10"
-oxide-tokio-rt = "0.1.2"
+oxide-tokio-rt = "0.1.4"
 parking_lot = "0.12"
 pretty_assertions = "1.4"
 proc-macro2 = "1.0"
@@ -107,7 +107,8 @@ strum = { version = "0.27", features = [ "derive" ] }
 syn = { version = "2.0", features = ["extra-traits"]}
 tabwriter = { version = "1", features = ["ansi_formatting"] }
 thiserror = "1.0"
-tokio = "1.37"
+# pinned to match omicron main (tokio-rs/tokio#8056)
+tokio = "1.52.1"
 toml = "0.9"
 usdt = "0.6"
 uuid = { version = "1.10", features = [ "v4", "serde" ] }
@@ -117,3 +118,4 @@ internet-checksum = "0.2"
 # It's common during development to use a local copy of various complex
 # dependencies.  If you want to use those, uncomment one of these blocks.
 #
+
