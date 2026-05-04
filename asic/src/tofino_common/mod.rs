@@ -348,6 +348,20 @@ fn infer_p4_dir() -> AsicResult<String> {
         AsicError::P4Missing(format!("looking up dpd path: {e:?}"))
     })?;
 
+    // std::env::current_exe() has platform-specific behavior when the
+    // executable is invoked through a symlink: some platforms return the
+    // symlink path, while others return the symlink target. Omicron exposes
+    // Dendrite through a symlinked bin directory, which caused dpd to infer
+    // and validate the wrong install root on macOS (the symlink path). See:
+    // https://github.com/oxidecomputer/omicron/issues/10367
+    //
+    // Using std::fs::canonicalize() removes the platform difference since it
+    // resolves symlinks. With that, the checks below always operate on the
+    // real package layout.
+    exe_path = exe_path.canonicalize().map_err(|e| {
+        AsicError::P4Missing(format!("canonicalizing dpd path: {e:?}"))
+    })?;
+
     // Pop off the trailing "dpd":
     exe_path = expect_name(exe_path, "dpd")?;
 
