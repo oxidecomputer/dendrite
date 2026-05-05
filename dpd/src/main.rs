@@ -740,8 +740,8 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
         let rear_links: BTreeMap<PortId, LinkCreate> = switch
             .switch_ports
             .ports
-            .iter()
-            .filter_map(|(port_id, _)| {
+            .keys()
+            .filter_map(|port_id| {
                 if matches!(port_id, PortId::Rear(_)) {
                     let create = LinkCreate {
                         speed: common::ports::PortSpeed::Speed100G,

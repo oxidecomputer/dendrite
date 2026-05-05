@@ -8,14 +8,13 @@
 // Copyright 2026 Oxide Computer Company
 
 use std::collections::BTreeMap;
-use std::{thread::sleep, time::Duration};
 
 use slog::{debug, error, info};
 
 use rust_rpi::Platform;
 use rust_rpi::RegisterInstance;
 
-const INTERVAL: Duration = Duration::from_secs(5);
+const POLL_TIMEOUT_MS: u64 = 100;
 
 pub type IntrResult<T> = Result<T, IntrError>;
 
@@ -156,6 +155,12 @@ impl ShadowInterrupt {
             })?);
         }
         Ok(())
+    }
+
+    pub fn mask_all(&mut self) {
+        for word in self.mask.iter_mut() {
+            *word = 0xffffffff;
+        }
     }
 
     pub fn get_bit(&self, bit: u32) -> IntrResult<bool> {
@@ -361,7 +366,7 @@ fn build_interrupt_map(tf: &Tofino) -> BTreeMap<u32, Vec<InterruptGroup>> {
 }
 
 pub fn interrupt_monitor(log: &slog::Logger) -> IntrResult<()> {
-    let tf = match Tofino::new() {
+    let mut tf = match Tofino::new() {
         Ok(t) => t,
         Err(e) => {
             panic!("Failed to initialize Tofino interface: {e:?}");
@@ -372,6 +377,8 @@ pub fn interrupt_monitor(log: &slog::Logger) -> IntrResult<()> {
     let mut shadow = ShadowInterrupt::new(&tf);
     shadow.read_mask(&tf)?;
     debug!(log, "initial mask: {:?}", shadow.mask);
+    //shadow.mask_all();
+    //shadow.write_mask(&tf)?;
 
     for (num, groups) in imap.iter_mut() {
         shadow.clear_mask_bit(*num)?;
@@ -391,24 +398,28 @@ pub fn interrupt_monitor(log: &slog::Logger) -> IntrResult<()> {
         }
     }
     shadow.write_mask(&tf)?;
-    let ds = tf.rpi.device_select();
-    let global_shadow_inst = ds.pcie_bar_01_regs().glb_shadow_int();
-    let freerun_inst = ds.pcie_bar_01_regs().freerun_cnt();
-    let scratch_inst = ds.pcie_bar_01_regs().scratch_reg(0).unwrap();
+    let timeout = std::time::Duration::from_millis(POLL_TIMEOUT_MS);
     loop {
-        let running = u32::from(freerun_inst.read(&tf)?);
-        info!(
-            log,
-            "runnning: {}  scratch: {}",
-            running,
-            u32::from(scratch_inst.read(&tf)?)
-        );
-        scratch_inst.write(&tf, running.into())?;
-        let c = u32::from(global_shadow_inst.read(&tf)?);
-        info!(log, "global {c:?}");
+        match tf.pci.poll(timeout) {
+            Err(e) => {
+                error!(log, "poll of tofino failed: {e:?}");
+                continue;
+            }
+            Ok(false) => {
+                continue;
+            }
+            Ok(true) => {
+                // We don't care about the returned data, as we access the
+                // registers directly below.  This read is necessary to let
+                // the kernel know that we've read the data, so the next
+                // poll() will block until there is another interrupt.
+                if let Err(e) = tf.pci.read_shadow_bits() {
+                    error!(log, "failed to read shadow interrupt bits: {e:?}");
+                    continue;
+                }
+            }
+        }
         shadow.read_set(&tf)?;
-        shadow.read_mask(&tf)?;
-        debug!(log, "   mask: {:?}", shadow.mask);
         debug!(log, "   set: {:?}", shadow.set);
 
         for (num, groups) in imap.iter_mut() {
@@ -428,6 +439,5 @@ pub fn interrupt_monitor(log: &slog::Logger) -> IntrResult<()> {
             }
         }
         shadow.write_mask(&tf)?;
-        sleep(INTERVAL);
     }
 }
