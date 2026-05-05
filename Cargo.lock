@@ -174,7 +174,7 @@ dependencies = [
  "cfg-if",
  "chrono",
  "common 0.1.0",
- "dpd-api",
+ "dpd-types",
  "lazy_static",
  "libc",
  "oximeter",
@@ -1597,6 +1597,7 @@ dependencies = [
  "dpd-api",
  "dpd-client 0.1.0",
  "dpd-types",
+ "dpd-types-versions",
  "dropshot",
  "expectorate",
  "futures",
@@ -1644,13 +1645,10 @@ version = "0.1.0"
 dependencies = [
  "common 0.1.0",
  "dpd-types",
+ "dpd-types-versions",
  "dropshot",
  "dropshot-api-manager-types",
- "oxnet",
- "schemars 0.8.22",
- "serde",
  "transceiver-controller",
- "uuid",
 ]
 
 [[package]]
@@ -1716,9 +1714,20 @@ dependencies = [
 name = "dpd-types"
 version = "0.1.0"
 dependencies = [
- "aal",
  "chrono",
+ "dpd-types-versions",
+ "omicron-common",
+ "schemars 0.8.22",
+ "serde",
+]
+
+[[package]]
+name = "dpd-types-versions"
+version = "0.1.0"
+dependencies = [
+ "aal",
  "common 0.1.0",
+ "dropshot",
  "omicron-common",
  "oxnet",
  "schemars 0.8.22",

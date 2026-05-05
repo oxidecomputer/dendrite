@@ -4,6 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use dpd_types::table;
 use std::convert::TryInto;
 use std::net::Ipv6Addr;
 
@@ -144,14 +145,14 @@ pub fn delete_route_target(s: &Switch, idx: u16) -> DpdResult<()> {
 pub fn forward_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<IndexKey, RouteAction>(
         TableType::RouteFwdIpv6,
         from_hardware,
     )
 }
 
-pub fn index_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
+pub fn index_dump(s: &Switch, from_hardware: bool) -> DpdResult<table::Table> {
     s.table_dump::<RouteKey, IndexAction>(
         TableType::RouteIdxIpv6,
         from_hardware,
@@ -161,14 +162,14 @@ pub fn index_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
 pub fn forward_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<IndexKey>(force_sync, TableType::RouteFwdIpv6)
 }
 
 pub fn index_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<RouteKey>(force_sync, TableType::RouteIdxIpv6)
 }
 

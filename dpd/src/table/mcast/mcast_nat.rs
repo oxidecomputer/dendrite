@@ -11,6 +11,7 @@
 //! check in the P4 pipeline. Decapsulated Geneve packets never reach these
 //! tables, so each group only needs a single entry with an exact VLAN match.
 
+use dpd_types::table;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::{Switch, table::*};
@@ -143,7 +144,7 @@ pub(crate) fn del_ipv4_entry_with_tgt(
 pub(crate) fn ipv4_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<Ipv4VlanMatchKey, Ipv4Action>(
         TableType::NatIngressIpv4Mcast,
         from_hardware,
@@ -154,7 +155,7 @@ pub(crate) fn ipv4_table_dump(
 pub(crate) fn ipv4_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<Ipv4VlanMatchKey>(
         force_sync,
         TableType::NatIngressIpv4Mcast,
@@ -276,7 +277,7 @@ pub(crate) fn del_ipv6_entry_with_tgt(
 pub(crate) fn ipv6_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<Ipv6VlanMatchKey, Ipv6Action>(
         TableType::NatIngressIpv6Mcast,
         from_hardware,
@@ -287,7 +288,7 @@ pub(crate) fn ipv6_table_dump(
 pub(crate) fn ipv6_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<Ipv6VlanMatchKey>(
         force_sync,
         TableType::NatIngressIpv6Mcast,

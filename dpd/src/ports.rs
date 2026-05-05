@@ -7,9 +7,9 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use dpd_api::LinkCreate;
+use dpd_types::link::LinkCreate;
+use dpd_types::link::LinkEvent;
 use dpd_types::link::LinkId;
-use dpd_types::views::LinkEvent;
 use slog::debug;
 use slog::error;
 use slog::info;
