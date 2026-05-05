@@ -140,7 +140,7 @@ pub fn build(
     println!("using p4 compiler at {p4c_path}");
 
     let tgt_path = format!("{root}/target/proto/opt/oxide/dendrite/{app_name}");
-    println!("building p4 payload in: {}", &tgt_path);
+    println!("building p4 payload in: {}", tgt_path);
 
     fs::create_dir_all(Path::new(&tgt_path))?;
 

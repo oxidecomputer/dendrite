@@ -103,7 +103,7 @@ fn collect_sde(dst: &str, p4_root: &str) -> Result<()> {
 fn illumos_package() -> Result<()> {
     let dist_root = "target/dist";
     fs::create_dir_all(dist_root).with_context(|| "Creating {dist_root}")?;
-    let manifest = format!("{}/manifest", &dist_root);
+    let manifest = format!("{}/manifest", dist_root);
     let proto_root = "target/proto";
     let fmri =
         format!("pkg://oxide/system/sidecar@{}", env!("CARGO_PKG_VERSION"));
@@ -145,7 +145,7 @@ fn illumos_package() -> Result<()> {
     }
 
     // build a temporary repo
-    let repo_dir = format!("{}/repo", &dist_root);
+    let repo_dir = format!("{}/repo", dist_root);
     fs::create_dir_all(&repo_dir)?;
     let _ = fs::remove_dir_all(&repo_dir);
     let status = Command::new("/usr/bin/pkgrepo")
@@ -242,7 +242,7 @@ pub async fn dist(
     format: DistFormat,
 ) -> Result<()> {
     let proto_root = "target/proto";
-    let opt_root = format!("{}/opt/oxide/dendrite", &proto_root);
+    let opt_root = format!("{}/opt/oxide/dendrite", proto_root);
     let bin_root = format!("{opt_root}/bin");
     let p4_root = format!("{opt_root}/sidecar");
 
