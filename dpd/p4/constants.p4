@@ -90,6 +90,7 @@ const bit<8> DROP_MULTICAST_PATH_FILTERED       = 0x17;
 const bit<8> DROP_GENEVE_OPTIONS_TOO_LONG       = 0x18;
 const bit<8> DROP_GENEVE_OPTION_MALFORMED       = 0x19;
 const bit<8> DROP_GENEVE_OPTION_UNKNOWN         = 0x1A;
+const bit<8> DROP_SCTP                          = 0x1B;
 // MAX(DROP_xxx) + 1
-const bit<32> DROP_REASON_MAX                   = 0x1B;
+const bit<32> DROP_REASON_MAX                   = 0x1C;
 
