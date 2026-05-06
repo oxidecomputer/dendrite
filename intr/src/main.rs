@@ -7,8 +7,8 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use anyhow::bail;
 use clap::{Parser, Subcommand};
-
 use slog::{Drain, o};
 
 use rust_rpi::RegisterInstance;
@@ -20,30 +20,63 @@ pub struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+enum InjectSubcommand {
+    #[command(subcommand)]
+    Tcam(Tcam),
+}
+
+#[derive(Debug, Subcommand)]
 enum CliCommand {
     Monitor,
-    Inject {
-        #[command(subcommand)]
-        tcam: Tcam,
-    },
+    #[command(subcommand)]
+    Inject(InjectSubcommand),
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Tcam {
-    Ecc,
+    Ecc { pipe: u32, mau: u32, row: u32, addr: u32 },
     Channel,
 }
 
-fn inject_tcam_sbe() -> anyhow::Result<()> {
+macro_rules! validate_arg {
+    ($v:ident, $max:literal) => {
+        if $v > $max {
+            bail!(format!(
+                "Invalid value for {}: {}.  Must be less than {}.",
+                stringify!($v),
+                $v,
+                $max
+            ))
+        }
+    };
+}
+
+fn inject_tcam_ecc_err(
+    pipe: u32,
+    mau: u32,
+    row: u32,
+    addr: u32,
+) -> anyhow::Result<()> {
+    validate_arg!(pipe, 3);
+    validate_arg!(mau, 19);
+    validate_arg!(row, 11);
+    validate_arg!(addr, 1024);
+
     let tf = intr::Tofino::new()?;
 
-    let pipes = tf.rpi.pipes(0).unwrap();
-    let inst = pipes.mau(0).unwrap().tcams().intr_inject_mau_tcam_array();
-    let mut reg = inst.read(&tf)?;
-    reg.set_tcam_sbe((1u32 << 4).try_into().unwrap());
-    let v = u32::from(reg);
-    println!("writing {v:x} to {:x}", inst.addr());
-    inst.write(&tf, v.into()).map_err(|e| e.into())
+    let tcam = tf.rpi.pipes(pipe).unwrap().mau(mau).unwrap().tcams();
+    let inj_inst = tcam.intr_inject_mau_tcam_array();
+    let mut inj_reg = inj_inst.cons();
+
+    let sbe_inst = tcam.tcam_sbe_errlog(row).unwrap();
+    let mut sbe_reg = sbe_inst.cons();
+    inj_reg.set_tcam_sbe((1u32 << row).try_into().unwrap());
+    sbe_reg.set_tcam_sbe_errlog_addr(addr.try_into().unwrap());
+    println!("writing sbe reg: {sbe_reg:?}");
+    println!("writing sbe inj: {inj_reg:?}");
+    sbe_inst.write(&tf, sbe_reg)?;
+    inj_inst.write(&tf, inj_reg)?;
+    Ok(())
 }
 
 fn log_init() -> anyhow::Result<slog::Logger> {
@@ -61,9 +94,15 @@ pub fn main() -> anyhow::Result<()> {
     let log = log_init()?;
 
     match cli.cmd {
-        CliCommand::Monitor => {
-            intr::interrupt_monitor(&log).map_err(|e| e.into())
-        }
-        CliCommand::Inject { .. } => inject_tcam_sbe(),
+        CliCommand::Monitor => intr::interrupt_monitor(&log)?,
+        CliCommand::Inject(cmd) => match cmd {
+            InjectSubcommand::Tcam(tcam) => match tcam {
+                Tcam::Channel => {}
+                Tcam::Ecc { pipe, mau, row, addr } => {
+                    inject_tcam_ecc_err(pipe, mau, row, addr)?
+                }
+            },
+        },
     }
+    Ok(())
 }

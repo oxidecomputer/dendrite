@@ -245,12 +245,11 @@ impl InterruptGroup {
         let mut triggered = 0;
         for i in &self.interrupts {
             let name = i.name;
-            if (i.get_status)(stat) {
-                debug!(log, "handling {name}");
-                triggered += 1;
-            }
-            match (i.process)(tf, stat) {
-                Ok(true) => info!(log, "handled {name}"),
+            match (i.process)(tf, log, stat) {
+                Ok(true) => {
+                    info!(log, "handled {name}");
+                    triggered += 1;
+                }
                 Ok(false) => {}
                 Err(e) => error!(log, "failed to handle {name}: {e:?}"),
             }
@@ -260,11 +259,6 @@ impl InterruptGroup {
             if let Err(e) = self.write_status(tf) {
                 error!(log, "failed to push status-clearing write: {e:?}");
             }
-            debug!(
-                log,
-                "post-write: {}",
-                tf.read_register(self.status_reg_addr).unwrap()
-            );
         }
     }
 }
@@ -272,10 +266,11 @@ impl InterruptGroup {
 struct Interrupt {
     pub name: &'static str,
     pub set_enable: fn(&mut u32, bool),
-    pub get_status: fn(u32) -> bool,
-    #[allow(dead_code)]
-    pub set_status: fn(&mut u32, bool),
-    pub process: fn(tofino: &Tofino, status: u32) -> IntrResult<bool>,
+    pub process: fn(
+        tofino: &Tofino,
+        log: &slog::Logger,
+        status: u32,
+    ) -> IntrResult<bool>,
 }
 
 // macro_rules! interrupt {
@@ -292,15 +287,6 @@ struct Interrupt {
 //                 e.$set_fn(v.into());
 //                 *x = e.into();
 //             },
-//             get_status: |x| {
-//                 let s = regs::$status_reg::from(*x);
-//                 s.$get_fn().into()
-//             },
-//             set_status: |x, v| {
-//                 let mut s = regs::$status_reg::from(*x);
-//                 s.$set_fn(v.into());
-//                 *x = s.into();
-//             },
 //             process: |tf| true,
 //         }
 //     };
@@ -310,6 +296,8 @@ mod tcam_intr {
     use bitset::BitSet;
     use regs::IntrEnable0MauTcamArray;
     use regs::IntrStatusMauTcamArray;
+    use rust_rpi::RegisterInstance;
+    use slog::error;
 
     use super::{Interrupt, IntrResult, Tofino};
 
@@ -323,36 +311,106 @@ mod tcam_intr {
             *ena_raw = 0;
         }
     }
-    fn set_status(status_raw: &mut u32, v: bool) {
-        if v {
-            let mut status: IntrStatusMauTcamArray = (*status_raw).into();
-            status.set_tcam_logical_channel_err(BitSet::<4>::max());
-            status.set_tcam_sbe(BitSet::<12>::max());
-            *status_raw = status.into();
-        } else {
-            *status_raw = 0;
+
+    fn handle_lc_err(
+        tf: &Tofino,
+        log: &slog::Logger,
+        lce: u8,
+    ) -> IntrResult<()> {
+        // The RPI knows how many instances there are.  It would be handy if it
+        // provided an API to let us ask.
+        const PAIRS: u8 = 4;
+        let pipes = tf.rpi.pipes(0).unwrap();
+
+        for bit in 0..PAIRS {
+            if lce & 1 << bit != 0 {
+                let lel = pipes
+                    .mau(0)
+                    .unwrap()
+                    .tcams()
+                    .tcam_logical_channel_errlog_lo(bit as u32)
+                    .unwrap()
+                    .read(tf)?;
+                let leh = pipes
+                    .mau(0)
+                    .unwrap()
+                    .tcams()
+                    .tcam_logical_channel_errlog_hi(bit as u32)
+                    .unwrap()
+                    .read(tf)?;
+                error!(
+                    log,
+                    "logical channel mismatch with pair {}: \
+                     lo channal (addr: 0x{:x} hit: {} action: {}) \
+                     hi channal (addr: 0x{:x} hit: {} action: {})",
+                    bit,
+                    lel.get_tcam_logical_channel_errlog_addr(),
+                    lel.get_tcam_logical_channel_errlog_hit(),
+                    lel.get_tcam_logical_channel_errlog_actionbit(),
+                    leh.get_tcam_logical_channel_errlog_addr(),
+                    leh.get_tcam_logical_channel_errlog_hit(),
+                    leh.get_tcam_logical_channel_errlog_actionbit()
+                );
+            }
         }
-    }
-    fn get_status(status_raw: u32) -> bool {
-        let status: IntrStatusMauTcamArray = status_raw.into();
-        u8::from(status.get_tcam_logical_channel_err()) != 0
-            || u16::from(status.get_tcam_sbe()) != 0
+
+        Ok(())
     }
 
-    fn process(_tf: &Tofino, status_raw: u32) -> IntrResult<bool> {
-        Ok(get_status(status_raw))
+    fn handle_sb_err(
+        tf: &Tofino,
+        log: &slog::Logger,
+        sbe: u16,
+    ) -> IntrResult<()> {
+        // The RPI knows how many instances there are.  It would be handy if it
+        // provided an API to let us ask.
+        const ROWS: u8 = 11;
+        let pipes = tf.rpi.pipes(0).unwrap();
+
+        for row in 0..ROWS {
+            if sbe & 1 << row != 0 {
+                let errlog = pipes
+                    .mau(0)
+                    .unwrap()
+                    .tcams()
+                    .tcam_sbe_errlog(row as u32)
+                    .unwrap()
+                    .read(tf)?;
+
+                error!(
+                    log,
+                    "TCAM single-bit error.  row: {}  addr: 0x{:x}",
+                    row,
+                    u32::from(errlog.get_tcam_sbe_errlog_addr())
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn process(
+        tf: &Tofino,
+        log: &slog::Logger,
+        status_raw: u32,
+    ) -> IntrResult<bool> {
+        let status: IntrStatusMauTcamArray = status_raw.into();
+        let lce = u8::from(status.get_tcam_logical_channel_err());
+        let sbe = u16::from(status.get_tcam_sbe());
+        let handled = lce > 0 || sbe > 0;
+        if lce > 0 {
+            handle_lc_err(tf, log, lce)?;
+        }
+        if sbe > 0 {
+            handle_sb_err(tf, log, sbe)?;
+        }
+        Ok(handled)
     }
 
     pub fn new() -> Interrupt {
-        Interrupt {
-            name: "tcam_intr",
-            set_enable,
-            get_status,
-            set_status,
-            process,
-        }
+        Interrupt { name: "tcam_intr", set_enable, process }
     }
 }
+
 fn build_interrupt_map(tf: &Tofino) -> BTreeMap<u32, Vec<InterruptGroup>> {
     let pipes = tf.rpi.pipes(0).unwrap();
     let g = InterruptGroup::new(
