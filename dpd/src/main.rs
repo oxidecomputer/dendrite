@@ -259,7 +259,7 @@ fn get_sidecar_revision(
 }
 
 impl Switch {
-    fn new(
+    pub(crate) fn new(
         log: slog::Logger,
         _p4_name: &str,
         config: config::Config,
