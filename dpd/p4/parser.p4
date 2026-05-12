@@ -228,6 +228,7 @@ parser IngressParser(
 			IPPROTO_ICMP: parse_icmp;
 			IPPROTO_TCP: parse_tcp;
 			IPPROTO_UDP: parse_udp;
+			IPPROTO_SCTP: drop_sctp;
 			default: accept;
 		}
 	}
@@ -319,6 +320,7 @@ parser IngressParser(
 			IPPROTO_ICMPV6: parse_icmp;
 			IPPROTO_TCP: parse_tcp;
 			IPPROTO_UDP: parse_udp;
+			IPPROTO_SCTP: drop_sctp;
 			default: accept;
 		}
 	}
@@ -364,6 +366,12 @@ parser IngressParser(
 			GENEVE_UDP_PORT: parse_geneve;
 			default: accept;
 		}
+	}
+
+	state drop_sctp {
+		meta.drop_reason = DROP_SCTP;
+		meta.dropped = true;
+		transition accept;
 	}
 
 	state parse_geneve {

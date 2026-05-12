@@ -14,6 +14,7 @@ const bit<16> ETHERTYPE_SIDECAR	= 0x0901;
 const bit<8> IPPROTO_ICMP	= 1;
 const bit<8> IPPROTO_TCP	= 6;
 const bit<8> IPPROTO_UDP	= 17;
+const bit<8> IPPROTO_SCTP	= 132;
 
 const bit<8> IPPROTO_HOPOPTS	= 0;
 const bit<8> IPPROTO_ROUTING	= 43;

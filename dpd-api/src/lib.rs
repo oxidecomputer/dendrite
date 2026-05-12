@@ -510,34 +510,10 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/channels",
-        versions = VERSION_MCAST_STRICT_UNDERLAY..,
     }]
     async fn channels_list(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseOk<Vec<latest::port::FreeChannels>>, HttpError>;
-
-    /// Get the set of available channels for all ports.
-    ///
-    /// This returns the unused MAC channels for each physical switch port. This can
-    /// be used to determine how many additional links can be crated on a physical
-    /// switch port.
-    //
-    // TODO: `FreeChannels` is unchanged across versions, so this split may be
-    // unnecessary — the rationale for gating the endpoint at
-    // `VERSION_MCAST_STRICT_UNDERLAY` is not obvious from the code alone.
-    // Revisit in a follow-up to either document the reason or collapse back to
-    // a single `channels_list` endpoint.
-    #[endpoint {
-        method = GET,
-        path = "/channels",
-        versions = ..VERSION_MCAST_STRICT_UNDERLAY,
-        operation_id = "channels_list",
-    }]
-    async fn channels_list_v1(
-        rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<v1::port::FreeChannels>>, HttpError> {
-        Self::channels_list(rqctx).await
-    }
 
     /// Return information about a single switch port.
     #[endpoint {
@@ -2186,10 +2162,11 @@ pub trait DpdApi {
      * Underlay groups are used for admin-scoped IPv6 multicast traffic that
      * requires replication infrastructure with external and underlay members.
      */
-    // Required method: the latest version requires a `MulticastGroupTagQuery`
-    // query parameter that v1 does not have. When the tag is absent from the
-    // request body, the implementation must look up the existing group's tag
-    // via `Self::Context`, which is not available in a provided method.
+    // Required method: v1 carries `tag` as `Option<String>` in the body, while
+    // the latest version moves it to a required `MulticastGroupTagQuery`.
+    // Resolving a `None` body tag means reading the existing group's tag from
+    // switch state, which is reachable only through the concrete context type
+    // in the implementation.
     #[endpoint {
         method = PUT,
         path = "/multicast/underlay-groups/{group_ip}",
@@ -2233,10 +2210,11 @@ pub trait DpdApi {
      *
      * Tags are optional for backward compatibility.
      */
-    // Required method: the latest version requires a `MulticastGroupTagQuery`
-    // query parameter that v7 does not have. When the tag is absent from the
-    // request body, the implementation must look up the existing group's tag
-    // via `Self::Context`, which is not available in a provided method.
+    // Required method: v7 carries `tag` as `Option<String>` in the body, while
+    // the latest version moves it to a required `MulticastGroupTagQuery`.
+    // Resolving a `None` body tag means reading the existing group's tag from
+    // switch state, which is reachable only through the concrete context type
+    // in the implementation.
     #[endpoint {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",

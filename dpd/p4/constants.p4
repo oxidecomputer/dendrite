@@ -11,7 +11,11 @@ const bit<16> L2_ISOLATED_FLAG = 0x8000;
 const int IPV4_NAT_TABLE_SIZE       = 1024; // nat routing table
 const int IPV6_NAT_TABLE_SIZE       = 1024; // nat routing table
 const int IPV4_LPM_SIZE             = 8192; // ipv4 forwarding table
+#ifdef MULTICAST
 const int IPV6_LPM_SIZE             = 1024; // ipv6 forwarding table
+#else
+const int IPV6_LPM_SIZE             = 8192; // ipv6 forwarding table
+#endif
 const int IPV4_ARP_SIZE             = 512;  // arp cache
 const int IPV6_NEIGHBOR_SIZE        = 512;  // ipv6 neighbor cache
 const int SWITCH_IPV4_ADDRS_SIZE    = 512;  // ipv4 addrs assigned to our ports
@@ -90,6 +94,7 @@ const bit<8> DROP_MULTICAST_PATH_FILTERED       = 0x17;
 const bit<8> DROP_GENEVE_OPTIONS_TOO_LONG       = 0x18;
 const bit<8> DROP_GENEVE_OPTION_MALFORMED       = 0x19;
 const bit<8> DROP_GENEVE_OPTION_UNKNOWN         = 0x1A;
+const bit<8> DROP_SCTP                          = 0x1B;
 // MAX(DROP_xxx) + 1
-const bit<32> DROP_REASON_MAX                   = 0x1B;
+const bit<32> DROP_REASON_MAX                   = 0x1C;
 
