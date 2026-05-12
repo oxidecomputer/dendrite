@@ -791,7 +791,7 @@ pub async fn get_range_ipv4(
     switch: &Switch,
     last: Option<Ipv4Net>,
     max: u32,
-) -> DpdResult<Vec<dpd_api::Ipv4Routes>> {
+) -> DpdResult<Vec<dpd_types::route::Ipv4Routes>> {
     let route_data = switch.routes.lock().await;
     let lower = match last {
         None => Bound::Unbounded,
@@ -804,7 +804,7 @@ pub async fn get_range_ipv4(
         .range((lower, Bound::Unbounded))
         .take(usize::try_from(max).expect("invalid usize"))
     {
-        routes.push(dpd_api::Ipv4Routes {
+        routes.push(dpd_types::route::Ipv4Routes {
             cidr: match subnet {
                 IpNet::V4(n) => *n,
                 IpNet::V6(_) => {
@@ -824,7 +824,7 @@ pub async fn get_range_ipv6(
     switch: &Switch,
     last: Option<Ipv6Net>,
     max: u32,
-) -> DpdResult<Vec<dpd_api::Ipv6Routes>> {
+) -> DpdResult<Vec<dpd_types::route::Ipv6Routes>> {
     let route_data = switch.routes.lock().await;
     let lower = match last {
         None => Bound::Unbounded,
@@ -837,7 +837,7 @@ pub async fn get_range_ipv6(
         .range((lower, Bound::Unbounded))
         .take(usize::try_from(max).expect("invalid usize"))
     {
-        routes.push(dpd_api::Ipv6Routes {
+        routes.push(dpd_types::route::Ipv6Routes {
             cidr: match subnet {
                 IpNet::V6(n) => *n,
                 IpNet::V4(_) => {

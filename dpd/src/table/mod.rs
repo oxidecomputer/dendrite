@@ -16,7 +16,7 @@ use aal::ActionParse;
 use aal::MatchParse;
 use aal::TableOps;
 use common::table::TableType;
-use dpd_types::views;
+use dpd_types::table as dpd_table;
 
 pub mod arp_ipv4;
 pub mod attached_subnet_v4;
@@ -214,7 +214,7 @@ pub fn get_entries(
     switch: &Switch,
     name: String,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<dpd_table::Table> {
     match TableType::try_from(name.as_str())? {
         TableType::RouteIdxIpv4 => {
             route_ipv4::index_dump(switch, from_hardware)
@@ -309,7 +309,7 @@ pub fn get_counters(
     switch: &Switch,
     force_sync: bool,
     name: String,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<dpd_table::TableCounterEntry>> {
     match TableType::try_from(name.as_str())? {
         TableType::RouteIdxIpv4 => {
             route_ipv4::index_counter_fetch(switch, force_sync)

@@ -16,7 +16,7 @@ use crate::tofino_asic::genpd::*;
 use crate::tofino_asic::ports;
 use crate::tofino_asic::{CheckError, Handle};
 use aal::{AsicError, AsicResult, PortHdl};
-use dpd_api::{
+use dpd_types::serdes::{
     AnLtStatus, AnStatus, DfeAdaptationState, EncSpeed, LaneEncoding, LaneMap,
     LaneStatus, LpPages, LtStatus, RxSigInfo, SerdesEye,
 };

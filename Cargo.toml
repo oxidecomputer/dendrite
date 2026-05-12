@@ -9,6 +9,7 @@ members = [
 	"dpd-api",
 	"dpd-client",
 	"dpd-types",
+	"dpd-types/versions",
 	"dropshot-apis",
 	"packet",
 	"pcap",
@@ -35,6 +36,7 @@ asic = { path = "asic" }
 dpd-api = { path = "dpd-api" }
 dpd-client = { path = "dpd-client" }
 dpd-types = { path = "dpd-types" }
+dpd-types-versions = { path = "dpd-types/versions" }
 common = { path = "common" }
 packet = { path = "packet" }
 pcap = { path = "pcap" }

@@ -28,6 +28,7 @@ asic.workspace = true
 common.workspace = true
 dpd-api.workspace = true
 dpd-types.workspace = true
+dpd-types-versions.workspace = true
 
 anyhow.workspace = true
 cfg-if.workspace = true

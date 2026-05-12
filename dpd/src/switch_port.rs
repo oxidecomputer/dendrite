@@ -11,8 +11,8 @@ use dpd_types::port_map::BackplaneLink;
 use dpd_types::switch_port::Led;
 use dpd_types::switch_port::LedPolicy;
 use dpd_types::switch_port::ManagementMode;
+use dpd_types::switch_port::SwitchPortView;
 use dpd_types::transceivers::QsfpDevice;
-use dpd_types::views;
 use serde::Deserialize;
 use tokio::sync::Mutex;
 pub use transceiver_controller::message::LedState;
@@ -271,7 +271,7 @@ impl SwitchPort {
     }
 }
 
-impl From<&SwitchPort> for views::SwitchPort {
+impl From<&SwitchPort> for SwitchPortView {
     fn from(p: &SwitchPort) -> Self {
         let qsfp_device = match &p.fixed_side {
             FixedSideDevice::Qsfp { device, .. } => Some(device.clone()),
