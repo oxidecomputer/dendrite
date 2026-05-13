@@ -101,7 +101,7 @@ pfexec chown "$UID" /out
 
 banner "P4 Codegen"
 # Add gcc-12 so the p4 compiler can find cpp
-PATH=/opt/gcc-12/bin:$PATH cargo xtask codegen --stages $TOFINO_STAGES
+PATH=/opt/gcc-12/bin:$PATH cargo xtask codegen --stages $TOFINO_STAGES --multicast
 
 # Preserve all the diagnostics spit out by the compiler
 mkdir -p /out/p4c-diags

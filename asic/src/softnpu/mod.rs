@@ -28,6 +28,8 @@ use common::ports::{
 
 use softnpu_lib::ManagementRequest;
 
+#[cfg(feature = "multicast")]
+pub mod mcast;
 pub mod mgmt;
 pub mod table;
 
@@ -105,6 +107,9 @@ pub struct Handle {
     pub mgmt_config: mgmt::ManagementConfig,
 
     update_tx: Mutex<Option<mpsc::UnboundedSender<PortUpdate>>>,
+
+    #[cfg(feature = "multicast")]
+    mc_data: Mutex<mcast::McGroupData>,
 }
 
 impl Handle {
@@ -130,6 +135,8 @@ impl Handle {
             ports: Mutex::new(HashMap::new()),
             mgmt_config,
             update_tx: Mutex::new(None),
+            #[cfg(feature = "multicast")]
+            mc_data: Mutex::new(mcast::init()),
         })
     }
 
@@ -148,46 +155,68 @@ impl Handle {
 #[cfg(feature = "multicast")]
 impl AsicMulticastOps for Handle {
     fn mc_domains(&self) -> Vec<u16> {
-        let len = self.ports.lock().unwrap().len() as u16;
-        (0..len).collect()
+        let mc_data = self.mc_data.lock().unwrap();
+        mc_data.domains()
     }
 
-    fn mc_port_count(&self, _group_id: u16) -> AsicResult<usize> {
-        Ok(self.ports.lock().unwrap().len())
+    fn mc_port_count(&self, group_id: u16) -> AsicResult<usize> {
+        let mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_count(group_id)
     }
 
     fn mc_port_add(
         &self,
-        _group_id: u16,
-        _port: u16,
-        _rid: u16,
-        _level1_excl_id: u16,
+        group_id: u16,
+        port: u16,
+        rid: u16,
+        level1_excl_id: u16,
     ) -> AsicResult<()> {
-        Err(AsicError::OperationUnsupported)
+        slog::info!(
+            self.log,
+            "adding port {port} to multicast group {group_id}"
+        );
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_add(group_id, port, rid, level1_excl_id)
     }
 
-    fn mc_port_remove(&self, _group_id: u16, _port: u16) -> AsicResult<()> {
-        Ok(())
+    fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
+        slog::info!(
+            self.log,
+            "removing port {port} from multicast group {group_id}"
+        );
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_remove(group_id, port)
     }
 
-    fn mc_group_create(&self, _group_id: u16) -> AsicResult<()> {
-        Err(AsicError::OperationUnsupported)
+    fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
+        slog::info!(self.log, "creating multicast group {group_id}");
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_create(group_id)
     }
 
-    fn mc_group_destroy(&self, _group_id: u16) -> AsicResult<()> {
-        Ok(())
+    fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()> {
+        slog::info!(self.log, "destroying multicast group {group_id}");
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_destroy(group_id)
     }
 
     fn mc_groups_count(&self) -> AsicResult<usize> {
-        Ok(self.ports.lock().unwrap().len())
+        let mc_data = self.mc_data.lock().unwrap();
+        Ok(mc_data.domains_count())
     }
 
     fn mc_set_max_nodes(
         &self,
-        _max_nodes: u32,
-        _max_link_aggregated_nodes: u32,
+        max_nodes: u32,
+        max_link_aggregated_nodes: u32,
     ) -> AsicResult<()> {
-        Ok(())
+        slog::info!(
+            self.log,
+            "setting max nodes to {max_nodes}, \
+             max link aggregated nodes to {max_link_aggregated_nodes}"
+        );
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.set_max_nodes(max_nodes, max_link_aggregated_nodes)
     }
 }
 

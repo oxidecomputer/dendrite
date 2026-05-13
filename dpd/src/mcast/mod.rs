@@ -723,9 +723,15 @@ pub(crate) fn modify_group_external(
     // VLAN is assigned directly -> `Some(x)` sets VLAN, `None` removes VLAN
     updated_group.ext_fwding.vlan_id =
         new_group_info.external_forwarding.vlan_id;
-    updated_group.sources = canonicalize_sources(
-        new_group_info.sources.clone().or(updated_group.sources),
-    );
+
+    // Mirror the canonicalization that `update_external_tables` above used to
+    // rewrite the P4 source-filter entries. Earlier revisions wrote back
+    // `new.sources.or(existing)` here, so a `None` update cleared the P4
+    // table but left the in-memory `Some([...])` stale; the GET response
+    // then disagreed with the hardware/softnpu state and callers driving
+    // `(S,G) -> (*,G)` transitions saw perpetual drift.
+    updated_group.sources =
+        canonicalize_sources(new_group_info.sources.clone());
 
     // Update bitmap tables with new VLAN if VLAN changed
     // Also, handles possible membership skew between update internal + external calls.
@@ -2393,15 +2399,16 @@ mod tests {
             None
         );
 
-        // Vec with only Exact sources stays as-is
+        // Vec with only Exact sources is deduplicated and sorted
         let exact_sources = vec![
             IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
             IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
         ];
-        assert_eq!(
-            canonicalize_sources(Some(exact_sources.clone())),
-            Some(exact_sources)
-        );
+        let expected = vec![
+            IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
+            IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
+        ];
+        assert_eq!(canonicalize_sources(Some(exact_sources)), Some(expected));
 
         // Single Exact source stays as-is
         let single_exact = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
