@@ -13,6 +13,7 @@
 //! VLAN-based access control (preventing VLAN translation) is handled by NAT
 //! ingress tables before encapsulation, not by route tables.
 
+use dpd_types::table;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use aal::ActionParse;
@@ -100,7 +101,7 @@ pub(crate) fn del_ipv4_entry(s: &Switch, route: Ipv4Addr) -> DpdResult<()> {
 pub(crate) fn ipv4_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<Ipv4MatchKey, Ipv4Action>(
         TableType::RouteIpv4Mcast,
         from_hardware,
@@ -111,7 +112,7 @@ pub(crate) fn ipv4_table_dump(
 pub(crate) fn ipv4_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<Ipv4MatchKey>(force_sync, TableType::RouteIpv4Mcast)
 }
 
@@ -199,7 +200,7 @@ pub(crate) fn del_ipv6_entry(s: &Switch, route: Ipv6Addr) -> DpdResult<()> {
 pub(crate) fn ipv6_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<Ipv6MatchKey, Ipv6Action>(
         TableType::RouteIpv6Mcast,
         from_hardware,
@@ -210,7 +211,7 @@ pub(crate) fn ipv6_table_dump(
 pub(crate) fn ipv6_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<Ipv6MatchKey>(force_sync, TableType::RouteIpv6Mcast)
 }
 

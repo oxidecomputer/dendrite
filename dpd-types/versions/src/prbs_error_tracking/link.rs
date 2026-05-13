@@ -4,71 +4,35 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-//! Types from API version 10 (ASIC_DETAILS) that changed in
-//! version 11 (PRBS_IMPROVEMENT).
-//!
-//! Dropped API support for PRBS modes not supported by the Tofino ASIC.
-
-use std::convert::TryFrom;
-
+use common::{
+    network::MacAddr,
+    ports::{PortFec, PortId, PortMedia, PortPrbsMode, PortSpeed},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use common::network::MacAddr;
-use common::ports::{PortFec, PortId, PortMedia, PortSpeed};
-use dpd_types::link::{LinkId, LinkState};
+use crate::v1;
 
-/// Legal PRBS modes
-#[derive(
-    Clone, Copy, Eq, PartialEq, Debug, Deserialize, Serialize, JsonSchema,
-)]
-pub enum PortPrbsMode {
-    Mode31,
-    Mode23,
-    Mode15,
-    Mode13,
-    Mode11,
-    Mode9,
-    Mode7,
-    Mission, // i.e. PRBS disabled
-}
+// `MsDuration` lives alongside `LinkView` because it is the body type for the
+// link-scoped PRBS bit-error measurement endpoint introduced in this version.
 
-impl TryFrom<PortPrbsMode> for common::ports::PortPrbsMode {
-    type Error = String;
-
-    fn try_from(x: PortPrbsMode) -> Result<Self, Self::Error> {
-        match x {
-            PortPrbsMode::Mode9 => Ok(common::ports::PortPrbsMode::Mode9),
-            PortPrbsMode::Mode13 => Ok(common::ports::PortPrbsMode::Mode13),
-            PortPrbsMode::Mode15 => Ok(common::ports::PortPrbsMode::Mode15),
-            PortPrbsMode::Mode31 => Ok(common::ports::PortPrbsMode::Mode31),
-            PortPrbsMode::Mission => Ok(common::ports::PortPrbsMode::Mission),
-            x => Err(format!("{x:?} is not a supported PRBS mode")),
-        }
-    }
-}
-
-impl From<common::ports::PortPrbsMode> for PortPrbsMode {
-    fn from(x: common::ports::PortPrbsMode) -> Self {
-        match x {
-            common::ports::PortPrbsMode::Mode9 => PortPrbsMode::Mode9,
-            common::ports::PortPrbsMode::Mode13 => PortPrbsMode::Mode13,
-            common::ports::PortPrbsMode::Mode15 => PortPrbsMode::Mode15,
-            common::ports::PortPrbsMode::Mode31 => PortPrbsMode::Mode31,
-            common::ports::PortPrbsMode::Mission => PortPrbsMode::Mission,
-        }
-    }
+/// Duration in milliseconds
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct MsDuration {
+    /// Duration in milliseconds
+    pub ms: u32,
 }
 
 /// An Ethernet-capable link within a switch port.
 //
-// NOTE: This is a view onto `crate::link::Link`.
+// NOTE: This is a view onto `dpd::link::Link`.
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct Link {
+#[serde(rename = "Link")]
+pub struct LinkView {
     /// The switch port on which this link exists.
     pub port_id: PortId,
     /// The `LinkId` within the switch port for this link.
-    pub link_id: LinkId,
+    pub link_id: v1::link::LinkId,
     /// The Tofino connector number associated with this link.
     pub tofino_connector: u16,
     /// The lower-level ASIC ID used to refer to this object in the switch
@@ -93,15 +57,15 @@ pub struct Link {
     /// The PRBS mode.
     pub prbs: PortPrbsMode,
     /// The state of the Ethernet link.
-    pub link_state: LinkState,
+    pub link_state: v1::link::LinkState,
     /// The MAC address for the link.
     pub address: MacAddr,
     /// The link is configured for IPv6 use
     pub ipv6_enabled: bool,
 }
 
-impl From<dpd_types::views::Link> for Link {
-    fn from(value: dpd_types::views::Link) -> Self {
+impl From<LinkView> for v1::link::LinkView {
+    fn from(value: LinkView) -> Self {
         Self {
             port_id: value.port_id,
             link_id: value.link_id,

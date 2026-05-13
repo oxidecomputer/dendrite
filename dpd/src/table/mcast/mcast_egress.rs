@@ -6,6 +6,7 @@
 
 //! Table operations for multicast egress entries.
 
+use dpd_types::table;
 use std::fmt;
 
 use crate::{Switch, table::*};
@@ -162,7 +163,7 @@ pub(crate) fn del_bitmap_entry(
 pub(crate) fn bitmap_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<MatchKeyDecapPorts, DecapPortsAction>(
         TableType::McastEgressDecapPorts,
         from_hardware,
@@ -173,7 +174,7 @@ pub(crate) fn bitmap_table_dump(
 pub(crate) fn bitmap_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<MatchKeyDecapPorts>(
         force_sync,
         TableType::McastEgressDecapPorts,
@@ -245,7 +246,7 @@ pub(crate) fn del_port_mapping_entry(
 pub(crate) fn port_mapping_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<MatchKeyPortId, PortIdAction>(
         TableType::McastEgressPortMapping,
         from_hardware,
@@ -256,7 +257,7 @@ pub(crate) fn port_mapping_table_dump(
 pub(crate) fn port_mapping_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<MatchKeyPortId>(
         force_sync,
         TableType::McastEgressPortMapping,

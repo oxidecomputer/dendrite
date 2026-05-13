@@ -152,7 +152,7 @@ checksum = "3c3610892ee6e0cbce8ae2700349fcf8f98adb0dbfbee85aec3c9179d29cc072"
 dependencies = [
  "base64ct",
  "blake2",
- "cpufeatures 0.2.17",
+ "cpufeatures",
  "password-hash",
 ]
 
@@ -185,7 +185,7 @@ dependencies = [
  "cfg-if",
  "chrono",
  "common 0.1.0",
- "dpd-api",
+ "dpd-types",
  "lazy_static",
  "libc",
  "oximeter",
@@ -414,7 +414,7 @@ dependencies = [
 [[package]]
 name = "bhyve_api"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#784de5e4b123b48e574bbffc1188c0d5c30b2e62"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#6615e4f072c58f4d10e29007f328c536c464445d"
 dependencies = [
  "bhyve_api_sys 0.0.0 (git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast)",
  "libc",
@@ -444,7 +444,7 @@ dependencies = [
 [[package]]
 name = "bhyve_api_sys"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#784de5e4b123b48e574bbffc1188c0d5c30b2e62"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#6615e4f072c58f4d10e29007f328c536c464445d"
 dependencies = [
  "libc",
  "strum 0.26.3",
@@ -647,6 +647,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
 name = "bstr"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -779,18 +788,7 @@ checksum = "c3613f74bd2eac03dad61bd53dbe620703d4371614fe0bc3b9f04dd36fe4e818"
 dependencies = [
  "cfg-if",
  "cipher",
- "cpufeatures 0.2.17",
-]
-
-[[package]]
-name = "chacha20"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f8d983286843e49675a4b7a2d174efe136dc93a18d69130dd18198a6c167601"
-dependencies = [
- "cfg-if",
- "cpufeatures 0.3.0",
- "rand_core 0.10.1",
+ "cpufeatures",
 ]
 
 [[package]]
@@ -800,7 +798,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10cd79432192d1c0f4e1a0fef9527696cc039165d729fb41b3f4f4f354c2dc35"
 dependencies = [
  "aead",
- "chacha20 0.9.1",
+ "chacha20",
  "cipher",
  "poly1305",
  "zeroize",
@@ -1022,7 +1020,7 @@ version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fde0e0ec90c9dfb3b4b1a0891a7dcd0e2bffde2f7efed5fe7c9bb00e5bfb915e"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1193,18 +1191,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "cpufeatures"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "cpuid_utils"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#784de5e4b123b48e574bbffc1188c0d5c30b2e62"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#6615e4f072c58f4d10e29007f328c536c464445d"
 dependencies = [
  "bhyve_api 0.0.0 (git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast)",
  "bitflags 2.9.4",
@@ -1395,7 +1384,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
 dependencies = [
  "cfg-if",
- "cpufeatures 0.2.17",
+ "cpufeatures",
  "curve25519-dalek-derive",
  "digest",
  "fiat-crypto",
@@ -1708,7 +1697,7 @@ dependencies = [
 [[package]]
 name = "dladm"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#784de5e4b123b48e574bbffc1188c0d5c30b2e62"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#6615e4f072c58f4d10e29007f328c536c464445d"
 dependencies = [
  "libc",
  "strum 0.26.3",
@@ -1717,11 +1706,11 @@ dependencies = [
 [[package]]
 name = "dlpi"
 version = "0.2.0"
-source = "git+https://github.com/oxidecomputer/dlpi-sys?branch=main#7cce2d3ab9dcac909642e1d1060f27bb2549cfdc"
+source = "git+https://github.com/oxidecomputer/dlpi-sys?branch=main#555fa6e1315a64f40c72716e4d168697c03795c6"
 dependencies = [
  "libc",
  "libdlpi-sys 0.1.0 (git+https://github.com/oxidecomputer/dlpi-sys?branch=main)",
- "num_enum 0.7.6",
+ "num_enum 0.7.5",
  "pretty-hex",
  "thiserror 2.0.18",
  "tokio",
@@ -1730,11 +1719,11 @@ dependencies = [
 [[package]]
 name = "dlpi"
 version = "0.2.0"
-source = "git+https://github.com/oxidecomputer/dlpi-sys#7cce2d3ab9dcac909642e1d1060f27bb2549cfdc"
+source = "git+https://github.com/oxidecomputer/dlpi-sys#42b2bfeefdfb8c7b96fc6cfa9ec45ef4554c2714"
 dependencies = [
  "libc",
  "libdlpi-sys 0.1.0 (git+https://github.com/oxidecomputer/dlpi-sys)",
- "num_enum 0.7.6",
+ "num_enum 0.7.5",
  "pretty-hex",
  "thiserror 2.0.18",
 ]
@@ -1791,6 +1780,7 @@ dependencies = [
  "dpd-api",
  "dpd-client 0.1.0",
  "dpd-types",
+ "dpd-types-versions",
  "dropshot",
  "expectorate",
  "futures",
@@ -1838,13 +1828,10 @@ version = "0.1.0"
 dependencies = [
  "common 0.1.0",
  "dpd-types",
+ "dpd-types-versions",
  "dropshot",
  "dropshot-api-manager-types",
- "oxnet",
- "schemars 0.8.22",
- "serde",
  "transceiver-controller",
- "uuid",
 ]
 
 [[package]]
@@ -1910,9 +1897,20 @@ dependencies = [
 name = "dpd-types"
 version = "0.1.0"
 dependencies = [
- "aal",
  "chrono",
+ "dpd-types-versions",
+ "omicron-common 0.1.0 (git+https://github.com/oxidecomputer/omicron?branch=main)",
+ "schemars 0.8.22",
+ "serde",
+]
+
+[[package]]
+name = "dpd-types-versions"
+version = "0.1.0"
+dependencies = [
+ "aal",
  "common 0.1.0",
+ "dropshot",
  "omicron-common 0.1.0 (git+https://github.com/oxidecomputer/omicron?branch=main)",
  "oxnet",
  "schemars 0.8.22",
@@ -2637,23 +2635,9 @@ dependencies = [
  "cfg-if",
  "js-sys",
  "libc",
- "r-efi 5.3.0",
+ "r-efi",
  "wasip2",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "getrandom"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0de51e6874e94e7bf76d726fc5d13ba782deca734ff60d5bb2fb2607c7406555"
-dependencies = [
- "cfg-if",
- "libc",
- "r-efi 6.0.0",
- "rand_core 0.10.1",
- "wasip2",
- "wasip3",
 ]
 
 [[package]]
@@ -3313,12 +3297,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "id-arena"
-version = "2.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
-
-[[package]]
 name = "iddqd"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3780,7 +3758,7 @@ version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb26cec98cce3a3d96cbb7bced3c4b16e3d13f27ec56dbd62cbc8f39cfb9d653"
 dependencies = [
- "cpufeatures 0.2.17",
+ "cpufeatures",
 ]
 
 [[package]]
@@ -3818,26 +3796,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
-name = "leb128fmt"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
-
-[[package]]
 name = "libc"
-version = "0.2.183"
+version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
+checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libdlpi-sys"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/dlpi-sys?branch=main#7cce2d3ab9dcac909642e1d1060f27bb2549cfdc"
+source = "git+https://github.com/oxidecomputer/dlpi-sys?branch=main#555fa6e1315a64f40c72716e4d168697c03795c6"
 
 [[package]]
 name = "libdlpi-sys"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/dlpi-sys#7cce2d3ab9dcac909642e1d1060f27bb2549cfdc"
+source = "git+https://github.com/oxidecomputer/dlpi-sys#42b2bfeefdfb8c7b96fc6cfa9ec45ef4554c2714"
 
 [[package]]
 name = "libgit2-sys"
@@ -3880,23 +3852,23 @@ checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 [[package]]
 name = "libnet"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/netadm-sys?branch=main#e9bf1e519ce304bf9cc6e87b50b9c64a77c8b0c1"
+source = "git+https://github.com/oxidecomputer/netadm-sys?branch=main#24167d269038223b9d5d50c333ecaa34001d8f94"
 dependencies = [
  "anyhow",
  "cfg-if",
  "colored",
  "dlpi 0.2.0 (git+https://github.com/oxidecomputer/dlpi-sys)",
  "libc",
- "num_enum 0.7.6",
+ "num_enum 0.7.5",
  "nvpair 0.5.0",
  "nvpair-sys",
  "oxnet",
- "rand 0.10.1",
+ "rand 0.9.2",
  "rusty-doors",
  "socket2 0.6.3",
  "thiserror 2.0.18",
  "tracing",
- "winnow 1.0.1",
+ "winnow 0.7.14",
 ]
 
 [[package]]
@@ -3909,7 +3881,7 @@ dependencies = [
  "colored",
  "dlpi 0.2.0 (git+https://github.com/oxidecomputer/dlpi-sys)",
  "libc",
- "num_enum 0.7.6",
+ "num_enum 0.7.5",
  "nvpair 0.5.0",
  "nvpair-sys",
  "oxnet",
@@ -4438,9 +4410,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.31.2"
+version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d6d0705320c1e6ba1d912b5e37cf18071b6c2e9b7fa8215a1e8a7651966f5d3"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
 dependencies = [
  "bitflags 2.9.4",
  "cfg-if",
@@ -4574,11 +4546,11 @@ dependencies = [
 
 [[package]]
 name = "num_enum"
-version = "0.7.6"
+version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d0bca838442ec211fa11de3a8b0e0e8f3a4522575b5c4c06ed722e005036f26"
+checksum = "b1207a7e20ad57b847bbddc6776b968420d38292bbfe2089accff5e19e82454c"
 dependencies = [
- "num_enum_derive 0.7.6",
+ "num_enum_derive 0.7.5",
  "rustversion",
 ]
 
@@ -4596,9 +4568,9 @@ dependencies = [
 
 [[package]]
 name = "num_enum_derive"
-version = "0.7.6"
+version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
+checksum = "ff32365de1b6743cb203b710788263c44a03de03802daf96092f2da4fe6ba4d7"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -4618,7 +4590,7 @@ dependencies = [
 [[package]]
 name = "nvpair"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#784de5e4b123b48e574bbffc1188c0d5c30b2e62"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#6615e4f072c58f4d10e29007f328c536c464445d"
 dependencies = [
  "libc",
  "nvpair_sys",
@@ -4642,7 +4614,7 @@ source = "git+https://github.com/jmesmon/rust-libzfs?branch=master#ecd5a922247a6
 [[package]]
 name = "nvpair_sys"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#784de5e4b123b48e574bbffc1188c0d5c30b2e62"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#6615e4f072c58f4d10e29007f328c536c464445d"
 dependencies = [
  "libc",
 ]
@@ -5017,12 +4989,12 @@ checksum = "d211803b9b6b570f68772237e415a029d5a50c65d382910b879fb19d3271f94d"
 
 [[package]]
 name = "oxide-tokio-rt"
-version = "0.1.4"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7d3e6073f692ff812f2d99b61e0ea7f503e54fc9ba44481f619c50a16f0565d"
+checksum = "da86bc49f57aaf4d5af349241ee12e8cef5bc1d22c12d6ef60e3779e9102d5b5"
 dependencies = [
  "anyhow",
- "nix 0.31.2",
+ "nix 0.31.3",
  "tokio",
  "tokio-dtrace",
 ]
@@ -5335,7 +5307,7 @@ dependencies = [
 [[package]]
 name = "p9ds"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/p9fs#04fb133ac730f6f69612dcb20d1cb2195e4e89a6"
+source = "git+https://github.com/oxidecomputer/p9fs#113f170aff6aa1d5add00c19b3a2f3241e16a763"
 dependencies = [
  "ispf",
  "num_enum 0.5.11",
@@ -5624,7 +5596,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8159bd90725d2df49889a078b54f4f79e87f1f8a8444194cdca81d38f5393abf"
 dependencies = [
- "cpufeatures 0.2.17",
+ "cpufeatures",
  "opaque-debug",
  "universal-hash",
 ]
@@ -6007,7 +5979,7 @@ dependencies = [
 [[package]]
 name = "propolis"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#784de5e4b123b48e574bbffc1188c0d5c30b2e62"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#6615e4f072c58f4d10e29007f328c536c464445d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6027,7 +5999,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "libloading 0.7.4",
- "nix 0.31.2",
+ "nix 0.31.3",
  "p9ds",
  "paste",
  "pin-project-lite",
@@ -6105,7 +6077,7 @@ dependencies = [
 [[package]]
 name = "propolis_types"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#784de5e4b123b48e574bbffc1188c0d5c30b2e62"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#6615e4f072c58f4d10e29007f328c536c464445d"
 dependencies = [
  "schemars 0.8.22",
  "serde",
@@ -6184,7 +6156,7 @@ dependencies = [
 [[package]]
 name = "protocol"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/lldp#ed02e1a3a96f98107cbbe90f90c7ed1c16edf97d"
+source = "git+https://github.com/oxidecomputer/lldp#4c9df170cdfdeead0896e35f20a560f2102ed907"
 dependencies = [
  "anyhow",
  "schemars 0.8.22",
@@ -6290,12 +6262,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
-name = "r-efi"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
-
-[[package]]
 name = "radium"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6320,17 +6286,6 @@ checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
-]
-
-[[package]]
-name = "rand"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
-dependencies = [
- "chacha20 0.10.0",
- "getrandom 0.4.2",
- "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -6370,12 +6325,6 @@ checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 dependencies = [
  "getrandom 0.3.4",
 ]
-
-[[package]]
-name = "rand_core"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rand_xorshift"
@@ -6600,7 +6549,7 @@ checksum = "6b3789b30bd25ba102de4beabd95d21ac45b69b1be7d14522bab988c526d6799"
 [[package]]
 name = "rfb"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#784de5e4b123b48e574bbffc1188c0d5c30b2e62"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#6615e4f072c58f4d10e29007f328c536c464445d"
 dependencies = [
  "ascii",
  "bitflags 2.9.4",
@@ -6626,7 +6575,7 @@ dependencies = [
 [[package]]
 name = "rgb_frame"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#784de5e4b123b48e574bbffc1188c0d5c30b2e62"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#6615e4f072c58f4d10e29007f328c536c464445d"
 dependencies = [
  "strum 0.26.3",
 ]
@@ -7161,11 +7110,12 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.18.0"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd5414fad8e6907dbdd5bc441a50ae8d6e26151a03b1de04d89a5576de61d01f"
+checksum = "e72c1c2cb7b223fafb600a619537a871c2818583d619401b785e7c0b746ccde2"
 dependencies = [
  "base64 0.22.1",
+ "bs58",
  "chrono",
  "hex",
  "indexmap 1.9.3",
@@ -7181,9 +7131,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.18.0"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3db8978e608f1fe7357e211969fd9abdcae80bac1ba7a3369bb7eb6b404eb65"
+checksum = "b90c488738ecb4fb0262f41f43bc40efc5868d9fb744319ddf5f5317f417bfac"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -7211,7 +7161,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
 dependencies = [
  "cfg-if",
- "cpufeatures 0.2.17",
+ "cpufeatures",
  "digest",
 ]
 
@@ -7222,7 +7172,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
- "cpufeatures 0.2.17",
+ "cpufeatures",
  "digest",
 ]
 
@@ -8311,7 +8261,7 @@ dependencies = [
 [[package]]
 name = "tofino"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/tofino#e25e52991785039e967fd8fe7d86554d976e6d4b"
+source = "git+https://github.com/oxidecomputer/tofino#7e56ab6e9a64ebae27cd97cd6e10ebf2cfdc3a33"
 dependencies = [
  "anyhow",
  "cc",
@@ -8320,9 +8270,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.52.1"
+version = "1.52.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b67dee974fe86fd92cc45b7a95fdd2f99a36a6d7b0d431a231178d3d670bbcc6"
+checksum = "8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe"
 dependencies = [
  "bytes",
  "libc",
@@ -9351,7 +9301,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "viona_api"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#784de5e4b123b48e574bbffc1188c0d5c30b2e62"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#6615e4f072c58f4d10e29007f328c536c464445d"
 dependencies = [
  "libc",
  "nvpair 0.0.0",
@@ -9449,16 +9399,7 @@ version = "1.0.1+wasi-0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0562428422c63773dad2c345a1882263bbf4d65cf3f42e90921f787ef5ad58e7"
 dependencies = [
- "wit-bindgen 0.46.0",
-]
-
-[[package]]
-name = "wasip3"
-version = "0.4.0+wasi-0.3.0-rc-2026-01-06"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5428f8bf88ea5ddc08faddef2ac4a67e390b88186c703ce6dbd955e1c145aca5"
-dependencies = [
- "wit-bindgen 0.51.0",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -9527,28 +9468,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasm-encoder"
-version = "0.244.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "990065f2fe63003fe337b932cfb5e3b80e0b4d0f5ff650e6985b1048f62c8319"
-dependencies = [
- "leb128fmt",
- "wasmparser",
-]
-
-[[package]]
-name = "wasm-metadata"
-version = "0.244.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb0e353e6a2fbdc176932bbaab493762eb1255a7900fe0fea1a2f96c296cc909"
-dependencies = [
- "anyhow",
- "indexmap 2.13.0",
- "wasm-encoder",
- "wasmparser",
-]
-
-[[package]]
 name = "wasm-streams"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9572,18 +9491,6 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
-]
-
-[[package]]
-name = "wasmparser"
-version = "0.244.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47b807c72e1bac69382b3a6fb3dbe8ea4c0ed87ff5629b8685ae6b9a611028fe"
-dependencies = [
- "bitflags 2.9.4",
- "hashbrown 0.15.5",
- "indexmap 2.13.0",
- "semver 1.0.27",
 ]
 
 [[package]]
@@ -9654,7 +9561,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -10007,15 +9914,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "winnow"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09dac053f1cd375980747450bfc7250c264eaae0583872e845c0c7cd578872b5"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "winreg"
 version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10030,94 +9928,6 @@ name = "wit-bindgen"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
-
-[[package]]
-name = "wit-bindgen"
-version = "0.51.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7249219f66ced02969388cf2bb044a09756a083d0fab1e566056b04d9fbcaa5"
-dependencies = [
- "wit-bindgen-rust-macro",
-]
-
-[[package]]
-name = "wit-bindgen-core"
-version = "0.51.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea61de684c3ea68cb082b7a88508a8b27fcc8b797d738bfc99a82facf1d752dc"
-dependencies = [
- "anyhow",
- "heck 0.5.0",
- "wit-parser",
-]
-
-[[package]]
-name = "wit-bindgen-rust"
-version = "0.51.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7c566e0f4b284dd6561c786d9cb0142da491f46a9fbed79ea69cdad5db17f21"
-dependencies = [
- "anyhow",
- "heck 0.5.0",
- "indexmap 2.13.0",
- "prettyplease",
- "syn 2.0.117",
- "wasm-metadata",
- "wit-bindgen-core",
- "wit-component",
-]
-
-[[package]]
-name = "wit-bindgen-rust-macro"
-version = "0.51.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c0f9bfd77e6a48eccf51359e3ae77140a7f50b1e2ebfe62422d8afdaffab17a"
-dependencies = [
- "anyhow",
- "prettyplease",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
- "wit-bindgen-core",
- "wit-bindgen-rust",
-]
-
-[[package]]
-name = "wit-component"
-version = "0.244.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d66ea20e9553b30172b5e831994e35fbde2d165325bec84fc43dbf6f4eb9cb2"
-dependencies = [
- "anyhow",
- "bitflags 2.9.4",
- "indexmap 2.13.0",
- "log",
- "serde",
- "serde_derive",
- "serde_json",
- "wasm-encoder",
- "wasm-metadata",
- "wasmparser",
- "wit-parser",
-]
-
-[[package]]
-name = "wit-parser"
-version = "0.244.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecc8ac4bc1dc3381b7f59c34f00b67e18f910c2c0f50015669dde7def656a736"
-dependencies = [
- "anyhow",
- "id-arena",
- "indexmap 2.13.0",
- "log",
- "semver 1.0.27",
- "serde",
- "serde_derive",
- "serde_json",
- "unicode-xid",
- "wasmparser",
-]
 
 [[package]]
 name = "writeable"

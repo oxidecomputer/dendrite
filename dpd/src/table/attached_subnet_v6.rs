@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
 // Copyright 2026 Oxide Computer Company
+use dpd_types::table;
 use std::convert::TryInto;
 use std::net::Ipv6Addr;
 
@@ -55,7 +56,7 @@ pub fn delete_entry(s: &Switch, subnet: Ipv6Net) -> DpdResult<()> {
     s.table_entry_del(TableType::AttachedSubnetIpv6, &match_key)
 }
 
-pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
+pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<table::Table> {
     s.table_dump::<AttachedSubnetV6MatchKey, AttachedSubnetV6Action>(
         TableType::AttachedSubnetIpv6,
         from_hardware,
@@ -65,7 +66,7 @@ pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
 pub fn counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<AttachedSubnetV6MatchKey>(
         force_sync,
         TableType::AttachedSubnetIpv6,
