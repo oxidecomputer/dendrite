@@ -231,6 +231,7 @@ parser IngressParser(
 			IPPROTO_ICMP: parse_icmp;
 			IPPROTO_TCP: parse_tcp;
 			IPPROTO_UDP: parse_udp;
+			IPPROTO_SCTP: drop_sctp;
 			default: accept;
 		}
 	}
@@ -322,6 +323,7 @@ parser IngressParser(
 			IPPROTO_ICMPV6: parse_icmp;
 			IPPROTO_TCP: parse_tcp;
 			IPPROTO_UDP: parse_udp;
+			IPPROTO_SCTP: drop_sctp;
 			default: accept;
 		}
 	}
@@ -367,6 +369,12 @@ parser IngressParser(
 			GENEVE_UDP_PORT: parse_geneve;
 			default: accept;
 		}
+	}
+
+	state drop_sctp {
+		meta.drop_reason = DROP_SCTP;
+		meta.dropped = true;
+		transition accept;
 	}
 
 	state parse_geneve {
@@ -533,7 +541,6 @@ parser EgressParser(
 
 	state meta_init {
 		meta.drop_reason = 0;
-		meta.bridge_hdr.setInvalid();
 
 		meta.decap_ports_0 = 0;
 		meta.decap_ports_1 = 0;
@@ -555,7 +562,6 @@ parser EgressParser(
 	state parse_bridge_hdr {
 		pkt.extract(bridge_hdr);
 		meta.bridge_hdr = bridge_hdr;
-		meta.bridge_hdr.setValid();
 
 		transition parse_ethernet;
 	}

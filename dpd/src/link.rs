@@ -34,12 +34,15 @@ use common::ports::PortMedia;
 use common::ports::PortPrbsMode;
 use common::ports::PortSpeed;
 use common::ports::TxEq;
-use dpd_api::{Ber, LinkCreate};
+use dpd_types::link::LinkCreate;
 use dpd_types::link::LinkFsmCounters;
+use dpd_types::link::LinkHistory;
 use dpd_types::link::LinkId;
 use dpd_types::link::LinkState;
 use dpd_types::link::LinkUpCounter;
-use dpd_types::views;
+use dpd_types::link::LinkView;
+use dpd_types::link::TfportData;
+use dpd_types::serdes::Ber;
 use slog::debug;
 use slog::error;
 use slog::info;
@@ -204,7 +207,7 @@ impl Switch {
 /// A `Link` is a configured Ethernet link.
 ///
 /// This object exists to capture all the Tofino-facing information required to
-/// keep track of the logical link. It is converted to a `crate::views::Link` for
+/// keep track of the logical link. It is converted to a `crate::LinkView` for
 /// exposure in the public API.
 #[derive(Debug)]
 pub struct Link {
@@ -251,7 +254,7 @@ pub struct Link {
     pub(crate) plumbed: LinkPlumbed,
 }
 
-impl From<&Link> for views::Link {
+impl From<&Link> for LinkView {
     fn from(m: &Link) -> Self {
         Self {
             port_id: m.port_id,
@@ -274,13 +277,13 @@ impl From<&Link> for views::Link {
     }
 }
 
-impl From<Link> for views::Link {
+impl From<Link> for LinkView {
     fn from(m: crate::link::Link) -> Self {
         Self::from(&m)
     }
 }
 
-impl From<&Link> for views::TfportData {
+impl From<&Link> for TfportData {
     fn from(m: &Link) -> Self {
         Self {
             port_id: m.port_id,
@@ -293,7 +296,7 @@ impl From<&Link> for views::TfportData {
     }
 }
 
-impl From<Link> for views::TfportData {
+impl From<Link> for TfportData {
     fn from(m: Link) -> Self {
         Self::from(&m)
     }
@@ -610,21 +613,21 @@ impl Switch {
         &self,
         port_id: PortId,
         link_id: LinkId,
-    ) -> DpdResult<views::Link> {
+    ) -> DpdResult<LinkView> {
         let link_lock = self.get_link_lock(port_id, link_id)?;
-        let link = views::Link::from(&*link_lock.lock().unwrap());
+        let link = LinkView::from(&*link_lock.lock().unwrap());
         Ok(link)
     }
 
     /// List all links on the given switch port.
-    pub fn list_links(&self, port_id: PortId) -> DpdResult<Vec<views::Link>> {
+    pub fn list_links(&self, port_id: PortId) -> DpdResult<Vec<LinkView>> {
         self.switch_ports.verify_exists(port_id)?;
 
         let links = self.links.lock().unwrap();
         let mut all = Vec::new();
         for ((p_id, _), link_lock) in links.0.iter() {
             if *p_id == port_id {
-                all.push(views::Link::from(&*link_lock.lock().unwrap()))
+                all.push(LinkView::from(&*link_lock.lock().unwrap()))
             }
         }
         Ok(all)
@@ -634,7 +637,7 @@ impl Switch {
     ///
     /// If provided, the `filter` argument can be used to limit the output to
     /// those links whose name contains `filter` as a substring.
-    pub fn list_all_links(&self, filter: Option<&str>) -> Vec<views::Link> {
+    pub fn list_all_links(&self, filter: Option<&str>) -> Vec<LinkView> {
         let mut links = Vec::with_capacity(self.switch_ports.ports.len());
         for port_id in self.switch_ports.ports.keys() {
             let port_links = self.list_links(*port_id).unwrap_or_default();
@@ -651,10 +654,7 @@ impl Switch {
     }
 
     // Fetch the tfport-relevant data for all links on this port
-    fn port_tfport_data(
-        &self,
-        port_id: PortId,
-    ) -> DpdResult<Vec<views::TfportData>> {
+    fn port_tfport_data(&self, port_id: PortId) -> DpdResult<Vec<TfportData>> {
         self.switch_ports.verify_exists(port_id)?;
         let links = self.links.lock().unwrap();
 
@@ -664,7 +664,7 @@ impl Switch {
             .filter_map(|link_lock| {
                 let link = link_lock.lock().unwrap();
                 if link.port_id == port_id {
-                    Some(views::TfportData::from(&*link))
+                    Some(TfportData::from(&*link))
                 } else {
                     None
                 }
@@ -673,7 +673,7 @@ impl Switch {
     }
 
     /// Fetch the tfport-relevant data for all links on all switch ports
-    pub fn all_tfport_data(&self) -> Vec<views::TfportData> {
+    pub fn all_tfport_data(&self) -> Vec<TfportData> {
         self.switch_ports
             .ports
             .keys()
@@ -966,7 +966,7 @@ impl Switch {
         &self,
         port_id: PortId,
         link_id: LinkId,
-    ) -> DpdResult<views::LinkHistory> {
+    ) -> DpdResult<LinkHistory> {
         let asic_ids: Vec<AsicId> = {
             let link_lock = self.get_link_lock(port_id, link_id)?;
             // If the link hasn't been configured yet, we only collect the
@@ -998,7 +998,7 @@ impl Switch {
         // caller.
         let mut events = self.fetch_history(asic_ids);
         events.sort_by_key(|a| a.timestamp);
-        Ok(views::LinkHistory {
+        Ok(LinkHistory {
             timestamp: common::wallclock_ms(),
             relative: common::timestamp_ms(),
             events: events.iter().map(|er| er.into()).collect(),

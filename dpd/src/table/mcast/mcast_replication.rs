@@ -6,10 +6,10 @@
 
 //! Table operations for multicast replication information.
 //!
-//! Only IPv6 replication groups are managed here. IPv4 multicast uses
-//! direct forwarding via the `MulticastRouter4` P4 control without
-//! replication group tracking.
+//! Only IPv6 replication groups are managed here. IPv4 multicast does not
+//! require replication group tracking.
 
+use dpd_types::table;
 use std::net::Ipv6Addr;
 
 use crate::{Switch, table::*};
@@ -123,7 +123,7 @@ pub(crate) fn del_ipv6_entry(s: &Switch, dst_addr: Ipv6Addr) -> DpdResult<()> {
 pub(crate) fn ipv6_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<Ipv6MatchKey, Ipv6Action>(
         TableType::McastIpv6,
         from_hardware,
@@ -134,7 +134,7 @@ pub(crate) fn ipv6_table_dump(
 pub(crate) fn ipv6_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<Ipv6MatchKey>(force_sync, TableType::McastIpv6)
 }
 

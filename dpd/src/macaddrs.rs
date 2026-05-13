@@ -29,7 +29,7 @@ cfg_if::cfg_if! {
         use common::ports::PortFec;
         use common::ports::PortSpeed;
         use common::ports::InternalPort;
-        use dpd_api::LinkCreate;
+        use dpd_types::link::LinkCreate;
         use transceiver_controller::Error as TransceiverError;
     }
 }

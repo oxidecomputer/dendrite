@@ -15,7 +15,7 @@ use aal_macros::ActionParse;
 use aal_macros::MatchParse;
 use common::network::MacAddr;
 use common::table::TableType;
-use dpd_types::views;
+use dpd_types::table;
 
 #[derive(MatchParse, Debug, Hash)]
 struct MacMatchKey {
@@ -79,7 +79,7 @@ pub fn mac_clear(s: &Switch, port: u16) -> DpdResult<()> {
     mac_clear_common(s, TableType::PortMacAddress, port)
 }
 
-pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
+pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<table::Table> {
     s.table_dump::<MacMatchKey, MacAction>(
         TableType::PortMacAddress,
         from_hardware,
@@ -89,7 +89,7 @@ pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
 pub fn counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<MacMatchKey>(force_sync, TableType::PortMacAddress)
 }
 
@@ -117,7 +117,7 @@ pub fn mcast_mac_clear(s: &Switch, port: u16) -> DpdResult<()> {
 pub fn mcast_table_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<MacMatchKey, MacAction>(
         TableType::PortMacAddressMcast,
         from_hardware,
@@ -128,7 +128,7 @@ pub fn mcast_table_dump(
 pub fn mcast_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<MacMatchKey>(force_sync, TableType::PortMacAddressMcast)
 }
 

@@ -9,15 +9,15 @@
 use crate::Switch;
 use crate::types::DpdError;
 use asic::tofino_asic::snapshot;
-use dpd_api::{SnapshotCreate, SnapshotResult};
-use dpd_api::{SnapshotDirection, SnapshotFieldScope, SnapshotScopeRequest};
+use dpd_types::snapshot::{
+    SnapshotCreate, SnapshotDirection, SnapshotFieldScope, SnapshotResult,
+    SnapshotScopeRequest,
+};
 
 pub(crate) async fn capture(
     switch: &Switch,
     req: SnapshotCreate,
 ) -> Result<SnapshotResult, DpdError> {
-    use dpd_api::SnapshotDirection;
-
     let hdl = &switch.asic_hdl;
 
     let dir = match req.dir {
@@ -92,7 +92,9 @@ pub(crate) async fn capture(
         // Build stage results with decoded fields.
         let mut stages = Vec::new();
         for ctrl in &cap.ctrls {
-            use dpd_api::{SnapshotStageResult, SnapshotTableResult};
+            use dpd_types::snapshot::{
+                SnapshotStageResult, SnapshotTableResult,
+            };
 
             let tables = ctrl
                 .tables
@@ -108,7 +110,7 @@ pub(crate) async fn capture(
 
             let mut fields = Vec::new();
             for field_name in &req.fields {
-                use dpd_api::SnapshotFieldValue;
+                use dpd_types::snapshot::SnapshotFieldValue;
 
                 let val = snapshot::snapshot_decode_field(
                     hdl,
@@ -122,7 +124,7 @@ pub(crate) async fn capture(
                 .map_err(DpdError::from)?;
 
                 fields.push(SnapshotFieldValue {
-                    name: field_name.clone(),
+                    name: field_name.to_string(),
                     value: val.map(|v| {
                         let hex: String =
                             v.iter().map(|b| format!("{b:02x}")).collect();

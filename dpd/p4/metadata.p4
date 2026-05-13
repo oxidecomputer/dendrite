@@ -20,6 +20,7 @@
 @pa_no_init("ingress", "meta.resolve_nexthop")
 @pa_no_init("ingress", "meta.nexthop_is_v6")
 @pa_no_init("ingress", "meta.route_ttl_is_1")
+@pa_no_init("ingress", "meta.skip_ttl_check")
 // These fields are set in the parser on some paths but not all. On paths
 // that skip the set, the field is init-only and vulnerable.
 @pa_no_init("ingress", "meta.is_switch_address")
@@ -32,7 +33,7 @@
 // Without these pragmas the compiler may pack small metadata fields into mocha
 // containers alongside unrelated fields. A whole-container write to one field
 // then clobbers the others. The risk is highest for 1-bit booleans and fields
-// with long liverange gaps between set and use.
+// with long live-range gaps between set and use.
 //
 // Both builds share ipv4_checksum_err: confirmed allocated to mocha MH0 where
 // it shared a container with pkt_type, risking false checksum-error drops.
@@ -53,6 +54,7 @@
 @pa_container_type("ingress", "meta.encap_needed", "normal")
 @pa_container_type("ingress", "meta.resolve_nexthop", "normal")
 @pa_container_type("ingress", "meta.route_ttl_is_1", "normal")
+@pa_container_type("ingress", "meta.skip_ttl_check", "normal")
 @pa_container_type("ingress", "meta.nexthop_is_v6", "normal")
 @pa_container_type("ingress", "meta.icmp_recalc", "normal")
 
@@ -81,11 +83,9 @@
 // builds. In the MULTICAST build, additional egress fields are set by
 // multicast table actions and consumed later in the pipeline.
 @pa_container_type("egress", "meta.drop_reason", "normal")
-#ifdef MULTICAST
 @pa_container_type("egress", "meta.vlan_id", "normal")
 @pa_container_type("egress", "meta.port_number", "normal")
 @pa_container_type("egress", "meta.ipv4_checksum_recalc", "normal")
-#endif
 
 /* Flexible bridge header for passing metadata between ingress and egress
  * pipelines.
@@ -112,6 +112,7 @@ struct sidecar_ingress_meta_t {
 	bool encap_needed;
 	bool resolve_nexthop;		// signals nexthop needs to be resolved
 	bool route_ttl_is_1;		// TTL/hop_limit equals 1 (for route lookup)
+	bool skip_ttl_check;		// skip TTL=1 exception (service-port route)
 	bool nexthop_is_v6;		// true when nexthop is IPv6
 	ipv6_addr_t nexthop;		// next hop address; IPv4 uses low bits
 	bit<10> pkt_type;
@@ -164,7 +165,7 @@ struct sidecar_egress_meta_t {
 // Unified route result struct for both Router4 and Router6.
 // A single instance is allocated in L3Router and passed to both
 // controls, forcing the compiler to use the same PHV allocation
-// and preventing liverange divergence under high PHV pressure.
+// and preventing live-range divergence under high PHV pressure.
 struct route_result_t {
 	/* Did we successfully look up the route in the table? */
 	bool is_hit;

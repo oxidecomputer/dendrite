@@ -16,6 +16,7 @@ use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
 use packet::eth::EthQHdr;
 
+use dpd_client::ClientInfo;
 use dpd_client::types;
 
 #[derive(Debug)]
@@ -38,7 +39,7 @@ impl Router {
             port_id,
             link_id,
             tgt_ip: self.ip.parse().unwrap(),
-            tag: "testing".into(),
+            tag: switch.client.inner().tag.clone(),
             vlan_id: self.vlan,
         }
     }
@@ -536,7 +537,11 @@ async fn test_reset() -> TestResult {
         .into_inner();
     assert_eq!(routes.items.len(), 3);
 
-    switch.client.reset_all_tagged("failed").await.unwrap();
+    switch
+        .client
+        .reset_all_tagged(common::NON_MATCHING_TEST_TAG)
+        .await
+        .unwrap();
     let routes = switch
         .client
         .route_ipv6_list(Some(limit), None)
@@ -545,7 +550,7 @@ async fn test_reset() -> TestResult {
         .into_inner();
     assert_eq!(routes.items.len(), 3);
 
-    switch.client.reset_all_tagged("test").await.unwrap();
+    switch.client.reset_all_tagged(common::DEFAULT_TEST_TAG).await.unwrap();
     let routes = switch
         .client
         .route_ipv6_list(Some(limit), None)
@@ -568,7 +573,7 @@ async fn test_create_and_set_semantics_v6() -> TestResult {
         port_id,
         link_id,
         tgt_ip: "fe80::1701:d:2000:47".parse().unwrap(),
-        tag: "testing".into(),
+        tag: common::DEFAULT_TEST_TAG.into(),
         vlan_id: None,
     };
 
@@ -600,6 +605,7 @@ async fn test_create_and_set_semantics_v6() -> TestResult {
     assert_eq!(rt.len(), 1);
     assert_eq!(rt[0].tgt_ip, target33.tgt_ip);
 
+    switch.client.reset_all_tagged(common::DEFAULT_TEST_TAG).await.unwrap();
     Ok(())
 }
 
@@ -708,5 +714,78 @@ async fn skip_test_multipath_traffic_vlan() -> TestResult {
         config_router(switch, cidr, &routers[r]).await?;
         test_multipath(switch, &routers[0..r + 1]).await?;
     }
+    Ok(())
+}
+
+// IPv6 prefixes drive TTL=1 handling per-prefix via the `skip_ttl` bit
+// on the index action. Mixed ECMP target sets (service port + normal
+// egress port) would cause hash-selected non-service targets to skip
+// the dataplane TTL exception, so dpd rejects them at the API.
+#[tokio::test]
+#[ignore]
+async fn test_mixed_service_port_ecmp_rejected_v6() -> TestResult {
+    let switch = &*get_switch().await;
+    let client = &switch.client;
+
+    let cidr: Ipv6Net = "fd00:1122:3344:0500::/64".parse().unwrap();
+    let (svc_port_id, svc_link_id) = switch.link_id(SERVICE_PORT).unwrap();
+    let (normal_port_id, normal_link_id) =
+        switch.link_id(PhysPort(11)).unwrap();
+
+    let svc_target = types::Ipv6Route {
+        port_id: svc_port_id,
+        link_id: svc_link_id,
+        tgt_ip: "fd00:1122:7788:0101::4".parse().unwrap(),
+        tag: common::DEFAULT_TEST_TAG.into(),
+        vlan_id: None,
+    };
+    let normal_target = types::Ipv6Route {
+        port_id: normal_port_id,
+        link_id: normal_link_id,
+        tgt_ip: "fd00:1122:7788:0102::4".parse().unwrap(),
+        tag: common::DEFAULT_TEST_TAG.into(),
+        vlan_id: None,
+    };
+
+    // Service-port-only set is fine.
+    client.route_ipv6_set(&build_route_add(cidr, &svc_target)).await?;
+
+    // Adding a normal target on top would mix the set. Expect a 4xx.
+    let err = client
+        .route_ipv6_add(&build_route_add(cidr, &normal_target))
+        .await
+        .expect_err("mixed ECMP set should be rejected");
+    let dpd_client::Error::ErrorResponse(inner) = err else {
+        panic!("expected an error response, got: {err:?}");
+    };
+    assert!(
+        inner.status().is_client_error(),
+        "expected 4xx, got {}",
+        inner.status()
+    );
+
+    // The reverse direction is also rejected. Replace the service-port route
+    // with a normal-port one first.
+    client
+        .route_ipv6_set(&types::Ipv6RouteUpdate {
+            cidr,
+            target: normal_target.clone(),
+            replace: true,
+        })
+        .await?;
+    let err = client
+        .route_ipv6_add(&build_route_add(cidr, &svc_target))
+        .await
+        .expect_err("mixed ECMP set should be rejected");
+    let dpd_client::Error::ErrorResponse(inner) = err else {
+        panic!("expected an error response, got: {err:?}");
+    };
+    assert!(
+        inner.status().is_client_error(),
+        "expected 4xx, got {}",
+        inner.status()
+    );
+
+    switch.client.reset_all_tagged(common::DEFAULT_TEST_TAG).await.unwrap();
     Ok(())
 }

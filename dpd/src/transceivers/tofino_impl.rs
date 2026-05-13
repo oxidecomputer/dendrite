@@ -3589,15 +3589,29 @@ where
         offset: u8,
         len: u8,
     ) -> Result<Vec<Self>, ControllerError> {
-        let end = offset + len;
+        let offset = u16::from(offset);
+        let len = u16::from(len);
+        let end = offset.checked_add(len).expect("offset and len are u8s");
         (offset..end)
             .step_by(usize::from(Self::SIZE))
             .map(|new_offset| {
+                // The addition used to find the bounds of this range is done
+                // with u16s, so the new offset could be larger than a u8. Check
+                // that it fits first. If not, we've stepped past the end of the
+                // valid range. Use u8::MAX here, and let the call to
+                // build_one() fail with the right error type.
+                let offset = new_offset.try_into().unwrap_or(u8::MAX);
+
                 // The length is up to SIZE, or the remainder of the entire
                 // operation, whichever is smaller.
-                let remainder = end - new_offset;
-                let new_len = Self::SIZE.min(remainder);
-                Self::build_one(page, new_offset, new_len)
+                let remainder =
+                    end.checked_sub(new_offset).expect("new_offset <= end");
+                let new_len = u16::from(Self::SIZE)
+                    .min(remainder)
+                    .try_into()
+                    .expect("min of SIZE and rem must be a u8");
+
+                Self::build_one(page, offset, new_len)
             })
             .collect()
     }
@@ -3664,6 +3678,7 @@ mod tests {
     use transceiver_controller::Identifier;
     use transceiver_controller::IdentifierResult;
     use transceiver_controller::ReadResult;
+    use transceiver_controller::TransceiverError;
 
     fn logger() -> Logger {
         let decorator =
@@ -5048,5 +5063,83 @@ mod tests {
             panic!("Expected an SdeTransceiverResponse::Read");
         };
         assert_eq!(data, expected_data);
+    }
+
+    #[test]
+    fn handle_large_op_at_the_end_of_lower_page() {
+        let offset = 112;
+        let len = 16;
+        let page = mgmt::cmis::Page::Lower;
+        let read_args = mgmt::MemoryRead::build_many(page, offset, len).expect(
+            "Should handle offset / len reads to the end of the lower page",
+        );
+        assert_eq!(read_args.len(), 2);
+        assert!(read_args.iter().all(|rd| rd.len() == len / 2));
+    }
+
+    #[test]
+    fn handle_large_op_at_the_end_of_upper_page() {
+        let offset = 240;
+        let len = 16;
+        let page = mgmt::cmis::Page::Upper(
+            mgmt::cmis::UpperPage::new_unbanked(0).unwrap(),
+        );
+        let read_args = mgmt::MemoryRead::build_many(page, offset, len).expect(
+            "Should handle offset / len reads to the end of the upper page",
+        );
+        assert_eq!(read_args.len(), 2);
+        assert!(read_args.iter().all(|rd| rd.len() == len / 2));
+    }
+
+    #[test]
+    fn fail_if_large_op_reads_past_the_end_of_the_lower_page() {
+        let offset = 112;
+        let len = 18;
+        let page = mgmt::cmis::Page::Lower;
+        let err = mgmt::MemoryRead::build_many(page, offset, len)
+            .expect_err("Should fail rather than panicking");
+        assert!(matches!(
+            err,
+            ControllerError::Transceiver(TransceiverError::Mgmt(
+                mgmt::Error::InvalidMemoryAccess { .. }
+            ))
+        ));
+
+        let len = u8::MAX;
+        let err = mgmt::MemoryRead::build_many(page, offset, len)
+            .expect_err("Should fail rather than panicking");
+        assert!(matches!(
+            err,
+            ControllerError::Transceiver(TransceiverError::Mgmt(
+                mgmt::Error::InvalidMemoryAccess { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn fail_if_large_op_reads_past_the_end_of_the_upper_page() {
+        let offset = 240;
+        let len = 19;
+        let page = mgmt::cmis::Page::Upper(
+            mgmt::cmis::UpperPage::new_unbanked(0).unwrap(),
+        );
+        let err = mgmt::MemoryRead::build_many(page, offset, len)
+            .expect_err("Should fail rather than panicking");
+        assert!(matches!(
+            err,
+            ControllerError::Transceiver(TransceiverError::Mgmt(
+                mgmt::Error::InvalidMemoryAccess { .. }
+            ))
+        ));
+
+        let len = u8::MAX;
+        let err = mgmt::MemoryRead::build_many(page, offset, len)
+            .expect_err("Should fail rather than panicking");
+        assert!(matches!(
+            err,
+            ControllerError::Transceiver(TransceiverError::Mgmt(
+                mgmt::Error::InvalidMemoryAccess { .. }
+            ))
+        ));
     }
 }

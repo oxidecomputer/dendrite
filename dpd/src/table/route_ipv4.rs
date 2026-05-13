@@ -4,12 +4,12 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use dpd_types::table;
 use std::convert::TryInto;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 
 use crate::Switch;
-use crate::table::SERVICE_PORT;
 use crate::table::*;
 use aal::ActionParse;
 use aal::MatchParse;
@@ -100,13 +100,17 @@ pub fn delete_route_index(s: &Switch, cidr: &Ipv4Net) -> DpdResult<()> {
         })
 }
 
-// Add a target into the route_data table at the given index
+// Add a target into the route_data table at the given index. `is_service`
+// reflects whether the route target is the CPU/service port, which the
+// caller determines by checking `PortId::Internal(_)` on the target's
+// port_id (the type-stable discriminator).
 pub fn add_route_target(
     s: &Switch,
     idx: u16,
     port: u16,
     nexthop: Ipv4Addr,
     vlan_id: Option<u16>,
+    is_service: bool,
 ) -> DpdResult<()> {
     let match_key = IndexKey { idx, route_ttl_is_1: false };
     let action_data = match vlan_id {
@@ -124,7 +128,7 @@ pub fn add_route_target(
                 "port" => port,
                 "nexthop" => %nexthop,
                 "vlan_id" => ?vlan_id);
-            add_ttl_entry(s, idx, &match_key, &action_data, port)
+            add_ttl_entry(s, idx, &match_key, &action_data, is_service)
         }
         Err(e) => {
             error!(s.log, "failed to add ipv4 route entry";
@@ -139,24 +143,20 @@ pub fn add_route_target(
 
 // Add the TTL==1 entry for a route target.
 //
-// For service port routes, we forward even when TTL==1 (bypassing ICMP TTL exceeded).
-// For all other routes, we trigger TTL exceeded handling.
+// For service port routes, we forward even when TTL==1 (bypassing ICMP
+// TTL exceeded). For all other routes, we trigger TTL exceeded handling.
 // This matches the P4 behavior: `ttl == 1 && !IS_SERVICE(fwd.port)`.
 fn add_ttl_entry(
     s: &Switch,
     idx: u16,
     forward_key: &IndexKey,
     forward_action: &RouteAction,
-    port: u16,
+    is_service: bool,
 ) -> DpdResult<()> {
     let ttl_match_key = IndexKey { idx, route_ttl_is_1: true };
 
-    // Service port routes forward even with TTL==1
-    let ttl_action = if port == SERVICE_PORT {
-        *forward_action
-    } else {
-        RouteAction::TtlExceeded
-    };
+    let ttl_action =
+        if is_service { *forward_action } else { RouteAction::TtlExceeded };
 
     if let Err(e) =
         s.table_entry_add(TableType::RouteFwdIpv4, &ttl_match_key, &ttl_action)
@@ -177,13 +177,15 @@ fn add_ttl_entry(
 }
 
 // Add a target with IPv6 nexthop into the route_data table at the given index
-// (used for v4-over-v6 routing)
+// (used for v4-over-v6 routing). `is_service` is determined by the caller
+// from the target's `PortId::Internal(_)` variant.
 pub fn add_route_target_v6(
     s: &Switch,
     idx: u16,
     port: u16,
     nexthop: Ipv6Addr,
     vlan_id: Option<u16>,
+    is_service: bool,
 ) -> DpdResult<()> {
     let match_key = IndexKey { idx, route_ttl_is_1: false };
     let action_data = match vlan_id {
@@ -201,7 +203,7 @@ pub fn add_route_target_v6(
                 "port" => port,
                 "nexthop" => %nexthop,
                 "vlan_id" => ?vlan_id);
-            add_ttl_entry(s, idx, &match_key, &action_data, port)
+            add_ttl_entry(s, idx, &match_key, &action_data, is_service)
         }
         Err(e) => {
             error!(s.log, "failed to add ipv4 route entry (v6 nexthop)";
@@ -245,14 +247,14 @@ pub fn delete_route_target(s: &Switch, idx: u16) -> DpdResult<()> {
 pub fn forward_dump(
     s: &Switch,
     from_hardware: bool,
-) -> DpdResult<views::Table> {
+) -> DpdResult<table::Table> {
     s.table_dump::<IndexKey, RouteAction>(
         TableType::RouteFwdIpv4,
         from_hardware,
     )
 }
 
-pub fn index_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
+pub fn index_dump(s: &Switch, from_hardware: bool) -> DpdResult<table::Table> {
     s.table_dump::<RouteKey, IndexAction>(
         TableType::RouteIdxIpv4,
         from_hardware,
@@ -262,14 +264,14 @@ pub fn index_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
 pub fn forward_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<IndexKey>(force_sync, TableType::RouteFwdIpv4)
 }
 
 pub fn index_counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<RouteKey>(force_sync, TableType::RouteIdxIpv4)
 }
 

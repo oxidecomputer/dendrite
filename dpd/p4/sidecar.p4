@@ -213,12 +213,11 @@ control Filter(
 					meta.dropped = true;
 					return;
 				}
-			} else {
+			} else
+#endif /* MULTICAST */
+			{
 				switch_ipv4_addr.apply();
 			}
-#else /* MULTICAST */
-			switch_ipv4_addr.apply();
-#endif /* MULTICAST */
 		} else if (hdr.ipv6.isValid()) {
 #ifdef MULTICAST
 			if (meta.is_mcast) {
@@ -425,9 +424,11 @@ control Services(
 	}
 
 	apply {
-		// TODO: This can be simplified by checking "is this a switch address"
-		// at the start, then dropping non-NAT packets in NatIngress directly.
-		// Deferred due to knock-on effects in dpd and sidecar-lite.
+		// TODO: Could probably be simplified by hoisting the
+		// switch_ipv{4,6}_addr lookup earlier and dropping non-NAT
+		// switch-addressed packets in NatIngress. Not currently done because
+		// the current fall-through to service.apply() is how the control plane
+		// traffic to the switch addresses reaches userspace.
 		if (meta.is_switch_address && hdr.geneve.isValid() && hdr.geneve.vni != 0) {
 			meta.nat_egress_hit = true;
 		}
@@ -638,7 +639,7 @@ control NatIngress (
 			hdr.vlan.vlan_id : exact;
 		}
 		actions = { mcast_forward_ipv4_to; }
-		const size = IPV4_MULTICAST_TABLE_SIZE;
+		const size = INGRESS_IPV4_MCAST_SIZE;
 		counters = mcast_ipv4_ingress_ctr;
 	}
 
@@ -661,7 +662,7 @@ control NatIngress (
 			hdr.vlan.vlan_id : exact;
 		}
 		actions = { mcast_forward_ipv6_to; }
-		const size = IPV6_MULTICAST_TABLE_SIZE;
+		const size = INGRESS_IPV6_MCAST_SIZE;
 		counters = mcast_ipv6_ingress_ctr;
 	}
 #endif /* MULTICAST */
@@ -962,22 +963,15 @@ control RouterLookupIndex6(
 		forward_ctr.count();
 	}
 
-	action ttl_exceeded() {
-		ICMP_ERROR_SETUP(ICMP6_TIME_EXCEEDED, ICMP_EXC_TTL);
-		meta.drop_reason = DROP_IPV6_TTL_EXCEEDED;
-		forward_ctr.count();
-	}
-
 	/*
-	 * The table size is reduced by one here just to allow the integration
-	 * test to pass. We keep the forward table capacity aligned with the
-	 * lookup table from dpd's perspective. The route_ttl_is_1 key doubles
-	 * the physical entries, so the size is scaled accordingly.
+	 * Index 0 is reserved as the unreachable/miss sentinel set by
+	 * `unreachable()`. The freemap allocates indices 1..IPV6_LPM_SIZE - 1,
+	 * leaving slot 0 vacant so misses cleanly fall through.
 	 */
 	table route {
-		key             = { res.idx: exact; meta.route_ttl_is_1: exact; }
-		actions         = { forward; forward_vlan; ttl_exceeded; }
-		const size      = IPV6_LPM_SIZE * FWD_ENTRIES_PER_ROUTE - 1;
+		key             = { res.idx: exact; }
+		actions         = { forward; forward_vlan; }
+		const size      = IPV6_LPM_SIZE - 1;
 		counters        = forward_ctr;
 	}
 
@@ -997,22 +991,24 @@ control RouterLookupIndex6(
 	 */
 	#include <route_selector.p4>
 
-	action index(bit<16> idx, bit<8> slots) {
+	action index(bit<16> idx, bit<8> slots, bit<1> skip_ttl) {
 		res.is_hit = true;
 		res.idx = idx;
 		res.slots = slots;
 		res.slot = 0;
+		meta.skip_ttl_check = (skip_ttl == 1);
 		index_ctr.count();
 	}
 
+	/*
+	 * Sized to IPV6_LPM_SIZE without padding. A +1 cushion crosses a
+	 * hardware boundary in the v6 LPM and costs an ingress stage.
+	 */
 	table lookup {
 		key             = { hdr.ipv6.dst_addr: lpm; }
 		actions         = { index; unreachable; }
 		default_action  = unreachable;
-		// The table size is incremented by one here just to allow the
-		// integration tests to pass, as this is used by the multicast
-		// implementation as well
-		const size      = IPV6_LPM_SIZE + 1;
+		const size      = IPV6_LPM_SIZE;
 		counters        = index_ctr;
 	}
 
@@ -1029,7 +1025,23 @@ control RouterLookupIndex6(
 			 */
 			select_route.apply();
 			res.idx = res.idx + res.slot;
-			route.apply();
+
+			if (meta.route_ttl_is_1 && !meta.skip_ttl_check) {
+				// TTL=1 short-circuit, inlined to avoid a dedicated
+				// table stage. Aggregate count surfaces through the
+				// DROP_IPV6_TTL_EXCEEDED drop-reason counter.
+				//
+				// Packets routed to the service port (skip_ttl_check=true)
+				// bypass this setup. They are not counted as TTL_EXCEEDED
+				// even if userspace later rejects them. If a "TTL=1 bypassed
+				// to userspace" signal becomes useful for diagnostics, add a
+				// dedicated counter rather than relaxing the bypass.
+				ICMP_ERROR_SETUP(
+					ICMP6_TIME_EXCEEDED, ICMP_EXC_TTL);
+				meta.drop_reason = DROP_IPV6_TTL_EXCEEDED;
+			} else {
+				route.apply();
+			}
 		}
 	}
 }
@@ -1101,15 +1113,17 @@ control RouterLookupIndex4(
 	}
 
 	/*
-	 * The table size is reduced by one here just to allow the integration
-	 * test to pass. We keep the forward table capacity aligned with the
-	 * lookup table from dpd's perspective. The route_ttl_is_1 key doubles
-	 * the physical entries, so the size is scaled accordingly.
+	 * IPv4 still uses the older compound-key encoding: each logical route
+	 * consumes two physical entries keyed by `(idx, route_ttl_is_1)`, one
+	 * for normal forwarding and one for the ttl_exceeded path. IPv6 was
+	 * collapsed to one entry per logical route by moving TTL=1 handling
+	 * inline in the apply block. IPv4 keeps the two-entry form because it
+	 * still needs per-target TTL behavior for mixed ECMP sets.
 	 */
 	table route {
 		key          = { res.idx: exact; meta.route_ttl_is_1: exact; }
 		actions      = { forward; forward_v6; forward_vlan; forward_vlan_v6; ttl_exceeded; }
-		const size   = IPV4_LPM_SIZE * FWD_ENTRIES_PER_ROUTE - 1;
+		const size   = IPV4_LPM_SIZE * FWD_ENTRIES_PER_ROUTE_V4 - 1;
 		counters     = forward_ctr;
 	}
 
@@ -1334,7 +1348,7 @@ control MulticastRouter4(
 		}
 		actions = { forward; forward_vlan; unreachable; }
 		default_action = unreachable;
-		const size = IPV4_MULTICAST_TABLE_SIZE;
+		const size = MCAST_ROUTER_IPV4_SIZE;
 		counters = ctr;
 	}
 
@@ -1438,7 +1452,7 @@ control MulticastRouter6 (
 		}
 		actions = { forward; forward_vlan; unreachable; }
 		default_action = unreachable;
-		const size = IPV6_MULTICAST_TABLE_SIZE;
+		const size = MCAST_ROUTER_IPV6_SIZE;
 		counters = ctr;
 	}
 
@@ -1484,7 +1498,7 @@ control L3Router(
 	apply {
 		// Shared: allocate a single route_result_t for Router4 and Router6.
 		// This forces the compiler to use the same PHV allocation for both,
-		// preventing liverange divergence under high PHV pressure.
+		// preventing live-range divergence under high PHV pressure.
 		route_result_t fwd;
 		fwd.is_hit = false;
 		fwd.ecmp_hash = 0;
@@ -1650,7 +1664,7 @@ control MulticastIngress (
 		mcast_ipv4_ssm_ctr.count();
 	}
 
-	// Drop action for IPv6 ulticast packets with no source-specific multicast
+	// Drop action for IPv6 multicast packets with no source-specific multicast
 	// group.
 	action drop_mcastv6_filtered_source() {
 		meta.drop_reason = DROP_MULTICAST_SOURCE_FILTERED;
@@ -1714,7 +1728,7 @@ control MulticastIngress (
 			drop_mcastv4_filtered_source;
 		}
 		default_action = drop_mcastv4_filtered_source;
-		const size = IPV4_MULTICAST_TABLE_SIZE;
+		const size = MCAST_SOURCE_FILTER_IPV4_SIZE;
 		counters = mcast_ipv4_ssm_ctr;
 	}
 
@@ -1725,7 +1739,7 @@ control MulticastIngress (
 			drop_mcastv6_admin_scoped_no_group;
 		}
 		default_action = drop_mcastv6_admin_scoped_no_group;
-		const size = IPV6_MULTICAST_TABLE_SIZE;
+		const size = MCAST_REPLICATION_IPV6_SIZE;
 		counters = mcast_ipv6_ctr;
 	}
 
@@ -1739,7 +1753,7 @@ control MulticastIngress (
 			drop_mcastv6_filtered_source;
 		}
 		default_action = drop_mcastv6_filtered_source;
-		const size = IPV6_MULTICAST_TABLE_SIZE;
+		const size = MCAST_SOURCE_FILTER_IPV6_SIZE;
 		counters = mcast_ipv6_ssm_ctr;
 	}
 
@@ -1915,7 +1929,7 @@ control MulticastEgress (
 		}
 
 		// Group RIDs == Group IPs
-		const size = IPV6_MULTICAST_TABLE_SIZE;
+		const size = MCAST_DECAP_PORTS_SIZE;
 	}
 
 	action set_port_number(bit<8> port_number) {
@@ -2092,7 +2106,7 @@ control Ingress(
 			if (!meta.is_mcast || meta.is_link_local_mcastv6) {
 				services.apply(hdr, meta, ig_intr_md, ig_tm_md);
 #ifdef MULTICAST
-			} else if (meta.is_mcast && !meta.is_link_local_mcastv6) {
+			} else {
 				mcast_ingress.apply(hdr, meta, ig_intr_md, ig_tm_md);
 #endif /* MULTICAST */
 			}
@@ -2108,13 +2122,12 @@ control Ingress(
 		}
 
 		if (meta.dropped) {
-			// Handle dropped packets
+			// Handle dropped packets. Unicast packets proceed to egress for
+			// MAC rewrite and are counted by unicast_ctr in Egress for
+			// consistency.
 			ig_dprsr_md.drop_ctl = 1;
 			drop_port_ctr.count(ig_intr_md.ingress_port);
 			drop_reason_ctr.count(meta.drop_reason);
-		} else if (!meta.is_mcast) {
-			// Unicast packets proceed to egress for MAC rewrite.
-			// Counted by unicast_ctr in Egress for consistency.
 		}
 
 		// Pass state to egress via bridge header.
@@ -2343,7 +2356,7 @@ control Egress(
 #ifdef MULTICAST
 			// Multicast-specific counting. Use the mcast_tag
 			// local (captured before egress decap may strip
-			// geneve headers) rather than re-checking header
+			// geneve headers) rather than rechecking header
 			// validity.
 			if (is_mcast_routed) {
 				mcast_ctr.count(eg_intr_md.egress_port);
@@ -2405,9 +2418,9 @@ control EgressDeparser(
 		}
 		pkt.emit(hdr);
 	}
-#else
+#else /* MULTICAST */
 	apply { pkt.emit(hdr); }
-#endif
+#endif /* MULTICAST */
 }
 
 Pipeline(

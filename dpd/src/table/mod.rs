@@ -16,7 +16,7 @@ use aal::ActionParse;
 use aal::MatchParse;
 use aal::TableOps;
 use common::table::TableType;
-use dpd_types::views;
+use dpd_types::table as views;
 
 pub mod arp_ipv4;
 pub mod attached_subnet_v4;
@@ -31,25 +31,6 @@ pub mod route_ipv4;
 pub mod route_ipv6;
 pub mod uplink;
 
-// The service port is the CPU/userspace port. Routes targeting this port should
-// forward packets even when TTL==1, bypassing the normal TTL exceeded handling.
-// This matches the P4 behavior: `ttl == 1 && !IS_SERVICE(fwd.port)`.
-//
-// Port values match USER_SPACE_SERVICE_PORT in sidecar.p4:
-// - Tofino2 (tofino_asic/softnpu/tofino_stub): port 0
-// - Tofino1 (chaos): port 192
-#[cfg(any(
-    feature = "softnpu",
-    feature = "tofino_asic",
-    feature = "tofino_stub"
-))]
-pub const SERVICE_PORT: u16 = 0;
-#[cfg(not(any(
-    feature = "softnpu",
-    feature = "tofino_asic",
-    feature = "tofino_stub"
-)))]
-pub const SERVICE_PORT: u16 = 192;
 /// Basic statistics about p4 table usage
 #[derive(Clone, Debug, Default)]
 pub struct TableUsage {

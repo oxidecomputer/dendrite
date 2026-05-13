@@ -16,6 +16,7 @@ use crate::integration_tests::common::prelude::*;
 use packet::Endpoint;
 use packet::eth::EthQHdr;
 
+use dpd_client::ClientInfo;
 use dpd_client::types;
 
 struct Router {
@@ -37,7 +38,7 @@ impl Router {
             port_id,
             link_id,
             tgt_ip: self.ip.parse().unwrap(),
-            tag: "testing".into(),
+            tag: switch.client.inner().tag.clone(),
             vlan_id: self.vlan,
         }
     }
@@ -346,7 +347,11 @@ async fn test_reset() -> TestResult {
         .into_inner();
     assert_eq!(routes.items.len(), 3);
 
-    switch.client.reset_all_tagged("failed").await.unwrap();
+    switch
+        .client
+        .reset_all_tagged(common::NON_MATCHING_TEST_TAG)
+        .await
+        .unwrap();
     let routes = switch
         .client
         .route_ipv4_list(Some(limit), None)
@@ -355,7 +360,7 @@ async fn test_reset() -> TestResult {
         .into_inner();
     assert_eq!(routes.items.len(), 3);
 
-    switch.client.reset_all_tagged("test").await.unwrap();
+    switch.client.reset_all_tagged(common::DEFAULT_TEST_TAG).await.unwrap();
     let routes = switch
         .client
         .route_ipv4_list(Some(limit), None)
@@ -720,28 +725,28 @@ async fn test_multipath_mixed_delete() -> TestResult {
     let (port_13, link_13) = switch.link_id(PhysPort(13)).unwrap();
 
     let v4_a = types::Ipv4Route {
-        tag: "testing".into(),
+        tag: common::DEFAULT_TEST_TAG.into(),
         port_id: port_10,
         link_id: link_10,
         tgt_ip: "203.0.47.1".parse().unwrap(),
         vlan_id: None,
     };
     let v6_b = types::Ipv6Route {
-        tag: "testing".into(),
+        tag: common::DEFAULT_TEST_TAG.into(),
         port_id: port_11,
         link_id: link_11,
         tgt_ip: "fe80::1".parse().unwrap(),
         vlan_id: None,
     };
     let v4_c = types::Ipv4Route {
-        tag: "testing".into(),
+        tag: common::DEFAULT_TEST_TAG.into(),
         port_id: port_12,
         link_id: link_12,
         tgt_ip: "203.0.22.1".parse().unwrap(),
         vlan_id: None,
     };
     let v6_d = types::Ipv6Route {
-        tag: "testing".into(),
+        tag: common::DEFAULT_TEST_TAG.into(),
         port_id: port_13,
         link_id: link_13,
         tgt_ip: "fe80::2".parse().unwrap(),

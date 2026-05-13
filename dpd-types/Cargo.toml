@@ -4,13 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-aal.workspace = true
 chrono.workspace = true
-common.workspace = true
+dpd-types-versions.workspace = true
 omicron-common.workspace = true
-oxnet.workspace = true
 schemars.workspace = true
 serde.workspace = true
-thiserror.workspace = true
-transceiver-controller = { workspace = true, features = ["api-traits"] }
-uuid.workspace = true

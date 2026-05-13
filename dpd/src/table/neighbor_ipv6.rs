@@ -4,6 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use dpd_types::table;
 use std::convert::TryInto;
 use std::net::Ipv6Addr;
 
@@ -68,14 +69,14 @@ pub fn delete_entry(s: &Switch, tgt_ip: Ipv6Addr) -> DpdResult<()> {
     s.table_entry_del(TableType::NeighborIpv6, &match_key)
 }
 
-pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<views::Table> {
+pub fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<table::Table> {
     s.table_dump::<MatchKey, Action>(TableType::NeighborIpv6, from_hardware)
 }
 
 pub fn counter_fetch(
     s: &Switch,
     force_sync: bool,
-) -> DpdResult<Vec<views::TableCounterEntry>> {
+) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<MatchKey>(force_sync, TableType::NeighborIpv6)
 }
 

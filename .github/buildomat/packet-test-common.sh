@@ -19,9 +19,9 @@ if [ x$MULTICAST == x ]; then
 fi
 
 if [ x$MULTICAST == x ]; then
-        TOFINO_STAGES=15
+        TOFINO_STAGES=16
     else
-        TOFINO_STAGES=18
+        TOFINO_STAGES=19
 fi
 
 function cleanup {
