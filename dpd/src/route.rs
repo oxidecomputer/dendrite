@@ -1595,58 +1595,12 @@ mod tests {
     /// single replace that drops all three sharing the `tgt_ip` (delta=3).
     /// Exercises the multi-target subset-removal path through
     /// `shrink_in_place`.
-    async fn delete_targets_full_scenario(f: FamilyFixtures) {
-        let switch = make_switch();
-        let mut rd = switch.routes.lock().await;
-        shrink_test_freemap(&mut rd, f.is_ipv4);
-        let shared_tgt = f.targets[0];
-        let survivor = f.targets[1];
-        for tag in ["a", "b", "c"] {
-            add_route_locked(
-                &switch,
-                &mut rd,
-                f.victim,
-                Route {
-                    tag: tag.into(),
-                    port_id: fake_port_id(),
-                    link_id: LinkId(0),
-                    tgt_ip: shared_tgt,
-                    vlan_id: None,
-                },
-                FAKE_ASIC_PORT,
-            )
-            .expect("victim add must succeed on an empty table");
-        }
-        add_route_locked(
-            &switch,
-            &mut rd,
-            f.victim,
-            make_route(survivor),
-            FAKE_ASIC_PORT,
-        )
-        .expect("survivor add must succeed on an empty table");
-        fill_table(&switch, &mut rd, f.filler, f.filler_cidr);
-
-        replace_route_targets(
-            &switch,
-            &mut rd,
-            f.victim,
-            next_hops([survivor]),
-        )
-        .expect("multi-target delete must succeed on a full table");
-        assert_post_shrink(&mut rd, f.victim, f.is_ipv4, &[survivor], 3);
-    }
-
-    #[tokio::test]
-    async fn delete_targets_full() {
-        delete_targets_full_scenario(fixtures_v6()).await;
-        delete_targets_full_scenario(fixtures_v4()).await;
-    }
-
-    /// Same shape as the multi-target full-table scenario but against a
-    /// fragmented freemap.  shrink-in-place must succeed without calling
-    /// `FreeMap::alloc`, regardless of fragmentation.
-    async fn delete_targets_fragmented_scenario(f: FamilyFixtures) {
+    /// Install three NextHops that all share one `tgt_ip` (distinguished by
+    /// `tag`) plus one survivor with a different `tgt_ip`, then issue a
+    /// single replace that drops all three sharing the `tgt_ip` (delta=3).
+    /// Exercises the multi-target subset-removal path through
+    /// `shrink_in_place` against either a full or a full+fragmented freemap.
+    async fn delete_targets_scenario(f: FamilyFixtures, fragmented: bool) {
         let switch = make_switch();
         let mut rd = switch.routes.lock().await;
         shrink_test_freemap(&mut rd, f.is_ipv4);
@@ -1677,7 +1631,9 @@ mod tests {
         )
         .expect("survivor add must succeed on an empty table");
         let fillers = fill_table(&switch, &mut rd, f.filler, f.filler_cidr);
-        fragment(&switch, &mut rd, &fillers);
+        if fragmented {
+            fragment(&switch, &mut rd, &fillers);
+        }
 
         replace_route_targets(
             &switch,
@@ -1685,14 +1641,20 @@ mod tests {
             f.victim,
             next_hops([survivor]),
         )
-        .expect("multi-target delete must succeed on a fragmented table");
+        .expect("multi-target delete must succeed");
         assert_post_shrink(&mut rd, f.victim, f.is_ipv4, &[survivor], 3);
     }
 
     #[tokio::test]
+    async fn delete_targets_full() {
+        delete_targets_scenario(fixtures_v6(), false).await;
+        delete_targets_scenario(fixtures_v4(), false).await;
+    }
+
+    #[tokio::test]
     async fn delete_targets_fragmented() {
-        delete_targets_fragmented_scenario(fixtures_v6()).await;
-        delete_targets_fragmented_scenario(fixtures_v4()).await;
+        delete_targets_scenario(fixtures_v6(), true).await;
+        delete_targets_scenario(fixtures_v4(), true).await;
     }
 
     /// Growing an existing route on a full table is a legitimate TableFull
@@ -1814,10 +1776,12 @@ mod tests {
             &before, after,
             "identity replace must leave the in-core entry untouched"
         );
-        // The original reservation must still be claimed: an alloc of
-        // `old.slots` starting at `before.index` would only be possible if
-        // the FreeMap had reclaimed it, which would mean we ran the
-        // alloc-then-swap path.
+        // The original reservation must still be claimed.  `FreeMap::alloc`
+        // checks the per-size recycle bin before the freelist, so if we *had*
+        // taken alloc-then-swap, the old span would now sit in
+        // `recycle_bins[before.slots]` and this probe would return
+        // `before.index`.  A return value other than `before.index` is
+        // therefore proof that the old reservation was never freed.
         let probe = rd
             .freemap_mut(f.is_ipv4)
             .alloc(before.slots)
@@ -1833,4 +1797,78 @@ mod tests {
         identity_replace_is_noop_scenario(fixtures_v6()).await;
         identity_replace_is_noop_scenario(fixtures_v4()).await;
     }
+
+    /// A same-length, non-subset replace (one target swapped for another)
+    /// must take the alloc-then-swap path: the new set isn't ⊆ old, so
+    /// shrink-in-place doesn't apply.  Verifies the dispatcher routes
+    /// correctly and that the resulting in-core entry reflects the new
+    /// target set.  Run against an empty freemap so the alloc itself is
+    /// uncontested — we're testing dispatch, not allocation pressure.
+    async fn same_size_non_subset_replace_scenario(f: FamilyFixtures) {
+        let switch = make_switch();
+        let mut rd = switch.routes.lock().await;
+        shrink_test_freemap(&mut rd, f.is_ipv4);
+        install_victim(&switch, &mut rd, f.victim, [f.targets[0], f.targets[1]]);
+        let before_index = rd.get(f.victim).expect("victim installed").index;
+
+        replace_route_targets(
+            &switch,
+            &mut rd,
+            f.victim,
+            next_hops([f.targets[0], f.targets[2]]),
+        )
+        .expect("same-size non-subset replace must succeed");
+
+        let entry = rd.get(f.victim).expect("victim must still exist");
+        use std::collections::BTreeSet;
+        let observed: BTreeSet<IpAddr> =
+            entry.targets.iter().map(|t| t.route.tgt_ip).collect();
+        let expected: BTreeSet<IpAddr> =
+            [f.targets[0], f.targets[2]].into_iter().collect();
+        assert_eq!(observed, expected, "in-core target set must match new set");
+        assert_ne!(
+            entry.index, before_index,
+            "alloc-then-swap must have moved the reservation to a new base"
+        );
+    }
+
+    #[tokio::test]
+    async fn same_size_non_subset_replace() {
+        same_size_non_subset_replace_scenario(fixtures_v6()).await;
+        same_size_non_subset_replace_scenario(fixtures_v4()).await;
+    }
+
+    /// Growing an existing route on an uncontested table must succeed via
+    /// the alloc-then-swap path.  Companion to `add_target_fails_full`,
+    /// which covers the same code path under freemap exhaustion.
+    async fn grow_succeeds_scenario(f: FamilyFixtures) {
+        let switch = make_switch();
+        let mut rd = switch.routes.lock().await;
+        shrink_test_freemap(&mut rd, f.is_ipv4);
+        install_victim(&switch, &mut rd, f.victim, [f.targets[0]]);
+
+        replace_route_targets(
+            &switch,
+            &mut rd,
+            f.victim,
+            next_hops([f.targets[0], f.targets[1]]),
+        )
+        .expect("grow on an uncontested table must succeed");
+
+        let entry = rd.get(f.victim).expect("victim must still exist");
+        assert_eq!(entry.slots, 2, "reservation must reflect the new size");
+        use std::collections::BTreeSet;
+        let observed: BTreeSet<IpAddr> =
+            entry.targets.iter().map(|t| t.route.tgt_ip).collect();
+        let expected: BTreeSet<IpAddr> =
+            [f.targets[0], f.targets[1]].into_iter().collect();
+        assert_eq!(observed, expected, "in-core target set must match new set");
+    }
+
+    #[tokio::test]
+    async fn grow_succeeds() {
+        grow_succeeds_scenario(fixtures_v6()).await;
+        grow_succeeds_scenario(fixtures_v4()).await;
+    }
+
 }
