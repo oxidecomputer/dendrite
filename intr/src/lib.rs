@@ -8,11 +8,14 @@
 // Copyright 2026 Oxide Computer Company
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use slog::{debug, error, info};
 
 use rust_rpi::Platform;
 use rust_rpi::RegisterInstance;
+
+mod tcam;
 
 const POLL_TIMEOUT_MS: u64 = 100;
 
@@ -26,8 +29,16 @@ pub enum IntrError {
     Asic(String),
     #[error("Internal error: {0}")]
     Internal(String),
+    #[error("RPI range error: {0}")]
+    RpiRange(rust_rpi::OutOfRange),
     #[error("{0:?}")]
     Other(anyhow::Error),
+}
+
+impl From<rust_rpi::OutOfRange> for IntrError {
+    fn from(value: rust_rpi::OutOfRange) -> Self {
+        IntrError::RpiRange(value)
+    }
 }
 
 impl From<anyhow::Error> for IntrError {
@@ -36,6 +47,15 @@ impl From<anyhow::Error> for IntrError {
     }
 }
 
+trait Interrupt: fmt::Display {
+    fn set_enable(&mut self, raw: &mut u32, val: bool);
+    fn process(
+        &mut self,
+        tf: &Tofino,
+        log: &slog::Logger,
+        status_raw: u32,
+    ) -> IntrResult<bool>;
+}
 pub struct Tofino {
     pub rpi: regs::Client,
     pub pci: tofino::pci::Pci,
@@ -123,7 +143,7 @@ impl ShadowInterrupt {
         }
     }
 
-    pub fn read_set(&mut self, tf: &Tofino) -> IntrResult<()> {
+    pub fn read_shadow_interrupts(&mut self, tf: &Tofino) -> IntrResult<()> {
         for (i, inst) in self.shadow_inst.iter().enumerate() {
             self.set[i] = inst
                 .read(tf)
@@ -131,6 +151,19 @@ impl ShadowInterrupt {
                     IntrError::Asic(format!("failed to read shadow {i}: {e:?}"))
                 })?
                 .into();
+        }
+        Ok(())
+    }
+
+    pub fn write_shadow_interrupts(&mut self, tf: &Tofino) -> IntrResult<()> {
+        for (i, inst) in self.shadow_inst.iter().enumerate() {
+            inst.write(tf, regs::ShadowInt::from(self.set[i])).map_err(
+                |e| {
+                    IntrError::Asic(format!(
+                        "failed to write shadow {i}: {e:?}"
+                    ))
+                },
+            )?;
         }
         Ok(())
     }
@@ -165,7 +198,8 @@ impl ShadowInterrupt {
 
     pub fn get_bit(&self, bit: u32) -> IntrResult<bool> {
         let (byte, bit) = Self::bit_to_idx(bit)?;
-        Ok(self.set[byte] & (1 << bit) == 1)
+
+        Ok(self.set[byte] & (1 << bit) != 0)
     }
 
     pub fn set_mask_bit(&mut self, bit: u32) -> IntrResult<()> {
@@ -181,96 +215,102 @@ impl ShadowInterrupt {
     }
 }
 
+// Each shadow interrupt bit corresponds to one or more interrupts status
+// registers.  Each register may contain the status for one or more interrupts.
+// An InterruptGroup represents all the interrupts that share a common status
+// register.
 struct InterruptGroup {
+    pub name: String,
+    pub status: u32,
+    pub enable: u32,
+    pub interrupts: Vec<Box<dyn Interrupt>>,
     enable_reg_addr: u32,
     status_reg_addr: u32,
-    pub stat: u32,
-    pub enable: u32,
-    pub interrupts: Vec<Interrupt>,
 }
 
 #[allow(unused)]
 impl InterruptGroup {
     pub fn new(
+        name: impl ToString,
         enable_reg: impl RegisterInstance<u32, u32>,
         status_reg: impl RegisterInstance<u32, u32>,
-        interrupts: Vec<Interrupt>,
+        interrupts: Vec<Box<dyn Interrupt>>,
     ) -> Self {
         InterruptGroup {
+            name: name.to_string(),
             enable_reg_addr: enable_reg.addr(),
             status_reg_addr: status_reg.addr(),
-            stat: 0,
+            status: 0,
             enable: 0,
             interrupts,
         }
     }
 
     pub fn read_status(&mut self, tf: &Tofino) -> IntrResult<()> {
-        self.stat = tf.read_register(self.status_reg_addr)?;
+        self.status = tf.read_register(self.status_reg_addr)?;
         Ok(())
     }
-    pub fn write_status(&self, tf: &Tofino) -> IntrResult<()> {
-        println!(
-            "Writing status {:x} to {:x}",
-            self.stat, self.status_reg_addr
+    pub fn write_status(
+        &self,
+        tf: &Tofino,
+        log: &slog::Logger,
+    ) -> IntrResult<()> {
+        debug!(
+            log,
+            "Writing status {:x} to {:x}", self.status, self.status_reg_addr
         );
-        tf.write_register(self.status_reg_addr, self.stat)
+        tf.write_register(self.status_reg_addr, self.status)
     }
     pub fn read_enable(&mut self, tf: &Tofino) -> IntrResult<()> {
         self.enable = tf.read_register(self.enable_reg_addr)?;
         Ok(())
     }
-    pub fn write_enable(&self, tf: &Tofino) -> IntrResult<()> {
-        println!(
-            "Writing enable {:x} to {:x}",
-            self.enable, self.enable_reg_addr
-        );
+    pub fn write_enable(
+        &self,
+        tf: &Tofino,
+        log: &slog::Logger,
+    ) -> IntrResult<()> {
         tf.write_register(self.enable_reg_addr, self.enable)
     }
 
     pub fn enable_interrupts(&mut self) {
-        for interrupt in &self.interrupts {
-            (interrupt.set_enable)(&mut self.enable, true)
+        for interrupt in &mut self.interrupts {
+            interrupt.set_enable(&mut self.enable, true)
         }
     }
 
     pub fn disable_interrupts(&mut self) {
-        for interrupt in &self.interrupts {
-            (interrupt.set_enable)(&mut self.enable, false)
+        for interrupt in &mut self.interrupts {
+            interrupt.set_enable(&mut self.enable, false)
         }
     }
 
     pub fn process_interrupts(&mut self, tf: &Tofino, log: &slog::Logger) {
-        let stat = self.stat;
+        let stat = self.status;
         let mut triggered = 0;
-        for i in &self.interrupts {
-            let name = i.name;
-            match (i.process)(tf, log, stat) {
+        debug!(log, "processing interrutps for {}: {}", self.name, stat);
+        for i in &mut self.interrupts {
+            match i.process(tf, log, stat) {
                 Ok(true) => {
-                    info!(log, "handled {name}");
+                    info!(log, "handled interrupt {i}");
                     triggered += 1;
                 }
                 Ok(false) => {}
-                Err(e) => error!(log, "failed to handle {name}: {e:?}"),
+                Err(e) => error!(log, "failed to handle {i}: {e:?}"),
             }
         }
         if triggered > 0 {
             debug!(log, "clearing status");
-            if let Err(e) = self.write_status(tf) {
+            if let Err(e) = self.write_status(tf, log) {
                 error!(log, "failed to push status-clearing write: {e:?}");
+            }
+            if let Err(e) = self.read_status(tf) {
+                error!(log, "failed to reread status: {e:?}");
+            } else {
+                debug!(log, "post-clear status: 0x{:x}", self.status);
             }
         }
     }
-}
-
-struct Interrupt {
-    pub name: &'static str,
-    pub set_enable: fn(&mut u32, bool),
-    pub process: fn(
-        tofino: &Tofino,
-        log: &slog::Logger,
-        status: u32,
-    ) -> IntrResult<bool>,
 }
 
 // macro_rules! interrupt {
@@ -292,135 +332,34 @@ struct Interrupt {
 //     };
 // }
 
-mod tcam_intr {
-    use bitset::BitSet;
-    use regs::IntrEnable0MauTcamArray;
-    use regs::IntrStatusMauTcamArray;
-    use rust_rpi::RegisterInstance;
-    use slog::error;
-
-    use super::{Interrupt, IntrResult, Tofino};
-
-    fn set_enable(ena_raw: &mut u32, v: bool) {
-        if v {
-            let mut ena: IntrEnable0MauTcamArray = (*ena_raw).into();
-            ena.set_tcam_logical_channel_err(BitSet::<4>::max());
-            ena.set_tcam_sbe(BitSet::<12>::max());
-            *ena_raw = ena.into();
-        } else {
-            *ena_raw = 0;
-        }
-    }
-
-    fn handle_lc_err(
-        tf: &Tofino,
-        log: &slog::Logger,
-        lce: u8,
-    ) -> IntrResult<()> {
-        // The RPI knows how many instances there are.  It would be handy if it
-        // provided an API to let us ask.
-        const PAIRS: u8 = 4;
-        let pipes = tf.rpi.pipes(0).unwrap();
-
-        for bit in 0..PAIRS {
-            if lce & 1 << bit != 0 {
-                let lel = pipes
-                    .mau(0)
-                    .unwrap()
-                    .tcams()
-                    .tcam_logical_channel_errlog_lo(bit as u32)
-                    .unwrap()
-                    .read(tf)?;
-                let leh = pipes
-                    .mau(0)
-                    .unwrap()
-                    .tcams()
-                    .tcam_logical_channel_errlog_hi(bit as u32)
-                    .unwrap()
-                    .read(tf)?;
-                error!(
-                    log,
-                    "logical channel mismatch with pair {}: \
-                     lo channal (addr: 0x{:x} hit: {} action: {}) \
-                     hi channal (addr: 0x{:x} hit: {} action: {})",
-                    bit,
-                    lel.get_tcam_logical_channel_errlog_addr(),
-                    lel.get_tcam_logical_channel_errlog_hit(),
-                    lel.get_tcam_logical_channel_errlog_actionbit(),
-                    leh.get_tcam_logical_channel_errlog_addr(),
-                    leh.get_tcam_logical_channel_errlog_hit(),
-                    leh.get_tcam_logical_channel_errlog_actionbit()
-                );
-            }
-        }
-
-        Ok(())
-    }
-
-    fn handle_sb_err(
-        tf: &Tofino,
-        log: &slog::Logger,
-        sbe: u16,
-    ) -> IntrResult<()> {
-        // The RPI knows how many instances there are.  It would be handy if it
-        // provided an API to let us ask.
-        const ROWS: u8 = 11;
-        let pipes = tf.rpi.pipes(0).unwrap();
-
-        for row in 0..ROWS {
-            if sbe & 1 << row != 0 {
-                let errlog = pipes
-                    .mau(0)
-                    .unwrap()
-                    .tcams()
-                    .tcam_sbe_errlog(row as u32)
-                    .unwrap()
-                    .read(tf)?;
-
-                error!(
-                    log,
-                    "TCAM single-bit error.  row: {}  addr: 0x{:x}",
-                    row,
-                    u32::from(errlog.get_tcam_sbe_errlog_addr())
-                );
-            }
-        }
-        Ok(())
-    }
-
-    fn process(
-        tf: &Tofino,
-        log: &slog::Logger,
-        status_raw: u32,
-    ) -> IntrResult<bool> {
-        let status: IntrStatusMauTcamArray = status_raw.into();
-        let lce = u8::from(status.get_tcam_logical_channel_err());
-        let sbe = u16::from(status.get_tcam_sbe());
-        let handled = lce > 0 || sbe > 0;
-        if lce > 0 {
-            handle_lc_err(tf, log, lce)?;
-        }
-        if sbe > 0 {
-            handle_sb_err(tf, log, sbe)?;
-        }
-        Ok(handled)
-    }
-
-    pub fn new() -> Interrupt {
-        Interrupt { name: "tcam_intr", set_enable, process }
-    }
-}
-
-fn build_interrupt_map(tf: &Tofino) -> BTreeMap<u32, Vec<InterruptGroup>> {
-    let pipes = tf.rpi.pipes(0).unwrap();
-    let g = InterruptGroup::new(
-        pipes.mau(0).unwrap().tcams().intr_enable_0_mau_tcam_array(),
-        pipes.mau(0).unwrap().tcams().intr_status_mau_tcam_array(),
-        vec![tcam_intr::new()],
-    );
+// Build a structure that maps all of the interrupts we want to monitor to the
+// bits in the shadow interrupt map that are triggered when one of those
+// interrupts fires.
+fn build_interrupt_map(
+    tf: &Tofino,
+) -> IntrResult<BTreeMap<u32, Vec<InterruptGroup>>> {
+    // There is a separate shadow interrupt ID for the TCAM on each pipe and
+    // MAU.  They are assigned sequentially within a pipe, but the starting
+    // point for each pipe comes from the shadow interrupt table.
+    let pipe_bases = [256, 320, 384, 448];
     let mut m = BTreeMap::new();
-    m.insert(256u32, vec![g]);
-    m
+    for pipe in 0..4 {
+        for mau in 0..20 {
+            let tcam_block = tf.rpi.pipes(pipe)?.mau(mau)?.tcams();
+            for s in 0..2 {
+                let shadow_int = pipe_bases[pipe as usize] + mau * 2 + s;
+
+                let group = InterruptGroup::new(
+                    format!("TCAM ECC pipe: {pipe} mau: {mau}"),
+                    tcam_block.intr_enable_0_mau_tcam_array(),
+                    tcam_block.intr_status_mau_tcam_array(),
+                    vec![Box::new(tcam::new(tf, pipe, mau)?)],
+                );
+                m.insert(shadow_int, vec![group]);
+            }
+        }
+    }
+    Ok(m)
 }
 
 pub fn interrupt_monitor(log: &slog::Logger) -> IntrResult<()> {
@@ -431,23 +370,26 @@ pub fn interrupt_monitor(log: &slog::Logger) -> IntrResult<()> {
         }
     };
 
-    let mut imap = build_interrupt_map(&tf);
+    let mut imap = build_interrupt_map(&tf)?;
     let mut shadow = ShadowInterrupt::new(&tf);
     shadow.read_mask(&tf)?;
     debug!(log, "initial mask: {:?}", shadow.mask);
-    //shadow.mask_all();
-    //shadow.write_mask(&tf)?;
 
     for (num, groups) in imap.iter_mut() {
         shadow.clear_mask_bit(*num)?;
         for group in groups.iter_mut() {
             if let Err(e) = group.read_status(&tf) {
-                error!(log, "failed to read interrupt status: {e:?}");
+                error!(
+                    log,
+                    "failed to read interrupt status for {}: {:?}",
+                    group.name,
+                    e
+                );
                 continue;
             }
 
             group.enable_interrupts();
-            if let Err(e) = group.write_enable(&tf) {
+            if let Err(e) = group.write_enable(&tf, log) {
                 return Err(IntrError::Asic(format!(
                     "failed to write to enable register: {e:?}"
                 )));
@@ -477,16 +419,29 @@ pub fn interrupt_monitor(log: &slog::Logger) -> IntrResult<()> {
                 }
             }
         }
-        shadow.read_set(&tf)?;
-        debug!(log, "   set: {:?}", shadow.set);
+        shadow.read_shadow_interrupts(&tf)?;
+        debug!(log, "before processing set: {:?}", shadow.set);
 
         for (num, groups) in imap.iter_mut() {
             for group in groups.iter_mut() {
                 if let Err(e) = group.read_status(&tf) {
-                    error!(log, "Failed to read status register: {e:?}");
+                    error!(
+                        log,
+                        "Failed to read status register for {}: {:?}",
+                        group.name,
+                        e
+                    );
                     continue;
                 }
-                debug!(log, "  group stat {}", group.stat)
+                if group.status != 0 {
+                    debug!(
+                        log,
+                        "  group stat for shadow {} {}: {}",
+                        num,
+                        group.name,
+                        group.status
+                    )
+                }
             }
             if shadow.get_bit(*num).expect(
                 "range error would have been caught when enabling interrupts",
@@ -496,6 +451,13 @@ pub fn interrupt_monitor(log: &slog::Logger) -> IntrResult<()> {
                 }
             }
         }
-        shadow.write_mask(&tf)?;
+
+        if false {
+            shadow.read_shadow_interrupts(&tf)?;
+            debug!(log, "after processing set: {:?}", shadow.set);
+            shadow.write_shadow_interrupts(&tf)?;
+            shadow.read_shadow_interrupts(&tf)?;
+            debug!(log, "after clearing set: {:?}", shadow.set);
+        }
     }
 }

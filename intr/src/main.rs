@@ -72,8 +72,8 @@ fn inject_tcam_ecc_err(
     let mut sbe_reg = sbe_inst.cons();
     inj_reg.set_tcam_sbe((1u32 << row).try_into().unwrap());
     sbe_reg.set_tcam_sbe_errlog_addr(addr.try_into().unwrap());
-    println!("writing sbe reg: {sbe_reg:?}");
-    println!("writing sbe inj: {inj_reg:?}");
+    println!("writing sbe reg: {sbe_reg:?} at 0x{:x}", sbe_inst.addr());
+    println!("writing inj rehg {inj_reg:?} at 0x{:x}", inj_inst.addr());
     sbe_inst.write(&tf, sbe_reg)?;
     inj_inst.write(&tf, inj_reg)?;
     Ok(())

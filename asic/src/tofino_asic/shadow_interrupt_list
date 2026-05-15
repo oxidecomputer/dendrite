@@ -17,12 +17,8 @@ and the software team didn't take advantage of that.
 
 Bit Interrupt status register
 --- ------------------------------------------------------------
- 32 device_select.tbc.tbc_tbus.intr_stat0
- 32 device_select.tbc.tbc_tbus.intr_stat1
- 32 device_select.tbc.tbc_tbus.intr_stat2
- 33 device_select.tbc.tbc_tbus.intr_stat0
- 33 device_select.tbc.tbc_tbus.intr_stat1
- 33 device_select.tbc.tbc_tbus.intr_stat2
+ 32 device_select.tbc.*
+ 33 device_select.tbc.*
  64 device_select.lfltr[0].ctrl.intr_stat
  65 device_select.lfltr[0].ctrl.intr_stat
  66 device_select.lfltr[1].ctrl.intr_stat
@@ -31,531 +27,223 @@ Bit Interrupt status register
  69 device_select.lfltr[2].ctrl.intr_stat
  70 device_select.lfltr[3].ctrl.intr_stat
  71 device_select.lfltr[3].ctrl.intr_stat
- 72 device_select.tm_top.tm_wac_top.wac_pipe[0].wac_reg.intr.stat
- 72 device_select.tm_top.tm_wac_top.wac_pipe[1].wac_reg.intr.stat
- 72 device_select.tm_top.tm_wac_top.wac_pipe[2].wac_reg.intr.stat
- 72 device_select.tm_top.tm_wac_top.wac_pipe[3].wac_reg.intr.stat
- 73 device_select.tm_top.tm_wac_top.wac_pipe[0].wac_reg.intr.stat
- 73 device_select.tm_top.tm_wac_top.wac_pipe[1].wac_reg.intr.stat
- 73 device_select.tm_top.tm_wac_top.wac_pipe[2].wac_reg.intr.stat
- 73 device_select.tm_top.tm_wac_top.wac_pipe[3].wac_reg.intr.stat
+ 72 device_select.tm_top.tm_wac_top.wac_pipe[*].*
+ 73 device_select.tm_top.tm_wac_top.wac_pipe[*].*
  74 device_select.tm_top.tm_caa_top.intr.stat
  75 device_select.tm_top.tm_caa_top.intr.stat
- 76 device_select.tm_top.tm_qac_top.qac_pipe[0].qac_reg.intr.stat
- 76 device_select.tm_top.tm_qac_top.qac_pipe[1].qac_reg.intr.stat
- 76 device_select.tm_top.tm_qac_top.qac_pipe[2].qac_reg.intr.stat
- 76 device_select.tm_top.tm_qac_top.qac_pipe[3].qac_reg.intr.stat
- 77 device_select.tm_top.tm_qac_top.qac_pipe[0].qac_reg.intr.stat
- 77 device_select.tm_top.tm_qac_top.qac_pipe[1].qac_reg.intr.stat
- 77 device_select.tm_top.tm_qac_top.qac_pipe[2].qac_reg.intr.stat
- 77 device_select.tm_top.tm_qac_top.qac_pipe[3].qac_reg.intr.stat
- 78 device_select.tm_top.tm_scha_top.sch[0].intr.stat
- 78 device_select.tm_top.tm_scha_top.sch[1].intr.stat
- 79 device_select.tm_top.tm_scha_top.sch[0].intr.stat
- 79 device_select.tm_top.tm_scha_top.sch[1].intr.stat
- 80 device_select.tm_top.tm_schb_top.sch[0].intr.stat
- 80 device_select.tm_top.tm_schb_top.sch[1].intr.stat
- 81 device_select.tm_top.tm_schb_top.sch[0].intr.stat
- 81 device_select.tm_top.tm_schb_top.sch[1].intr.stat
- 82 device_select.tm_top.tm_clc_top.clc[0].intr.stat
- 82 device_select.tm_top.tm_clc_top.clc[1].intr.stat
- 82 device_select.tm_top.tm_clc_top.clc[2].intr.stat
- 82 device_select.tm_top.tm_clc_top.clc[3].intr.stat
- 83 device_select.tm_top.tm_clc_top.clc[0].intr.stat
- 83 device_select.tm_top.tm_clc_top.clc[1].intr.stat
- 83 device_select.tm_top.tm_clc_top.clc[2].intr.stat
- 83 device_select.tm_top.tm_clc_top.clc[3].intr.stat
- 84 device_select.tm_top.tm_pex_top.pex[0].intr.stat
- 84 device_select.tm_top.tm_pex_top.pex[1].intr.stat
- 84 device_select.tm_top.tm_pex_top.pex[2].intr.stat
- 84 device_select.tm_top.tm_pex_top.pex[3].intr.stat
- 85 device_select.tm_top.tm_pex_top.pex[0].intr.stat
- 85 device_select.tm_top.tm_pex_top.pex[1].intr.stat
- 85 device_select.tm_top.tm_pex_top.pex[2].intr.stat
- 85 device_select.tm_top.tm_pex_top.pex[3].intr.stat
- 86 device_select.tm_top.tm_qlc_top.qlc[0].intr.stat
- 86 device_select.tm_top.tm_qlc_top.qlc[1].intr.stat
- 86 device_select.tm_top.tm_qlc_top.qlc[2].intr.stat
- 86 device_select.tm_top.tm_qlc_top.qlc[3].intr.stat
- 87 device_select.tm_top.tm_qlc_top.qlc[0].intr.stat
- 87 device_select.tm_top.tm_qlc_top.qlc[1].intr.stat
- 87 device_select.tm_top.tm_qlc_top.qlc[2].intr.stat
- 87 device_select.tm_top.tm_qlc_top.qlc[3].intr.stat
- 88 device_select.tm_top.tm_prc_top.prc[0].intr.stat
- 88 device_select.tm_top.tm_prc_top.prc[1].intr.stat
- 88 device_select.tm_top.tm_prc_top.prc[2].intr.stat
- 88 device_select.tm_top.tm_prc_top.prc[3].intr.stat
- 89 device_select.tm_top.tm_prc_top.prc[0].intr.stat
- 89 device_select.tm_top.tm_prc_top.prc[1].intr.stat
- 89 device_select.tm_top.tm_prc_top.prc[2].intr.stat
- 89 device_select.tm_top.tm_prc_top.prc[3].intr.stat
- 90 device_select.tm_top.tm_pre_top.pre[0].intr.stat
- 90 device_select.tm_top.tm_pre_top.pre[1].intr.stat
- 90 device_select.tm_top.tm_pre_top.pre[2].intr.stat
- 90 device_select.tm_top.tm_pre_top.pre[3].intr.stat
- 91 device_select.tm_top.tm_pre_top.pre[0].intr.stat
- 91 device_select.tm_top.tm_pre_top.pre[1].intr.stat
- 91 device_select.tm_top.tm_pre_top.pre[2].intr.stat
- 91 device_select.tm_top.tm_pre_top.pre[3].intr.stat
+ 76 device_select.tm_top.tm_qac_top.qac_pipe[*].*
+ 77 device_select.tm_top.tm_qac_top.qac_pipe[*].*
+ 78 device_select.tm_top.tm_scha_top.sch[*].intr.stat
+ 79 device_select.tm_top.tm_scha_top.sch[*].intr.stat
+ 80 device_select.tm_top.tm_schb_top.sch[*].intr.stat
+ 81 device_select.tm_top.tm_schb_top.sch[*].intr.stat
+ 82 device_select.tm_top.tm_clc_top.clc[*].intr.stat
+ 83 device_select.tm_top.tm_clc_top.clc[*].intr.stat
+ 84 device_select.tm_top.tm_pex_top.pex[*].intr.stat
+ 85 device_select.tm_top.tm_pex_top.pex[*].intr.stat
+ 86 device_select.tm_top.tm_qlc_top.qlc[*].intr.stat
+ 87 device_select.tm_top.tm_qlc_top.qlc[*].intr.stat
+ 88 device_select.tm_top.tm_prc_top.prc[*].intr.stat
+ 89 device_select.tm_top.tm_prc_top.prc[*].intr.stat
+ 90 device_select.tm_top.tm_pre_top.pre[*].intr.stat
+ 91 device_select.tm_top.tm_pre_top.pre[*].intr.stat
  92 device_select.tm_top.tm_psc_top.psc_common.intr.stat
- 92 device_select.tm_top.tm_psc_top.psc[0].intr.stat
- 92 device_select.tm_top.tm_psc_top.psc[1].intr.stat
- 92 device_select.tm_top.tm_psc_top.psc[2].intr.stat
- 92 device_select.tm_top.tm_psc_top.psc[3].intr.stat
+ 92 device_select.tm_top.tm_psc_top.psc[*].intr.stat
  93 device_select.tm_top.tm_psc_top.psc_common.intr.stat
- 93 device_select.tm_top.tm_psc_top.psc[0].intr.stat
- 93 device_select.tm_top.tm_psc_top.psc[1].intr.stat
- 93 device_select.tm_top.tm_psc_top.psc[2].intr.stat
- 93 device_select.tm_top.tm_psc_top.psc[3].intr.stat
- 94 device_select.cbc.cbc_cbus.intr_stat0
- 94 device_select.cbc.cbc_cbus.intr_stat1
- 95 device_select.cbc.cbc_cbus.intr_stat0
- 95 device_select.cbc.cbc_cbus.intr_stat1
- 96 device_select.cbc.cbc_cbus.intr_stat0
- 96 device_select.cbc.cbc_cbus.intr_stat1
- 97 device_select.cbc.cbc_cbus.intr_stat0
- 97 device_select.cbc.cbc_cbus.intr_stat1
-256 pipes.mau.cfg_regs.intr_status_mau_cfg
-256 pipes.mau.dp.intr_status_mau_gfm_hash
-256 pipes.mau.dp.intr_status_mau_imem
-256 pipes.mau.dp.intr_status_mau_snapshot
-256 pipes.mau.rams.array.row[0].intr_status_mau_unit_ram_row
-256 pipes.mau.rams.array.row[1].intr_status_mau_unit_ram_row
-256 pipes.mau.rams.array.row[2].intr_status_mau_unit_ram_row
-256 pipes.mau.rams.array.row[3].intr_status_mau_unit_ram_row
-256 pipes.mau.rams.array.row[4].intr_status_mau_unit_ram_row
-256 pipes.mau.rams.array.row[5].intr_status_mau_unit_ram_row
-256 pipes.mau.rams.array.row[6].intr_status_mau_unit_ram_row
-256 pipes.mau.rams.array.row[7].intr_status_mau_unit_ram_row
-256 pipes.mau.rams.map_alu.meter_group[0].selector.intr_status_mau_selector_alu
-256 pipes.mau.rams.map_alu.meter_group[1].selector.intr_status_mau_selector_alu
-256 pipes.mau.rams.map_alu.meter_group[2].selector.intr_status_mau_selector_alu
-256 pipes.mau.rams.map_alu.meter_group[3].selector.intr_status_mau_selector_alu
-256 pipes.mau.rams.map_alu.row[0].adrmux.intr_status_mau_adrmux_row
-256 pipes.mau.rams.map_alu.row[0].i2portctl.intr_status_mau_synth2port
-256 pipes.mau.rams.map_alu.row[1].adrmux.intr_status_mau_adrmux_row
-256 pipes.mau.rams.map_alu.row[1].i2portctl.intr_status_mau_synth2port
-256 pipes.mau.rams.map_alu.row[2].adrmux.intr_status_mau_adrmux_row
-256 pipes.mau.rams.map_alu.row[2].i2portctl.intr_status_mau_synth2port
-256 pipes.mau.rams.map_alu.row[3].adrmux.intr_status_mau_adrmux_row
-256 pipes.mau.rams.map_alu.row[3].i2portctl.intr_status_mau_synth2port
-256 pipes.mau.rams.map_alu.row[4].adrmux.intr_status_mau_adrmux_row
-256 pipes.mau.rams.map_alu.row[4].i2portctl.intr_status_mau_synth2port
-256 pipes.mau.rams.map_alu.row[5].adrmux.intr_status_mau_adrmux_row
-256 pipes.mau.rams.map_alu.row[5].i2portctl.intr_status_mau_synth2port
-256 pipes.mau.rams.map_alu.row[6].adrmux.intr_status_mau_adrmux_row
-256 pipes.mau.rams.map_alu.row[6].i2portctl.intr_status_mau_synth2port
-256 pipes.mau.rams.map_alu.row[7].adrmux.intr_status_mau_adrmux_row
-256 pipes.mau.rams.map_alu.row[7].i2portctl.intr_status_mau_synth2port
-256 pipes.mau.rams.map_alu.stats_wrap[0].stats.intr_status_mau_stats_alu
-256 pipes.mau.rams.map_alu.stats_wrap[1].stats.intr_status_mau_stats_alu
-256 pipes.mau.rams.map_alu.stats_wrap[2].stats.intr_status_mau_stats_alu
-256 pipes.mau.rams.map_alu.stats_wrap[3].stats.intr_status_mau_stats_alu
-256 pipes.mau.rams.match.adrdist.intr_status_mau_ad
-256 pipes.mau.tcams.intr_status_mau_tcam_array
-257 pipes.mau.cfg_regs.intr_status_mau_cfg
-257 pipes.mau.dp.intr_status_mau_gfm_hash
-257 pipes.mau.dp.intr_status_mau_imem
-257 pipes.mau.dp.intr_status_mau_snapshot
-257 pipes.mau.rams.array.row[0].intr_status_mau_unit_ram_row
-257 pipes.mau.rams.array.row[1].intr_status_mau_unit_ram_row
-257 pipes.mau.rams.array.row[2].intr_status_mau_unit_ram_row
-257 pipes.mau.rams.array.row[3].intr_status_mau_unit_ram_row
-257 pipes.mau.rams.array.row[4].intr_status_mau_unit_ram_row
-257 pipes.mau.rams.array.row[5].intr_status_mau_unit_ram_row
-257 pipes.mau.rams.array.row[6].intr_status_mau_unit_ram_row
-257 pipes.mau.rams.array.row[7].intr_status_mau_unit_ram_row
-257 pipes.mau.rams.map_alu.meter_group[0].selector.intr_status_mau_selector_alu
-257 pipes.mau.rams.map_alu.meter_group[1].selector.intr_status_mau_selector_alu
-257 pipes.mau.rams.map_alu.meter_group[2].selector.intr_status_mau_selector_alu
-257 pipes.mau.rams.map_alu.meter_group[3].selector.intr_status_mau_selector_alu
-257 pipes.mau.rams.map_alu.row[0].adrmux.intr_status_mau_adrmux_row
-257 pipes.mau.rams.map_alu.row[0].i2portctl.intr_status_mau_synth2port
-257 pipes.mau.rams.map_alu.row[1].adrmux.intr_status_mau_adrmux_row
-257 pipes.mau.rams.map_alu.row[1].i2portctl.intr_status_mau_synth2port
-257 pipes.mau.rams.map_alu.row[2].adrmux.intr_status_mau_adrmux_row
-257 pipes.mau.rams.map_alu.row[2].i2portctl.intr_status_mau_synth2port
-257 pipes.mau.rams.map_alu.row[3].adrmux.intr_status_mau_adrmux_row
-257 pipes.mau.rams.map_alu.row[3].i2portctl.intr_status_mau_synth2port
-257 pipes.mau.rams.map_alu.row[4].adrmux.intr_status_mau_adrmux_row
-257 pipes.mau.rams.map_alu.row[4].i2portctl.intr_status_mau_synth2port
-257 pipes.mau.rams.map_alu.row[5].adrmux.intr_status_mau_adrmux_row
-257 pipes.mau.rams.map_alu.row[5].i2portctl.intr_status_mau_synth2port
-257 pipes.mau.rams.map_alu.row[6].adrmux.intr_status_mau_adrmux_row
-257 pipes.mau.rams.map_alu.row[6].i2portctl.intr_status_mau_synth2port
-257 pipes.mau.rams.map_alu.row[7].adrmux.intr_status_mau_adrmux_row
-257 pipes.mau.rams.map_alu.row[7].i2portctl.intr_status_mau_synth2port
-257 pipes.mau.rams.map_alu.stats_wrap[0].stats.intr_status_mau_stats_alu
-257 pipes.mau.rams.map_alu.stats_wrap[1].stats.intr_status_mau_stats_alu
-257 pipes.mau.rams.map_alu.stats_wrap[2].stats.intr_status_mau_stats_alu
-257 pipes.mau.rams.map_alu.stats_wrap[3].stats.intr_status_mau_stats_alu
-257 pipes.mau.rams.match.adrdist.intr_status_mau_ad
-257 pipes.mau.tcams.intr_status_mau_tcam_array
-296 pipes.pardereg.pgstnreg.ebuf900reg[0].ebuf100reg.glb_group.intr_stat
-296 pipes.pardereg.pgstnreg.ebuf900reg[0].ebuf400reg[0].glb_group.intr_stat
-296 pipes.pardereg.pgstnreg.ebuf900reg[0].ebuf400reg[1].glb_group.intr_stat
-296 pipes.pardereg.pgstnreg.ebuf900reg[1].ebuf100reg.glb_group.intr_stat
-296 pipes.pardereg.pgstnreg.ebuf900reg[1].ebuf400reg[0].glb_group.intr_stat
-296 pipes.pardereg.pgstnreg.ebuf900reg[1].ebuf400reg[1].glb_group.intr_stat
-296 pipes.pardereg.pgstnreg.ebuf900reg[2].ebuf100reg.glb_group.intr_stat
-296 pipes.pardereg.pgstnreg.ebuf900reg[2].ebuf400reg[0].glb_group.intr_stat
-296 pipes.pardereg.pgstnreg.ebuf900reg[2].ebuf400reg[1].glb_group.intr_stat
-296 pipes.pardereg.pgstnreg.ebuf900reg[3].ebuf100reg.glb_group.intr_stat
-296 pipes.pardereg.pgstnreg.ebuf900reg[3].ebuf400reg[0].glb_group.intr_stat
-296 pipes.pardereg.pgstnreg.ebuf900reg[3].ebuf400reg[1].glb_group.intr_stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[0].epbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[0].epbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[0].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[0].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[0].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[0].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[1].epbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[1].epbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[1].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[1].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[1].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[1].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[2].epbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[2].epbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[2].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[2].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[2].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[2].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[3].epbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[3].epbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[3].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[3].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[3].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[3].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[4].epbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[4].epbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[4].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[4].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[4].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[4].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[5].epbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[5].epbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[5].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[5].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[5].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[5].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[6].epbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[6].epbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[6].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[6].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[6].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[6].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[7].epbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[7].epbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[7].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[7].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[7].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[7].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[8].epbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[8].epbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.epbprsr4reg[8].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[8].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[8].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.epbprsr4reg[8].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[0].ipbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[0].ipbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[0].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[0].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[0].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[0].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[1].ipbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[1].ipbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[1].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[1].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[1].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[1].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[2].ipbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[2].ipbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[2].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[2].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[2].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[2].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[3].ipbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[3].ipbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[3].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[3].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[3].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[3].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[4].ipbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[4].ipbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[4].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[4].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[4].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[4].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[5].ipbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[5].ipbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[5].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[5].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[5].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[5].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[6].ipbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[6].ipbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[6].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[6].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[6].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[6].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[7].ipbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[7].ipbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[7].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[7].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[7].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[7].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[8].ipbreg.glb_group.intr_stat.stat.stat_0_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[8].ipbreg.glb_group.intr_stat.stat.stat_1_2
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[8].prsr[0].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[8].prsr[1].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[8].prsr[2].intr.stat
-296 pipes.pardereg.pgstnreg.ipbprsr4reg[8].prsr[3].intr.stat
-296 pipes.pardereg.pgstnreg.p2sreg.intr.stat
-296 pipes.pardereg.pgstnreg.parbreg.left.intr.stat
-296 pipes.pardereg.pgstnreg.parbreg.right.intr.stat
-296 pipes.pardereg.pgstnreg.pbusreg.intr.stat
-296 pipes.pardereg.pgstnreg.pgrreg.pgr_common.intr_stat.intr_stat_0_4
-296 pipes.pardereg.pgstnreg.pgrreg.pgr_common.intr_stat.intr_stat_1_4
-296 pipes.pardereg.pgstnreg.pgrreg.pgr_common.intr_stat.intr_stat_2_4
-296 pipes.pardereg.pgstnreg.pgrreg.pgr_common.intr_stat.intr_stat_3_4
-296 pipes.pardereg.pgstnreg.pmergereg.ll0.intr.stat
-296 pipes.pardereg.pgstnreg.pmergereg.lr0.intr.stat
-296 pipes.pardereg.pgstnreg.pmergereg.lr1.intr.stat
-296 pipes.pardereg.pgstnreg.s2preg.intr.stat
-297 pipes.pardereg.pgstnreg.ebuf900reg[0].ebuf100reg.glb_group.intr_stat
-297 pipes.pardereg.pgstnreg.ebuf900reg[0].ebuf400reg[0].glb_group.intr_stat
-297 pipes.pardereg.pgstnreg.ebuf900reg[0].ebuf400reg[1].glb_group.intr_stat
-297 pipes.pardereg.pgstnreg.ebuf900reg[1].ebuf100reg.glb_group.intr_stat
-297 pipes.pardereg.pgstnreg.ebuf900reg[1].ebuf400reg[0].glb_group.intr_stat
-297 pipes.pardereg.pgstnreg.ebuf900reg[1].ebuf400reg[1].glb_group.intr_stat
-297 pipes.pardereg.pgstnreg.ebuf900reg[2].ebuf100reg.glb_group.intr_stat
-297 pipes.pardereg.pgstnreg.ebuf900reg[2].ebuf400reg[0].glb_group.intr_stat
-297 pipes.pardereg.pgstnreg.ebuf900reg[2].ebuf400reg[1].glb_group.intr_stat
-297 pipes.pardereg.pgstnreg.ebuf900reg[3].ebuf100reg.glb_group.intr_stat
-297 pipes.pardereg.pgstnreg.ebuf900reg[3].ebuf400reg[0].glb_group.intr_stat
-297 pipes.pardereg.pgstnreg.ebuf900reg[3].ebuf400reg[1].glb_group.intr_stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[0].epbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[0].epbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[0].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[0].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[0].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[0].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[1].epbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[1].epbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[1].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[1].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[1].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[1].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[2].epbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[2].epbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[2].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[2].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[2].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[2].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[3].epbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[3].epbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[3].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[3].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[3].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[3].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[4].epbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[4].epbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[4].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[4].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[4].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[4].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[5].epbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[5].epbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[5].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[5].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[5].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[5].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[6].epbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[6].epbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[6].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[6].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[6].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[6].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[7].epbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[7].epbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[7].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[7].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[7].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[7].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[8].epbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[8].epbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.epbprsr4reg[8].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[8].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[8].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.epbprsr4reg[8].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[0].ipbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[0].ipbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[0].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[0].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[0].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[0].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[1].ipbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[1].ipbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[1].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[1].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[1].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[1].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[2].ipbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[2].ipbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[2].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[2].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[2].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[2].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[3].ipbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[3].ipbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[3].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[3].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[3].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[3].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[4].ipbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[4].ipbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[4].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[4].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[4].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[4].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[5].ipbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[5].ipbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[5].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[5].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[5].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[5].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[6].ipbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[6].ipbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[6].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[6].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[6].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[6].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[7].ipbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[7].ipbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[7].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[7].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[7].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[7].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[8].ipbreg.glb_group.intr_stat.stat.stat_0_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[8].ipbreg.glb_group.intr_stat.stat.stat_1_2
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[8].prsr[0].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[8].prsr[1].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[8].prsr[2].intr.stat
-297 pipes.pardereg.pgstnreg.ipbprsr4reg[8].prsr[3].intr.stat
-297 pipes.pardereg.pgstnreg.p2sreg.intr.stat
-297 pipes.pardereg.pgstnreg.parbreg.left.intr.stat
-297 pipes.pardereg.pgstnreg.parbreg.right.intr.stat
-297 pipes.pardereg.pgstnreg.pbusreg.intr.stat
-297 pipes.pardereg.pgstnreg.pgrreg.pgr_common.intr_stat.intr_stat_0_4
-297 pipes.pardereg.pgstnreg.pgrreg.pgr_common.intr_stat.intr_stat_1_4
-297 pipes.pardereg.pgstnreg.pgrreg.pgr_common.intr_stat.intr_stat_2_4
-297 pipes.pardereg.pgstnreg.pgrreg.pgr_common.intr_stat.intr_stat_3_4
-297 pipes.pardereg.pgstnreg.pmergereg.ll0.intr.stat
-297 pipes.pardereg.pgstnreg.pmergereg.lr0.intr.stat
-297 pipes.pardereg.pgstnreg.pmergereg.lr1.intr.stat
-297 pipes.pardereg.pgstnreg.s2preg.intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.dprsr_pbus.intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_e[0].her.h.intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_e[0].out_egr.intr_0.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_e[0].out_egr.intr_1.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_e[1].her.h.intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_e[1].out_egr.intr_0.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_e[1].out_egr.intr_1.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_e[2].her.h.intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_e[2].out_egr.intr_0.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_e[2].out_egr.intr_1.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_e[3].her.h.intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_e[3].out_egr.intr_0.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_e[3].out_egr.intr_1.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_i[0].hir.h.intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_i[0].out_ingr.intr_0.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_i[0].out_ingr.intr_1.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_i[1].hir.h.intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_i[1].out_ingr.intr_0.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_i[1].out_ingr.intr_1.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_i[2].hir.h.intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_i[2].out_ingr.intr_0.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_i[2].out_ingr.intr_1.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_i[3].hir.h.intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_i[3].out_ingr.intr_0.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.ho_i[3].out_ingr.intr_1.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.inp.icr.intr_b.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.inp.icr.intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.inpslice[0].intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.inpslice[1].intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.inpslice[2].intr.stat
-298 pipes.pardereg.dprsrreg.dprsrreg.inpslice[3].intr.stat
-298 pipes.pardereg.mirreg.mirror.s2p_regs.intr.stat
-298 pipes.pardereg.mirreg.mirror.slice_regs[0].intr.stat
-298 pipes.pardereg.mirreg.mirror.slice_regs[1].intr.stat
-298 pipes.pardereg.mirreg.mirror.slice_regs[2].intr.stat
-298 pipes.pardereg.mirreg.mirror.slice_regs[3].intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.dprsr_pbus.intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_e[0].her.h.intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_e[0].out_egr.intr_0.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_e[0].out_egr.intr_1.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_e[1].her.h.intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_e[1].out_egr.intr_0.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_e[1].out_egr.intr_1.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_e[2].her.h.intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_e[2].out_egr.intr_0.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_e[2].out_egr.intr_1.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_e[3].her.h.intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_e[3].out_egr.intr_0.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_e[3].out_egr.intr_1.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_i[0].hir.h.intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_i[0].out_ingr.intr_0.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_i[0].out_ingr.intr_1.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_i[1].hir.h.intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_i[1].out_ingr.intr_0.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_i[1].out_ingr.intr_1.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_i[2].hir.h.intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_i[2].out_ingr.intr_0.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_i[2].out_ingr.intr_1.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_i[3].hir.h.intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_i[3].out_ingr.intr_0.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.ho_i[3].out_ingr.intr_1.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.inp.icr.intr_b.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.inp.icr.intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.inpslice[0].intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.inpslice[1].intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.inpslice[2].intr.stat
-299 pipes.pardereg.dprsrreg.dprsrreg.inpslice[3].intr.stat
-299 pipes.pardereg.mirreg.mirror.s2p_regs.intr.stat
-299 pipes.pardereg.mirreg.mirror.slice_regs[0].intr.stat
-299 pipes.pardereg.mirreg.mirror.slice_regs[1].intr.stat
-299 pipes.pardereg.mirreg.mirror.slice_regs[2].intr.stat
-299 pipes.pardereg.mirreg.mirror.slice_regs[3].intr.stat
-504 device_select.pbc.pbc_pbus.intr_stat0
-504 device_select.pbc.pbc_pbus.intr_stat1
-504 device_select.pbc.pbc_pbus.intr_stat2
-504 device_select.pbc.pbc_pbus.intr_stat3
-505 device_select.pbc.pbc_pbus.intr_stat0
-505 device_select.pbc.pbc_pbus.intr_stat1
-505 device_select.pbc.pbc_pbus.intr_stat2
-505 device_select.pbc.pbc_pbus.intr_stat3
-506 device_select.pbc.pbc_pbus.intr_stat0
-506 device_select.pbc.pbc_pbus.intr_stat1
-506 device_select.pbc.pbc_pbus.intr_stat2
-506 device_select.pbc.pbc_pbus.intr_stat3
-507 device_select.pbc.pbc_pbus.intr_stat0
-507 device_select.pbc.pbc_pbus.intr_stat1
-507 device_select.pbc.pbc_pbus.intr_stat2
-507 device_select.pbc.pbc_pbus.intr_stat3
-508 device_select.pbc.pbc_pbus.intr_stat0
-508 device_select.pbc.pbc_pbus.intr_stat1
-508 device_select.pbc.pbc_pbus.intr_stat2
-508 device_select.pbc.pbc_pbus.intr_stat3
-509 device_select.pbc.pbc_pbus.intr_stat0
-509 device_select.pbc.pbc_pbus.intr_stat1
-509 device_select.pbc.pbc_pbus.intr_stat2
-509 device_select.pbc.pbc_pbus.intr_stat3
-510 device_select.pbc.pbc_pbus.intr_stat0
-510 device_select.pbc.pbc_pbus.intr_stat1
-510 device_select.pbc.pbc_pbus.intr_stat2
-510 device_select.pbc.pbc_pbus.intr_stat3
-511 device_select.pbc.pbc_pbus.intr_stat0
-511 device_select.pbc.pbc_pbus.intr_stat1
-511 device_select.pbc.pbc_pbus.intr_stat2
-511 device_select.pbc.pbc_pbus.intr_stat3
+ 93 device_select.tm_top.tm_psc_top.psc[*].intr.stat
+ 94 device_select.cbc.cbc_cbus.*
+ 95 device_select.cbc.cbc_cbus.*
+ 96 device_select.cbc.cbc_cbus.*
+ 97 device_select.cbc.cbc_cbus.*
+256 pipes[0].mau[0].*
+257 pipes[0].mau[0].*
+258 pipes[0].mau[1].*
+259 pipes[0].mau[1].*
+260 pipes[0].mau[2].*
+261 pipes[0].mau[2].*
+262 pipes[0].mau[3].*
+263 pipes[0].mau[3].*
+264 pipes[0].mau[4].*
+265 pipes[0].mau[4].*
+266 pipes[0].mau[5].*
+267 pipes[0].mau[5].*
+268 pipes[0].mau[6].*
+269 pipes[0].mau[6].*
+270 pipes[0].mau[7].*
+271 pipes[0].mau[7].*
+272 pipes[0].mau[8].*
+273 pipes[0].mau[8].*
+274 pipes[0].mau[9].*
+275 pipes[0].mau[9].*
+276 pipes[0].mau[10].*
+277 pipes[0].mau[10].*
+278 pipes[0].mau[11].*
+279 pipes[0].mau[11].*
+280 pipes[0].mau[12].*
+281 pipes[0].mau[12].*
+282 pipes[0].mau[13].*
+283 pipes[0].mau[13].*
+284 pipes[0].mau[14].*
+285 pipes[0].mau[14].*
+286 pipes[0].mau[15].*
+287 pipes[0].mau[15].*
+288 pipes[0].mau[16].*
+289 pipes[0].mau[16].*
+290 pipes[0].mau[17].*
+291 pipes[0].mau[17].*
+292 pipes[0].mau[18].*
+293 pipes[0].mau[18].*
+294 pipes[0].mau[19].*
+295 pipes[0].mau[19].*
+296 pipes[0].pardereg.pgstnreg.*
+297 pipes[0].pardereg.pgstnreg.*
+298 pipes[0].pardereg.dprsrreg.*
+298 pipes[0].pardereg.mirreg.*
+299 pipes[0].pardereg.dprsrreg.*
+299 pipes[0].pardereg.mirreg.*
+320 pipes[1].mau[0].*
+321 pipes[1].mau[0].*
+322 pipes[1].mau[1].*
+323 pipes[1].mau[1].*
+324 pipes[1].mau[2].*
+325 pipes[1].mau[2].*
+326 pipes[1].mau[3].*
+327 pipes[1].mau[3].*
+328 pipes[1].mau[4].*
+329 pipes[1].mau[4].*
+330 pipes[1].mau[5].*
+331 pipes[1].mau[5].*
+332 pipes[1].mau[6].*
+333 pipes[1].mau[6].*
+334 pipes[1].mau[7].*
+335 pipes[1].mau[7].*
+336 pipes[1].mau[8].*
+337 pipes[1].mau[8].*
+338 pipes[1].mau[9].*
+339 pipes[1].mau[9].*
+340 pipes[1].mau[10].*
+341 pipes[1].mau[10].*
+342 pipes[1].mau[11].*
+343 pipes[1].mau[11].*
+344 pipes[1].mau[12].*
+345 pipes[1].mau[12].*
+346 pipes[1].mau[13].*
+347 pipes[1].mau[13].*
+348 pipes[1].mau[14].*
+349 pipes[1].mau[14].*
+350 pipes[1].mau[15].*
+351 pipes[1].mau[15].*
+352 pipes[1].mau[16].*
+353 pipes[1].mau[16].*
+354 pipes[1].mau[17].*
+355 pipes[1].mau[17].*
+356 pipes[1].mau[18].*
+357 pipes[1].mau[18].*
+358 pipes[1].mau[19].*
+359 pipes[1].mau[19].*
+360 pipes[1].pardereg.pgstnreg.*
+361 pipes[1].pardereg.pgstnreg.*
+362 pipes[1].pardereg.dprsrreg.*
+362 pipes[1].pardereg.mirreg.*
+363 pipes[1].pardereg.dprsrreg.*
+363 pipes[1].pardereg.mirreg.*
+384 pipes[2].mau[0].*
+385 pipes[2].mau[0].*
+386 pipes[2].mau[1].*
+387 pipes[2].mau[1].*
+388 pipes[2].mau[2].*
+389 pipes[2].mau[2].*
+390 pipes[2].mau[3].*
+391 pipes[2].mau[3].*
+392 pipes[2].mau[4].*
+393 pipes[2].mau[4].*
+394 pipes[2].mau[5].*
+395 pipes[2].mau[5].*
+396 pipes[2].mau[6].*
+397 pipes[2].mau[6].*
+398 pipes[2].mau[7].*
+399 pipes[2].mau[7].*
+400 pipes[2].mau[8].*
+401 pipes[2].mau[8].*
+402 pipes[2].mau[9].*
+403 pipes[2].mau[9].*
+404 pipes[2].mau[10].*
+405 pipes[2].mau[10].*
+406 pipes[2].mau[11].*
+407 pipes[2].mau[11].*
+408 pipes[2].mau[12].*
+409 pipes[2].mau[12].*
+410 pipes[2].mau[13].*
+411 pipes[2].mau[13].*
+412 pipes[2].mau[14].*
+413 pipes[2].mau[14].*
+414 pipes[2].mau[15].*
+415 pipes[2].mau[15].*
+416 pipes[2].mau[16].*
+417 pipes[2].mau[16].*
+418 pipes[2].mau[17].*
+419 pipes[2].mau[17].*
+420 pipes[2].mau[18].*
+421 pipes[2].mau[18].*
+422 pipes[2].mau[19].*
+423 pipes[2].mau[19].*
+424 pipes[2].pardereg.pgstnreg.*
+425 pipes[2].pardereg.pgstnreg.*
+426 pipes[2].pardereg.dprsrreg.*
+426 pipes[2].pardereg.mirreg.*
+427 pipes[2].pardereg.dprsrreg.*
+427 pipes[2].pardereg.mirreg.*
+448 pipes[3].mau[0].*
+449 pipes[3].mau[0].*
+450 pipes[3].mau[1].*
+451 pipes[3].mau[1].*
+452 pipes[3].mau[2].*
+453 pipes[3].mau[2].*
+454 pipes[3].mau[3].*
+455 pipes[3].mau[3].*
+456 pipes[3].mau[4].*
+457 pipes[3].mau[4].*
+458 pipes[3].mau[5].*
+459 pipes[3].mau[5].*
+460 pipes[3].mau[6].*
+461 pipes[3].mau[6].*
+462 pipes[3].mau[7].*
+463 pipes[3].mau[7].*
+464 pipes[3].mau[8].*
+465 pipes[3].mau[8].*
+466 pipes[3].mau[9].*
+467 pipes[3].mau[9].*
+468 pipes[3].mau[10].*
+469 pipes[3].mau[10].*
+470 pipes[3].mau[11].*
+471 pipes[3].mau[11].*
+472 pipes[3].mau[12].*
+473 pipes[3].mau[12].*
+474 pipes[3].mau[13].*
+475 pipes[3].mau[13].*
+476 pipes[3].mau[14].*
+477 pipes[3].mau[14].*
+478 pipes[3].mau[15].*
+479 pipes[3].mau[15].*
+480 pipes[3].mau[16].*
+481 pipes[3].mau[16].*
+482 pipes[3].mau[17].*
+483 pipes[3].mau[17].*
+484 pipes[3].mau[18].*
+485 pipes[3].mau[18].*
+486 pipes[3].mau[19].*
+487 pipes[3].mau[19].*
+488 pipes[3].pardereg.pgstnreg.*
+489 pipes[3].pardereg.pgstnreg.*
+490 pipes[3].pardereg.dprsrreg.*
+481 pipes[3].pardereg.mirreg.*
+492 pipes[3].pardereg.dprsrreg.*
+493 pipes[3].pardereg.mirreg.*
+504 device_select.pbc.*
+505 device_select.pbc.*
+506 device_select.pbc.*
+507 device_select.pbc.*
+508 device_select.pbc.*
+509 device_select.pbc.*
+510 device_select.pbc.*
+511 device_select.pbc.*
