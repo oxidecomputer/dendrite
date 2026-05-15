@@ -608,12 +608,11 @@ fn replace_route_targets(
             let old = old_entry.expect("subset removal requires existing route");
             shrink_in_place(switch, route_data, subnet, old, targets, removed)
         }
-        // Non-subset same-or-smaller replaces fall through to the
-        // alloc-then-swap path here; the reserve-backed `Swap` path
-        // that lets them succeed under fragmentation is wired up in
-        // a follow-up commit.
-        RouteTargetUpdate::Swap | RouteTargetUpdate::Alloc => {
-            alloc_then_swap(switch, route_data, subnet, old_entry, targets)
+        RouteTargetUpdate::Swap => {
+            // Swap is only returned when old_entry is Some.
+            let old =
+                old_entry.expect("swap dispatch requires existing route");
+            reserve_two_swap(switch, route_data, subnet, old, targets)
         }
         RouteTargetUpdate::Alloc => {
             alloc_then_swap(switch, route_data, subnet, old_entry, targets)
@@ -928,6 +927,228 @@ fn rollback_shrink(
     failure_encountered |=
         add_route_index_for(switch, subnet, base, original_slots).is_err();
     !failure_encountered
+}
+
+// Apply a same-or-smaller non-subset replace by staging the new target set
+// in the FreeMap's reserve region, swapping `route_index` to point at it,
+// then migrating out into a freshly-allocated user-pool region.  Two swaps,
+// each implemented as add (and an internal delete) on the route_index — the
+// caller has already unhooked the route (route_index gone, in-core empty),
+// so this function picks back up from "route is off the dataplane."
+//
+//   Swap 1: write new targets into the reserve, add a route_index pointing
+//   at the reserve.  Then tear down the old slot range.
+//
+//   Swap 2: allocate `new.len()` slots from the (now-replenished) user
+//   pool, delete the route_index (was pointing at reserve), write the
+//   targets at the final location, add a route_index pointing there.  Then
+//   clean up the reserve copies and return the reserve to availability.
+//
+// The reserve is fixed-size and never enters the user-pool freelist, so
+// Swap 1's writes cannot fail on fragmentation.  Swap 2 can fail if the
+// user pool is genuinely out of room; in that case we leave the route live
+// in the reserve (degraded mode) and return Err.  The reserve stays held
+// until a subsequent op on this subnet unwinds it — `cleanup_route`
+// dispatches reserve-resident entries to `release_reserve_in_place`, so
+// any path that fully tears down the old slots (`alloc_then_swap`,
+// `delete_route_entirely`) recovers automatically.
+//
+// If `take_reserve` returns `None` (a prior op left a route in the reserve),
+// fall back to `alloc_then_swap` with the owned `old` entry.  That path
+// doesn't touch the reserve and will unwind the in-reserve route through
+// `cleanup_route` → `release_reserve_in_place`.
+fn reserve_two_swap(
+    switch: &Switch,
+    route_data: &mut RouteData,
+    subnet: IpNet,
+    old: RouteEntry,
+    new_targets: Vec<NextHop>,
+) -> DpdResult<()> {
+    let is_ipv4 = old.is_ipv4;
+    let new_n = new_targets.len() as u8;
+
+    let Some(reserve) = route_data.freemap_mut(is_ipv4).take_reserve() else {
+        debug!(
+            switch.log,
+            "reserve unavailable for {subnet}; falling back to alloc-then-swap"
+        );
+        return alloc_then_swap(
+            switch,
+            route_data,
+            subnet,
+            Some(old),
+            new_targets,
+        );
+    };
+    let reserve_base = reserve.base();
+
+    // Swap 1.  Caller already deleted route_index via unhook_route.
+    // Step 1.1: stage new targets in the reserve.
+    if let Err(e) =
+        write_targets_at(switch, is_ipv4, reserve_base, &new_targets)
+    {
+        debug!(switch.log, "reserve swap-1 write failed: {e:?}");
+        let _ =
+            delete_targets_at(switch, is_ipv4, reserve_base, new_n as u16);
+        // Restore the old route: reinstall route_index on the ASIC and
+        // put the old entry back into the in-core mirror.
+        let _ = add_route_index_for(switch, subnet, old.index, old.slots);
+        route_data.insert(subnet, old);
+        route_data.freemap_mut(is_ipv4).return_reserve(reserve);
+        return Err(e);
+    }
+    // Step 1.2: install the route_index pointing at the reserve.
+    if let Err(e) =
+        add_route_index_for(switch, subnet, reserve_base, new_n)
+    {
+        debug!(switch.log, "reserve swap-1 index re-add failed: {e:?}");
+        let _ =
+            delete_targets_at(switch, is_ipv4, reserve_base, new_n as u16);
+        let _ = add_route_index_for(switch, subnet, old.index, old.slots);
+        route_data.insert(subnet, old);
+        route_data.freemap_mut(is_ipv4).return_reserve(reserve);
+        return Err(e);
+    }
+
+    // Past the swap-1 commit: dataplane is now serving the new policy
+    // from the reserve.  Tear down the old slot range; failures are
+    // leaks.  This consumes `old`.
+    let _ = cleanup_route(switch, route_data, None, old);
+
+    // Swap 2.
+    // Step 2.1: alloc final location from the (now-replenished) user pool.
+    let final_idx = match route_data.freemap_mut(is_ipv4).alloc(new_n) {
+        Ok(idx) => idx,
+        Err(e) => {
+            debug!(
+                switch.log,
+                "reserve swap-2 alloc failed for {subnet}; \
+                 leaving route in reserve (degraded)"
+            );
+            // The reserve stays held; route is correctly programmed
+            // there.  Install the reserve-resident entry into the
+            // (now-empty) in-core mirror.
+            drop(reserve);
+            let prev = route_data.insert(
+                subnet,
+                RouteEntry {
+                    is_ipv4,
+                    index: reserve_base,
+                    slots: new_n,
+                    targets: new_targets,
+                },
+            );
+            debug_assert!(
+                prev.is_none(),
+                "degraded-mode insert for {subnet} replaced an \
+                 unexpected existing entry"
+            );
+            return Err(e);
+        }
+    };
+
+    // Step 2.2: take the route off the dataplane (was pointing at reserve).
+    if let Err(e) = delete_route_index_for(switch, subnet) {
+        debug!(
+            switch.log,
+            "reserve swap-2 index delete failed for {subnet}: {e:?}"
+        );
+        // Reserve route_index still installed; free the alloc and stay
+        // in degraded mode.
+        route_data.freemap_mut(is_ipv4).free(final_idx, new_n);
+        drop(reserve);
+        let prev = route_data.insert(
+            subnet,
+            RouteEntry {
+                is_ipv4,
+                index: reserve_base,
+                slots: new_n,
+                targets: new_targets,
+            },
+        );
+        debug_assert!(
+            prev.is_none(),
+            "degraded-mode insert for {subnet} replaced an unexpected \
+             existing entry"
+        );
+        return Err(e);
+    }
+    // Step 2.3: write new targets at the final location.
+    if let Err(e) =
+        write_targets_at(switch, is_ipv4, final_idx, &new_targets)
+    {
+        debug!(
+            switch.log,
+            "reserve swap-2 write failed for {subnet}; \
+             restoring reserve-resident route (degraded)"
+        );
+        let _ = delete_targets_at(switch, is_ipv4, final_idx, new_n as u16);
+        route_data.freemap_mut(is_ipv4).free(final_idx, new_n);
+        let _ = add_route_index_for(switch, subnet, reserve_base, new_n);
+        drop(reserve);
+        let prev = route_data.insert(
+            subnet,
+            RouteEntry {
+                is_ipv4,
+                index: reserve_base,
+                slots: new_n,
+                targets: new_targets,
+            },
+        );
+        debug_assert!(
+            prev.is_none(),
+            "degraded-mode insert for {subnet} replaced an unexpected \
+             existing entry"
+        );
+        return Err(e);
+    }
+    // Step 2.4: install the route_index pointing at the final location.
+    if let Err(e) = add_route_index_for(switch, subnet, final_idx, new_n) {
+        debug!(
+            switch.log,
+            "reserve swap-2 index re-add failed for {subnet}; \
+             restoring reserve-resident route (degraded)"
+        );
+        let _ = delete_targets_at(switch, is_ipv4, final_idx, new_n as u16);
+        route_data.freemap_mut(is_ipv4).free(final_idx, new_n);
+        let _ = add_route_index_for(switch, subnet, reserve_base, new_n);
+        drop(reserve);
+        let prev = route_data.insert(
+            subnet,
+            RouteEntry {
+                is_ipv4,
+                index: reserve_base,
+                slots: new_n,
+                targets: new_targets,
+            },
+        );
+        debug_assert!(
+            prev.is_none(),
+            "degraded-mode insert for {subnet} replaced an unexpected \
+             existing entry"
+        );
+        return Err(e);
+    }
+
+    // Both swaps committed.  Clean up the reserve copies and release.
+    let _ = delete_targets_at(switch, is_ipv4, reserve_base, new_n as u16);
+    route_data.freemap_mut(is_ipv4).return_reserve(reserve);
+
+    let prev = route_data.insert(
+        subnet,
+        RouteEntry {
+            is_ipv4,
+            index: final_idx,
+            slots: new_n,
+            targets: new_targets,
+        },
+    );
+    debug_assert!(
+        prev.is_none(),
+        "successful reserve_two_swap insert for {subnet} replaced an \
+         unexpected existing entry"
+    );
+    Ok(())
 }
 
 fn add_route_locked(
@@ -1783,6 +2004,86 @@ mod tests {
         ) {
             Err(DpdError::TableFull(_)) => {}
             other => panic!("expected TableFull, got {other:?}"),
+        }
+    }
+
+    /// Replace a multi-target route with a single non-subset target on a
+    /// full table.  Exercises the reserve_two_swap path through
+    /// `RouteTargetUpdate::Swap` with a smaller new size that is not a
+    /// subset of old.
+    #[tokio::test]
+    async fn non_subset_smaller_replace_succeeds_on_full_table_v6() {
+        let switch = make_switch();
+        let victim: Ipv6Net = "3fff:dead::/64".parse().unwrap();
+        let old_tgts: [Ipv6Addr; 3] = [
+            "2001:db8::55:1".parse().unwrap(),
+            "2001:db8::55:2".parse().unwrap(),
+            "2001:db8::55:3".parse().unwrap(),
+        ];
+        let replacement: Ipv6Addr = "2001:db8::aa:1".parse().unwrap();
+        let filler: Ipv6Addr = "2001:db8::ff:1".parse().unwrap();
+
+        let mut rd = switch.routes.lock().await;
+        shrink_test_freemap(&mut rd, false);
+        install_victim(
+            &switch,
+            &mut rd,
+            victim.into(),
+            old_tgts.iter().map(|a| IpAddr::from(*a)),
+        );
+        fill_table(&switch, &mut rd, filler.into(), v6_filler_cidr);
+
+        let new_hops = vec![NextHop {
+            asic_port_id: FAKE_ASIC_PORT,
+            route: make_route(IpAddr::from(replacement)),
+        }];
+        replace_route_targets(&switch, &mut rd, victim.into(), new_hops)
+            .expect("non-subset smaller replace must succeed on full table");
+    }
+
+    /// Replace a multi-target route with an entirely new same-size set
+    /// (no shared targets) on a full table.  Exercises the reserve path
+    /// for the same-size non-subset case, where alloc_then_swap would
+    /// TableFull.  Calls `replace_route_targets` directly since no public
+    /// API installs an N-target replacement in one shot.
+    #[tokio::test]
+    async fn non_subset_same_size_replace_succeeds_on_full_table_v6() {
+        let switch = make_switch();
+        let victim: Ipv6Net = "3fff:dead::/64".parse().unwrap();
+        let old_tgts: [Ipv6Addr; 3] = [
+            "2001:db8::55:1".parse().unwrap(),
+            "2001:db8::55:2".parse().unwrap(),
+            "2001:db8::55:3".parse().unwrap(),
+        ];
+        let new_tgts: [Ipv6Addr; 3] = [
+            "2001:db8::aa:1".parse().unwrap(),
+            "2001:db8::aa:2".parse().unwrap(),
+            "2001:db8::aa:3".parse().unwrap(),
+        ];
+        let filler: Ipv6Addr = "2001:db8::ff:1".parse().unwrap();
+
+        {
+            let mut rd = switch.routes.lock().await;
+            shrink_test_freemap(&mut rd, false);
+            install_victim(
+                &switch,
+                &mut rd,
+                victim.into(),
+                old_tgts.iter().map(|a| IpAddr::from(*a)),
+            );
+            fill_table(&switch, &mut rd, filler.into(), v6_filler_cidr);
+
+            let new_hops: Vec<NextHop> = new_tgts
+                .iter()
+                .map(|ip| NextHop {
+                    asic_port_id: FAKE_ASIC_PORT,
+                    route: make_route(IpAddr::from(*ip)),
+                })
+                .collect();
+            replace_route_targets(&switch, &mut rd, victim.into(), new_hops)
+                .expect(
+                    "same-size non-subset replace must succeed on full table",
+                );
         }
     }
 
