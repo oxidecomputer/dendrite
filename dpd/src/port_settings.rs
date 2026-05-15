@@ -396,27 +396,17 @@ impl PortSettingsDiff {
         spec: &Modify<LinkSpec>,
         rb: &mut Rollback,
     ) -> DpdResult<()> {
-        // unsupported things
-        // XXX: we actually could support this now, as the reconciler task will
-        // do the necessary cleanup before attempting to apply the changes.
-        if spec.before.speed != spec.after.speed {
-            return Err(DpdError::Invalid(
-                "changing link speed not supported, recreate required".into(),
-            ));
-        }
-        if spec.before.fec != spec.after.fec {
-            return Err(DpdError::Invalid(
-                "changing link fec not supported, recreate required".into(),
-            ));
-        }
-
         let link_lock = ctx.link(link_id)?;
         let mut link = link_lock.lock().unwrap();
 
+        let speed_before = spec.before.speed;
+        let fec_before = spec.before.fec;
         let an_before = spec.before.autoneg;
         let kr_before = spec.before.kr;
         let txeq_before = spec.before.tx_eq;
         let delete_before = spec.before.delete_me;
+        link.config.speed = spec.after.speed;
+        link.config.fec = spec.after.fec;
         link.config.autoneg = spec.after.autoneg;
         link.config.kr = spec.after.kr;
         link.tx_eq = spec.after.tx_eq;
@@ -427,6 +417,8 @@ impl PortSettingsDiff {
         rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
             let link_lock = ctx.link(link_id)?;
             let mut link = link_lock.lock().unwrap();
+            link.config.speed = speed_before;
+            link.config.fec = fec_before;
             link.config.autoneg = an_before;
             link.config.kr = kr_before;
             link.tx_eq = txeq_before;
