@@ -908,8 +908,16 @@ pub fn init(log: &slog::Logger) -> RouteData {
     RouteData {
         v4: BTreeMap::new(),
         v6: BTreeMap::new(),
-        v4_freemap: freemap::FreeMap::new(log, "route_ipv4"),
-        v6_freemap: freemap::FreeMap::new(log, "route_ipv6"),
+        v4_freemap: freemap::FreeMap::new(
+            log,
+            "route_ipv4",
+            MAX_TARGETS_IPV4 as u16,
+        ),
+        v6_freemap: freemap::FreeMap::new(
+            log,
+            "route_ipv6",
+            MAX_TARGETS_IPV6 as u16,
+        ),
     }
 }
 
