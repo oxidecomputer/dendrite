@@ -301,6 +301,122 @@ impl RouteData {
     }
 }
 
+/// Per-subnet-family dispatch over the on-chip `route_target` and
+/// `route_index` tables.  Internal route helpers (`replace_route_targets`,
+/// `shrink_in_place`, etc.) take `&dyn RouteTableOps` rather than `&Switch`
+/// so tests can supply an implementation that records calls without
+/// invoking the ASIC.  Production code passes `&Switch`, whose impl below
+/// dispatches to the live `table::route_ipv{4,6}` functions.
+trait RouteTableOps {
+    /// Logger to use for the routing subsystem's messages.
+    fn log(&self) -> &slog::Logger;
+
+    /// Size (in slots) of the `route_target` forwarding table for the
+    /// requested family.  Used by `add_route_locked` to lazily initialize
+    /// the per-family `FreeMap` on first use.
+    fn route_fwd_table_size(&self, is_ipv4: bool) -> DpdResult<u32>;
+
+    /// Write `target` into slot `idx` of the `route_target` table for a
+    /// subnet of the indicated family.  Production dispatches on
+    /// `(subnet_is_ipv4, target.route.tgt_ip)`: an IPv4 target always goes
+    /// to the v4 table; a v6 target goes to `route_ipv4::add_route_target_v6`
+    /// when the subnet is v4, otherwise to the v6 table.
+    fn add_target(
+        &self,
+        subnet_is_ipv4: bool,
+        idx: u16,
+        target: &NextHop,
+    ) -> DpdResult<()>;
+
+    /// Delete slot `idx` of the `route_target` table for a subnet of the
+    /// indicated family.
+    fn delete_target(&self, subnet_is_ipv4: bool, idx: u16) -> DpdResult<()>;
+
+    /// Install a `route_index` entry pointing at `[index, index + slots)`
+    /// of the family inferred from `subnet`.
+    fn add_index(&self, subnet: IpNet, index: u16, slots: u8) -> DpdResult<()>;
+
+    /// Delete the `route_index` entry for `subnet`.
+    fn delete_index(&self, subnet: IpNet) -> DpdResult<()>;
+}
+
+impl RouteTableOps for Switch {
+    fn log(&self) -> &slog::Logger {
+        &self.log
+    }
+
+    fn route_fwd_table_size(&self, is_ipv4: bool) -> DpdResult<u32> {
+        let table = if is_ipv4 {
+            TableType::RouteFwdIpv4
+        } else {
+            TableType::RouteFwdIpv6
+        };
+        self.table_size(table)
+    }
+
+    fn add_target(
+        &self,
+        subnet_is_ipv4: bool,
+        idx: u16,
+        target: &NextHop,
+    ) -> DpdResult<()> {
+        match target.route.tgt_ip {
+            IpAddr::V4(tgt_ip) => table::route_ipv4::add_route_target(
+                self,
+                idx,
+                target.asic_port_id,
+                tgt_ip,
+                target.route.vlan_id,
+            ),
+            IpAddr::V6(tgt_ip) => {
+                if subnet_is_ipv4 {
+                    table::route_ipv4::add_route_target_v6(
+                        self,
+                        idx,
+                        target.asic_port_id,
+                        tgt_ip,
+                        target.route.vlan_id,
+                    )
+                } else {
+                    table::route_ipv6::add_route_target(
+                        self,
+                        idx,
+                        target.asic_port_id,
+                        tgt_ip,
+                        target.route.vlan_id,
+                    )
+                }
+            }
+        }
+    }
+
+    fn delete_target(&self, subnet_is_ipv4: bool, idx: u16) -> DpdResult<()> {
+        if subnet_is_ipv4 {
+            table::route_ipv4::delete_route_target(self, idx)
+        } else {
+            table::route_ipv6::delete_route_target(self, idx)
+        }
+    }
+
+    fn add_index(&self, subnet: IpNet, index: u16, slots: u8) -> DpdResult<()> {
+        match subnet {
+            IpNet::V4(v4) => {
+                table::route_ipv4::add_route_index(self, &v4, index, slots)
+            }
+            IpNet::V6(v6) => {
+                table::route_ipv6::add_route_index(self, &v6, index, slots)
+            }
+        }
+    }
+
+    fn delete_index(&self, subnet: IpNet) -> DpdResult<()> {
+        match subnet {
+            IpNet::V4(v4) => table::route_ipv4::delete_route_index(self, &v4),
+            IpNet::V6(v6) => table::route_ipv6::delete_route_index(self, &v6),
+        }
+    }
+}
+
 // Remove all the data for a given route from both the route_data and
 // route_index tables.
 //
@@ -308,34 +424,23 @@ impl RouteData {
 // operation, not all of the target slots may yet be populated.  Thus we require
 // the caller to explicitly indicate which slots need to be cleared.
 fn cleanup_route(
-    switch: &Switch,
+    ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
     subnet: Option<IpNet>,
     entry: RouteEntry,
 ) -> DpdResult<()> {
     // Remove the subnet -> index mapping first, so nobody can reach the
     // entries we delete below.
-    match subnet {
-        Some(IpNet::V4(subnet)) => {
-            table::route_ipv4::delete_route_index(switch, &subnet)
-        }
-        Some(IpNet::V6(subnet)) => {
-            table::route_ipv6::delete_route_index(switch, &subnet)
-        }
-        None => Ok(()),
-    }?;
+    if let Some(subnet) = subnet {
+        ops.delete_index(subnet)?;
+    }
 
     let all_clear = entry
         .targets
         .iter()
         .enumerate()
         .map(|(idx, _hop)| {
-            let x = entry.index + idx as u16;
-            if entry.is_ipv4 {
-                table::route_ipv4::delete_route_target(switch, x)
-            } else {
-                table::route_ipv6::delete_route_target(switch, x)
-            }
+            ops.delete_target(entry.is_ipv4, entry.index + idx as u16)
         })
         .all(|rval| rval.is_ok());
 
@@ -354,32 +459,19 @@ fn cleanup_route(
 //
 // If that fails, free all resources associated with the new set of targets and
 fn finalize_route(
-    switch: &Switch,
+    ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
     subnet: IpNet,
     entry: Option<RouteEntry>,
 ) -> DpdResult<()> {
     let Some(entry) = entry else { return Ok(()) };
 
-    match match subnet {
-        IpNet::V4(subnet) => table::route_ipv4::add_route_index(
-            switch,
-            &subnet,
-            entry.index,
-            entry.slots,
-        ),
-        IpNet::V6(subnet) => table::route_ipv6::add_route_index(
-            switch,
-            &subnet,
-            entry.index,
-            entry.slots,
-        ),
-    } {
+    match ops.add_index(subnet, entry.index, entry.slots) {
         Ok(_) => {
             route_data.insert(subnet, entry);
             Ok(())
         }
-        Err(_) => cleanup_route(switch, route_data, None, entry),
+        Err(_) => cleanup_route(ops, route_data, None, entry),
     }
 }
 
@@ -442,80 +534,6 @@ fn classify_update(
     }
 }
 
-fn write_one_target(
-    switch: &Switch,
-    subnet_is_ipv4: bool,
-    idx: u16,
-    target: &NextHop,
-) -> DpdResult<()> {
-    match target.route.tgt_ip {
-        IpAddr::V4(tgt_ip) => table::route_ipv4::add_route_target(
-            switch,
-            idx,
-            target.asic_port_id,
-            tgt_ip,
-            target.route.vlan_id,
-        ),
-        IpAddr::V6(tgt_ip) => {
-            if subnet_is_ipv4 {
-                table::route_ipv4::add_route_target_v6(
-                    switch,
-                    idx,
-                    target.asic_port_id,
-                    tgt_ip,
-                    target.route.vlan_id,
-                )
-            } else {
-                table::route_ipv6::add_route_target(
-                    switch,
-                    idx,
-                    target.asic_port_id,
-                    tgt_ip,
-                    target.route.vlan_id,
-                )
-            }
-        }
-    }
-}
-
-/// Delete one route_target entry at `idx`, dispatching on subnet family.
-fn delete_one_target_at(
-    switch: &Switch,
-    subnet_is_ipv4: bool,
-    idx: u16,
-) -> DpdResult<()> {
-    if subnet_is_ipv4 {
-        table::route_ipv4::delete_route_target(switch, idx)
-    } else {
-        table::route_ipv6::delete_route_target(switch, idx)
-    }
-}
-
-/// Add a route_index entry for `subnet` pointing at `[index, index + slots)`.
-fn add_route_index_for(
-    switch: &Switch,
-    subnet: IpNet,
-    index: u16,
-    slots: u8,
-) -> DpdResult<()> {
-    match subnet {
-        IpNet::V4(v4) => {
-            table::route_ipv4::add_route_index(switch, &v4, index, slots)
-        }
-        IpNet::V6(v6) => {
-            table::route_ipv6::add_route_index(switch, &v6, index, slots)
-        }
-    }
-}
-
-/// Delete the route_index entry for `subnet`.
-fn delete_route_index_for(switch: &Switch, subnet: IpNet) -> DpdResult<()> {
-    match subnet {
-        IpNet::V4(v4) => table::route_ipv4::delete_route_index(switch, &v4),
-        IpNet::V6(v6) => table::route_ipv6::delete_route_index(switch, &v6),
-    }
-}
-
 /// Take the route off the dataplane: remove the in-core entry for `subnet`
 /// and delete the on-chip `route_index`.  On success the caller owns the
 /// previous `RouteEntry` (or `None` if the subnet had none).  On failure
@@ -525,16 +543,16 @@ fn delete_route_index_for(switch: &Switch, subnet: IpNet) -> DpdResult<()> {
 /// It gives the caller sole ownership of the old entry and guarantees
 /// the dataplane can't reach the slots while they're in flight.
 fn unhook_route(
-    switch: &Switch,
+    ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
     subnet: IpNet,
 ) -> DpdResult<Option<RouteEntry>> {
     let Some(old) = route_data.remove(subnet) else {
         return Ok(None);
     };
-    if let Err(e) = delete_route_index_for(switch, subnet) {
+    if let Err(e) = ops.delete_index(subnet) {
         debug!(
-            switch.log,
+            ops.log(),
             "unhook_route: route_index delete failed for {subnet}: {e:?}"
         );
         route_data.insert(subnet, old);
@@ -558,18 +576,18 @@ fn unhook_route(
 // calls `FreeMap::alloc`; everything else falls through to the
 // alloc-then-swap path.
 fn replace_route_targets(
-    switch: &Switch,
+    ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
     subnet: IpNet,
     targets: Vec<NextHop>,
 ) -> DpdResult<()> {
-    debug!(switch.log, "replacing targets for {subnet} with: {targets:?}");
+    debug!(ops.log(), "replacing targets for {subnet} with: {targets:?}");
 
     // Delete-route path: no classification needed; unhook and free.
     if targets.is_empty() {
-        let old_entry = unhook_route(switch, route_data, subnet)?;
+        let old_entry = unhook_route(ops, route_data, subnet)?;
         return match old_entry {
-            Some(entry) => cleanup_route(switch, route_data, None, entry),
+            Some(entry) => cleanup_route(ops, route_data, None, entry),
             None => Ok(()),
         };
     }
@@ -579,18 +597,18 @@ fn replace_route_targets(
     match classify_update(route_data.get(subnet), &targets) {
         RouteTargetUpdate::NoOp => Ok(()),
         RouteTargetUpdate::ShrinkInPlace { removed } => {
-            let old = unhook_route(switch, route_data, subnet)?
+            let old = unhook_route(ops, route_data, subnet)?
                 .expect("subset removal requires existing route");
             // shrink_in_place reconstructs the in-core target vec from the
             // compacted ASIC layout rather than caller-supplied order (see
             // its body for why), so the caller's vec carries no useful
             // information past this point.
             drop(targets);
-            shrink_in_place(switch, route_data, subnet, old, removed)
+            shrink_in_place(ops, route_data, subnet, old, removed)
         }
         RouteTargetUpdate::Alloc => {
-            let old_entry = unhook_route(switch, route_data, subnet)?;
-            alloc_then_swap(switch, route_data, subnet, old_entry, targets)
+            let old_entry = unhook_route(ops, route_data, subnet)?;
+            alloc_then_swap(ops, route_data, subnet, old_entry, targets)
         }
     }
 }
@@ -601,7 +619,7 @@ fn replace_route_targets(
 // `old_entry` carries the previous slot reservation that we still need to
 // free on success or restore on failure.
 fn alloc_then_swap(
-    switch: &Switch,
+    ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
     subnet: IpNet,
     old_entry: Option<RouteEntry>,
@@ -618,12 +636,12 @@ fn alloc_then_swap(
         },
         Err(e) => {
             debug!(
-                switch.log,
+                ops.log(),
                 "failed to allocate space for the new target list"
             );
             // Restore the old route_index + in-core entry (or no-op if
             // there was no old entry).
-            let _ = finalize_route(switch, route_data, subnet, old_entry);
+            let _ = finalize_route(ops, route_data, subnet, old_entry);
             return Err(e);
         }
     };
@@ -632,10 +650,10 @@ fn alloc_then_swap(
     let mut idx = new_entry.index;
 
     for target in targets {
-        if let Err(e) = write_one_target(switch, is_ipv4, idx, &target) {
-            debug!(switch.log, "failed to insert {target:?} into route table");
-            let _ = cleanup_route(switch, route_data, None, new_entry);
-            let _ = finalize_route(switch, route_data, subnet, old_entry);
+        if let Err(e) = ops.add_target(is_ipv4, idx, &target) {
+            debug!(ops.log(), "failed to insert {target:?} into route table");
+            let _ = cleanup_route(ops, route_data, None, new_entry);
+            let _ = finalize_route(ops, route_data, subnet, old_entry);
             return Err(e);
         }
         idx += 1;
@@ -643,22 +661,22 @@ fn alloc_then_swap(
     }
 
     // Insert the new subnet->index mapping
-    match finalize_route(switch, route_data, subnet, Some(new_entry.clone())) {
+    match finalize_route(ops, route_data, subnet, Some(new_entry.clone())) {
         Ok(()) => {
             // Finally free all of the table space for the original set of
             // targets
             if let Some(entry) = old_entry {
-                let _ = cleanup_route(switch, route_data, None, entry);
+                let _ = cleanup_route(ops, route_data, None, entry);
             }
             Ok(())
         }
         Err(e) => {
-            debug!(switch.log, "failed to update index to new target list");
+            debug!(ops.log(), "failed to update index to new target list");
             // We failed to point at the new set of targets.  Free all of the
             // new data and update the route_index table to point at the
             // original set of targets.
-            let _ = cleanup_route(switch, route_data, None, new_entry);
-            let _ = finalize_route(switch, route_data, subnet, old_entry);
+            let _ = cleanup_route(ops, route_data, None, new_entry);
+            let _ = finalize_route(ops, route_data, subnet, old_entry);
             Err(e)
         }
     }
@@ -693,7 +711,7 @@ fn alloc_then_swap(
 // (matching the now-unknown ASIC state) so the next control-plane update
 // rebuilds from scratch.
 fn shrink_in_place(
-    switch: &Switch,
+    ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
     subnet: IpNet,
     old: RouteEntry,
@@ -728,34 +746,29 @@ fn shrink_in_place(
                 .as_ref()
                 .expect("tail slot is live at this point")
                 .clone();
-            if let Err(e) =
-                delete_one_target_at(switch, is_ipv4, base + removed_idx)
-            {
+            if let Err(e) = ops.delete_target(is_ipv4, base + removed_idx) {
                 warn!(
-                    switch.log,
+                    ops.log(),
                     "shrink-in-place compact delete failed at slot {}: {e:?}",
                     base + removed_idx
                 );
                 restore_after_shrink_failure(
-                    switch, route_data, subnet, &live, &touched, old,
+                    ops, route_data, subnet, &live, &touched, old,
                 );
                 return Err(e);
             }
             live[removed_idx as usize] = None;
             touched.push(removed_idx);
-            if let Err(e) = write_one_target(
-                switch,
-                is_ipv4,
-                base + removed_idx,
-                &tail_contents,
-            ) {
+            if let Err(e) =
+                ops.add_target(is_ipv4, base + removed_idx, &tail_contents)
+            {
                 warn!(
-                    switch.log,
+                    ops.log(),
                     "shrink-in-place compact add failed at slot {}: {e:?}",
                     base + removed_idx
                 );
                 restore_after_shrink_failure(
-                    switch, route_data, subnet, &live, &touched, old,
+                    ops, route_data, subnet, &live, &touched, old,
                 );
                 return Err(e);
             }
@@ -765,13 +778,13 @@ fn shrink_in_place(
     }
 
     // Step 2: install the route_index pointing at the compacted range.
-    if let Err(e) = add_route_index_for(switch, subnet, base, new_n) {
+    if let Err(e) = ops.add_index(subnet, base, new_n) {
         warn!(
-            switch.log,
+            ops.log(),
             "shrink-in-place index re-add failed for {subnet}: {e:?}"
         );
         restore_after_shrink_failure(
-            switch, route_data, subnet, &live, &touched, old,
+            ops, route_data, subnet, &live, &touched, old,
         );
         return Err(e);
     }
@@ -783,8 +796,7 @@ fn shrink_in_place(
     let release_count = old.slots as u16 - new_n as u16;
     let mut all_clear = true;
     for offset in 0..release_count {
-        if delete_one_target_at(switch, is_ipv4, release_base + offset).is_err()
-        {
+        if ops.delete_target(is_ipv4, release_base + offset).is_err() {
             all_clear = false;
         }
     }
@@ -792,7 +804,7 @@ fn shrink_in_place(
         route_data.freemap_mut(is_ipv4).free(release_base, release_count);
     } else {
         warn!(
-            switch.log,
+            ops.log(),
             "shrink-in-place tail cleanup partially failed for {subnet}; \
              leaking slots in the FreeMap's accounting"
         );
@@ -832,18 +844,18 @@ fn shrink_in_place(
 // re-insert `old` into the in-core mirror; if rollback itself fails leave
 // the in-core empty so the next update rebuilds.  Consumes `old`.
 fn restore_after_shrink_failure(
-    switch: &Switch,
+    ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
     subnet: IpNet,
     live: &[Option<NextHop>],
     touched: &[u16],
     old: RouteEntry,
 ) {
-    if rollback_shrink(switch, subnet, &old, live, touched) {
+    if rollback_shrink(ops, subnet, &old, live, touched) {
         route_data.insert(subnet, old);
     } else {
         error!(
-            switch.log,
+            ops.log(),
             "shrink-in-place rollback failed for {subnet}; in-core entry \
              stays cleared and ASIC state may diverge until the next \
              control-plane update on this subnet rebuilds it"
@@ -858,7 +870,7 @@ fn restore_after_shrink_failure(
 /// succeeded, `false` otherwise.  Per-slot failures are logged
 /// individually so a divergence postmortem can name the slots involved.
 fn rollback_shrink(
-    switch: &Switch,
+    ops: &dyn RouteTableOps,
     subnet: IpNet,
     old: &RouteEntry,
     live: &[Option<NextHop>],
@@ -871,19 +883,19 @@ fn rollback_shrink(
         let slot = base + i;
         let orig = &old.targets[i as usize];
         if live[i as usize].is_some()
-            && let Err(e) = delete_one_target_at(switch, is_ipv4, slot)
+            && let Err(e) = ops.delete_target(is_ipv4, slot)
         {
-            error!(switch.log, "rollback delete failed at slot {slot}: {e:?}");
+            error!(ops.log(), "rollback delete failed at slot {slot}: {e:?}");
             ok = false;
         }
-        if let Err(e) = write_one_target(switch, is_ipv4, slot, orig) {
-            error!(switch.log, "rollback write failed at slot {slot}: {e:?}");
+        if let Err(e) = ops.add_target(is_ipv4, slot, orig) {
+            error!(ops.log(), "rollback write failed at slot {slot}: {e:?}");
             ok = false;
         }
     }
-    if let Err(e) = add_route_index_for(switch, subnet, base, old.slots) {
+    if let Err(e) = ops.add_index(subnet, base, old.slots) {
         error!(
-            switch.log,
+            ops.log(),
             "rollback route_index re-add failed for {subnet}: {e:?}"
         );
         ok = false;
@@ -892,13 +904,13 @@ fn rollback_shrink(
 }
 
 fn add_route_locked(
-    switch: &Switch,
+    ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
     subnet: IpNet,
     route: Route,
     asic_port_id: u16,
 ) -> DpdResult<()> {
-    info!(switch.log, "adding route {subnet} -> {:?}", route.tgt_ip);
+    info!(ops.log(), "adding route {subnet} -> {:?}", route.tgt_ip);
 
     // Verify that the slot freelist has been initialized
     let max_targets;
@@ -906,12 +918,12 @@ fn add_route_locked(
         max_targets = MAX_TARGETS_IPV4;
         route_data
             .v4_freemap
-            .maybe_init(switch.table_size(TableType::RouteFwdIpv4)? as u16);
+            .maybe_init(ops.route_fwd_table_size(true)? as u16);
     } else {
         max_targets = MAX_TARGETS_IPV6;
         route_data
             .v6_freemap
-            .maybe_init(switch.table_size(TableType::RouteFwdIpv6)? as u16);
+            .maybe_init(ops.route_fwd_table_size(false)? as u16);
     }
 
     // Get the old set of targets that we'll be adding to
@@ -925,7 +937,7 @@ fn add_route_locked(
             "exceeded limit of {max_targets} targets for one route"
         )))
     } else {
-        replace_route_targets(switch, route_data, subnet, targets)
+        replace_route_targets(ops, route_data, subnet, targets)
     }
 }
 
@@ -988,16 +1000,16 @@ async fn set_route(
 // them.  If the route only has a single target, this call will remove the
 // entire route.
 fn delete_route_target_locked(
-    switch: &Switch,
+    ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
     subnet: IpNet,
     route: Route,
 ) -> DpdResult<()> {
-    info!(switch.log, "deleting route {subnet} -> {}", route.tgt_ip);
+    info!(ops.log(), "deleting route {subnet} -> {}", route.tgt_ip);
 
     // Get set of targets remaining after we remove this entry
     let entry = route_data.get(subnet).ok_or({
-        debug!(switch.log, "No such route");
+        debug!(ops.log(), "No such route");
         DpdError::Missing("no such route".into())
     })?;
     let targets: Vec<NextHop> = entry
@@ -1007,10 +1019,10 @@ fn delete_route_target_locked(
         .cloned()
         .collect();
     if targets.len() == entry.targets.len() {
-        debug!(switch.log, "target not found");
+        debug!(ops.log(), "target not found");
         Err(DpdError::Missing("no such route".into()))
     } else {
-        replace_route_targets(switch, route_data, subnet, targets)
+        replace_route_targets(ops, route_data, subnet, targets)
     }
 }
 
@@ -1092,7 +1104,7 @@ pub async fn get_route_ipv6(
 }
 
 fn delete_route_locked(
-    switch: &Switch,
+    ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
     subnet: IpNet,
 ) -> DpdResult<()> {
@@ -1101,7 +1113,7 @@ fn delete_route_locked(
         .remove(subnet)
         .ok_or(DpdError::Missing("no such route".into()))?;
 
-    cleanup_route(switch, route_data, Some(subnet), entry)
+    cleanup_route(ops, route_data, Some(subnet), entry)
 }
 
 // Delete a route and all of its targets
@@ -1318,31 +1330,8 @@ mod tests {
         }
     }
 
-    fn make_switch() -> Switch {
-        // The asic stub locates its bfrt artifacts by walking up from the
-        // running binary path, which fails for `cargo test` because the test
-        // executable doesn't end in "dpd". Pin the P4 directory explicitly so
-        // the test runs from a workspace checkout regardless of host.
-        let p4_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("workspace root")
-            .join("target/proto/opt/oxide/dendrite/sidecar");
-        // SAFETY: set_var is unsafe wrt concurrent access; tests in this
-        // module all compute the same value and don't race meaningfully.
-        unsafe { std::env::set_var("P4_DIR", &p4_dir) };
-
-        let log = common::logging::init(
-            "route-test",
-            &None,
-            common::logging::LogFormat::Human,
-        )
-        .expect("test logger");
-        let mut switch =
-            Switch::new(log, "sidecar", crate::config::Config::default())
-                .expect("construct stub switch");
-        table::init(&mut switch).expect("init tables");
-        switch
-    }
+    use aal::AsicError;
+    use std::cell::Cell;
 
     /// Total size to use for the per-family FreeMap in tests that exercise
     /// "table full" / "table fragmented" behavior.  Small enough to keep
@@ -1350,32 +1339,142 @@ mod tests {
     /// victim plus a handful of fillers.
     const TEST_FREEMAP_SIZE: u16 = 64;
 
-    /// Pre-initialize the per-family FreeMap to `TEST_FREEMAP_SIZE` so
-    /// subsequent `add_route_locked` calls don't enlarge it to the stub
-    /// table's full size.  `maybe_init` is idempotent — once we set the
-    /// geometry, the production code path is a no-op.  Must be called
-    /// before any `add_route_locked` invocation in the test.
-    fn shrink_test_freemap(rd: &mut RouteData, is_ipv4: bool) {
-        rd.freemap_mut(is_ipv4).maybe_init(TEST_FREEMAP_SIZE);
+    /// Which on-chip table operation a failpoint applies to.
+    #[derive(Clone, Copy)]
+    enum Op {
+        AddTarget,
+        DelTarget,
+        AddIndex,
+        DelIndex,
+    }
+
+    /// In-process implementation of `RouteTableOps` used by the route tests.
+    /// Every on-chip operation is a no-op (returning `Ok`) unless the
+    /// corresponding failpoint has been armed via [`TestOps::arm`], in which
+    /// case the configured call returns a synthetic `Switch(SdeError)` and
+    /// the failpoint disarms.  This lets the route state machine run
+    /// without any ASIC or P4-runtime presence.
+    struct TestOps {
+        log: slog::Logger,
+        add_target_fail: Cell<Option<u32>>,
+        del_target_fail: Cell<Option<u32>>,
+        add_index_fail: Cell<Option<u32>>,
+        del_index_fail: Cell<Option<u32>>,
+    }
+
+    impl TestOps {
+        fn new() -> Self {
+            let log = common::logging::init(
+                "route-test",
+                &None,
+                common::logging::LogFormat::Human,
+            )
+            .expect("test logger");
+            TestOps {
+                log,
+                add_target_fail: Cell::new(None),
+                del_target_fail: Cell::new(None),
+                add_index_fail: Cell::new(None),
+                del_index_fail: Cell::new(None),
+            }
+        }
+
+        fn slot(&self, op: Op) -> &Cell<Option<u32>> {
+            match op {
+                Op::AddTarget => &self.add_target_fail,
+                Op::DelTarget => &self.del_target_fail,
+                Op::AddIndex => &self.add_index_fail,
+                Op::DelIndex => &self.del_index_fail,
+            }
+        }
+
+        /// Fail the `(after+1)`-th subsequent call to `op` with a synthetic
+        /// SDE error, then disarm.  Tests that need multiple failures on
+        /// the same op should re-arm after each fire.
+        fn arm(&self, op: Op, after: u32) {
+            self.slot(op).set(Some(after));
+        }
+
+        fn check(&self, op: Op) -> DpdResult<()> {
+            let cell = self.slot(op);
+            match cell.get() {
+                None => Ok(()),
+                Some(0) => {
+                    cell.set(None);
+                    Err(DpdError::Switch(AsicError::SdeError {
+                        ctx: "test failpoint".into(),
+                        err: "injected failure".into(),
+                    }))
+                }
+                Some(n) => {
+                    cell.set(Some(n - 1));
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    impl RouteTableOps for TestOps {
+        fn log(&self) -> &slog::Logger {
+            &self.log
+        }
+
+        fn route_fwd_table_size(&self, _is_ipv4: bool) -> DpdResult<u32> {
+            Ok(TEST_FREEMAP_SIZE as u32)
+        }
+
+        fn add_target(
+            &self,
+            _subnet_is_ipv4: bool,
+            _idx: u16,
+            _target: &NextHop,
+        ) -> DpdResult<()> {
+            self.check(Op::AddTarget)
+        }
+
+        fn delete_target(
+            &self,
+            _subnet_is_ipv4: bool,
+            _idx: u16,
+        ) -> DpdResult<()> {
+            self.check(Op::DelTarget)
+        }
+
+        fn add_index(
+            &self,
+            _subnet: IpNet,
+            _index: u16,
+            _slots: u8,
+        ) -> DpdResult<()> {
+            self.check(Op::AddIndex)
+        }
+
+        fn delete_index(&self, _subnet: IpNet) -> DpdResult<()> {
+            self.check(Op::DelIndex)
+        }
+    }
+
+    /// Build a fresh `(TestOps, RouteData)` pair for a test.  `RouteData`
+    /// starts empty and unsized; the first `add_route_locked` call will
+    /// initialize it to `TEST_FREEMAP_SIZE` via the trait, so no separate
+    /// pre-init step is required.
+    fn make_test_ctx() -> (TestOps, RouteData) {
+        let ops = TestOps::new();
+        let rd = init(ops.log());
+        (ops, rd)
     }
 
     /// Install one entry per target onto `victim`. Callers use this against
     /// an empty table, so any failure is a bug in the test setup.
     fn install_victim(
-        switch: &Switch,
+        ops: &dyn RouteTableOps,
         rd: &mut RouteData,
         victim: IpNet,
         targets: impl IntoIterator<Item = IpAddr>,
     ) {
         for tgt in targets {
-            add_route_locked(
-                switch,
-                rd,
-                victim,
-                make_route(tgt),
-                FAKE_ASIC_PORT,
-            )
-            .expect("victim add must succeed on an empty table");
+            add_route_locked(ops, rd, victim, make_route(tgt), FAKE_ASIC_PORT)
+                .expect("victim add must succeed on an empty table");
         }
     }
 
@@ -1383,7 +1482,7 @@ mod tests {
     /// `i = 0, 1, ...`) until any add returns [`DpdError::TableFull`],
     /// returning the CIDRs that were accepted.
     fn fill_table(
-        switch: &Switch,
+        ops: &dyn RouteTableOps,
         rd: &mut RouteData,
         filler: IpAddr,
         mut cidr_at: impl FnMut(u32) -> IpNet,
@@ -1392,7 +1491,7 @@ mod tests {
         for i in 0u32.. {
             let cidr = cidr_at(i);
             match add_route_locked(
-                switch,
+                ops,
                 rd,
                 cidr,
                 make_route(filler),
@@ -1409,14 +1508,18 @@ mod tests {
     /// Delete every other entry in `fillers` so the freemap is left with
     /// size-1 free spans separated by surviving entries — spans that
     /// `reclaim()` cannot coalesce into anything wider.
-    fn fragment(switch: &Switch, rd: &mut RouteData, fillers: &[IpNet]) {
+    fn fragment(
+        ops: &dyn RouteTableOps,
+        rd: &mut RouteData,
+        fillers: &[IpNet],
+    ) {
         assert!(
             fillers.len() >= 2,
             "table did not accept enough fillers: got {}",
             fillers.len(),
         );
         for f in fillers.iter().step_by(2) {
-            delete_route_locked(switch, rd, *f).expect("delete filler");
+            delete_route_locked(ops, rd, *f).expect("delete filler");
         }
     }
 
@@ -1523,20 +1626,13 @@ mod tests {
     ///      any size when the loop exits.
     ///   3. Replace the victim's target set with just the first one,
     ///      i.e. drop the second target.
-    async fn delete_target_full_scenario(f: FamilyFixtures) {
-        let switch = make_switch();
-        let mut rd = switch.routes.lock().await;
-        shrink_test_freemap(&mut rd, f.is_ipv4);
-        install_victim(
-            &switch,
-            &mut rd,
-            f.victim,
-            [f.targets[0], f.targets[1]],
-        );
-        fill_table(&switch, &mut rd, f.filler, f.filler_cidr);
+    fn delete_target_full_scenario(f: FamilyFixtures) {
+        let (ops, mut rd) = make_test_ctx();
+        install_victim(&ops, &mut rd, f.victim, [f.targets[0], f.targets[1]]);
+        fill_table(&ops, &mut rd, f.filler, f.filler_cidr);
 
         replace_route_targets(
-            &switch,
+            &ops,
             &mut rd,
             f.victim,
             next_hops([f.targets[0]]),
@@ -1545,10 +1641,10 @@ mod tests {
         assert_post_shrink(&mut rd, f.victim, f.is_ipv4, &[f.targets[0]], 1);
     }
 
-    #[tokio::test]
-    async fn delete_target_full() {
-        delete_target_full_scenario(fixtures_v6()).await;
-        delete_target_full_scenario(fixtures_v4()).await;
+    #[test]
+    fn delete_target_full() {
+        delete_target_full_scenario(fixtures_v6());
+        delete_target_full_scenario(fixtures_v4());
     }
 
     /// Deleting a target must succeed when the forwarding table is full
@@ -1566,16 +1662,14 @@ mod tests {
     ///      spans are pairwise non-adjacent and reclaim() cannot coalesce
     ///      them into anything wider.
     ///   4. Drop the victim's last target.
-    async fn delete_target_fragmented_scenario(f: FamilyFixtures) {
-        let switch = make_switch();
-        let mut rd = switch.routes.lock().await;
-        shrink_test_freemap(&mut rd, f.is_ipv4);
-        install_victim(&switch, &mut rd, f.victim, f.targets);
-        let fillers = fill_table(&switch, &mut rd, f.filler, f.filler_cidr);
-        fragment(&switch, &mut rd, &fillers);
+    fn delete_target_fragmented_scenario(f: FamilyFixtures) {
+        let (ops, mut rd) = make_test_ctx();
+        install_victim(&ops, &mut rd, f.victim, f.targets);
+        let fillers = fill_table(&ops, &mut rd, f.filler, f.filler_cidr);
+        fragment(&ops, &mut rd, &fillers);
 
         replace_route_targets(
-            &switch,
+            &ops,
             &mut rd,
             f.victim,
             next_hops(f.targets[..3].iter().copied()),
@@ -1584,10 +1678,10 @@ mod tests {
         assert_post_shrink(&mut rd, f.victim, f.is_ipv4, &f.targets[..3], 1);
     }
 
-    #[tokio::test]
-    async fn delete_target_fragmented() {
-        delete_target_fragmented_scenario(fixtures_v6()).await;
-        delete_target_fragmented_scenario(fixtures_v4()).await;
+    #[test]
+    fn delete_target_fragmented() {
+        delete_target_fragmented_scenario(fixtures_v6());
+        delete_target_fragmented_scenario(fixtures_v4());
     }
 
     /// Install three NextHops that all share one `tgt_ip` (distinguished
@@ -1600,15 +1694,13 @@ mod tests {
     /// single replace that drops all three sharing the `tgt_ip` (delta=3).
     /// Exercises the multi-target subset-removal path through
     /// `shrink_in_place` against either a full or a full+fragmented freemap.
-    async fn delete_targets_scenario(f: FamilyFixtures, fragmented: bool) {
-        let switch = make_switch();
-        let mut rd = switch.routes.lock().await;
-        shrink_test_freemap(&mut rd, f.is_ipv4);
+    fn delete_targets_scenario(f: FamilyFixtures, fragmented: bool) {
+        let (ops, mut rd) = make_test_ctx();
         let shared_tgt = f.targets[0];
         let survivor = f.targets[1];
         for tag in ["a", "b", "c"] {
             add_route_locked(
-                &switch,
+                &ops,
                 &mut rd,
                 f.victim,
                 Route {
@@ -1623,53 +1715,46 @@ mod tests {
             .expect("victim add must succeed on an empty table");
         }
         add_route_locked(
-            &switch,
+            &ops,
             &mut rd,
             f.victim,
             make_route(survivor),
             FAKE_ASIC_PORT,
         )
         .expect("survivor add must succeed on an empty table");
-        let fillers = fill_table(&switch, &mut rd, f.filler, f.filler_cidr);
+        let fillers = fill_table(&ops, &mut rd, f.filler, f.filler_cidr);
         if fragmented {
-            fragment(&switch, &mut rd, &fillers);
+            fragment(&ops, &mut rd, &fillers);
         }
 
-        replace_route_targets(
-            &switch,
-            &mut rd,
-            f.victim,
-            next_hops([survivor]),
-        )
-        .expect("multi-target delete must succeed");
+        replace_route_targets(&ops, &mut rd, f.victim, next_hops([survivor]))
+            .expect("multi-target delete must succeed");
         assert_post_shrink(&mut rd, f.victim, f.is_ipv4, &[survivor], 3);
     }
 
-    #[tokio::test]
-    async fn delete_targets_full() {
-        delete_targets_scenario(fixtures_v6(), false).await;
-        delete_targets_scenario(fixtures_v4(), false).await;
+    #[test]
+    fn delete_targets_full() {
+        delete_targets_scenario(fixtures_v6(), false);
+        delete_targets_scenario(fixtures_v4(), false);
     }
 
-    #[tokio::test]
-    async fn delete_targets_fragmented() {
-        delete_targets_scenario(fixtures_v6(), true).await;
-        delete_targets_scenario(fixtures_v4(), true).await;
+    #[test]
+    fn delete_targets_fragmented() {
+        delete_targets_scenario(fixtures_v6(), true);
+        delete_targets_scenario(fixtures_v4(), true);
     }
 
     /// Growing an existing route on a full table is a legitimate TableFull
     /// condition; the alloc-then-swap path should surface that, not paper
     /// over it.
-    async fn add_target_fails_full_scenario(f: FamilyFixtures) {
-        let switch = make_switch();
-        let mut rd = switch.routes.lock().await;
-        shrink_test_freemap(&mut rd, f.is_ipv4);
-        install_victim(&switch, &mut rd, f.victim, [f.targets[0]]);
-        fill_table(&switch, &mut rd, f.filler, f.filler_cidr);
+    fn add_target_fails_full_scenario(f: FamilyFixtures) {
+        let (ops, mut rd) = make_test_ctx();
+        install_victim(&ops, &mut rd, f.victim, [f.targets[0]]);
+        fill_table(&ops, &mut rd, f.filler, f.filler_cidr);
 
         // Grow: replace the 1-target set with a 2-target set (old + new).
         match replace_route_targets(
-            &switch,
+            &ops,
             &mut rd,
             f.victim,
             next_hops([f.targets[0], f.targets[1]]),
@@ -1679,10 +1764,10 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn add_target_fails_full() {
-        add_target_fails_full_scenario(fixtures_v6()).await;
-        add_target_fails_full_scenario(fixtures_v4()).await;
+    #[test]
+    fn add_target_fails_full() {
+        add_target_fails_full_scenario(fixtures_v6());
+        add_target_fails_full_scenario(fixtures_v4());
     }
 
     /// After a shrink, the in-core `RouteEntry.targets` must reflect the
@@ -1692,14 +1777,12 @@ mod tests {
     /// removed=[2,1] in decreasing order: slot 2 <- live[3]=t3, slot 1 <-
     /// live[2]=t3 (the just-moved tail).  After step 3 drops the released
     /// tail, the live window is [t0, t3] — that's what in-core must reflect.
-    async fn shrink_preserves_compacted_order_scenario(f: FamilyFixtures) {
-        let switch = make_switch();
-        let mut rd = switch.routes.lock().await;
-        shrink_test_freemap(&mut rd, f.is_ipv4);
-        install_victim(&switch, &mut rd, f.victim, f.targets);
+    fn shrink_preserves_compacted_order_scenario(f: FamilyFixtures) {
+        let (ops, mut rd) = make_test_ctx();
+        install_victim(&ops, &mut rd, f.victim, f.targets);
 
         replace_route_targets(
-            &switch,
+            &ops,
             &mut rd,
             f.victim,
             next_hops([f.targets[3], f.targets[0]]),
@@ -1717,10 +1800,10 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn shrink_preserves_compacted_order() {
-        shrink_preserves_compacted_order_scenario(fixtures_v6()).await;
-        shrink_preserves_compacted_order_scenario(fixtures_v4()).await;
+    #[test]
+    fn shrink_preserves_compacted_order() {
+        shrink_preserves_compacted_order_scenario(fixtures_v6());
+        shrink_preserves_compacted_order_scenario(fixtures_v4());
     }
 
     /// Exercise the `removed_idx == tail_idx` branch (skip the copy) for
@@ -1728,14 +1811,12 @@ mod tests {
     /// {3, 1, 0}.  Compaction order: j=0 tail=3=removed (skip), j=1 tail=2
     /// removed=1 (copy t2 -> slot 1), j=2 tail=1 removed=0 (copy live[1]=t2
     /// -> slot 0).  Expected in-core: [t2].
-    async fn shrink_to_single_non_zero_survivor_scenario(f: FamilyFixtures) {
-        let switch = make_switch();
-        let mut rd = switch.routes.lock().await;
-        shrink_test_freemap(&mut rd, f.is_ipv4);
-        install_victim(&switch, &mut rd, f.victim, f.targets);
+    fn shrink_to_single_non_zero_survivor_scenario(f: FamilyFixtures) {
+        let (ops, mut rd) = make_test_ctx();
+        install_victim(&ops, &mut rd, f.victim, f.targets);
 
         replace_route_targets(
-            &switch,
+            &ops,
             &mut rd,
             f.victim,
             next_hops([f.targets[2]]),
@@ -1748,10 +1829,10 @@ mod tests {
         assert_eq!(observed, vec![f.targets[2]]);
     }
 
-    #[tokio::test]
-    async fn shrink_to_single_non_zero_survivor() {
-        shrink_to_single_non_zero_survivor_scenario(fixtures_v6()).await;
-        shrink_to_single_non_zero_survivor_scenario(fixtures_v4()).await;
+    #[test]
+    fn shrink_to_single_non_zero_survivor() {
+        shrink_to_single_non_zero_survivor_scenario(fixtures_v6());
+        shrink_to_single_non_zero_survivor_scenario(fixtures_v4());
     }
 
     /// An identity replace (new target set equals old target set) must
@@ -1761,14 +1842,12 @@ mod tests {
     /// FreeMap's bookkeeping is undisturbed.  The index check is the
     /// strongest signal: any alloc-then-swap path would have moved the
     /// reservation to a new base.
-    async fn identity_replace_is_noop_scenario(f: FamilyFixtures) {
-        let switch = make_switch();
-        let mut rd = switch.routes.lock().await;
-        shrink_test_freemap(&mut rd, f.is_ipv4);
-        install_victim(&switch, &mut rd, f.victim, f.targets);
+    fn identity_replace_is_noop_scenario(f: FamilyFixtures) {
+        let (ops, mut rd) = make_test_ctx();
+        install_victim(&ops, &mut rd, f.victim, f.targets);
         let before = rd.get(f.victim).expect("victim installed").clone();
 
-        replace_route_targets(&switch, &mut rd, f.victim, next_hops(f.targets))
+        replace_route_targets(&ops, &mut rd, f.victim, next_hops(f.targets))
             .expect("identity replace must succeed");
 
         let after = rd.get(f.victim).expect("victim must still exist");
@@ -1792,10 +1871,10 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn identity_replace_is_noop() {
-        identity_replace_is_noop_scenario(fixtures_v6()).await;
-        identity_replace_is_noop_scenario(fixtures_v4()).await;
+    #[test]
+    fn identity_replace_is_noop() {
+        identity_replace_is_noop_scenario(fixtures_v6());
+        identity_replace_is_noop_scenario(fixtures_v4());
     }
 
     /// A same-length, non-subset replace (one target swapped for another)
@@ -1804,15 +1883,13 @@ mod tests {
     /// correctly and that the resulting in-core entry reflects the new
     /// target set.  Run against an empty freemap so the alloc itself is
     /// uncontested — we're testing dispatch, not allocation pressure.
-    async fn same_size_non_subset_replace_scenario(f: FamilyFixtures) {
-        let switch = make_switch();
-        let mut rd = switch.routes.lock().await;
-        shrink_test_freemap(&mut rd, f.is_ipv4);
-        install_victim(&switch, &mut rd, f.victim, [f.targets[0], f.targets[1]]);
+    fn same_size_non_subset_replace_scenario(f: FamilyFixtures) {
+        let (ops, mut rd) = make_test_ctx();
+        install_victim(&ops, &mut rd, f.victim, [f.targets[0], f.targets[1]]);
         let before_index = rd.get(f.victim).expect("victim installed").index;
 
         replace_route_targets(
-            &switch,
+            &ops,
             &mut rd,
             f.victim,
             next_hops([f.targets[0], f.targets[2]]),
@@ -1832,23 +1909,21 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn same_size_non_subset_replace() {
-        same_size_non_subset_replace_scenario(fixtures_v6()).await;
-        same_size_non_subset_replace_scenario(fixtures_v4()).await;
+    #[test]
+    fn same_size_non_subset_replace() {
+        same_size_non_subset_replace_scenario(fixtures_v6());
+        same_size_non_subset_replace_scenario(fixtures_v4());
     }
 
     /// Growing an existing route on an uncontested table must succeed via
     /// the alloc-then-swap path.  Companion to `add_target_fails_full`,
     /// which covers the same code path under freemap exhaustion.
-    async fn grow_succeeds_scenario(f: FamilyFixtures) {
-        let switch = make_switch();
-        let mut rd = switch.routes.lock().await;
-        shrink_test_freemap(&mut rd, f.is_ipv4);
-        install_victim(&switch, &mut rd, f.victim, [f.targets[0]]);
+    fn grow_succeeds_scenario(f: FamilyFixtures) {
+        let (ops, mut rd) = make_test_ctx();
+        install_victim(&ops, &mut rd, f.victim, [f.targets[0]]);
 
         replace_route_targets(
-            &switch,
+            &ops,
             &mut rd,
             f.victim,
             next_hops([f.targets[0], f.targets[1]]),
@@ -1865,10 +1940,176 @@ mod tests {
         assert_eq!(observed, expected, "in-core target set must match new set");
     }
 
-    #[tokio::test]
-    async fn grow_succeeds() {
-        grow_succeeds_scenario(fixtures_v6()).await;
-        grow_succeeds_scenario(fixtures_v4()).await;
+    #[test]
+    fn grow_succeeds() {
+        grow_succeeds_scenario(fixtures_v6());
+        grow_succeeds_scenario(fixtures_v4());
     }
 
+    // ----- failure-injection (rollback) tests -----------------------------
+    //
+    // Drive `shrink_in_place`'s recovery paths by arming `TestOps` failpoints
+    // at the call indices that land at the step being tested.  Each test:
+    //   1. Builds a fresh `(TestOps, RouteData)` and installs a 4-target
+    //      victim; snapshots the resulting `RouteEntry`.
+    //   2. Arms one (or two) failpoints.
+    //   3. Issues a shrink-style replace and expects `Err(Switch(_))`.
+    //   4. Asserts the documented post-failure invariant — for compact-loop
+    //      and commit-boundary failures the in-core entry is restored
+    //      byte-for-byte and the FreeMap probe shows the original
+    //      reservation still claimed; for the rollback-failure case the
+    //      in-core entry is absent and the reservation leaks.
+
+    /// Install a 4-target victim and return a snapshot of its `RouteEntry`
+    /// for post-failure comparison.
+    fn install_for_rollback(
+        ops: &dyn RouteTableOps,
+        rd: &mut RouteData,
+        f: &FamilyFixtures,
+    ) -> RouteEntry {
+        install_victim(ops, rd, f.victim, f.targets);
+        rd.get(f.victim).expect("victim installed").clone()
+    }
+
+    /// Assert that a failed shrink restored the in-core entry byte-for-byte
+    /// and that the FreeMap still considers the original reservation
+    /// claimed.  Uses the same `recycle_bins`-checked-first probe as
+    /// `identity_replace_is_noop`.
+    fn assert_rolled_back(
+        rd: &mut RouteData,
+        f: &FamilyFixtures,
+        before: &RouteEntry,
+    ) {
+        let after = rd.get(f.victim).expect("in-core entry must be restored");
+        assert_eq!(
+            before, after,
+            "rollback must restore in-core byte-for-byte"
+        );
+        let probe = rd
+            .freemap_mut(f.is_ipv4)
+            .alloc(before.slots)
+            .expect("freemap must still have room");
+        assert_ne!(
+            probe, before.index,
+            "rollback must not have freed the original reservation"
+        );
+    }
+
+    /// The compact loop's first `delete_target` fails.  Nothing was
+    /// touched, `touched` is empty, rollback only re-adds the original
+    /// `route_index`.
+    ///
+    /// Drops `t0` rather than `t3` so the compact loop has real work: when
+    /// `removed_idx == tail_idx` the loop body short-circuits and no
+    /// `delete_target` is called, leaving the failpoint to fire during the
+    /// best-effort post-commit tail cleanup (which never surfaces as Err).
+    #[test]
+    fn rollback_on_compact_delete_failure() {
+        let (ops, mut rd) = make_test_ctx();
+        let f = fixtures_v6();
+        let before = install_for_rollback(&ops, &mut rd, &f);
+
+        ops.arm(Op::DelTarget, 0);
+        let err = replace_route_targets(
+            &ops,
+            &mut rd,
+            f.victim,
+            next_hops(f.targets[1..].iter().copied()),
+        )
+        .expect_err("compact-delete failpoint must surface as Err");
+        assert!(matches!(err, DpdError::Switch(_)));
+
+        assert_rolled_back(&mut rd, &f, &before);
+    }
+
+    /// The compact loop's first `add_target` fails after the matching
+    /// delete succeeded.  `live[idx] = None` and `idx ∈ touched`, so
+    /// rollback must skip the delete (no live entry to remove) and
+    /// rewrite `original[idx]`.  This is the case that motivates the
+    /// `live[]` / `touched[]` distinction.
+    #[test]
+    fn rollback_on_compact_write_failure() {
+        let (ops, mut rd) = make_test_ctx();
+        let f = fixtures_v6();
+        let before = install_for_rollback(&ops, &mut rd, &f);
+
+        // Drop two targets (indices 0 and 2 of 4) so the compact loop must
+        // copy at least once; the first add_target call lands on the copy.
+        ops.arm(Op::AddTarget, 0);
+        let err = replace_route_targets(
+            &ops,
+            &mut rd,
+            f.victim,
+            next_hops([f.targets[1], f.targets[3]]),
+        )
+        .expect_err("compact-write failpoint must surface as Err");
+        assert!(matches!(err, DpdError::Switch(_)));
+
+        assert_rolled_back(&mut rd, &f, &before);
+    }
+
+    /// The compact loop completes successfully but the commit-boundary
+    /// `add_index` fails.  Every removed-slot position has been overwritten
+    /// with tail contents and is in `touched`; rollback must restore each
+    /// and re-add the original `route_index` (the second AddIndex call of
+    /// the run).
+    #[test]
+    fn rollback_on_index_readd_failure() {
+        let (ops, mut rd) = make_test_ctx();
+        let f = fixtures_v6();
+        let before = install_for_rollback(&ops, &mut rd, &f);
+
+        // First AddIndex call = step 2 (the commit).  Second = rollback's
+        // index re-add, which must succeed for this test's assertions.
+        ops.arm(Op::AddIndex, 0);
+        let err = replace_route_targets(
+            &ops,
+            &mut rd,
+            f.victim,
+            next_hops([f.targets[1], f.targets[3]]),
+        )
+        .expect_err("commit-boundary AddIndex failpoint must surface as Err");
+        assert!(matches!(err, DpdError::Switch(_)));
+
+        assert_rolled_back(&mut rd, &f, &before);
+    }
+
+    /// Rollback-of-rollback failure: trigger a compact-delete failure, then
+    /// also break the rollback's own `add_index` call.  Documented posture
+    /// is "in-core entry stays cleared; FreeMap reservation leaks until
+    /// the next control-plane update on this subnet."
+    ///
+    /// Drops `t0` for the same reason as `rollback_on_compact_delete_failure`.
+    #[test]
+    fn rollback_failure_leaves_in_core_cleared() {
+        let (ops, mut rd) = make_test_ctx();
+        let f = fixtures_v6();
+        let before = install_for_rollback(&ops, &mut rd, &f);
+
+        // Compact delete fails → rollback fires.  AddIndex's only call this
+        // run is the rollback's, so arming "fail next" breaks it.
+        ops.arm(Op::DelTarget, 0);
+        ops.arm(Op::AddIndex, 0);
+        let err = replace_route_targets(
+            &ops,
+            &mut rd,
+            f.victim,
+            next_hops(f.targets[1..].iter().copied()),
+        )
+        .expect_err("compact-delete failpoint must surface as Err");
+        assert!(matches!(err, DpdError::Switch(_)));
+
+        assert!(
+            rd.get(f.victim).is_none(),
+            "documented posture: in-core entry stays cleared when rollback fails"
+        );
+        let probe = rd
+            .freemap_mut(f.is_ipv4)
+            .alloc(before.slots)
+            .expect("freemap must still have room");
+        assert_ne!(
+            probe, before.index,
+            "rollback failure must leak the original reservation"
+        );
+    }
 }
