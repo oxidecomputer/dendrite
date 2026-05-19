@@ -16,7 +16,7 @@ use aal::ActionParse;
 use aal::MatchParse;
 use aal::TableOps;
 use common::table::TableType;
-use dpd_types::table as dpd_table;
+use dpd_types::table as views;
 
 pub mod arp_ipv4;
 pub mod attached_subnet_v4;
@@ -214,7 +214,7 @@ pub fn get_entries(
     switch: &Switch,
     name: String,
     from_hardware: bool,
-) -> DpdResult<dpd_table::Table> {
+) -> DpdResult<views::Table> {
     match TableType::try_from(name.as_str())? {
         TableType::RouteIdxIpv4 => {
             route_ipv4::index_dump(switch, from_hardware)
@@ -309,7 +309,7 @@ pub fn get_counters(
     switch: &Switch,
     force_sync: bool,
     name: String,
-) -> DpdResult<Vec<dpd_table::TableCounterEntry>> {
+) -> DpdResult<Vec<views::TableCounterEntry>> {
     match TableType::try_from(name.as_str())? {
         TableType::RouteIdxIpv4 => {
             route_ipv4::index_counter_fetch(switch, force_sync)
@@ -381,16 +381,16 @@ pub fn get_counters(
             mcast::mcast_route::ipv6_counter_fetch(switch, force_sync)
         }
         #[cfg(feature = "multicast")]
+        TableType::PortMacAddressMcast => {
+            mac::mcast_counter_fetch(switch, force_sync)
+        }
+        #[cfg(feature = "multicast")]
         TableType::McastEgressDecapPorts => {
             mcast::mcast_egress::bitmap_counter_fetch(switch, force_sync)
         }
         #[cfg(feature = "multicast")]
         TableType::McastEgressPortMapping => {
             mcast::mcast_egress::port_mapping_counter_fetch(switch, force_sync)
-        }
-        #[cfg(feature = "multicast")]
-        TableType::PortMacAddressMcast => {
-            mac::mcast_counter_fetch(switch, force_sync)
         }
         x => Err(DpdError::Other(format!(
             "table {x} has no associated counters"

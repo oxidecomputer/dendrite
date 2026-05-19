@@ -285,7 +285,8 @@ impl Switch {
             &log,
             config.asic_config.xcvr_iface.as_deref(),
         );
-        let route_data = route::init(&log);
+        let route_data = route::init(&log, &asic_hdl)
+            .context("failed to initialize route state")?;
         let mac_mgmt = Mutex::new(macaddrs::MacManagement::new(&log));
 
         #[cfg(feature = "tofino_asic")]
