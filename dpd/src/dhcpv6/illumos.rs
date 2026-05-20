@@ -4,10 +4,10 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use common::illumos::IPV6_LINK_LOCAL_NAME;
+use common::illumos::IllumosError;
 use common::illumos::ifconfig;
 use common::illumos::ipadm;
-use common::illumos::IllumosError;
-use common::illumos::IPV6_LINK_LOCAL_NAME;
 use common::network::MacAddr;
 use common::network::generate_ipv6_link_local;
 use slog::Logger;
@@ -71,15 +71,7 @@ async fn start_dhcpv6_agent(log: &Logger, base_mac: &MacAddr) {
 
 /// Actually spawn the DHCP agent via `ifconfig`.
 async fn start_dhcpv6_agent_impl(log: &Logger, techport: &str) {
-    match ifconfig(&[
-        techport,
-        "inet6",
-        "dhcp",
-        "wait",
-        "0",
-        "start",
-    ]).await
-    {
+    match ifconfig(&[techport, "inet6", "dhcp", "wait", "0", "start"]).await {
         Ok(_) => {
             debug!(
                 log,
@@ -110,8 +102,8 @@ fn dhcp_is_already_running(e: &IllumosError) -> bool {
     match e {
         IllumosError::Exec(_) => false,
         IllumosError::Failed(msg) => {
-            msg.contains(DHCP_IS_ALREADY_RUNNING_MSG) ||
-                msg.contains(DHCP_HAS_PENDING_COMMAND)
+            msg.contains(DHCP_IS_ALREADY_RUNNING_MSG)
+                || msg.contains(DHCP_HAS_PENDING_COMMAND)
         }
         IllumosError::BadOutput(_) => false,
     }
@@ -130,7 +122,8 @@ async fn has_correct_ipv6_link_local(
         "-o",
         "ADDR",
         &format!("{techport}/{IPV6_LINK_LOCAL_NAME}"),
-    ]).await
+    ])
+    .await
     {
         Ok(lines) => lines,
         Err(e) => {
