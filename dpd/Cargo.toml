@@ -31,6 +31,7 @@ dpd-types.workspace = true
 dpd-types-versions.workspace = true
 
 anyhow.workspace = true
+bytes.workspace = true
 cfg-if.workspace = true
 chrono.workspace = true
 clap.workspace = true

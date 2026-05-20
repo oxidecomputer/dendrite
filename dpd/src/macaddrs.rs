@@ -371,27 +371,31 @@ impl Switch {
         }
     }
 
-    // We may start `dpd` without a base MAC address for assigning addresses to
-    // links. In that situation, we need to fetch the base MAC from the Sidecar
-    // SP via the management network. This presents us with a bootstrapping
-    // problem: we need a MAC to bring up that link, via which we'd fetch the
-    // MACs. To break the circularity, we will use a random MAC to temporarily
-    // bring up the CPU link; fetch the real MAC addresses; tear down the CPU
-    // link; and the continue as normal. We'll cache that as an SMF property to
-    // avoid the complexity each time we restart.
-    //
-    // In general, our process is:
-    //
-    // - Create a link on the CPU port, using a random MAC address.
-    // - Create a transceiver controller. This _will block_ until tfportd makes
-    //   us the `sidecar0` VLAN interface that we're expecting to use.
-    // - Fetch the MAC address range from the SP using the controller.
-    // - Update the MAC address on the CPU link with the final address derived
-    //   from the base_mac
+    /// Set the base MAC address for Dendrite.
+    ///
+    /// We may start `dpd` without a base MAC address for assigning addresses to
+    /// links. In that situation, we need to fetch the base MAC from the Sidecar
+    /// SP via the management network. This presents us with a bootstrapping
+    /// problem: we need a MAC to bring up that link, via which we'd fetch the
+    /// MACs. To break the circularity, we will use a random MAC to temporarily
+    /// bring up the CPU link; fetch the real MAC addresses; tear down the CPU
+    /// link; and the continue as normal. We'll cache that as an SMF property to
+    /// avoid the complexity each time we restart.
+    ///
+    /// In general, our process is:
+    ///
+    /// - Create a link on the CPU port, using a random MAC address.
+    /// - Create a transceiver controller. This _will block_ until tfportd makes
+    ///   us the `sidecar0` VLAN interface that we're expecting to use.
+    /// - Fetch the MAC address range from the SP using the controller.
+    /// - Update the MAC address on the CPU link with the final address derived
+    ///   from the base_mac
+    ///
+    /// This returns the base MAC address in any case.
     pub async fn set_base_mac_address(
         &self,
         autoconfig_links: &Option<crate::AutoconfiguredLinks>,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<MacAddr> {
         slog::info!(
             self.log,
             "no base MAC address found, fetching from Sidecar FRUID"
@@ -472,19 +476,22 @@ impl Switch {
             .expect("Expected a MAC for the internal CPU link");
         self.set_link_mac_address(port_id, link_id, cpu_mac)?;
 
-        Ok(true)
+        Ok(base_mac)
     }
 }
 
 #[cfg(not(feature = "tofino_asic"))]
 impl Switch {
     /// Assign a permanent but random base MAC address on non-Tofino systems.
+    ///
+    /// Return the MAC address.
     pub async fn set_base_mac_address(
         &self,
         _autoconfig_links: &Option<crate::AutoconfiguredLinks>,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<MacAddr> {
         // For non-ASIC builds, we just use a random MAC as our base address.
-        let base_mac = BaseMac::Permanent(MacAddr::random_oxide());
+        let mac = MacAddr::random_oxide();
+        let base_mac = BaseMac::Permanent(mac);
         debug!(
             self.log,
             "assigning random base MAC address";
@@ -492,7 +499,7 @@ impl Switch {
         );
         let mut mgr = self.mac_mgmt.lock().unwrap();
         mgr.set_base_mac(base_mac)?;
-        Ok(false)
+        Ok(mac)
     }
 }
 
