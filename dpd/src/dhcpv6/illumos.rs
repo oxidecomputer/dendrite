@@ -4,6 +4,9 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use common::illumos::ifconfig;
+use common::illumos::ipadm;
+use common::illumos::IllumosError;
 use common::illumos::IPV6_LINK_LOCAL_NAME;
 use common::network::MacAddr;
 use common::network::generate_ipv6_link_local;
@@ -13,24 +16,18 @@ use slog::error;
 use slog::info;
 use slog::warn;
 use std::net::Ipv6Addr;
-use std::process::Output;
 use std::time::Duration;
 
-const IPADM: &str = "/usr/sbin/ipadm";
-const IFCONFIG: &str = "/usr/sbin/ifconfig";
 const DUID_PATH: &str = "/etc/dhcp/duid";
 const TEMP_DUID_PATH: &str = "/etc/dhcp/duid.temp";
 const TECHPORTS: [&str; 2] = ["techport0", "techport1"];
 
-// From illumos source: `usr/include/dhcpagent_ipc.h:62`
-const DHCP_EXIT_FAILURE: i32 = 2;
-
 // From illumos source: `usr/include/dhcpagent_ipc.h:649`
-const DHCP_IS_ALREADY_RUNNING_MSG: &[u8] = b"DHCP is already running";
+const DHCP_IS_ALREADY_RUNNING_MSG: &str = "DHCP is already running";
 
 // From illumos source: `usr/include/dhcpagent_ipc.h:606`
-const DHCP_HAS_PENDING_COMMAND: &[u8] =
-    b"interface curently has a pending command (try later)";
+const DHCP_HAS_PENDING_COMMAND: &str =
+    "interface curently has a pending command (try later)";
 
 /// Ensure that the DHCP agent is running on the techports, checking that they
 /// have the provided base MAC address.
@@ -74,37 +71,33 @@ async fn start_dhcpv6_agent(log: &Logger, base_mac: &MacAddr) {
 
 /// Actually spawn the DHCP agent via `ifconfig`.
 async fn start_dhcpv6_agent_impl(log: &Logger, techport: &str) {
-    match tokio::process::Command::new(IFCONFIG)
-        .env_clear()
-        .arg(techport)
-        .arg("inet6")
-        .arg("dhcp")
-        .arg("wait")
-        .arg("0")
-        .arg("start")
-        .output()
-        .await
+    match ifconfig(&[
+        techport,
+        "inet6",
+        "dhcp",
+        "wait",
+        "0",
+        "start",
+    ]).await
     {
-        Ok(out) if dhcp_is_now_running(&out) => {
+        Ok(_) => {
             debug!(
                 log,
-                "DHCP started or already running for techport";
+                "DHCP started on techport";
                 "techport" => techport,
             );
         }
-        Ok(out) => {
-            error!(
+        Err(e) if dhcp_is_already_running(&e) => {
+            debug!(
                 log,
-                "`ifconfig` process returned an error";
-                "exit_status" => %out.status,
-                "stderr" => String::from_utf8_lossy(&out.stderr),
+                "DHCP is already running for techport";
                 "techport" => techport,
             );
         }
         Err(e) => {
             error!(
                 log,
-                "failed to spawn or wait for `ifconfig` command";
+                "failed to run `ifconfig` command";
                 "error" => %e,
                 "techport" => techport,
             );
@@ -112,19 +105,16 @@ async fn start_dhcpv6_agent_impl(log: &Logger, techport: &str) {
     }
 }
 
-/// Check the output of `ifconfig` to see if agent is now running.
-///
-/// This handles the agent being newly started or already running on the
-/// interface.
-fn dhcp_is_now_running(out: &Output) -> bool {
-    if out.status.success() {
-        return true;
+/// Check the error message from `ifconfig` to see if agent is already running.
+fn dhcp_is_already_running(e: &IllumosError) -> bool {
+    match e {
+        IllumosError::Exec(_) => false,
+        IllumosError::Failed(msg) => {
+            msg.contains(DHCP_IS_ALREADY_RUNNING_MSG) ||
+                msg.contains(DHCP_HAS_PENDING_COMMAND)
+        }
+        IllumosError::BadOutput(_) => false,
     }
-    if out.status.code() != Some(DHCP_EXIT_FAILURE) {
-        return false;
-    }
-    out.stderr.ends_with(DHCP_IS_ALREADY_RUNNING_MSG)
-        || out.stderr.ends_with(DHCP_HAS_PENDING_COMMAND)
 }
 
 /// Return true if the techport has the IPv6 link-local address derived from the
@@ -134,45 +124,26 @@ async fn has_correct_ipv6_link_local(
     techport: &str,
     base_mac: &MacAddr,
 ) -> bool {
-    let out = match tokio::process::Command::new(IPADM)
-        .env_clear()
-        .arg("show-addr")
-        .arg(format!("{techport}/{IPV6_LINK_LOCAL_NAME}"))
-        .arg("-p")
-        .arg("-o")
-        .arg("ADDR")
-        .output()
-        .await
+    let lines = match ipadm(&[
+        "show-addr",
+        "-p",
+        "-o",
+        "ADDR",
+        &format!("{techport}/{IPV6_LINK_LOCAL_NAME}"),
+    ]).await
     {
-        Ok(out) if out.status.success() => out,
-        Ok(out) => {
+        Ok(lines) => lines,
+        Err(e) => {
             error!(
                 log,
-                "`ipadm` process returned an error";
-                "exit_status" => %out.status,
-                "stderr" => String::from_utf8_lossy(&out.stderr),
+                "failed to run `ipadm` command";
+                "error" => %e,
                 "techport" => techport,
             );
             return false;
         }
-        Err(e) => {
-            error!(
-                log,
-                "failed to spawn or wait for `ipadm` command";
-                "error" => %e,
-            );
-            return false;
-        }
     };
-    let Ok(stdout) = std::str::from_utf8(&out.stdout) else {
-        error!(
-            log,
-            "`ipadm` process returned non-UTF8 stdout!";
-            "stdout_lossy" => String::from_utf8_lossy(&out.stdout)
-        );
-        return false;
-    };
-    stdout.lines().any(|line| has_matching_ipv6_link_local(line, base_mac))
+    lines.iter().any(|line| has_matching_ipv6_link_local(line, base_mac))
 }
 
 /// Return true if the provided line from `ipadm` output shows an  IPv6
@@ -288,54 +259,5 @@ mod tests {
         // Not a link-local at all
         let line = "2001::aa40:25ff:fe01:203%techport0/10";
         assert!(!has_matching_ipv6_link_local(line, &mac));
-    }
-
-    #[test]
-    fn test_dhcp_is_now_running() {
-        let success = std::process::Command::new("true")
-            .env_clear()
-            .output()
-            .expect("Failed to spawn `true`");
-        assert!(success.status.success());
-
-        let successful =
-            Output { status: success.status, stdout: vec![], stderr: vec![] };
-        assert!(dhcp_is_now_running(&successful));
-
-        let exit_2 = std::process::Command::new("/bin/bash")
-            .env_clear()
-            .arg("-c")
-            .arg("exit 2")
-            .output()
-            .expect("Failed to spawn `bash`");
-        assert!(!exit_2.status.success());
-        assert_eq!(exit_2.status.code(), Some(2));
-
-        let already_running = Output {
-            status: exit_2.status,
-            stdout: vec![],
-            stderr: b"ifconfig: ixgbe0: DHCP is already running".to_vec(),
-        };
-        assert!(dhcp_is_now_running(&already_running));
-
-        let failure = std::process::Command::new("false")
-            .env_clear()
-            .output()
-            .expect("Failed to spawn `false`");
-        assert!(!failure.status.success());
-
-        let wrong_exit_code = Output {
-            status: failure.status,
-            stdout: vec![],
-            stderr: b"ifconfig: ixgbe0: DHCP is already running".to_vec(),
-        };
-        assert!(!dhcp_is_now_running(&wrong_exit_code));
-
-        let wrong_msg = Output {
-            status: exit_2.status,
-            stdout: vec![],
-            stderr: b"ifconfig: ixgbe0: bad address".to_vec(),
-        };
-        assert!(!dhcp_is_now_running(&wrong_msg));
     }
 }
