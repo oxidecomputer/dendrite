@@ -2999,6 +2999,7 @@ fn launch_server(
         default_request_body_max_bytes: 10240,
         default_handler_task_mode: dropshot::HandlerTaskMode::Detached,
         log_headers: vec![],
+        compression: dropshot::CompressionConfig::None,
     };
     let log = switch
         .log
