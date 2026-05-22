@@ -2933,7 +2933,7 @@ fn path_to_qsfp(path: Path<PortIdPathParams>) -> Result<QsfpPort, HttpError> {
     }
 }
 
-fn build_info() -> BuildInfo {
+pub(crate) fn build_info() -> BuildInfo {
     BuildInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         git_sha: env!("VERGEN_GIT_SHA").to_string(),
@@ -2999,6 +2999,7 @@ fn launch_server(
         default_request_body_max_bytes: 10240,
         default_handler_task_mode: dropshot::HandlerTaskMode::Detached,
         log_headers: vec![],
+        compression: dropshot::CompressionConfig::None,
     };
     let log = switch
         .log

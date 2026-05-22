@@ -40,6 +40,7 @@ use anyhow::Result;
 use anyhow::anyhow;
 use clap::Parser;
 use common::illumos::AddressFamily;
+use common::illumos::IPV6_LINK_LOCAL_NAME;
 use libc::c_int;
 use oxnet::IpNet;
 use oxnet::Ipv4Net;
@@ -413,9 +414,11 @@ async fn create_link(iface: &str, tag: &str, addr: &IpNet) -> Result<String> {
 
 // Add a link-local address using ipadm
 async fn create_linklocal(iface: &str) -> Result<String> {
-    illumos::linklocal_add(iface, "ll")
+    illumos::linklocal_add(iface, IPV6_LINK_LOCAL_NAME)
         .await
-        .map(|_| format!("created link-local as {iface}/ll"))
+        .map(|_| {
+            format!("created link-local as {iface}/{IPV6_LINK_LOCAL_NAME}")
+        })
         .map_err(|e| e.into())
 }
 

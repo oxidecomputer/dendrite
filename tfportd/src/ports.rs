@@ -134,17 +134,21 @@ async fn dpd_port_update(g: &Global, links: &mut LinkMap) -> Result<()> {
         // Any change here should cause a mismatch when looking at the existing
         // tfports.
         if link.mac != entry_mac {
-            warn!(g.log, "tfport changed mac addresses";
-			  "tfport" => &expected_tfport,
-			  "mac" => entry_mac.to_string(),
-			  "stale_mac" => link.mac.to_string());
+            warn!(
+                g.log, "tfport changed mac addresses";
+                "tfport" => &expected_tfport,
+                "mac" => entry_mac.to_string(),
+                "stale_mac" => link.mac.to_string()
+            );
             link.mac = entry_mac;
         }
         if link.asic_id != entry.asic_id {
-            warn!(g.log, "tfport changed asic IDs";
-			  "tfport" => &expected_tfport,
-			  "asic_id" => entry.asic_id,
-			  "stale_asic_id" => link.asic_id);
+            warn!(
+                g.log, "tfport changed asic IDs";
+                "tfport" => &expected_tfport,
+                "asic_id" => entry.asic_id,
+                "stale_asic_id" => link.asic_id
+            );
             link.asic_id = entry.asic_id;
         }
     }
@@ -184,18 +188,19 @@ async fn illumos_port_update(
                     link.tfport_link_local = data.link_local;
                     continue;
                 } else {
-                    info!(g.log, "tfport found with stale data";
-				  "tfport" => tfport,
-				  "mac" => link.mac.to_string(),
-				  "stale_mac" => data.mac.to_string(),
-				  "asic_id" => link.asic_id,
-				  "stale_asic_id" => data.port);
+                    info!(
+                        g.log, "tfport found with stale data";
+                        "tfport" => tfport,
+                        "mac" => link.mac.to_string(),
+                        "stale_mac" => data.mac.to_string(),
+                        "asic_id" => link.asic_id,
+                        "stale_asic_id" => data.port
+                    );
                 }
             }
             None => {
                 if link.tfport.is_some() {
-                    info!(g.log, "tfport disappeared";
-			  "tfport" => tfport);
+                    info!(g.log, "tfport disappeared"; "tfport" => tfport);
                 }
             }
         }
@@ -282,9 +287,11 @@ pub async fn port_loop(g: Arc<Global>) {
         // Clean up any orphaned tfports
         for tfport in orphans {
             if let Err(e) = tfport::tfport_delete(&g, &tfport).await {
-                error!(g.log,
-		       "failed to clean up stale tfport: {e:?}";
-		       "tfport" => tfport)
+                error!(
+                    g.log,
+                    "failed to clean up stale tfport: {e:?}";
+                    "tfport" => tfport
+                );
             }
         }
 
@@ -300,15 +307,19 @@ pub async fn port_loop(g: Arc<Global>) {
             }
 
             if let Err(e) = tfport::tfport_ensure(&g, tfport, link).await {
-                error!(g.log,
-		       "tfport_ensure() failed: {e:?}";
-		       "tfport" => tfport)
+                error!(
+                    g.log,
+                    "tfport_ensure() failed: {e:?}";
+                    "tfport" => tfport
+                );
             }
 
             if let Err(e) = ensure_address_match(&g, link).await {
-                error!(g.log,
-		       "ensure_address_match() failed: {e:?}";
-		       "tfport" => tfport)
+                error!(
+                    g.log,
+                    "ensure_address_match() failed: {e:?}";
+                    "tfport" => tfport
+                );
             }
         }
         *g.tfport_to_asic.lock().unwrap() = tfport_to_asic;

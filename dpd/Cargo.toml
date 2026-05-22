@@ -32,6 +32,7 @@ dpd-types.workspace = true
 dpd-types-versions.workspace = true
 
 anyhow.workspace = true
+bytes.workspace = true
 cfg-if.workspace = true
 chrono.workspace = true
 clap.workspace = true
@@ -72,6 +73,7 @@ oximeter.workspace = true
 oximeter-producer.workspace = true
 smf.workspace = true
 transceiver-controller = { workspace = true, features = [ "api-traits" ] }
+scuffle = { workspace = true, features = ["smf-by-instance"] }
 
 [dev-dependencies]
 expectorate.workspace = true
