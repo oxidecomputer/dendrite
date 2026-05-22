@@ -290,10 +290,10 @@ impl Switch {
         let mac_mgmt = Mutex::new(macaddrs::MacManagement::new(&log));
 
         #[cfg(feature = "tofino_asic")]
-        if !asic_hdl.is_model() {
-            if let Err(e) = run_interrupt_monitor(log.clone()) {
-                error!(log, "failed to start interrupt monitor: {e:?}")
-            }
+        if !asic_hdl.is_model()
+            && let Err(e) = run_interrupt_monitor(log.clone())
+        {
+            error!(log, "failed to start interrupt monitor: {e:?}")
         }
 
         let ws_log = log.new(slog::o!("unit" => "workflow_server"));
