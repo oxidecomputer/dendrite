@@ -7577,7 +7577,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tofino"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/tofino?branch=atype#3c056f1dba60ae9261535c1f25248e57bdac1a48"
+source = "git+https://github.com/oxidecomputer/tofino?branch=atype#e2762712165e6e07b2ddaea35023053d4858cd6d"
 dependencies = [
  "anyhow",
  "cc",

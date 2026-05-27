@@ -348,7 +348,7 @@ fn wait_for_interrupts(
             }
             Ok(false) => {}
             Ok(true) => {
-                if let Err(e) = tf.pci.read_interrupt_counts() {
+                if let Err(e) = tf.pci.read_interrupt_count() {
                     error!(
                         log,
                         "failed to read interrupt state from kernel: {e:?}"
