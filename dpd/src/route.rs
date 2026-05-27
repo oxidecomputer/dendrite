@@ -311,26 +311,20 @@ trait RouteTableOps {
     /// Logger to use for the routing subsystem's messages.
     fn log(&self) -> &slog::Logger;
 
-    /// Size (in slots) of the `route_target` forwarding table for the
-    /// requested family.  Used by `add_route_locked` to lazily initialize
-    /// the per-family `FreeMap` on first use.
-    fn route_fwd_table_size(&self, is_ipv4: bool) -> DpdResult<u32>;
-
-    /// Write `target` into slot `idx` of the `route_target` table for a
-    /// subnet of the indicated family.  Production dispatches on
-    /// `(subnet_is_ipv4, target.route.tgt_ip)`: an IPv4 target always goes
-    /// to the v4 table; a v6 target goes to `route_ipv4::add_route_target_v6`
-    /// when the subnet is v4, otherwise to the v6 table.
+    /// Write `target` into slot `idx` of the `route_target` table for
+    /// `subnet`.  Production dispatches on `(subnet, target.route.tgt_ip)`:
+    /// an IPv4 target always goes to the v4 table; a v6 target goes to
+    /// `route_ipv4::add_route_target_v6` when the subnet is v4, otherwise
+    /// to the v6 table.
     fn add_target(
         &self,
-        subnet_is_ipv4: bool,
+        subnet: IpNet,
         idx: u16,
         target: &NextHop,
     ) -> DpdResult<()>;
 
-    /// Delete slot `idx` of the `route_target` table for a subnet of the
-    /// indicated family.
-    fn delete_target(&self, subnet_is_ipv4: bool, idx: u16) -> DpdResult<()>;
+    /// Delete slot `idx` of the `route_target` table for `subnet`.
+    fn delete_target(&self, subnet: IpNet, idx: u16) -> DpdResult<()>;
 
     /// Install a `route_index` entry pointing at `[index, index + slots)`
     /// of the family inferred from `subnet`.
@@ -345,18 +339,9 @@ impl RouteTableOps for Switch {
         &self.log
     }
 
-    fn route_fwd_table_size(&self, is_ipv4: bool) -> DpdResult<u32> {
-        let table = if is_ipv4 {
-            TableType::RouteFwdIpv4
-        } else {
-            TableType::RouteFwdIpv6
-        };
-        self.table_size(table)
-    }
-
     fn add_target(
         &self,
-        subnet_is_ipv4: bool,
+        subnet: IpNet,
         idx: u16,
         target: &NextHop,
     ) -> DpdResult<()> {
@@ -369,7 +354,7 @@ impl RouteTableOps for Switch {
                 target.route.vlan_id,
             ),
             IpAddr::V6(tgt_ip) => {
-                if subnet_is_ipv4 {
+                if subnet.is_ipv4() {
                     table::route_ipv4::add_route_target_v6(
                         self,
                         idx,
@@ -390,8 +375,8 @@ impl RouteTableOps for Switch {
         }
     }
 
-    fn delete_target(&self, subnet_is_ipv4: bool, idx: u16) -> DpdResult<()> {
-        if subnet_is_ipv4 {
+    fn delete_target(&self, subnet: IpNet, idx: u16) -> DpdResult<()> {
+        if subnet.is_ipv4() {
             table::route_ipv4::delete_route_target(self, idx)
         } else {
             table::route_ipv6::delete_route_target(self, idx)
@@ -426,12 +411,13 @@ impl RouteTableOps for Switch {
 fn cleanup_route(
     ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
-    subnet: Option<IpNet>,
+    subnet: IpNet,
+    delete_index: bool,
     entry: RouteEntry,
 ) -> DpdResult<()> {
     // Remove the subnet -> index mapping first, so nobody can reach the
     // entries we delete below.
-    if let Some(subnet) = subnet {
+    if delete_index {
         ops.delete_index(subnet)?;
     }
 
@@ -439,9 +425,7 @@ fn cleanup_route(
         .targets
         .iter()
         .enumerate()
-        .map(|(idx, _hop)| {
-            ops.delete_target(entry.is_ipv4, entry.index + idx as u16)
-        })
+        .map(|(idx, _hop)| ops.delete_target(subnet, entry.index + idx as u16))
         .all(|rval| rval.is_ok());
 
     // If all of the entries were removed, we can release the table space back
@@ -471,7 +455,7 @@ fn finalize_route(
             route_data.insert(subnet, entry);
             Ok(())
         }
-        Err(_) => cleanup_route(ops, route_data, None, entry),
+        Err(_) => cleanup_route(ops, route_data, subnet, false, entry),
     }
 }
 
@@ -587,7 +571,7 @@ fn replace_route_targets(
     if targets.is_empty() {
         let old_entry = unhook_route(ops, route_data, subnet)?;
         return match old_entry {
-            Some(entry) => cleanup_route(ops, route_data, None, entry),
+            Some(entry) => cleanup_route(ops, route_data, subnet, false, entry),
             None => Ok(()),
         };
     }
@@ -650,9 +634,9 @@ fn alloc_then_swap(
     let mut idx = new_entry.index;
 
     for target in targets {
-        if let Err(e) = ops.add_target(is_ipv4, idx, &target) {
+        if let Err(e) = ops.add_target(subnet, idx, &target) {
             debug!(ops.log(), "failed to insert {target:?} into route table");
-            let _ = cleanup_route(ops, route_data, None, new_entry);
+            let _ = cleanup_route(ops, route_data, subnet, false, new_entry);
             let _ = finalize_route(ops, route_data, subnet, old_entry);
             return Err(e);
         }
@@ -666,7 +650,7 @@ fn alloc_then_swap(
             // Finally free all of the table space for the original set of
             // targets
             if let Some(entry) = old_entry {
-                let _ = cleanup_route(ops, route_data, None, entry);
+                let _ = cleanup_route(ops, route_data, subnet, false, entry);
             }
             Ok(())
         }
@@ -675,7 +659,7 @@ fn alloc_then_swap(
             // We failed to point at the new set of targets.  Free all of the
             // new data and update the route_index table to point at the
             // original set of targets.
-            let _ = cleanup_route(ops, route_data, None, new_entry);
+            let _ = cleanup_route(ops, route_data, subnet, false, new_entry);
             let _ = finalize_route(ops, route_data, subnet, old_entry);
             Err(e)
         }
@@ -722,16 +706,10 @@ fn shrink_in_place(
     let new_n = old.slots - removed.len() as u8;
     // Mirror of the slot contents under [base, base+old.slots) that we update
     // in lockstep with each successful ASIC operation.  `None` means the
-    // slot's ASIC entry is currently deleted.
+    // slot's ASIC entry is currently deleted.  Rollback compares `live`
+    // against `old.targets` to find which positions to restore.
     let mut live: Vec<Option<NextHop>> =
         old.targets.iter().map(|t| Some(t.clone())).collect();
-    // Positions whose ASIC contents have diverged from `old.targets[i]`.  A
-    // position lands here as soon as we successfully delete its slot; from
-    // that point forward it differs from the original, regardless of whether
-    // the subsequent write succeeded.  Rollback walks this set instead of
-    // all `old.slots` positions, which keeps recovery O(removed) and lets us
-    // log per-position failures without flooding for untouched survivors.
-    let mut touched: Vec<u16> = Vec::with_capacity(removed.len());
 
     // Step 1: compact in decreasing-removed-index order via delete + add.
     // Slots are unreachable from the dataplane (route_index was deleted by
@@ -746,21 +724,20 @@ fn shrink_in_place(
                 .as_ref()
                 .expect("tail slot is live at this point")
                 .clone();
-            if let Err(e) = ops.delete_target(is_ipv4, base + removed_idx) {
+            if let Err(e) = ops.delete_target(subnet, base + removed_idx) {
                 warn!(
                     ops.log(),
                     "shrink-in-place compact delete failed at slot {}: {e:?}",
                     base + removed_idx
                 );
                 restore_after_shrink_failure(
-                    ops, route_data, subnet, &live, &touched, old,
+                    ops, route_data, subnet, &live, old,
                 );
                 return Err(e);
             }
             live[removed_idx as usize] = None;
-            touched.push(removed_idx);
             if let Err(e) =
-                ops.add_target(is_ipv4, base + removed_idx, &tail_contents)
+                ops.add_target(subnet, base + removed_idx, &tail_contents)
             {
                 warn!(
                     ops.log(),
@@ -768,7 +745,7 @@ fn shrink_in_place(
                     base + removed_idx
                 );
                 restore_after_shrink_failure(
-                    ops, route_data, subnet, &live, &touched, old,
+                    ops, route_data, subnet, &live, old,
                 );
                 return Err(e);
             }
@@ -783,9 +760,7 @@ fn shrink_in_place(
             ops.log(),
             "shrink-in-place index re-add failed for {subnet}: {e:?}"
         );
-        restore_after_shrink_failure(
-            ops, route_data, subnet, &live, &touched, old,
-        );
+        restore_after_shrink_failure(ops, route_data, subnet, &live, old);
         return Err(e);
     }
 
@@ -796,7 +771,7 @@ fn shrink_in_place(
     let release_count = old.slots as u16 - new_n as u16;
     let mut all_clear = true;
     for offset in 0..release_count {
-        if ops.delete_target(is_ipv4, release_base + offset).is_err() {
+        if ops.delete_target(subnet, release_base + offset).is_err() {
             all_clear = false;
         }
     }
@@ -839,19 +814,19 @@ fn shrink_in_place(
     Ok(())
 }
 
-// Try to restore the original ASIC slot contents at every `touched`
-// position and reinstall the original `route_index`; if that succeeds
-// re-insert `old` into the in-core mirror; if rollback itself fails leave
-// the in-core empty so the next update rebuilds.  Consumes `old`.
+// Try to restore the original ASIC slot contents at every position whose
+// mirrored state has diverged from `old.targets[i]`, then reinstall the
+// original `route_index`; if that succeeds re-insert `old` into the
+// in-core mirror; if rollback itself fails leave the in-core empty so the
+// next update rebuilds.  Consumes `old`.
 fn restore_after_shrink_failure(
     ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
     subnet: IpNet,
     live: &[Option<NextHop>],
-    touched: &[u16],
     old: RouteEntry,
 ) {
-    if rollback_shrink(ops, subnet, &old, live, touched) {
+    if rollback_shrink(ops, subnet, &old, live) {
         route_data.insert(subnet, old);
     } else {
         error!(
@@ -863,32 +838,38 @@ fn restore_after_shrink_failure(
     }
 }
 
-/// Restore every position in `touched` to its pre-shrink contents (a
+/// Restore every position whose mirrored slot contents (`live[i]`) no
+/// longer match `old.targets[i]` to its pre-shrink contents (a
 /// delete-if-present followed by a write of `old.targets[i]`), then
 /// reinstall the original `route_index` so the dataplane resumes with
 /// the pre-shrink policy.  Returns `true` if every restore + index-readd
 /// succeeded, `false` otherwise.  Per-slot failures are logged
 /// individually so a divergence postmortem can name the slots involved.
+//
+// Rollback is O(old.slots) rather than O(touched), but rollback is
+// vanishingly rare and `old.slots <= MAX_TARGETS`, so the extra cost is
+// negligible and the bookkeeping savings on the hot path are worth it.
 fn rollback_shrink(
     ops: &dyn RouteTableOps,
     subnet: IpNet,
     old: &RouteEntry,
     live: &[Option<NextHop>],
-    touched: &[u16],
 ) -> bool {
-    let is_ipv4 = old.is_ipv4;
     let base = old.index;
     let mut ok = true;
-    for &i in touched {
-        let slot = base + i;
-        let orig = &old.targets[i as usize];
-        if live[i as usize].is_some()
-            && let Err(e) = ops.delete_target(is_ipv4, slot)
+    for (i, slot_live) in live.iter().enumerate() {
+        let orig = &old.targets[i];
+        if slot_live.as_ref() == Some(orig) {
+            continue;
+        }
+        let slot = base + i as u16;
+        if slot_live.is_some()
+            && let Err(e) = ops.delete_target(subnet, slot)
         {
             error!(ops.log(), "rollback delete failed at slot {slot}: {e:?}");
             ok = false;
         }
-        if let Err(e) = ops.add_target(is_ipv4, slot, orig) {
+        if let Err(e) = ops.add_target(subnet, slot, orig) {
             error!(ops.log(), "rollback write failed at slot {slot}: {e:?}");
             ok = false;
         }
@@ -912,19 +893,8 @@ fn add_route_locked(
 ) -> DpdResult<()> {
     info!(ops.log(), "adding route {subnet} -> {:?}", route.tgt_ip);
 
-    // Verify that the slot freelist has been initialized
-    let max_targets;
-    if subnet.is_ipv4() {
-        max_targets = MAX_TARGETS_IPV4;
-        route_data
-            .v4_freemap
-            .maybe_init(ops.route_fwd_table_size(true)? as u16);
-    } else {
-        max_targets = MAX_TARGETS_IPV6;
-        route_data
-            .v6_freemap
-            .maybe_init(ops.route_fwd_table_size(false)? as u16);
-    }
+    let max_targets =
+        if subnet.is_ipv4() { MAX_TARGETS_IPV4 } else { MAX_TARGETS_IPV6 };
 
     // Get the old set of targets that we'll be adding to
     let mut targets =
@@ -1113,7 +1083,7 @@ fn delete_route_locked(
         .remove(subnet)
         .ok_or(DpdError::Missing("no such route".into()))?;
 
-    cleanup_route(ops, route_data, Some(subnet), entry)
+    cleanup_route(ops, route_data, subnet, true, entry)
 }
 
 // Delete a route and all of its targets
@@ -1309,6 +1279,18 @@ pub fn init(log: &slog::Logger) -> RouteData {
     }
 }
 
+/// Size the per-family route_target freemaps to match the on-chip table
+/// capacities.  Must be called after `table::init` has populated
+/// `switch.tables`, and before any `add_route` can run.
+pub async fn init_freemaps(switch: &Switch) -> DpdResult<()> {
+    let v4_size = switch.table_size(TableType::RouteFwdIpv4)? as u16;
+    let v6_size = switch.table_size(TableType::RouteFwdIpv6)? as u16;
+    let mut route_data = switch.routes.lock().await;
+    route_data.v4_freemap.maybe_init(v4_size);
+    route_data.v6_freemap.maybe_init(v6_size);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1419,24 +1401,16 @@ mod tests {
             &self.log
         }
 
-        fn route_fwd_table_size(&self, _is_ipv4: bool) -> DpdResult<u32> {
-            Ok(TEST_FREEMAP_SIZE as u32)
-        }
-
         fn add_target(
             &self,
-            _subnet_is_ipv4: bool,
+            _subnet: IpNet,
             _idx: u16,
             _target: &NextHop,
         ) -> DpdResult<()> {
             self.check(Op::AddTarget)
         }
 
-        fn delete_target(
-            &self,
-            _subnet_is_ipv4: bool,
-            _idx: u16,
-        ) -> DpdResult<()> {
+        fn delete_target(&self, _subnet: IpNet, _idx: u16) -> DpdResult<()> {
             self.check(Op::DelTarget)
         }
 
@@ -1454,13 +1428,14 @@ mod tests {
         }
     }
 
-    /// Build a fresh `(TestOps, RouteData)` pair for a test.  `RouteData`
-    /// starts empty and unsized; the first `add_route_locked` call will
-    /// initialize it to `TEST_FREEMAP_SIZE` via the trait, so no separate
-    /// pre-init step is required.
+    /// Build a fresh `(TestOps, RouteData)` pair for a test.  Both freemaps
+    /// are eagerly initialized to `TEST_FREEMAP_SIZE` to mirror production,
+    /// where `route::init_freemaps` runs after table init.
     fn make_test_ctx() -> (TestOps, RouteData) {
         let ops = TestOps::new();
-        let rd = init(ops.log());
+        let mut rd = init(ops.log());
+        rd.v4_freemap.maybe_init(TEST_FREEMAP_SIZE);
+        rd.v6_freemap.maybe_init(TEST_FREEMAP_SIZE);
         (ops, rd)
     }
 

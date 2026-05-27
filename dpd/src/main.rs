@@ -258,7 +258,7 @@ fn get_sidecar_revision(
 }
 
 impl Switch {
-    pub(crate) fn new(
+    fn new(
         log: slog::Logger,
         _p4_name: &str,
         config: config::Config,
@@ -614,6 +614,9 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
     #[cfg(feature = "tokio-console")]
     console_subscriber::init();
     table::init(&mut switch).context("failed to initialize tables")?;
+    route::init_freemaps(&switch)
+        .await
+        .context("failed to initialize route freemaps")?;
 
     // Load the links to be auto-created.
     //
