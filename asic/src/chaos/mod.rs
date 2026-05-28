@@ -371,7 +371,6 @@ macro_rules! unfurl {
         $handle.config.$name.unfurled(&$handle.log, stringify!($name))?
     };
 }
-pub(crate) use unfurl;
 
 /// A convenience macro for unfurling multicast chaos. The $name should be a
 /// regular `Chaos` member of [`AsicMulticastConfigConfig`]. The `handle` is

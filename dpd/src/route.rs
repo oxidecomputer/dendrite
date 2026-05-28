@@ -447,6 +447,7 @@ fn replace_route_targets(
     // Insert all the entries into the table
     let mut idx = new_entry.index;
 
+    #[allow(clippy::explicit_counter_loop)]
     for target in targets {
         if let Err(e) = match target.route.tgt_ip {
             IpAddr::V4(tgt_ip) => table::route_ipv4::add_route_target(

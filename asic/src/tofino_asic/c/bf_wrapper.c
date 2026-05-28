@@ -143,10 +143,11 @@ bfw_init_ctx(const char *devpath, const char *p4_dir,
 	}
 	ctx->conf_file = conffile;
 	ctx->init_mode = BF_DEV_INIT_COLD;
-	ctx->running_in_background = 1;;
+	ctx->running_in_background = 1;
 
 	if (devpath != NULL) {
 		ctx->kernel_pkt = 1;
+		ctx->skip_interrupt_thread = true;
 	} else {
 		perror("failed to find a tofino device");
 	}

@@ -290,9 +290,10 @@ impl Switch {
         let mac_mgmt = Mutex::new(macaddrs::MacManagement::new(&log));
 
         #[cfg(feature = "tofino_asic")]
-        if !asic_hdl.is_model() {
-            #[cfg(feature = "interrupts")]
-            run_interrupt_monitor(log.clone());
+        if !asic_hdl.is_model()
+            && let Err(e) = run_interrupt_monitor(log.clone())
+        {
+            error!(log, "failed to start interrupt monitor: {e:?}")
         }
 
         let ws_log = log.new(slog::o!("unit" => "workflow_server"));
@@ -754,8 +755,8 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
         let rear_links: BTreeMap<PortId, LinkCreate> = switch
             .switch_ports
             .ports
-            .iter()
-            .filter_map(|(port_id, _)| {
+            .keys()
+            .filter_map(|port_id| {
                 if matches!(port_id, PortId::Rear(_)) {
                     let create = LinkCreate {
                         speed: common::ports::PortSpeed::Speed100G,
@@ -833,9 +834,15 @@ async fn run_dpd(opt: Opt) -> anyhow::Result<()> {
     }
 }
 
-#[cfg(all(feature = "tofino_asic", feature = "interrupts"))]
-fn run_interrupt_monitor(log: slog::Logger) {
+#[cfg(feature = "tofino_asic")]
+fn run_interrupt_monitor(log: slog::Logger) -> anyhow::Result<()> {
+    // If the driver doesn't support interrupt monitoring, fail gracefully.
+    if !asic::tofino_asic::interrupt_monitor::interrupts_supported()? {
+        info!(log, "tofino driver too old to monitor interrupts");
+        return Ok(());
+    };
     std::thread::spawn(move || {
         asic::tofino_asic::interrupt_monitor::monitor_interrupts(log);
     });
+    Ok(())
 }
