@@ -101,6 +101,8 @@ DENDRITE_TEST_HOST='[::1]' \
     --no-fail-fast \
     --test \
     counters \
+    --test \
+    multicast \
     -- \
     --ignored
 
