@@ -11,7 +11,6 @@ STARTUP_TIMEOUT=${STARTUP_TIMEOUT:=120}
 BUILD_FEATURES=tofino_asic
 
 CODEGEN_FEATURES=--multicast
-SWADM_FEATURES="--features=multicast"
 
 function cleanup {
     set +o errexit
@@ -100,9 +99,10 @@ DENDRITE_TEST_HOST='[::1]' \
     DENDRITE_TEST_VERBOSITY=3 \
     cargo test \
     --no-fail-fast \
-    $SWADM_FEATURES \
     --test \
     counters \
+    --test \
+    multicast \
     -- \
     --ignored
 
