@@ -27,3 +27,4 @@ expectorate.workspace = true
 predicates.workspace = true
 serial_test.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
