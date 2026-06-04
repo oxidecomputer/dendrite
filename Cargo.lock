@@ -2148,7 +2148,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -3223,6 +3223,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "iddqd"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7721c885a97a7c67bc8645958710f3f43b5e7ad8644ce6f43b188a77f05fda7"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+ "hashbrown 0.16.1",
+]
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4140,7 +4152,7 @@ source = "git+https://github.com/oxidecomputer/omicron?branch=main#8e30605f52172
 dependencies = [
  "chrono",
  "futures",
- "iddqd",
+ "iddqd 0.3.18",
  "nexus-types",
  "omicron-common",
  "omicron-uuid-kinds",
@@ -4180,7 +4192,7 @@ dependencies = [
  "gateway-types",
  "http",
  "humantime",
- "iddqd",
+ "iddqd 0.3.18",
  "illumos-utils",
  "indent_write",
  "internal-dns-types",
@@ -4455,7 +4467,7 @@ dependencies = [
  "futures",
  "hex",
  "http",
- "iddqd",
+ "iddqd 0.3.18",
  "ipnetwork",
  "itertools 0.14.0",
  "macaddr",
@@ -5801,7 +5813,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.4",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6170,7 +6182,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -6809,7 +6821,7 @@ dependencies = [
  "camino",
  "chrono",
  "daft",
- "iddqd",
+ "iddqd 0.3.18",
  "omicron-common",
  "omicron-uuid-kinds",
  "omicron-workspace-hack",
@@ -6840,7 +6852,7 @@ dependencies = [
  "camino",
  "chrono",
  "daft",
- "iddqd",
+ "iddqd 0.3.18",
  "illumos-utils",
  "indent_write",
  "omicron-common",
@@ -7037,7 +7049,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -7398,7 +7410,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -7407,7 +7419,7 @@ version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2111ef44dae28680ae9752bb89409e7310ca33a8c621ebe7b106cf5c928b3ac0"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -7473,7 +7485,7 @@ dependencies = [
  "dpd-client 0.1.0",
  "futures",
  "http",
- "iddqd",
+ "iddqd 0.4.2",
  "internet-checksum",
  "ispf",
  "kstat-rs",
@@ -8134,7 +8146,7 @@ dependencies = [
  "gfss",
  "hex",
  "hkdf",
- "iddqd",
+ "iddqd 0.3.18",
  "omicron-uuid-kinds",
  "omicron-workspace-hack",
  "rand 0.9.3",
@@ -8171,7 +8183,7 @@ dependencies = [
  "daft",
  "derive_more",
  "gfss",
- "iddqd",
+ "iddqd 0.3.18",
  "omicron-uuid-kinds",
  "omicron-workspace-hack",
  "rand 0.9.3",
@@ -8946,7 +8958,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
