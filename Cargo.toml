@@ -54,7 +54,7 @@ omicron-common = { git = "https://github.com/oxidecomputer/omicron", branch= "ma
 oximeter = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 oximeter-producer = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 oximeter-instruments = { git = "https://github.com/oxidecomputer/omicron", branch = "main", default-features = false, features = ["kstat"] }
-oxnet = { version = "0.1.4", default-features = false, features = ["schemars", "serde"] }
+oxnet = { version = "0.1.6", default-features = false, features = ["schemars", "serde"] }
 propolis = { git = "https://github.com/oxidecomputer/propolis" }
 smf = { git = "https://github.com/illumos/smf-rs" }
 softnpu-lib = { git = "https://github.com/oxidecomputer/softnpu" , package = "softnpu" , branch = "main"}
