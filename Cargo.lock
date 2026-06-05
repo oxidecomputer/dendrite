@@ -1696,7 +1696,7 @@ dependencies = [
  "semver 1.0.28",
  "serde",
  "serde_json",
- "signal-hook",
+ "signal-hook 0.4.4",
  "signal-hook-tokio",
  "slog",
  "slog-async",
@@ -6760,6 +6760,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-hook"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2a0c28ca5908dbdbcd52e6fdaa00358ab88637f8ab33e1f188dd510eb44b53d"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
+
+[[package]]
 name = "signal-hook-registry"
 version = "1.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6776,7 +6786,7 @@ checksum = "213241f76fb1e37e27de3b6aa1b068a2c333233b59cca6634f634b80a27ecf1e"
 dependencies = [
  "futures-core",
  "libc",
- "signal-hook",
+ "signal-hook 0.3.18",
  "tokio",
 ]
 
@@ -7503,7 +7513,7 @@ dependencies = [
  "rand 0.9.3",
  "schemars 0.8.22",
  "serde",
- "signal-hook",
+ "signal-hook 0.4.4",
  "slog",
  "smf 0.10.0",
  "socket2 0.6.4",
@@ -8457,7 +8467,7 @@ dependencies = [
  "libc",
  "oxide-tokio-rt",
  "oxnet",
- "signal-hook",
+ "signal-hook 0.4.4",
  "slog",
  "smf 0.10.0",
  "tokio",
