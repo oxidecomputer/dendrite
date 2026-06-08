@@ -66,6 +66,7 @@ use dpd_types::table;
 use dpd_types::table::TableParam;
 use dpd_types::transceivers::Transceiver;
 use dpd_types_versions::{v1, v7};
+use dropshot::BuildError;
 use dropshot::ClientErrorStatusCode;
 use dropshot::ClientSpecifiesVersionInHeader;
 use dropshot::EmptyScanParams;
@@ -83,6 +84,7 @@ use dropshot::TypedBody;
 use dropshot::VersionPolicy;
 use dropshot::WhichPage;
 use slog::{debug, error, info, o};
+use slog_error_chain::InlineErrorChain;
 use transceiver_controller::Datapath;
 use transceiver_controller::Monitors;
 
@@ -2993,7 +2995,7 @@ fn launch_server(
     switch: Arc<Switch>,
     addr: &SocketAddr,
     id: u32,
-) -> anyhow::Result<ApiServer> {
+) -> Result<ApiServer, BuildError> {
     let config_dropshot = dropshot::ConfigDropshot {
         bind_address: *addr,
         default_request_body_max_bytes: 10240,
@@ -3015,7 +3017,6 @@ fn launch_server(
         )))
         .build_starter()
         .map(|s| s.start())
-        .map_err(|e| anyhow::anyhow!(e.to_string()))
 }
 
 // Manage the set of api servers currently listening for requests.  When a
@@ -3056,8 +3057,8 @@ pub async fn api_server_manager(
                 }
                 Err(e) => {
                     error!(
-                        log,
-                        "failed to launch api server {id} on {addr}: {e:?}"
+                        log, "failed to launch api server {id} on {addr}";
+                        InlineErrorChain::new(&e),
                     );
                 }
             };
