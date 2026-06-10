@@ -6423,7 +6423,8 @@ dependencies = [
 [[package]]
 name = "scuffle"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/scuffle#7181674535cc5ee0d461b2d53be19f181b9257e5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3bc8f6723061cb7e5f176f3132f96b7bbd3554afd7d533587fd58edbad02f97f"
 dependencies = [
  "bitflags 2.11.1",
  "chrono",

@@ -42,7 +42,6 @@ packet = { path = "packet" }
 pcap = { path = "pcap" }
 
 # oxide dependencies from github
-scuffle = { git = "https://github.com/oxidecomputer/scuffle", version = "0.1.0", features = ["smf-by-instance"] }
 internal-dns-resolver = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 internal-dns-types = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 ispf = { git = "https://github.com/oxidecomputer/ispf" }
@@ -97,6 +96,7 @@ regress = "0.11"
 reqwest = { version = "0.13", default-features = false }
 reqwest012 = { package = "reqwest", version = "0.12", default-features = false }
 schemars = "0.8"
+scuffle = { version = "0.1.0", features = ["smf-by-instance"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
