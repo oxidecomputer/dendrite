@@ -8,16 +8,10 @@ export WS=$wd
 MODEL_STARTUP_TIMEOUT=${MODEL_STARTUP_TIMEOUT:=5}
 STARTUP_TIMEOUT=${STARTUP_TIMEOUT:=120}
 
-if [ x$MULTICAST == x ]; then
-        BUILD_FEATURES=tofino_asic
-	CODEGEN_FEATURES=
-        SWADM_FEATURES=
-    else
-        BUILD_FEATURES=tofino_asic,multicast
-	CODEGEN_FEATURES=--multicast
-        SWADM_FEATURES=--features=multicast
-fi
-    
+BUILD_FEATURES=tofino_asic
+
+CODEGEN_FEATURES=--multicast
+
 function cleanup {
     set +o errexit
     set +o pipefail
@@ -105,9 +99,10 @@ DENDRITE_TEST_HOST='[::1]' \
     DENDRITE_TEST_VERBOSITY=3 \
     cargo test \
     --no-fail-fast \
-    $SWADM_FEATURES \
     --test \
     counters \
+    --test \
+    multicast \
     -- \
     --ignored
 
