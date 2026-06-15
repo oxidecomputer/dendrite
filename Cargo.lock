@@ -1689,7 +1689,7 @@ dependencies = [
  "semver 1.0.28",
  "serde",
  "serde_json",
- "signal-hook 0.4.4",
+ "signal-hook",
  "signal-hook-tokio",
  "slog",
  "slog-async",
@@ -6756,16 +6756,6 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "signal-hook"
-version = "0.3.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d881a16cf4426aa584979d30bd82cb33429027e42122b169753d6ef1085ed6e2"
-dependencies = [
- "libc",
- "signal-hook-registry",
-]
-
-[[package]]
-name = "signal-hook"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2a0c28ca5908dbdbcd52e6fdaa00358ab88637f8ab33e1f188dd510eb44b53d"
@@ -6785,13 +6775,13 @@ dependencies = [
 
 [[package]]
 name = "signal-hook-tokio"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "213241f76fb1e37e27de3b6aa1b068a2c333233b59cca6634f634b80a27ecf1e"
+checksum = "e513e435a8898a0002270f29d0a708b7879708fb5c4d00e46983ca2d2d378cf0"
 dependencies = [
  "futures-core",
  "libc",
- "signal-hook 0.3.18",
+ "signal-hook",
  "tokio",
 ]
 
@@ -7518,7 +7508,7 @@ dependencies = [
  "rand 0.9.3",
  "schemars 0.8.22",
  "serde",
- "signal-hook 0.4.4",
+ "signal-hook",
  "slog",
  "smf 0.10.0",
  "socket2 0.6.4",
@@ -8472,7 +8462,7 @@ dependencies = [
  "libc",
  "oxide-tokio-rt",
  "oxnet",
- "signal-hook 0.4.4",
+ "signal-hook",
  "slog",
  "smf 0.10.0",
  "tokio",

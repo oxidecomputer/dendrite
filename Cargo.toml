@@ -101,7 +101,7 @@ semver = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 signal-hook = "0.4"
-signal-hook-tokio = { version = "0.3", features = [ "futures-v0_3" ] }
+signal-hook-tokio = { version = "0.4", features = [ "futures-v0_3" ] }
 slog = { version = "2.7", features = [ "release_max_level_debug", "max_level_trace" ] }
 slog-async = "2.8"
 slog-bunyan = "2.5"
