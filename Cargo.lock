@@ -1699,7 +1699,7 @@ dependencies = [
  "strum 0.28.0",
  "thiserror 1.0.69",
  "tokio",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.2+spec-1.1.0",
  "transceiver-controller",
  "usdt 0.6.0",
  "uuid",
@@ -1748,7 +1748,7 @@ dependencies = [
  "slog-async",
  "slog-term",
  "tokio",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.2+spec-1.1.0",
  "transceiver-controller",
  "uuid",
 ]
