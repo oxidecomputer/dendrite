@@ -12,7 +12,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "uuid",
 ]
@@ -189,7 +189,7 @@ dependencies = [
  "slog-term",
  "softnpu 0.2.0 (git+https://github.com/oxidecomputer/softnpu?branch=main)",
  "strum 0.28.0",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tofino 0.1.0 (git+https://github.com/oxidecomputer/tofino?branch=main)",
  "tokio",
  "transceiver-controller",
@@ -964,7 +964,7 @@ dependencies = [
  "slog-bunyan",
  "slog-term",
  "smf 0.10.0",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
 ]
 
@@ -1697,7 +1697,7 @@ dependencies = [
  "slog-term",
  "smf 0.10.0",
  "strum 0.28.0",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "transceiver-controller",
@@ -1799,7 +1799,7 @@ dependencies = [
  "oxnet",
  "schemars 0.8.22",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "transceiver-controller",
  "uuid",
 ]
@@ -4979,7 +4979,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -7533,7 +7533,7 @@ dependencies = [
  "slog",
  "smf 0.10.0",
  "socket2 0.6.4",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "uuid",
 ]
