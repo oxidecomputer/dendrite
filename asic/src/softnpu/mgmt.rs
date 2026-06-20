@@ -101,9 +101,18 @@ fn read_uart(msg: ManagementRequest) -> String {
     f.write_all(&buf).unwrap();
     f.sync_all().unwrap();
 
+    // Responses are newline-terminated and a table dump can span multiple
+    // reads, so accumulate until the terminator arrives.
+    let mut response = Vec::new();
     let mut buf = [0u8; 1024];
-    let n = f.read(&mut buf).unwrap();
-    String::from_utf8_lossy(&buf[..n]).to_string()
+    loop {
+        let n = f.read(&mut buf).unwrap();
+        response.extend_from_slice(&buf[..n]);
+        if n == 0 || response.last() == Some(&b'\n') {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&response).to_string()
 }
 
 fn read_uds(msg: ManagementRequest, socket_path: &str) -> String {
@@ -111,7 +120,9 @@ fn read_uds(msg: ManagementRequest, socket_path: &str) -> String {
 
     write_uds(msg, socket_path);
 
-    let mut buf = vec![0u8; 10240];
+    // A table dump arrives as a single datagram, which recv truncates if
+    // the buffer is too small, so size it well past any expected response.
+    let mut buf = vec![0u8; 1 << 20];
     let n = client_uds.recv(&mut buf).unwrap();
     String::from_utf8_lossy(&buf[..n]).to_string()
 }

@@ -2375,12 +2375,18 @@ control Egress(
 
 			if (is_link_local_ipv6_mcast) {
 				link_local_mcast_ctr.count(eg_intr_md.egress_port);
-			} else if (hdr.geneve.isValid()) {
-				external_mcast_ctr.count(eg_intr_md.egress_port);
 			} else if (hdr.geneve.isValid() &&
 			           hdr.geneve_opts.oxg_mcast.isValid() &&
-			           hdr.geneve_opts.oxg_mcast.mcast_tag == MULTICAST_TAG_UNDERLAY) {
+			           (hdr.geneve_opts.oxg_mcast.mcast_tag == MULTICAST_TAG_UNDERLAY ||
+			            hdr.geneve_opts.oxg_mcast.mcast_tag == MULTICAST_TAG_UNDERLAY_EXTERNAL)) {
 				underlay_mcast_ctr.count(eg_intr_md.egress_port);
+			} else {
+				// External deliveries were decapsulated before this
+				// point: at ingress for external-only groups, or by
+				// mcast_egress above for bifurcated-group copies
+				// bound for front panel ports. Keying on a valid
+				// geneve header would therefore never count them.
+				external_mcast_ctr.count(eg_intr_md.egress_port);
 			}
 		} else {
 			// non-multicast packets should bypass the egress

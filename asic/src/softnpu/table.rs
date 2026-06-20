@@ -4,10 +4,14 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use std::collections::BTreeMap;
 use std::hash::Hash;
 
 use slog::{error, trace};
-use softnpu_lib::{ManagementRequest, TableAdd, TableRemove};
+use softnpu_lib::p4rs::TableEntry;
+use softnpu_lib::{
+    ManagementRequest, ManagementResponse, TableAdd, TableRemove,
+};
 
 use crate::softnpu::Handle;
 use aal::{
@@ -50,7 +54,7 @@ pub struct Table {
 
 impl Table {
     /// Return the sidecar-lite table name for this table, or `None` if the
-    /// table is not implemented in the softnpu backend.
+    /// table is not implemented in the SoftNPU backend.
     pub fn softnpu_table_name(&self) -> Option<&'static str> {
         if self.implemented {
             match self.type_ {
@@ -73,7 +77,7 @@ impl Table {
                 TableType::PortMacAddress => Some("ingress.mac.mac_rewrite"),
                 #[cfg(feature = "multicast")]
                 TableType::McastIpv6 => {
-                    Some("ingress.mcast.mcast_replication_v6")
+                    Some(crate::softnpu::mcast::MCAST_REPLICATION_V6_TABLE)
                 }
                 #[cfg(feature = "multicast")]
                 TableType::McastIpv4SrcFilter => {
@@ -158,6 +162,83 @@ impl Table {
             })
             .collect()
     }
+
+    /// Translate a `configure_mcastv6` request into a sidecar-lite
+    /// `set_port_bitmap` addition, holding the replication tracking lock across
+    /// the entire op.
+    ///
+    /// DPD sends `(mcast_grp_a, mcast_grp_b, rid, level1_excl_id,
+    /// level2_excl_id)`, while sidecar-lite expects `(external, underlay, rid)`,
+    /// from `McGroupData` membership. On SoftNPU the bitmap is a write-time
+    /// snapshot, unlike the live replication engine on the sidecar, so the
+    /// recorded group references let a later membership change recompute
+    /// the entry.
+    ///
+    /// The lock is held from the bitmap snapshot through to the table write so
+    /// a concurrent membership refresh, which takes the same lock across its
+    /// own rewrite (see @ `mc_port_add`), cannot interleave a newer bitmap that
+    /// this older snapshot would then overwrite.
+    #[cfg(feature = "multicast")]
+    fn mcast_replication_add(
+        &self,
+        hdl: &Handle,
+        table: String,
+        keyset_data: Vec<u8>,
+        action_data: &aal::ActionData,
+    ) -> AsicResult<()> {
+        let mut external_grp: u16 = 0;
+        let mut underlay_grp: u16 = 0;
+        let mut rid: u16 = 0;
+        for arg in action_data.args.iter() {
+            if let ValueTypes::U64(v) = &arg.value {
+                match arg.name.as_str() {
+                    "mcast_grp_a" => external_grp = *v as u16,
+                    "mcast_grp_b" => underlay_grp = *v as u16,
+                    "rid" => rid = *v as u16,
+                    _ => {}
+                }
+            }
+        }
+
+        let mut mc_data = hdl.mc_data.lock().unwrap();
+        let external_bitmap = mc_data.port_bitmap(external_grp);
+        let underlay_bitmap = mc_data.port_bitmap(underlay_grp);
+        mc_data.record_repl_entry(
+            keyset_data.clone(),
+            external_grp,
+            underlay_grp,
+            rid,
+        );
+
+        let parameter_data = [
+            external_bitmap.to_le_bytes().as_slice(),
+            underlay_bitmap.to_le_bytes().as_slice(),
+            rid.to_le_bytes().as_slice(),
+        ]
+        .concat();
+
+        // Logged at debug so the initial bitmap snapshot is visible in a
+        // release build.
+        slog::debug!(
+            hdl.log,
+            "mcast replication add: external_grp={external_grp} \
+             underlay_grp={underlay_grp} external_bitmap={external_bitmap:#x} \
+             underlay_bitmap={underlay_bitmap:#x} rid={rid}"
+        );
+        trace!(hdl.log, "table: {table}");
+        trace!(hdl.log, "keyset_data:\n{keyset_data:#?}");
+        trace!(hdl.log, "parameter_data:\n{parameter_data:#?}");
+
+        let msg = ManagementRequest::TableAdd(TableAdd {
+            table,
+            action: crate::softnpu::mcast::SET_PORT_BITMAP_ACTION.to_string(),
+            keyset_data,
+            parameter_data,
+        });
+        crate::softnpu::mgmt::write(msg, &hdl.mgmt_config);
+
+        Ok(())
+    }
 }
 
 // All tables are defined to be 4096 entries deep.
@@ -208,8 +289,49 @@ impl TableOps<Handle> for Table {
         self.size
     }
 
-    fn clear(&self, _hdl: &Handle) -> AsicResult<()> {
-        // TODO: implement in softnpu
+    fn clear(&self, hdl: &Handle) -> AsicResult<()> {
+        let Some(table) = self.softnpu_table_name() else {
+            return Ok(());
+        };
+
+        // Hold the replication tracking lock across the dump and removals
+        // when clearing the replication table, matching the locking
+        // discipline in `mcast_replication_add`, so a concurrent membership
+        // refresh cannot re-add entries mid-clear.
+        #[cfg(feature = "multicast")]
+        let mut mc_data = (self.type_ == TableType::McastIpv6)
+            .then(|| hdl.mc_data.lock().unwrap());
+
+        // The management protocol has no clear message, so emulate one by
+        // dumping table state and removing each entry.
+        let response = crate::softnpu::mgmt::read(
+            ManagementRequest::DumpRequest,
+            &hdl.mgmt_config,
+        );
+        let tables = parse_dump(&response)?;
+
+        // Include the untagged variant when the table splits on VLAN validity.
+        for name in std::iter::once(table).chain(self.untagged_id) {
+            let Some(entries) = tables.get(name) else {
+                continue;
+            };
+            for entry in entries {
+                let msg = ManagementRequest::TableRemove(TableRemove {
+                    table: name.to_string(),
+                    keyset_data: entry.keyset_data.clone(),
+                });
+                crate::softnpu::mgmt::write(msg, &hdl.mgmt_config);
+            }
+        }
+
+        // Drop all tracked replication entries so that a later membership
+        // change for a reused group identifier cannot resurrect a stale bitmap
+        // from a forgotten keyset.
+        #[cfg(feature = "multicast")]
+        if let Some(mc_data) = mc_data.as_mut() {
+            mc_data.clear_repl_entries();
+        }
+
         Ok(())
     }
 
@@ -246,6 +368,21 @@ impl TableOps<Handle> for Table {
         trace!(hdl.log, "action_data:\n{:#?}", action_data);
 
         let keyset_data = keyset_data(fields, self.type_, &table);
+
+        // Multicast replication is handled ahead of the generic match so the
+        // replication tracking lock can be held from the bitmap snapshot through
+        // the table write.
+        #[cfg(feature = "multicast")]
+        if let (TableType::McastIpv6, "configure_mcastv6") =
+            (self.type_, action_data.action.as_str())
+        {
+            return self.mcast_replication_add(
+                hdl,
+                table,
+                keyset_data,
+                &action_data,
+            );
+        }
 
         let (action, parameter_data) = match (
             self.type_,
@@ -578,39 +715,6 @@ impl TableOps<Handle> for Table {
             | (TableType::McastIpv6SrcFilter, "allow_source_mcastv6") => {
                 ("allow_source", Vec::new())
             }
-            // Multicast replication: translate group IDs to port bitmaps.
-            //
-            // DPD sends configure_mcastv6 with (mcast_grp_a, mcast_grp_b,
-            // rid, level1_excl_id, level2_excl_id). Sidecar-lite expects
-            // set_port_bitmap with (external, underlay, rid). We look up
-            // the group membership in McGroupData and build the bitmaps.
-            #[cfg(feature = "multicast")]
-            (TableType::McastIpv6, "configure_mcastv6") => {
-                let mut external_grp: u16 = 0;
-                let mut underlay_grp: u16 = 0;
-                let mut rid: u16 = 0;
-                for arg in action_data.args.iter() {
-                    if let ValueTypes::U64(v) = &arg.value {
-                        match arg.name.as_str() {
-                            "mcast_grp_a" => external_grp = *v as u16,
-                            "mcast_grp_b" => underlay_grp = *v as u16,
-                            "rid" => rid = *v as u16,
-                            _ => {}
-                        }
-                    }
-                }
-
-                let mc_data = hdl.mc_data.lock().unwrap();
-                let external_bitmap = mc_data.port_bitmap(external_grp);
-                let underlay_bitmap = mc_data.port_bitmap(underlay_grp);
-                drop(mc_data);
-
-                let mut params = Vec::new();
-                params.extend_from_slice(&external_bitmap.to_le_bytes());
-                params.extend_from_slice(&underlay_bitmap.to_le_bytes());
-                params.extend_from_slice(&rid.to_le_bytes());
-                ("set_port_bitmap", params)
-            }
             // Multicast egress decap: pack 8x32-bit bitmap into 128 bits.
             //
             // DPD sends set_decap_ports with 8x32-bit bitmap fields
@@ -682,7 +786,7 @@ impl TableOps<Handle> for Table {
         key: &M,
         data: &A,
     ) -> AsicResult<()> {
-        // Softnpu does not currently support in-place updates.
+        // SoftNPU does not currently support in-place updates.
         // Delete the old entry and re-add with the new action data.
         // Both operations are currently fire-and-forget over the
         // management channel, so neither can fail from DPD's
@@ -719,6 +823,13 @@ impl TableOps<Handle> for Table {
         trace!(hdl.log, "match_data (filtered): {fields:#?}");
 
         let keyset_data = keyset_data(fields, self.type_, &table);
+
+        // Stop tracking a replication entry once it leaves the pipeline so a
+        // later membership change does not resurrect a stale bitmap.
+        #[cfg(feature = "multicast")]
+        if self.type_ == TableType::McastIpv6 {
+            hdl.mc_data.lock().unwrap().forget_repl_entry(&keyset_data);
+        }
 
         trace!(hdl.log, "sending request to softnpu");
         trace!(hdl.log, "table: {table}");
@@ -859,6 +970,27 @@ fn pack_decap_bitmap(args: &aal::ActionData) -> Vec<u8> {
         }
     }
     chunks.iter().flat_map(|c| c.to_le_bytes()).collect()
+}
+
+/// Parse a `DumpRequest` response into per-table entries.
+///
+/// The standalone responder, managed over a Unix domain socket (UDS), wraps
+/// the dump in `ManagementResponse::DumpResponse`, while the propolis
+/// responder, managed over the emulated serial device (UART), writes the
+/// bare table map.
+///
+/// Note: there is no key collision between the two forms: table
+/// names are dotted P4 paths, never `DumpResponse`.
+fn parse_dump(response: &str) -> AsicResult<BTreeMap<String, Vec<TableEntry>>> {
+    let response = response.trim();
+    if let Ok(ManagementResponse::DumpResponse(tables)) =
+        serde_json::from_str(response)
+    {
+        return Ok(tables);
+    }
+    serde_json::from_str(response).map_err(|e| {
+        AsicError::Internal(format!("failed to parse SoftNPU table dump: {e}"))
+    })
 }
 
 /// Extract keys from `match_data` and ensure that they are
@@ -1044,5 +1176,65 @@ fn serialize_value_type_be(x: &ValueTypes, data: &mut Vec<u8>) {
         ValueTypes::Ptr(v) => {
             data.extend_from_slice(v.as_slice());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(feature = "multicast")]
+    use crate::softnpu::mcast::MCAST_REPLICATION_V6_TABLE as REPL_TABLE;
+    // `parse_dump` is name-agnostic; the alias just keeps the fixtures
+    // realistic when the mcast module is compiled out.
+    #[cfg(not(feature = "multicast"))]
+    const REPL_TABLE: &str = "ingress.mcast.mcast_replication_v6";
+
+    #[test]
+    fn parse_dump_standalone_uds_wrapped_response() {
+        // Round-trip through the responder's own types so the fixture tracks
+        // softnpu_lib's wire format rather than a hand-written copy of it.
+        let mut tables = BTreeMap::new();
+        tables.insert(
+            REPL_TABLE.to_string(),
+            vec![TableEntry {
+                action_id: "set_port_bitmap".to_string(),
+                keyset_data: vec![255, 4, 0, 1],
+                parameter_data: vec![2, 0],
+            }],
+        );
+        let response =
+            serde_json::to_string(&ManagementResponse::DumpResponse(tables))
+                .unwrap();
+        let tables = parse_dump(&response).unwrap();
+        let entries = tables.get(REPL_TABLE).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].keyset_data, vec![255, 4, 0, 1]);
+    }
+
+    #[test]
+    fn parse_dump_propolis_uart_bare_map() {
+        // The propolis UART responder writes the bare table map with a
+        // trailing newline. This fixture stays hand-written: the producer
+        // lives in the propolis repo.
+        let response = format!(
+            "{{\"{REPL_TABLE}\":[{{\"action_id\":\"set_port_bitmap\",\"keyset_data\":[1],\"parameter_data\":[]}}],\"ingress.nat.nat_v4\":[]}}\n"
+        );
+        let tables = parse_dump(&response).unwrap();
+        assert_eq!(tables.len(), 2);
+        assert_eq!(tables.get(REPL_TABLE).unwrap()[0].keyset_data, vec![1]);
+        assert!(tables.get("ingress.nat.nat_v4").unwrap().is_empty());
+
+        // An empty map still parses via the bare-map fallback.
+        assert!(parse_dump("{}\n").unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_dump_malformed_rejected() {
+        assert!(parse_dump("not json").is_err());
+        // Models `read_uart` returning on n == 0 or an empty UDS datagram.
+        assert!(parse_dump("").is_err());
+        // A wrapped response that is not a dump must fall through to the
+        // bare-map parse and fail there, not yield garbage.
+        assert!(parse_dump(r#"{"RadixResponse":8}"#).is_err());
     }
 }

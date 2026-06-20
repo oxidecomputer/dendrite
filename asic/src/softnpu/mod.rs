@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use slog::{Logger, o};
+use slog::{Logger, debug, o};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -150,6 +150,57 @@ impl Handle {
     }
 
     pub fn fini(&self) {}
+
+    /// Rewrite the replication entries refreshed after a membership change.
+    ///
+    /// SoftNPU operates on a generic port bitmap data structure for each
+    /// replication entry at write time, so a membership change must re-emit
+    /// every affected entry.
+    ///
+    /// SoftNPU has no in-place table update, so each entry is removed and
+    /// re-added with the recomputed bitmaps.
+    #[cfg(feature = "multicast")]
+    fn rewrite_replication_entries(
+        &self,
+        entries: Vec<mcast::RefreshedReplEntry>,
+    ) {
+        use softnpu_lib::{TableAdd, TableRemove};
+
+        for entry in entries {
+            // Logged at debug so the recomputed membership is visible in a
+            // release build, where trace is compiled out. The bitmaps are the
+            // post-refresh output ports, so an empty bitmap here is the signal
+            // that a group has no members to replicate to.
+            debug!(
+                self.log,
+                "refreshing mcast replication entry: \
+                 external_bitmap={:#x} underlay_bitmap={:#x} rid={}",
+                entry.external_bitmap,
+                entry.underlay_bitmap,
+                entry.rid
+            );
+            let remove = ManagementRequest::TableRemove(TableRemove {
+                keyset_data: entry.keyset.clone(),
+                table: mcast::MCAST_REPLICATION_V6_TABLE.to_string(),
+            });
+            mgmt::write(remove, &self.mgmt_config);
+
+            let parameter_data = [
+                entry.external_bitmap.to_le_bytes().as_slice(),
+                entry.underlay_bitmap.to_le_bytes().as_slice(),
+                entry.rid.to_le_bytes().as_slice(),
+            ]
+            .concat();
+
+            let add = ManagementRequest::TableAdd(TableAdd {
+                table: mcast::MCAST_REPLICATION_V6_TABLE.to_string(),
+                action: mcast::SET_PORT_BITMAP_ACTION.to_string(),
+                keyset_data: entry.keyset,
+                parameter_data,
+            });
+            mgmt::write(add, &self.mgmt_config);
+        }
+    }
 }
 
 #[cfg(feature = "multicast")]
@@ -175,8 +226,15 @@ impl AsicMulticastOps for Handle {
             self.log,
             "adding port {port} to multicast group {group_id}"
         );
+        // Hold the lock across the refresh and rewrite so the recomputed
+        // bitmap snapshot and its table writes are atomic with respect to a
+        // concurrent membership change. The rewrite touches only
+        // `mgmt_config`, not `mc_data`, so there's no re-entrant lock.
         let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_port_add(group_id, port, rid, level1_excl_id)
+        mc_data.domain_port_add(group_id, port, rid, level1_excl_id)?;
+        let refreshed = mc_data.refresh_params_for_group(group_id);
+        self.rewrite_replication_entries(refreshed);
+        Ok(())
     }
 
     fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
@@ -185,7 +243,10 @@ impl AsicMulticastOps for Handle {
             "removing port {port} from multicast group {group_id}"
         );
         let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_port_remove(group_id, port)
+        mc_data.domain_port_remove(group_id, port)?;
+        let refreshed = mc_data.refresh_params_for_group(group_id);
+        self.rewrite_replication_entries(refreshed);
+        Ok(())
     }
 
     fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
@@ -272,7 +333,7 @@ impl AsicOps for Handle {
         let asic_port_id = self.port_to_asic_id(port_hdl)?;
         let tx = self.update_tx.lock().unwrap();
         if let Some(tx) = tx.as_ref() {
-            // When a port is enabled in softnpu, it automatically comes online.
+            // When a port is enabled in SoftNPU, it automatically comes online.
             // When switching between enabled and disabled, we send the main body
             // of dpd the PortUpdate events we would expect to see on real hardware.
             let present =
@@ -298,7 +359,7 @@ impl AsicOps for Handle {
                 }
             }
         } else {
-            slog::debug!(self.log, "no PortUpdate handler registered");
+            debug!(self.log, "no PortUpdate handler registered");
         }
         Ok(())
     }
