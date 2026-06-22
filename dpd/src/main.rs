@@ -619,6 +619,9 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
     #[cfg(feature = "tokio-console")]
     console_subscriber::init();
     table::init(&mut switch).context("failed to initialize tables")?;
+    route::init_freemaps(&switch)
+        .await
+        .context("failed to initialize route freemaps")?;
 
     // Load the links to be auto-created.
     //
