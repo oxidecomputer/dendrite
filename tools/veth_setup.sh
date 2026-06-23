@@ -4,7 +4,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/
 #
-# Copyright 2025 Oxide Computer Company
+# Copyright 2026 Oxide Computer Company
 
 function config_veth() {
     /usr/bin/ip link set dev $1 mtu 10240 up
@@ -19,7 +19,9 @@ function config_veth() {
 function add_port() {
     veth0="veth$(($1*2))"
     veth1="veth$(($1*2+1))"
-    echo Adding $veth0 and $veth1 for port $1
+    if [ "${VETH_VERBOSE:-1}" -eq 1 ]; then
+        echo "Adding $veth0 and $veth1 for port $1"
+    fi
 
     if ! /usr/bin/ip link show $veth0 &> /dev/null; then
 	    /usr/bin/ip link add name $veth0 type veth peer name $veth1 &> /dev/null
@@ -39,7 +41,11 @@ else
 	ports=16
 fi
 
-echo "building veths for $ports ports"
+if [ "${VETH_VERBOSE:-1}" -eq 1 ]; then
+    echo "building veths for $ports ports"
+else
+    echo "veth setup: ports 0..$ports plus 125"
+fi
 
 port_list="`seq 0 $ports` 125"
 for port in $port_list; do

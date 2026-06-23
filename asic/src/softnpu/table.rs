@@ -112,6 +112,26 @@ impl TableOps<Handle> for Table {
         trace!(hdl.log, "match_data:\n{:#?}", match_data);
         trace!(hdl.log, "action_data:\n{:#?}", action_data);
 
+        // Route tables are idx-only in sidecar-lite and route_ttl_is_1
+        // is ignored here.
+        //
+        // TODO: remove compat once https://github.com/oxidecomputer/sidecar-lite/pull/152
+        // is merged and sidecar-lite updates route keys/actions accordingly.
+        let is_route_table = matches!(
+            self.type_,
+            TableType::RouteFwdIpv4 | TableType::RouteFwdIpv6
+        );
+        if is_route_table {
+            if route_ttl_is_1(&match_data.fields) {
+                trace!(hdl.log, "skipping ttl==1 route entry for {name}");
+                return Ok(());
+            }
+            if action_data.action == "ttl_exceeded" {
+                trace!(hdl.log, "skipping ttl_exceeded action for {name}");
+                return Ok(());
+            }
+        }
+
         let keyset_data = keyset_data(match_data.fields, self.type_);
 
         let (action, parameter_data) = match (
@@ -428,6 +448,22 @@ impl TableOps<Handle> for Table {
                 }
                 ("rewrite", params)
             }
+            #[cfg(feature = "multicast")]
+            (TableType::PortMacAddressMcast, "rewrite") => {
+                let mut params = Vec::new();
+                for arg in action_data.args {
+                    match arg.value {
+                        ValueTypes::U64(v) => {
+                            let mac = v.to_le_bytes();
+                            params.extend_from_slice(&mac[0..6]);
+                        }
+                        ValueTypes::Ptr(v) => {
+                            params.extend_from_slice(v.as_slice());
+                        }
+                    }
+                }
+                ("rewrite", params)
+            }
             (TableType::NatIngressIpv4, "forward_ipv4_to")
             | (TableType::NatIngressIpv6, "forward_ipv6_to")
             | (TableType::AttachedSubnetIpv4, "forward_to_v4")
@@ -573,6 +609,15 @@ impl TableOps<Handle> for Table {
         trace!(hdl.log, "table: {name}");
         trace!(hdl.log, "match_data:\n{:#?}", match_data);
 
+        let is_route_table = matches!(
+            self.type_,
+            TableType::RouteFwdIpv4 | TableType::RouteFwdIpv6
+        );
+        if is_route_table && route_ttl_is_1(&match_data.fields) {
+            trace!(hdl.log, "skipping ttl==1 route entry delete for {name}");
+            return Ok(());
+        }
+
         let keyset_data = keyset_data(match_data.fields, self.type_);
 
         trace!(hdl.log, "sending request to softnpu");
@@ -632,10 +677,12 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: TableType) -> Vec<u8> {
                         serialize_value_type(&x, &mut data);
                         keyset_data.extend_from_slice(&data[..2]);
                     }
-                    TableType::RouteIdxIpv4 => {
-                        // "idx" => exact => bit<16>
-                        serialize_value_type(&x, &mut data);
-                        keyset_data.extend_from_slice(&data[..2]);
+                    TableType::RouteFwdIpv4 | TableType::RouteFwdIpv6 => {
+                        // sidecar-lite route keys are idx-only.
+                        if m.name == "idx" {
+                            serialize_value_type(&x, &mut data);
+                            keyset_data.extend_from_slice(&data[..2]);
+                        }
                     }
                     TableType::NatIngressIpv4 => {
                         // "dst_addr" => hdr.ipv4.dst: exact => bit<32>
@@ -724,4 +771,19 @@ fn serialize_value_type_be(x: &ValueTypes, data: &mut Vec<u8>) {
             data.extend_from_slice(v.as_slice());
         }
     }
+}
+
+fn route_ttl_is_1(fields: &[MatchEntryField]) -> bool {
+    fields.iter().any(|field| {
+        if field.name != "route_ttl_is_1" {
+            return false;
+        }
+        match &field.value {
+            MatchEntryValue::Value(ValueTypes::U64(v)) => *v != 0,
+            MatchEntryValue::Value(ValueTypes::Ptr(v)) => {
+                v.first().is_some_and(|b| *b != 0)
+            }
+            _ => false,
+        }
+    })
 }

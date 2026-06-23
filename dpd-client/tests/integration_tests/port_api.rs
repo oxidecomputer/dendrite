@@ -519,7 +519,7 @@ async fn test_reset_tag() -> TestResult {
     addr_compare(vec![ipv4a, ipv4b], l).unwrap();
 
     // Send a reset with the wrong tag, and all the addresses should be set
-    switch.client.reset_all_tagged("fail").await.unwrap();
+    switch.client.reset_all_tagged(NON_MATCHING_TEST_TAG).await.unwrap();
 
     let l = switch
         .client
@@ -539,7 +539,7 @@ async fn test_reset_tag() -> TestResult {
     addr_compare(vec![ipv4a, ipv4b], l).unwrap();
 
     // Send a reset with the correct tag, and all the addresses should be gone
-    switch.client.reset_all_tagged("test").await.unwrap();
+    switch.client.reset_all_tagged(DEFAULT_TEST_TAG).await.unwrap();
     assert!(
         switch
             .client

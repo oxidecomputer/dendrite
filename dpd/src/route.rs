@@ -104,6 +104,53 @@
 //    - There is a lot of almost-duplicated code throughout the stack to support
 //      both IPv4 and IPv6 routes.  We should look at using traits and/or
 //      generics to coalesce common functionality into shared implementations.
+//
+// TTL handling
+// ------------
+// Routed packets arriving with TTL==1 (IPv4) or hop_limit==1 (IPv6) must
+// not be forwarded normally. The dataplane generates an ICMP time-exceeded
+// (v4) or ICMPv6 time-exceeded (v6) response back to the sender. The tree
+// enforces this at multiple sites:
+//
+//   - IPv4 unicast (route_ipv4.rs + sidecar.p4): compound exact-match key
+//     `(idx, route_ttl_is_1)` on the route table installs separate actions
+//     for the TTL==1 and TTL>1 rows.
+//   - IPv6 multicast (sidecar.p4, MulticastRouter6): inline `hop_limit==1`
+//     check in the apply block generates time-exceeded after the lookup.
+//   - IPv6 unicast (route_ipv6.rs + sidecar.p4): per-prefix `skip_ttl` bit
+//     on the `index` action gates an inline `ICMP_ERROR_SETUP` invocation
+//     in the apply block (same pattern as v6 multicast).
+//
+// Service port handling
+// ---------------------
+// Routes whose target is `PortId::Internal(_)` (the CPU/AUX/PCIe port that
+// delivers to dpd userspace) forward packets even when TTL==1, bypassing
+// the normal TTL exceeded handling. Delivery to the local switch's
+// userspace is not "forwarding" in the RFC sense. The packet has reached
+// its destination, so TTL/hop_limit semantics do not apply. Without this,
+// external traffic addressed to a switch-internal service that arrives
+// with TTL==1 (e.g. after a long path) would get an ICMP time-exceeded
+// reply instead of being delivered to the userspace handler.
+//
+// The discriminator is the type-level `PortId::Internal(_)` variant. The
+// runtime `asic_port_id` is an opaque dpd-internal value whose numeric
+// mapping to the service port varies by build and model configuration.
+//
+// v4/v6 encoding asymmetry
+// --------------------------
+// v4 uses a compound table key `(idx, route_ttl_is_1)` and installs
+// different per-target actions per TTL class. This supports ECMP groups
+// that mix service-port and non-service-port targets.
+//
+// v6 uses a per-prefix `skip_ttl` bit on the `index` action plus an
+// inline TTL-exceeded branch in the apply block. The bit gates whether
+// the inline path or the normal route table runs.
+//
+// Trade-off in the v6 encoding: v6 ECMP groups cannot mix service-port
+// targets with non-service-port targets, because the per-prefix bit
+// cannot represent both behaviors simultaneously. `replace_route_targets`
+// rejects such mixed sets up front. v4 has no such restriction because
+// its compound key discriminates per-target.
 
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
@@ -126,6 +173,28 @@ use oxnet::{IpNet, Ipv4Net, Ipv6Net};
 // These are the largest numbers of targets supported for a single route
 const MAX_TARGETS_IPV4: usize = 32;
 const MAX_TARGETS_IPV6: usize = 32;
+
+// IPv4 route indices map to two physical forward-table entries because the
+// route table still keys on `(idx, route_ttl_is_1)` and installs distinct
+// forwarding vs. ttl_exceeded rows. IPv6 routes map to a single entry.
+// TTL=1 is handled inline in the v6 ingress apply block, gated by a
+// per-prefix `skip_ttl` bit on the index action.
+const ROUTE_FWD_ENTRIES_PER_ROUTE_V4: u32 = 2;
+const ROUTE_FWD_ENTRIES_PER_ROUTE_V6: u32 = 1;
+
+/// Convert a P4 forward-table size to freemap size, given the number of
+/// physical entries each logical route consumes.
+fn freemap_size_from_table(
+    table_size: u32,
+    entries_per_route: u32,
+) -> DpdResult<u16> {
+    let logical_routes = table_size / entries_per_route;
+    u16::try_from(logical_routes).map_err(|_| {
+        DpdError::Invalid(format!(
+            "route table size {table_size} exceeds maximum supported"
+        ))
+    })
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Route {
@@ -263,6 +332,35 @@ pub struct RouteData {
 }
 
 impl RouteData {
+    fn new(log: &slog::Logger, asic_hdl: &asic::Handle) -> DpdResult<Self> {
+        let mut v4_freemap = freemap::FreeMap::new(log, "route_ipv4");
+        let mut v6_freemap = freemap::FreeMap::new(log, "route_ipv6");
+
+        let v4_table_size =
+            table::Table::new(asic_hdl, TableType::RouteFwdIpv4)?.size();
+        let v6_table_size =
+            table::Table::new(asic_hdl, TableType::RouteFwdIpv6)?.size();
+
+        v4_freemap.maybe_init(freemap_size_from_table(
+            v4_table_size,
+            ROUTE_FWD_ENTRIES_PER_ROUTE_V4,
+        )?);
+        v6_freemap.maybe_init_with_low(
+            1,
+            freemap_size_from_table(
+                v6_table_size,
+                ROUTE_FWD_ENTRIES_PER_ROUTE_V6,
+            )?,
+        );
+
+        Ok(RouteData {
+            v4: BTreeMap::new(),
+            v6: BTreeMap::new(),
+            v4_freemap,
+            v6_freemap,
+        })
+    }
+
     pub fn insert(
         &mut self,
         subnet: impl Into<IpNet>,
@@ -364,18 +462,38 @@ fn finalize_route(
             entry.index,
             entry.slots,
         ),
-        IpNet::V6(subnet) => table::route_ipv6::add_route_index(
-            switch,
-            &subnet,
-            entry.index,
-            entry.slots,
-        ),
+        IpNet::V6(subnet) => {
+            // If any target for this prefix routes to the user-space
+            // service port, suppress the dataplane TTL=1 exception so
+            // userspace still receives the packet. Mixed sets are
+            // rejected upstream, so any/all here are equivalent.
+            let skip_ttl = entry
+                .targets
+                .iter()
+                .any(|t| matches!(t.route.port_id, PortId::Internal(_)));
+            table::route_ipv6::add_route_index(
+                switch,
+                &subnet,
+                entry.index,
+                entry.slots,
+                skip_ttl,
+            )
+        }
     } {
         Ok(_) => {
             route_data.insert(subnet, entry);
             Ok(())
         }
-        Err(_) => cleanup_route(switch, route_data, None, entry),
+        Err(e) => {
+            // `cleanup_route` returns `Ok` unconditionally on
+            // best-effort cleanup. Swallowing it here would make the
+            // outer call appear to succeed when the LPM install
+            // actually failed, leaving dpd's in-memory route state
+            // and the P4 tables out of sync. Free the resources but
+            // propagate the original error.
+            let _ = cleanup_route(switch, route_data, None, entry);
+            Err(e)
+        }
     }
 }
 
@@ -421,6 +539,30 @@ fn replace_route_targets(
         return Ok(());
     }
 
+    // v6 prefixes drive TTL=1 handling per-prefix via the `skip_ttl` bit
+    // on the index action. Mixed sets (some targets routing to the
+    // service port, some not) would cause hash-selected non-service
+    // targets to silently skip the dataplane TTL exception. Reject up
+    // front so the bit's semantics stay coherent across all ECMP members.
+    // Discriminate by `PortId::Internal`, which is the type-level CPU
+    // port identity. The `asic_port_id` is an opaque dpd-internal
+    // value whose mapping to the service port varies by build.
+    if subnet.is_ipv6() {
+        let any_service = targets
+            .iter()
+            .any(|t| matches!(t.route.port_id, PortId::Internal(_)));
+        let all_service = targets
+            .iter()
+            .all(|t| matches!(t.route.port_id, PortId::Internal(_)));
+        if any_service && !all_service {
+            let _ = finalize_route(switch, route_data, subnet, old_entry);
+            return Err(DpdError::InvalidRoute(format!(
+                "ipv6 prefix {subnet}: ECMP targets cannot mix the \
+                 service port with normal egress ports"
+            )));
+        }
+    }
+
     // Allocate space in the p4 table for the new set of targets.
     let slots = targets.len() as u8;
     let is_ipv4 = subnet.is_ipv4();
@@ -448,6 +590,7 @@ fn replace_route_targets(
     let mut idx = new_entry.index;
 
     for target in targets {
+        let is_service = matches!(target.route.port_id, PortId::Internal(_));
         if let Err(e) = match target.route.tgt_ip {
             IpAddr::V4(tgt_ip) => table::route_ipv4::add_route_target(
                 switch,
@@ -455,6 +598,7 @@ fn replace_route_targets(
                 target.asic_port_id,
                 tgt_ip,
                 target.route.vlan_id,
+                is_service,
             ),
             IpAddr::V6(tgt_ip) => {
                 if subnet.is_ipv4() {
@@ -464,6 +608,7 @@ fn replace_route_targets(
                         target.asic_port_id,
                         tgt_ip,
                         target.route.vlan_id,
+                        is_service,
                     )
                 } else {
                     table::route_ipv6::add_route_target(
@@ -516,19 +661,10 @@ fn add_route_locked(
 ) -> DpdResult<()> {
     info!(switch.log, "adding route {subnet} -> {:?}", route.tgt_ip);
 
-    // Verify that the slot freelist has been initialized
-    let max_targets;
-    if subnet.is_ipv4() {
-        max_targets = MAX_TARGETS_IPV4;
-        route_data
-            .v4_freemap
-            .maybe_init(switch.table_size(TableType::RouteFwdIpv4)? as u16);
-    } else {
-        max_targets = MAX_TARGETS_IPV6;
-        route_data
-            .v6_freemap
-            .maybe_init(switch.table_size(TableType::RouteFwdIpv6)? as u16);
-    }
+    // Freemap sizing is established during RouteData construction so the
+    // delete/recovery paths can safely run before the first add.
+    let max_targets =
+        if subnet.is_ipv4() { MAX_TARGETS_IPV4 } else { MAX_TARGETS_IPV6 };
 
     // Get the old set of targets that we'll be adding to
     let mut targets =
@@ -587,7 +723,7 @@ async fn set_route(
         if entry.targets.len() == 1 && entry.targets[0].route == route {
             Ok(())
         } else if !replace {
-            Err(DpdError::Exists("route {cidr} already exists".into()))
+            Err(DpdError::Exists(format!("route {subnet} already exists")))
         } else {
             info!(switch.log, "replacing subnet {subnet}");
             let target = vec![NextHop { asic_port_id, route }];
@@ -904,11 +1040,9 @@ pub async fn reset(switch: &Switch) -> DpdResult<()> {
     Ok(())
 }
 
-pub fn init(log: &slog::Logger) -> RouteData {
-    RouteData {
-        v4: BTreeMap::new(),
-        v6: BTreeMap::new(),
-        v4_freemap: freemap::FreeMap::new(log, "route_ipv4"),
-        v6_freemap: freemap::FreeMap::new(log, "route_ipv6"),
-    }
+pub fn init(
+    log: &slog::Logger,
+    asic_hdl: &asic::Handle,
+) -> DpdResult<RouteData> {
+    RouteData::new(log, asic_hdl)
 }
