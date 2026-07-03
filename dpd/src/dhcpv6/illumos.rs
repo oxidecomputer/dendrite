@@ -71,7 +71,7 @@ async fn restart_ndpd(log: &Logger) {
 }
 
 async fn restart_ndpd_once() -> anyhow::Result<()> {
-    let scf = Scf::connect_global_zone()
+    let scf = Scf::connect_current_zone()
         .context("connecting to SCF in current zone")?;
     let mut instance = scf
         .instance_from_fmri(NDPD_FMRI)

@@ -42,7 +42,6 @@ packet = { path = "packet" }
 pcap = { path = "pcap" }
 
 # oxide dependencies from github
-scuffle = { git = "https://github.com/oxidecomputer/scuffle", version = "0.1.0", features = ["smf-by-instance"] }
 internal-dns-resolver = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 internal-dns-types = { git = "https://github.com/oxidecomputer/omicron", branch = "main" }
 ispf = { git = "https://github.com/oxidecomputer/ispf" }
@@ -77,9 +76,9 @@ dropshot-api-manager = "0.7.2"
 dropshot-api-manager-types = "0.7.2"
 expectorate = "1"
 futures = "0.3"
-http = "1.4.0"
+http = "1.4.2"
 humantime = "2.3"
-iddqd = "0.4.2"
+iddqd = "0.4.5"
 kstat-rs = "0.2.4"
 lazy_static = "1.5"
 libc = "0.2"
@@ -90,30 +89,31 @@ oxide-tokio-rt = "0.1.4"
 parking_lot = "0.12"
 pretty_assertions = "1.4"
 proc-macro2 = "1.0"
-progenitor = "0.13"
+progenitor = "0.14"
 rand = "0.9"
 regex = "1.12"
 regress = "0.11"
 reqwest = { version = "0.13", default-features = false }
 reqwest012 = { package = "reqwest", version = "0.12", default-features = false }
 schemars = "0.8"
+scuffle = { version = "0.1.0", features = ["smf-by-instance"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 signal-hook = "0.4"
-signal-hook-tokio = { version = "0.3", features = [ "futures-v0_3" ] }
+signal-hook-tokio = { version = "0.4", features = [ "futures-v0_3" ] }
 slog = { version = "2.7", features = [ "release_max_level_debug", "max_level_trace" ] }
 slog-async = "2.8"
 slog-bunyan = "2.5"
 slog-term = "2.9"
 socket2 = { version = "0.6", features = ["all"] }
-strum = { version = "0.27", features = [ "derive" ] }
+strum = { version = "0.28", features = [ "derive" ] }
 syn = { version = "2.0", features = ["extra-traits"]}
 tabwriter = { version = "1", features = ["ansi_formatting"] }
-thiserror = "1.0"
+thiserror = "2.0"
 # pinned to match omicron main (tokio-rs/tokio#8056)
 tokio = "1.52.1"
-toml = "0.9"
+toml = "1.0"
 usdt = "0.6"
 uuid = { version = "1.10", features = [ "v4", "serde" ] }
 internet-checksum = "0.2"
