@@ -1877,7 +1877,7 @@ control MulticastIngress (
 		} else if (hdr.geneve.isValid() && hdr.inner_ipv6.isValid()) {
 			// Check if the inner destination address is an IPv6 multicast
 			// address (ff00::/8). Apply source filtering for both SSM
-			// (ff3x::/16) and ASM ranges.
+			// (ff3x::/32) and ASM ranges.
 			if (hdr.inner_ipv6.dst_addr[127:120] == 8w0xff) {
 				mcast_source_filter_ipv6.apply();
 			} else {
@@ -2373,14 +2373,37 @@ control Egress(
 		} else if (is_mcast == true) {
 			mcast_ctr.count(eg_intr_md.egress_port);
 
+			// Count each multicast replica by type, one simple gateway
+			// per condition:
+			//
+			//  - link-local (ff02::/16 outer dst) — never replicated by
+			//    the PRE; it arrives with egress_rid == 0.
+			//  - egress_rid > 0, Geneve hdr still valid — bound for an
+			//    underlay port.
+			//  - egress_rid > 0, no Geneve hdr — decapped at ingress
+			//    (external-only groups) or by the mcast_egress control
+			//    above (bifurcated, external + underlay members), and
+			//    bound for an external member.
+			//
+			// The mcast_tag option is not read here: a replica headed
+			// for the underlay still carries its encapsulation whether
+			// or not the group is bifurcated.
+			//
+			// The rid arms don't test !is_link_local_ipv6_mcast: the
+			// compiler doesn't carry the negation across gateways.
+			// They don't need to either, since scope 2 is refused at
+			// group creation, so a replica never carries a link-local
+			// outer destination.
+			//
+			// The IngressDeparser above notes the same compiler limitation.
 			if (is_link_local_ipv6_mcast) {
 				link_local_mcast_ctr.count(eg_intr_md.egress_port);
-			} else if (hdr.geneve.isValid()) {
-				external_mcast_ctr.count(eg_intr_md.egress_port);
-			} else if (hdr.geneve.isValid() &&
-			           hdr.geneve_opts.oxg_mcast.isValid() &&
-			           hdr.geneve_opts.oxg_mcast.mcast_tag == MULTICAST_TAG_UNDERLAY) {
+			}
+			if (is_egress_rid_mcast && hdr.geneve.isValid()) {
 				underlay_mcast_ctr.count(eg_intr_md.egress_port);
+			}
+			if (is_egress_rid_mcast && !hdr.geneve.isValid()) {
+				external_mcast_ctr.count(eg_intr_md.egress_port);
 			}
 		} else {
 			// non-multicast packets should bypass the egress
