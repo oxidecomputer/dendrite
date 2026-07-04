@@ -17,7 +17,7 @@ use anyhow::anyhow;
 use dpd_client::{Error, types};
 use futures::TryStreamExt;
 use oxnet::MulticastMac;
-use packet::{Endpoint, eth, geneve, ipv4, ipv6, udp};
+use packet::{Endpoint, eth, geneve, ipv4, ipv6, sidecar, udp};
 
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
 const MULTICAST_TEST_IPV6: Ipv6Addr =
@@ -2147,9 +2147,27 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
     ];
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
+    let port_label_egress1 = switch.port_label(egress1).unwrap();
+    let port_label_egress2 = switch.port_label(egress2).unwrap();
 
     let ctr_baseline_ingress =
         switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
+    let ctr_baseline_external_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast_underlay"))
+        .await
+        .unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
@@ -2162,6 +2180,44 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
     )
     .await
     .unwrap();
+
+    // Decapped replicas to external members must be attributed to the
+    // external counter, not the underlay one.
+    check_counter_incremented(
+        switch,
+        &port_label_egress1,
+        ctr_baseline_external_egress1,
+        1,
+        Some("multicast_external"),
+    )
+    .await
+    .unwrap();
+    check_counter_incremented(
+        switch,
+        &port_label_egress2,
+        ctr_baseline_external_egress2,
+        1,
+        Some("multicast_external"),
+    )
+    .await
+    .unwrap();
+
+    let ctr_underlay_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_underlay_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    assert_eq!(
+        ctr_underlay_egress1, ctr_baseline_underlay_egress1,
+        "decapped replicas must not hit the underlay counter"
+    );
+    assert_eq!(
+        ctr_underlay_egress2, ctr_baseline_underlay_egress2,
+        "decapped replicas must not hit the underlay counter"
+    );
 
     cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
         .await
@@ -2277,9 +2333,27 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
     ];
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
+    let port_label_egress3 = switch.port_label(egress3).unwrap();
+    let port_label_egress4 = switch.port_label(egress4).unwrap();
 
     let ctr_baseline_ingress =
         switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
+    let ctr_baseline_underlay_egress3 = switch
+        .get_counter(&port_label_egress3, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay_egress4 = switch
+        .get_counter(&port_label_egress4, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress3 = switch
+        .get_counter(&port_label_egress3, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress4 = switch
+        .get_counter(&port_label_egress4, Some("multicast_external"))
+        .await
+        .unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
@@ -2292,6 +2366,44 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
     )
     .await
     .unwrap();
+
+    // Encapped replicas to underlay members must be attributed to the
+    // underlay counter, not the external one.
+    check_counter_incremented(
+        switch,
+        &port_label_egress3,
+        ctr_baseline_underlay_egress3,
+        1,
+        Some("multicast_underlay"),
+    )
+    .await
+    .unwrap();
+    check_counter_incremented(
+        switch,
+        &port_label_egress4,
+        ctr_baseline_underlay_egress4,
+        1,
+        Some("multicast_underlay"),
+    )
+    .await
+    .unwrap();
+
+    let ctr_external_egress3 = switch
+        .get_counter(&port_label_egress3, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_external_egress4 = switch
+        .get_counter(&port_label_egress4, Some("multicast_external"))
+        .await
+        .unwrap();
+    assert_eq!(
+        ctr_external_egress3, ctr_baseline_external_egress3,
+        "underlay-tagged replicas must not hit the external counter"
+    );
+    assert_eq!(
+        ctr_external_egress4, ctr_baseline_external_egress4,
+        "underlay-tagged replicas must not hit the external counter"
+    );
 
     cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
         .await
@@ -2420,9 +2532,45 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     ];
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
+    let port_label_egress1 = switch.port_label(egress1).unwrap();
+    let port_label_egress2 = switch.port_label(egress2).unwrap();
+    let port_label_egress3 = switch.port_label(egress3).unwrap();
+    let port_label_egress4 = switch.port_label(egress4).unwrap();
 
     let ctr_baseline_ingress =
         switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
+    let ctr_baseline_underlay_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay_egress3 = switch
+        .get_counter(&port_label_egress3, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay_egress4 = switch
+        .get_counter(&port_label_egress4, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress3 = switch
+        .get_counter(&port_label_egress3, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress4 = switch
+        .get_counter(&port_label_egress4, Some("multicast_external"))
+        .await
+        .unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
@@ -2436,10 +2584,165 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     .await
     .unwrap();
 
+    // Still-encapsulated replicas to underlay members count as underlay,
+    // not external, for UNDERLAY_EXTERNAL tagged groups.
+    check_counter_incremented(
+        switch,
+        &port_label_egress3,
+        ctr_baseline_underlay_egress3,
+        1,
+        Some("multicast_underlay"),
+    )
+    .await
+    .unwrap();
+    check_counter_incremented(
+        switch,
+        &port_label_egress4,
+        ctr_baseline_underlay_egress4,
+        1,
+        Some("multicast_underlay"),
+    )
+    .await
+    .unwrap();
+
+    // Decapped replicas to external members count as external.
+    check_counter_incremented(
+        switch,
+        &port_label_egress1,
+        ctr_baseline_external_egress1,
+        1,
+        Some("multicast_external"),
+    )
+    .await
+    .unwrap();
+    check_counter_incremented(
+        switch,
+        &port_label_egress2,
+        ctr_baseline_external_egress2,
+        1,
+        Some("multicast_external"),
+    )
+    .await
+    .unwrap();
+
+    let ctr_external_egress3 = switch
+        .get_counter(&port_label_egress3, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_external_egress4 = switch
+        .get_counter(&port_label_egress4, Some("multicast_external"))
+        .await
+        .unwrap();
+    assert_eq!(
+        ctr_external_egress3, ctr_baseline_external_egress3,
+        "underlay replicas must not hit the external counter"
+    );
+    assert_eq!(
+        ctr_external_egress4, ctr_baseline_external_egress4,
+        "underlay replicas must not hit the external counter"
+    );
+
+    let ctr_underlay_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_underlay_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    assert_eq!(
+        ctr_underlay_egress1, ctr_baseline_underlay_egress1,
+        "decapped replicas must not hit the underlay counter"
+    );
+    assert_eq!(
+        ctr_underlay_egress2, ctr_baseline_underlay_egress2,
+        "decapped replicas must not hit the underlay counter"
+    );
+
     cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
         .await
         .unwrap();
     cleanup_test_group(switch, MULTICAST_NAT_IP.into(), TEST_TAG).await
+}
+
+/// Link-local replicas reach egress with a zero replication id, so the
+/// counter block reaches them through `is_link_local_ipv6_mcast` rather
+/// than `egress_rid`. Both the underlay and external conditions exclude
+/// that case, and this checks the exclusion remains after compilation.
+#[tokio::test]
+#[ignore]
+async fn test_link_local_multicast_counter_attribution() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let egress = PhysPort(10);
+
+    let src =
+        Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0101::4", 3333)
+            .unwrap();
+    let dst = Endpoint::parse("33:33:00:00:00:01", "ff02::1", 4444).unwrap();
+
+    // Sourced from userspace so the packet egresses without replication,
+    // mirroring test_link_local_multicast_outbound in route_ipv6.
+    let mut send = common::gen_udp_packet(src, dst);
+    common::add_sidecar_hdr(
+        switch,
+        &mut send,
+        sidecar::SC_FWD_FROM_USERSPACE,
+        NO_PORT,
+        egress,
+        None,
+    );
+    let test_pkt = TestPacket { packet: Arc::new(send), port: SERVICE_PORT };
+    let expected_pkts = vec![TestPacket {
+        packet: Arc::new(common::gen_udp_packet(src, dst)),
+        port: egress,
+    }];
+
+    let port_label_egress = switch.port_label(egress).unwrap();
+
+    let ctr_baseline_link_local = switch
+        .get_counter(&port_label_egress, Some("multicast_link_local"))
+        .await
+        .unwrap();
+    let ctr_baseline_external = switch
+        .get_counter(&port_label_egress, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay = switch
+        .get_counter(&port_label_egress, Some("multicast_underlay"))
+        .await
+        .unwrap();
+
+    switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
+
+    check_counter_incremented(
+        switch,
+        &port_label_egress,
+        ctr_baseline_link_local,
+        1,
+        Some("multicast_link_local"),
+    )
+    .await
+    .unwrap();
+
+    let ctr_external = switch
+        .get_counter(&port_label_egress, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_underlay = switch
+        .get_counter(&port_label_egress, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    assert_eq!(
+        ctr_external, ctr_baseline_external,
+        "link-local replicas must not hit the external counter"
+    );
+    assert_eq!(
+        ctr_underlay, ctr_baseline_underlay,
+        "link-local replicas must not hit the underlay counter"
+    );
+
+    Ok(())
 }
 
 #[tokio::test]
