@@ -7,7 +7,9 @@
 use std::net::Ipv6Addr;
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use oxnet::Ipv6Net;
+use reqwest::StatusCode;
 
 use ::common::network::MacAddr;
 use packet::{Endpoint, ipv6, sidecar};
@@ -17,6 +19,11 @@ use crate::integration_tests::common::prelude::*;
 use packet::eth::EthQHdr;
 
 use dpd_client::types;
+
+const MAX_ROUTE_TARGET_FILLERS: u32 = 20_000;
+const SHRINK_TEST_VICTIM_TARGETS: u16 = 4;
+const SHRINK_TEST_FILLER_TARGETS: u16 = 3;
+const SHRINK_TEST_PROBE_TARGETS: u16 = SHRINK_TEST_FILLER_TARGETS - 1;
 
 #[derive(Debug)]
 struct Router {
@@ -60,6 +67,29 @@ async fn add_route(
 
     client.route_ipv6_add(&route_add).await?;
     Ok(())
+}
+
+#[cfg(test)]
+async fn validate_routes(
+    client: &dpd_client::Client,
+    cidr: &Ipv6Net,
+    expected: &[types::Ipv6Route],
+) -> TestResult {
+    if expected.is_empty() {
+        match client.route_ipv6_get(cidr).await {
+            Ok(f) => {
+                Err(anyhow!("found {} targets - expected no route", f.len()))
+            }
+            Err(_) => Ok(()),
+        }
+    } else {
+        let found = client.route_ipv6_get(cidr).await?;
+        assert_eq!(found.len(), expected.len());
+        for target in expected {
+            assert!(found.iter().any(|t| t == target));
+        }
+        Ok(())
+    }
 }
 
 fn build_route_add(
@@ -601,6 +631,162 @@ async fn test_create_and_set_semantics_v6() -> TestResult {
     assert_eq!(rt[0].tgt_ip, target33.tgt_ip);
 
     Ok(())
+}
+
+fn route_target_filler_cidr(i: u32) -> Ipv6Net {
+    let addr = Ipv6Addr::new(
+        0x3fff,
+        0xbeef,
+        ((i >> 16) & 0xffff) as u16,
+        (i & 0xffff) as u16,
+        0,
+        0,
+        0,
+        0,
+    );
+    Ipv6Net::new(addr, 64).unwrap()
+}
+
+fn shrink_test_route(
+    switch: &Switch,
+    target: u16,
+    ip_prefix: (u16, u16, u16),
+) -> types::Ipv6Route {
+    let phys_port = PhysPort(8 + (target - 1) % 16);
+    let (port_id, link_id) = switch.link_id(phys_port).unwrap();
+    types::Ipv6Route {
+        tag: "testing".into(),
+        port_id,
+        link_id,
+        tgt_ip: Ipv6Addr::new(
+            ip_prefix.0,
+            ip_prefix.1,
+            ip_prefix.2,
+            0,
+            0,
+            0,
+            0,
+            target,
+        ),
+        vlan_id: None,
+    }
+}
+
+async fn add_ipv6_route_target(
+    client: &dpd_client::Client,
+    cidr: Ipv6Net,
+    route: &types::Ipv6Route,
+) -> Result<(), dpd_client::Error<types::Error>> {
+    client.route_ipv6_add(&build_route_add(cidr, route)).await.map(|_| ())
+}
+
+async fn fill_until_ipv6_filler_alloc_unavailable(
+    switch: &Switch,
+) -> TestResult {
+    let client = &switch.client;
+    assert!(
+        SHRINK_TEST_VICTIM_TARGETS > SHRINK_TEST_FILLER_TARGETS,
+        "victim route must be wider than filler routes"
+    );
+    assert_eq!(
+        SHRINK_TEST_VICTIM_TARGETS - 1,
+        SHRINK_TEST_FILLER_TARGETS,
+        "filler width must match the victim's post-shrink width"
+    );
+    assert!(
+        SHRINK_TEST_FILLER_TARGETS > SHRINK_TEST_PROBE_TARGETS,
+        "filler route must be wider than its setup probe"
+    );
+
+    for i in 0..MAX_ROUTE_TARGET_FILLERS {
+        let cidr = route_target_filler_cidr(i);
+        let targets: Vec<_> = (1..=SHRINK_TEST_FILLER_TARGETS)
+            .map(|target| {
+                shrink_test_route(switch, target, (0x2001, 0x0db8, 0xffff))
+            })
+            .collect();
+
+        for route in targets.iter().take(SHRINK_TEST_PROBE_TARGETS as usize) {
+            add_ipv6_route_target(client, cidr, route).await.map_err(|e| {
+                anyhow!(
+                    "failed to create {SHRINK_TEST_PROBE_TARGETS}-target \
+                     IPv6 probe prefix {cidr} before proving \
+                     alloc({SHRINK_TEST_FILLER_TARGETS}) unavailable: {e:?}"
+                )
+            })?;
+        }
+
+        let probe = &targets[usize::from(SHRINK_TEST_FILLER_TARGETS - 1)];
+        match add_ipv6_route_target(client, cidr, probe).await {
+            Ok(_) => {
+                // Leave successful probes at exactly SHRINK_TEST_FILLER_TARGETS
+                // targets. Growing them further would free a reservation of
+                // that size, which is the allocation size this test is trying
+                // to prove unavailable.
+            }
+            Err(e) if e.status() == Some(StatusCode::INSUFFICIENT_STORAGE) => {
+                assert!(
+                    i > 0,
+                    "alloc({SHRINK_TEST_FILLER_TARGETS}) failed before any IPv6 fillers"
+                );
+                validate_routes(
+                    client,
+                    &cidr,
+                    &targets[..usize::from(SHRINK_TEST_PROBE_TARGETS)],
+                )
+                .await?;
+                return Ok(());
+            }
+            Err(e) => {
+                return Err(anyhow!(
+                    "unexpected error probing IPv6 \
+                     alloc({SHRINK_TEST_FILLER_TARGETS}) availability at \
+                     filler prefix {cidr}: {e:?}"
+                ));
+            }
+        }
+    }
+
+    Err(anyhow!(
+        "IPv6 route target allocation of size {SHRINK_TEST_FILLER_TARGETS} did not fail after \
+         {MAX_ROUTE_TARGET_FILLERS} filler prefixes"
+    ))
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_delete_target_shrinks_on_full_table_v6() -> TestResult {
+    let switch = &*get_switch().await;
+    let client = &switch.client;
+
+    let cidr: Ipv6Net = "3fff:dead:beef::/64".parse().unwrap();
+    let mut routes: Vec<_> = (1..=SHRINK_TEST_VICTIM_TARGETS)
+        .map(|target| {
+            shrink_test_route(switch, target, (0x2001, 0x0db8, 0xffff))
+        })
+        .collect();
+    for route in &routes {
+        add_ipv6_route_target(client, cidr, route).await?;
+    }
+    validate_routes(client, &cidr, &routes).await?;
+
+    // Prove that a fresh filler-width route-target allocation is unavailable.
+    // The old alloc-then-swap shrink path for the victim below would need
+    // exactly that allocation size before freeing the victim's existing slots.
+    fill_until_ipv6_filler_alloc_unavailable(switch).await?;
+
+    // This delete can only succeed if shrinking the target set does not need a
+    // new route-target allocation.
+    let removed = routes.remove(0);
+    client
+        .route_ipv6_delete_target(
+            &cidr,
+            &removed.port_id,
+            &removed.link_id,
+            &removed.tgt_ip,
+        )
+        .await?;
+    validate_routes(client, &cidr, &routes).await
 }
 
 #[cfg(test)]

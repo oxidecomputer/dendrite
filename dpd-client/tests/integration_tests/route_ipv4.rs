@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 use oxnet::Ipv4Net;
+use reqwest::StatusCode;
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
@@ -17,6 +18,11 @@ use packet::Endpoint;
 use packet::eth::EthQHdr;
 
 use dpd_client::types;
+
+const MAX_ROUTE_TARGET_FILLERS: u32 = 20_000;
+const SHRINK_TEST_VICTIM_TARGETS: u8 = 4;
+const SHRINK_TEST_FILLER_TARGETS: u8 = 3;
+const SHRINK_TEST_PROBE_TARGETS: u8 = SHRINK_TEST_FILLER_TARGETS - 1;
 
 struct Router {
     pub port: u16,
@@ -466,6 +472,110 @@ async fn delete_ipv4_route_target(
         .map_err(|e| anyhow!("{e}"))
 }
 
+fn route_target_filler_cidr(i: u32) -> Ipv4Net {
+    let base = u32::from(Ipv4Addr::new(172, 18, 0, 0));
+    Ipv4Net::new((base + i).into(), 32).unwrap()
+}
+
+fn shrink_test_route(
+    switch: &Switch,
+    target: u8,
+    ip_prefix: (u8, u8, u8),
+) -> types::Ipv4Route {
+    let phys_port = PhysPort(8 + u16::from(target - 1) % 16);
+    let (port_id, link_id) = switch.link_id(phys_port).unwrap();
+    types::Ipv4Route {
+        tag: "testing".into(),
+        port_id,
+        link_id,
+        tgt_ip: Ipv4Addr::new(ip_prefix.0, ip_prefix.1, ip_prefix.2, target)
+            .into(),
+        vlan_id: None,
+    }
+}
+
+async fn add_ipv4_route_target(
+    client: &dpd_client::Client,
+    cidr: Ipv4Net,
+    route: &types::Ipv4Route,
+) -> Result<(), dpd_client::Error<types::Error>> {
+    client
+        .route_ipv4_add(&build_route_update(cidr, route, false))
+        .await
+        .map(|_| ())
+}
+
+async fn fill_until_ipv4_filler_alloc_unavailable(
+    switch: &Switch,
+) -> TestResult {
+    let client = &switch.client;
+    assert!(
+        SHRINK_TEST_VICTIM_TARGETS > SHRINK_TEST_FILLER_TARGETS,
+        "victim route must be wider than filler routes"
+    );
+    assert_eq!(
+        SHRINK_TEST_VICTIM_TARGETS - 1,
+        SHRINK_TEST_FILLER_TARGETS,
+        "filler width must match the victim's post-shrink width"
+    );
+    assert!(
+        SHRINK_TEST_FILLER_TARGETS > SHRINK_TEST_PROBE_TARGETS,
+        "filler route must be wider than its setup probe"
+    );
+
+    for i in 0..MAX_ROUTE_TARGET_FILLERS {
+        let cidr = route_target_filler_cidr(i);
+        let targets: Vec<_> = (1..=SHRINK_TEST_FILLER_TARGETS)
+            .map(|target| shrink_test_route(switch, target, (203, 0, 113)))
+            .collect();
+
+        for route in targets.iter().take(SHRINK_TEST_PROBE_TARGETS as usize) {
+            add_ipv4_route_target(client, cidr, route).await.map_err(|e| {
+                anyhow!(
+                    "failed to create {SHRINK_TEST_PROBE_TARGETS}-target \
+                     IPv4 probe prefix {cidr} before proving \
+                     alloc({SHRINK_TEST_FILLER_TARGETS}) unavailable: {e:?}"
+                )
+            })?;
+        }
+
+        let probe = &targets[usize::from(SHRINK_TEST_FILLER_TARGETS - 1)];
+        match add_ipv4_route_target(client, cidr, probe).await {
+            Ok(_) => {
+                // Leave successful probes at exactly SHRINK_TEST_FILLER_TARGETS
+                // targets. Growing them further would free a reservation of
+                // that size, which is the allocation size this test is trying
+                // to prove unavailable.
+            }
+            Err(e) if e.status() == Some(StatusCode::INSUFFICIENT_STORAGE) => {
+                assert!(
+                    i > 0,
+                    "alloc({SHRINK_TEST_FILLER_TARGETS}) failed before any IPv4 fillers"
+                );
+                validate_routes(
+                    client,
+                    &cidr,
+                    &targets[..usize::from(SHRINK_TEST_PROBE_TARGETS)],
+                )
+                .await?;
+                return Ok(());
+            }
+            Err(e) => {
+                return Err(anyhow!(
+                    "unexpected error probing IPv4 \
+                     alloc({SHRINK_TEST_FILLER_TARGETS}) availability at \
+                     filler prefix {cidr}: {e:?}"
+                ));
+            }
+        }
+    }
+
+    Err(anyhow!(
+        "IPv4 route target allocation of size {SHRINK_TEST_FILLER_TARGETS} did not fail after \
+         {MAX_ROUTE_TARGET_FILLERS} filler prefixes"
+    ))
+}
+
 #[tokio::test]
 #[ignore]
 async fn test_multipath_delete() -> TestResult {
@@ -487,6 +597,33 @@ async fn test_multipath_delete() -> TestResult {
         validate_routes(client, &cidr, &routes).await?;
     }
     Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_delete_target_shrinks_on_full_table_v4() -> TestResult {
+    let switch = &*get_switch().await;
+    let client = &switch.client;
+
+    let cidr: Ipv4Net = "198.51.100.0/24".parse().unwrap();
+    let mut routes: Vec<_> = (1..=SHRINK_TEST_VICTIM_TARGETS)
+        .map(|target| shrink_test_route(switch, target, (198, 51, 100)))
+        .collect();
+    for route in &routes {
+        add_ipv4_route_target(client, cidr, route).await?;
+    }
+    validate_routes(client, &cidr, &routes).await?;
+
+    // Prove that a fresh filler-width route-target allocation is unavailable.
+    // The old alloc-then-swap shrink path for the victim below would need
+    // exactly that allocation size before freeing the victim's existing slots.
+    fill_until_ipv4_filler_alloc_unavailable(switch).await?;
+
+    // This delete can only succeed if shrinking the target set does not need a
+    // new route-target allocation.
+    let removed = routes.remove(0);
+    delete_ipv4_route_target(client, &cidr, &removed).await?;
+    validate_routes(client, &cidr, &routes).await
 }
 
 #[cfg(test)]
