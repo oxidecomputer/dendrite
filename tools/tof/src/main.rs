@@ -1,4 +1,5 @@
 mod bfa;
+mod jbay_regmap;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
@@ -376,48 +377,9 @@ impl ContextJson {
 // ============================================================================
 // Tofino2 (JBay) Register Map
 // ============================================================================
-
-// Register offset ranges within a stage (each stage is 0x80000 bytes in PCIe space)
-// Based on observed register writes and bf-asm structure
-struct RegRange {
-    start: u64,
-    end: u64,
-    name: &'static str,
-    description: &'static str,
-}
-
-const REG_MAP: &[RegRange] = &[
-    // rams.array section (SRAM row configuration and data)
-    RegRange { start: 0x00000, end: 0x04000, name: "rams.array.row[0-3]", description: "SRAM rows 0-3 config" },
-    RegRange { start: 0x04000, end: 0x08000, name: "rams.array.row[4-7]", description: "SRAM rows 4-7 config" },
-
-    // rams.map_alu (map RAM and ALU configuration)
-    RegRange { start: 0x08000, end: 0x10000, name: "rams.map_alu", description: "Map RAM / ALU config" },
-
-    // rams.match section (match logic configuration)
-    RegRange { start: 0x10000, end: 0x18000, name: "rams.match.adrdist", description: "Address distribution" },
-    RegRange { start: 0x18000, end: 0x1c000, name: "rams.match.merge", description: "Match merge config" },
-    // Gateway registers are at offset 0x1c000-0x1c800 (16 gateways * 0x80 bytes each)
-    RegRange { start: 0x1c000, end: 0x1c800, name: "gateway", description: "Gateway condition regs" },
-    RegRange { start: 0x1c800, end: 0x20000, name: "rams.match.misc", description: "Match misc config" },
-
-    // Configuration registers - this is where most per-table config lives
-    RegRange { start: 0x20000, end: 0x20800, name: "cfg_regs.table", description: "Per-table config" },
-    RegRange { start: 0x20800, end: 0x28000, name: "cfg_regs.misc", description: "Stage misc config" },
-
-    // Datapath registers
-    RegRange { start: 0x28000, end: 0x30000, name: "dp_regs", description: "Datapath registers" },
-
-    // Input crossbar and hash
-    RegRange { start: 0x30000, end: 0x40000, name: "input_xbar", description: "Input crossbar" },
-    RegRange { start: 0x40000, end: 0x50000, name: "hash", description: "Hash computation" },
-
-    // Instruction memory (VLIW actions)
-    RegRange { start: 0x50000, end: 0x60000, name: "imem", description: "Instruction memory" },
-
-    // Remaining
-    RegRange { start: 0x60000, end: 0x80000, name: "misc", description: "Miscellaneous" },
-];
+//
+// Register offsets within a stage (each stage is 0x80000 bytes in PCIe space)
+// are decoded exactly against the walle chip schema; see jbay_regmap.rs.
 
 // Memory offset regions within a stage (for D blocks, stage size is 0x2000)
 // Offset 0x000-0x5FF: SRAM regions
@@ -436,81 +398,23 @@ const MEM_MAP: &[MemRange] = &[
     MemRange { start: 0x600, end: 0x800, name: "gateway.mem" },      // Gateway memory (units 0-15)
 ];
 
-fn decode_register_name(offset: u64) -> (&'static str, &'static str) {
-    for range in REG_MAP {
-        if offset >= range.start && offset < range.end {
-            return (range.name, range.description);
-        }
+/// Format one decoded register: path, value, field breakdown, and (for imem
+/// registers) the PHV container / instruction-line annotation.
+fn format_reg_hit(hit: &jbay_regmap::RegHit, value: u32) -> String {
+    let mut out = String::new();
+    out.push_str(&hit.path.cyan().to_string());
+    if hit.reg.width > 32 {
+        out.push_str(&format!(" w{}", hit.word).dimmed().to_string());
     }
-    ("unknown", "Unknown register region")
-}
-
-// Decode gateway register offset to gateway unit number
-// Gateway registers are at 0x1c000-0x1c800 with 0x80 bytes per gateway
-fn decode_gateway_unit(offset: u64) -> Option<i32> {
-    if offset >= 0x1c000 && offset < 0x1c800 {
-        Some(((offset - 0x1c000) / 0x80) as i32)
-    } else {
-        None
+    out.push_str(&format!(" = {:08x}", value));
+    let fields = hit.decode_fields(value);
+    if !fields.is_empty() {
+        out.push_str(&format!("  {}", fields.dimmed()));
     }
-}
-
-// Gateway register layout within each 0x80-byte gateway unit:
-// Based on bf-asm gateway.cpp register writes
-#[derive(Debug)]
-enum GatewayReg {
-    Ctl,                          // gateway_table_ctl
-    MatchdataXorEn,              // gateway_table_matchdata_xor_en
-    EntryMatchdata { idx: u8, word: u8 },  // gateway_table_entry_matchdata[idx][word]
-    DataEntry { idx: u8, word: u8 },       // gateway_table_data_entry[idx][word]
-    VvEntry { idx: u8 },                   // gateway_table_vv_entry[idx]
-    Unknown(u64),
-}
-
-fn decode_gateway_reg(offset_in_unit: u64) -> GatewayReg {
-    // This is approximate based on observed patterns - exact layout may vary
-    match offset_in_unit {
-        0x00..=0x07 => GatewayReg::Ctl,
-        0x08..=0x0f => GatewayReg::MatchdataXorEn,
-        0x10..=0x2f => {
-            // Entry matchdata: 4 entries x 2 words x 4 bytes
-            let entry_offset = offset_in_unit - 0x10;
-            let idx = (entry_offset / 8) as u8;
-            let word = ((entry_offset / 4) % 2) as u8;
-            GatewayReg::EntryMatchdata { idx, word }
-        }
-        0x30..=0x4f => {
-            // Data entry: 4 entries x 2 words x 4 bytes
-            let entry_offset = offset_in_unit - 0x30;
-            let idx = (entry_offset / 8) as u8;
-            let word = ((entry_offset / 4) % 2) as u8;
-            GatewayReg::DataEntry { idx, word }
-        }
-        0x50..=0x5f => {
-            // VV entry: 4 entries
-            let idx = ((offset_in_unit - 0x50) / 4) as u8;
-            GatewayReg::VvEntry { idx }
-        }
-        _ => GatewayReg::Unknown(offset_in_unit),
+    if let Some(annot) = hit.imem_annotation(value) {
+        out.push_str(&format!("  {}", annot.yellow()));
     }
-}
-
-fn format_gateway_reg(gw_unit: i32, offset_in_unit: u64) -> String {
-    let reg = decode_gateway_reg(offset_in_unit);
-    match reg {
-        GatewayReg::Ctl => format!("gw[{}].ctl", gw_unit),
-        GatewayReg::MatchdataXorEn => format!("gw[{}].xor_en", gw_unit),
-        GatewayReg::EntryMatchdata { idx, word } => {
-            let word_name = if word == 0 { "w0" } else { "w1" };
-            format!("gw[{}].match[{}].{}", gw_unit, idx, word_name)
-        }
-        GatewayReg::DataEntry { idx, word } => {
-            let word_name = if word == 0 { "w0" } else { "w1" };
-            format!("gw[{}].data[{}].{}", gw_unit, idx, word_name)
-        }
-        GatewayReg::VvEntry { idx } => format!("gw[{}].vv[{}]", gw_unit, idx),
-        GatewayReg::Unknown(off) => format!("gw[{}]+{:02x}", gw_unit, off),
-    }
+    out
 }
 
 fn decode_mem_region(offset: u64) -> &'static str {
@@ -577,7 +481,9 @@ fn decode_gateway_tcam_entry(lo: u64, hi: u64) -> String {
 // ============================================================================
 // Tofino2 (JBay) address constants for B/R blocks (PCIe register addresses)
 const TOFINO2_MAU_REG_BASE: u64 = 0x04000000;
-const TOFINO2_MAU_REG_END: u64 = 0x05000000;
+// 20 MAU stages of 0x80000 bytes each; pipe offsets beyond 0xa00000 are the
+// parde (parser/deparser/pgr) region, which we do not decode yet.
+const TOFINO2_MAU_REG_END: u64 = 0x04a00000;
 const TOFINO2_MAU_STAGE_STRIDE: u64 = 0x80000;
 
 // Tofino2 (JBay) address constants for D blocks (chip memory addresses)
@@ -868,32 +774,21 @@ fn dump_bin<R: Read + Seek>(r: &mut R, args: &DumpArgs, context: Option<&Context
 
                 if show_data && !args.summary {
                     if args.symbolic {
-                        if let Some(s) = stage {
+                        if stage.is_some() {
                             let offset = stage_offset(reg_addr as u64).unwrap_or(0);
-
-                            // Check if this is a gateway register and format accordingly
-                            if let Some(gw_unit) = decode_gateway_unit(offset) {
-                                let offset_in_unit = (offset - 0x1c000) % 0x80;
-                                let gw_reg_name = format_gateway_reg(gw_unit, offset_in_unit);
-                                print!("  {:08x} {} = {:08x}",
-                                       reg_addr, gw_reg_name.cyan(), reg_data);
-                                // Annotate with condition from context.json
-                                if let Some(ctx) = context {
-                                    if let Some(table) = ctx.gateway_for_memory_unit(s, gw_unit) {
-                                        print!("  <- {}", table.name.cyan());
-                                        if let Some(ref cond) = table.condition {
-                                            print!(" ({})", cond);
-                                        }
-                                    }
-                                }
-                            } else {
-                                let (reg_name, _) = decode_register_name(offset);
-                                print!("  {:08x} {} {} = {:08x}",
-                                       reg_addr, reg_name.cyan(),
-                                       format!("+{:04x}", offset % 0x8000).dimmed(),
-                                       reg_data);
+                            match jbay_regmap::decode(offset) {
+                                Some(hit) => println!(
+                                    "  {:08x} {}",
+                                    reg_addr,
+                                    format_reg_hit(&hit, reg_data)
+                                ),
+                                None => println!(
+                                    "  {:08x} {} = {:08x}",
+                                    reg_addr,
+                                    format!("mau+{:05x}", offset).cyan(),
+                                    reg_data
+                                ),
                             }
-                            println!();
                         } else {
                             println!("  {:08x} = {:08x}", reg_addr, reg_data);
                         }
@@ -922,75 +817,103 @@ fn dump_bin<R: Read + Seek>(r: &mut R, args: &DumpArgs, context: Option<&Context
                     }
                 }
 
-                if show_data {
-                    if args.symbolic {
-                        if let Some(s) = stage {
-                            let offset = stage_offset(addr).unwrap_or(0);
+                // Exact per-word decode applies to register blocks inside a
+                // MAU stage when in symbolic mode
+                let decode_words = args.symbolic && stage.is_some();
 
-                            // Check if this is a gateway register block
-                            if let Some(gw_unit) = decode_gateway_unit(offset) {
-                                let offset_in_unit = (offset - 0x1c000) % 0x80;
-                                let gw_reg_name = format_gateway_reg(gw_unit, offset_in_unit);
-                                print!("  {:08x} {} [{}x{}]",
-                                       addr, gw_reg_name.cyan(), width, count);
-                                // Annotate with condition from context.json
-                                if let Some(ctx) = context {
-                                    if let Some(table) = ctx.gateway_for_memory_unit(s, gw_unit) {
-                                        print!("  <- {}", table.name.cyan());
-                                        if let Some(ref cond) = table.condition {
-                                            print!(" ({})", cond);
-                                        }
-                                    }
-                                }
-                            } else {
-                                let (reg_name, desc) = decode_register_name(offset);
-                                print!("  {:08x} {} ({}) [{}x{}]",
-                                       addr, reg_name.cyan(), desc, width, count);
-                            }
-                        } else {
-                            print!("B{:08x}: {}x{}", addr, width, count);
-                        }
+                if show_data {
+                    if decode_words {
+                        let offset = stage_offset(addr).unwrap_or(0);
+                        let region = match jbay_regmap::decode(offset) {
+                            Some(hit) => hit.path,
+                            None => format!("mau+{:05x}", offset),
+                        };
+                        println!(
+                            "  {:08x} {} [{}x{}]",
+                            addr,
+                            region.cyan(),
+                            width,
+                            count
+                        );
                     } else {
                         print!("B{:08x}: {}x{}", addr, width, count);
-                    }
-                    if total_bits % 32 != 0 {
-                        print!("  (not a multiple of 32 bits!)");
-                    }
-                }
-
-                let mut prev: u32 = 0;
-                let mut repeat = 0;
-                let mut col = 0;
-
-                for i in 0..word_count {
-                    let data = read_u32_le(r)?;
-                    if !show_data {
-                        continue;
-                    }
-                    if i != 0 && data == prev {
-                        repeat += 1;
-                        continue;
-                    }
-                    if repeat > 0 {
-                        print!(" x{:<7}", repeat + 1);
-                        col += 1;
-                        if col > 8 {
-                            col = 0;
+                        if total_bits % 32 != 0 {
+                            print!("  (not a multiple of 32 bits!)");
                         }
                     }
-                    repeat = 0;
-                    if !args.one_line && col % 8 == 0 {
-                        print!("\n   ");
-                    }
-                    col += 1;
-                    print!(" {:08x}", data);
-                    prev = data;
                 }
-                if show_data {
-                    if repeat > 0 {
-                        print!(" x{}", repeat + 1);
+
+                if decode_words {
+                    // One line per nonzero word, decoded against the register
+                    // map; runs of zero words are elided.
+                    let base = stage_offset(addr).unwrap_or(0);
+                    let mut zeros = 0usize;
+                    for i in 0..word_count {
+                        let data = read_u32_le(r)?;
+                        if !show_data {
+                            continue;
+                        }
+                        if data == 0 {
+                            zeros += 1;
+                            continue;
+                        }
+                        if zeros > 0 {
+                            println!("    {}", format!("... {} zero words", zeros).dimmed());
+                            zeros = 0;
+                        }
+                        let offset = base + (i as u64) * 4;
+                        match jbay_regmap::decode(offset) {
+                            Some(hit) => println!(
+                                "    {:08x} {}",
+                                addr + (i as u64) * 4,
+                                format_reg_hit(&hit, data)
+                            ),
+                            None => println!(
+                                "    {:08x} mau+{:05x} = {:08x}",
+                                addr + (i as u64) * 4,
+                                offset,
+                                data
+                            ),
+                        }
                     }
-                    println!();
+                    if show_data && zeros > 0 {
+                        println!("    {}", format!("... {} zero words", zeros).dimmed());
+                    }
+                } else {
+                    let mut prev: u32 = 0;
+                    let mut repeat = 0;
+                    let mut col = 0;
+
+                    for i in 0..word_count {
+                        let data = read_u32_le(r)?;
+                        if !show_data {
+                            continue;
+                        }
+                        if i != 0 && data == prev {
+                            repeat += 1;
+                            continue;
+                        }
+                        if repeat > 0 {
+                            print!(" x{:<7}", repeat + 1);
+                            col += 1;
+                            if col > 8 {
+                                col = 0;
+                            }
+                        }
+                        repeat = 0;
+                        if !args.one_line && col % 8 == 0 {
+                            print!("\n   ");
+                        }
+                        col += 1;
+                        print!(" {:08x}", data);
+                        prev = data;
+                    }
+                    if show_data {
+                        if repeat > 0 {
+                            print!(" x{}", repeat + 1);
+                        }
+                        println!();
+                    }
                 }
             }
             'D' => {
