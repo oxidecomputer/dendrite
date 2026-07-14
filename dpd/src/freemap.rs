@@ -202,6 +202,8 @@ impl FreeMap {
             return false;
         }
 
+        let mut preexist = std::mem::take(&mut self.freelist);
+        reclaim.append(&mut preexist);
         reclaim.sort();
         let mut idx = 0;
         while idx < reclaim.len() - 1 {
