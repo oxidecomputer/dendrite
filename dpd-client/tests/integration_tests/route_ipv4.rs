@@ -23,6 +23,8 @@ const MAX_ROUTE_TARGET_FILLERS: u32 = 20_000;
 const SHRINK_TEST_VICTIM_TARGETS: u8 = 4;
 const SHRINK_TEST_FILLER_TARGETS: u8 = 3;
 const SHRINK_TEST_PROBE_TARGETS: u8 = SHRINK_TEST_FILLER_TARGETS - 1;
+const IPV4_ROUTE_TARGET_TABLE: &str =
+    "Ingress.l3_router.Router4.lookup_idx.route";
 
 struct Router {
     pub port: u16,
@@ -494,20 +496,49 @@ fn shrink_test_route(
     }
 }
 
+fn shrink_test_route_v6(
+    switch: &Switch,
+    target: u8,
+    ip_prefix: &str,
+) -> types::Ipv6Route {
+    let phys_port = PhysPort(8 + u16::from(target - 1) % 16);
+    let (port_id, link_id) = switch.link_id(phys_port).unwrap();
+    types::Ipv6Route {
+        tag: "testing".into(),
+        port_id,
+        link_id,
+        tgt_ip: format!("{ip_prefix}::{target:x}").parse().unwrap(),
+        vlan_id: None,
+    }
+}
+
 async fn add_ipv4_route_target(
     client: &dpd_client::Client,
     cidr: Ipv4Net,
     route: &types::Ipv4Route,
 ) -> Result<(), dpd_client::Error<types::Error>> {
+    client.route_ipv4_add(&build_route_update(cidr, route, false)).await?;
+    Ok(())
+}
+
+async fn add_ipv4_over_ipv6_route_target(
+    client: &dpd_client::Client,
+    cidr: Ipv4Net,
+    route: &types::Ipv6Route,
+) -> Result<(), dpd_client::Error<types::Error>> {
     client
-        .route_ipv4_add(&build_route_update(cidr, route, false))
-        .await
-        .map(|_| ())
+        .route_ipv4_add(&types::Ipv4RouteUpdate {
+            cidr,
+            target: types::RouteTarget::V6(route.clone()),
+            replace: false,
+        })
+        .await?;
+    Ok(())
 }
 
 async fn fill_until_ipv4_filler_alloc_unavailable(
     switch: &Switch,
-) -> TestResult {
+) -> Result<Vec<Ipv4Net>, anyhow::Error> {
     let client = &switch.client;
     assert!(
         SHRINK_TEST_VICTIM_TARGETS > SHRINK_TEST_FILLER_TARGETS,
@@ -523,6 +554,7 @@ async fn fill_until_ipv4_filler_alloc_unavailable(
         "filler route must be wider than its setup probe"
     );
 
+    let mut fillers = Vec::new();
     for i in 0..MAX_ROUTE_TARGET_FILLERS {
         let cidr = route_target_filler_cidr(i);
         let targets: Vec<_> = (1..=SHRINK_TEST_FILLER_TARGETS)
@@ -546,6 +578,7 @@ async fn fill_until_ipv4_filler_alloc_unavailable(
                 // targets. Growing them further would free a reservation of
                 // that size, which is the allocation size this test is trying
                 // to prove unavailable.
+                fillers.push(cidr);
             }
             Err(e) if e.status() == Some(StatusCode::INSUFFICIENT_STORAGE) => {
                 assert!(
@@ -558,7 +591,7 @@ async fn fill_until_ipv4_filler_alloc_unavailable(
                     &targets[..usize::from(SHRINK_TEST_PROBE_TARGETS)],
                 )
                 .await?;
-                return Ok(());
+                return Ok(fillers);
             }
             Err(e) => {
                 return Err(anyhow!(
@@ -624,6 +657,119 @@ async fn test_delete_target_shrinks_on_full_table_v4() -> TestResult {
     let removed = routes.remove(0);
     delete_ipv4_route_target(client, &cidr, &removed).await?;
     validate_routes(client, &cidr, &routes).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_add_target_succeeds_when_table_fragmented_v4() -> TestResult {
+    let switch = &*get_switch().await;
+    let client = &switch.client;
+
+    let victim_cidr: Ipv4Net = "198.51.100.0/24".parse().unwrap();
+    let mut victim_routes: Vec<_> = (1..=SHRINK_TEST_PROBE_TARGETS)
+        .map(|target| shrink_test_route(switch, target, (198, 51, 100)))
+        .collect();
+    for route in &victim_routes {
+        add_ipv4_route_target(client, victim_cidr, route).await?;
+    }
+
+    let fillers = fill_until_ipv4_filler_alloc_unavailable(switch).await?;
+    assert!(
+        fillers.len() >= usize::from(SHRINK_TEST_FILLER_TARGETS),
+        "need at least {SHRINK_TEST_FILLER_TARGETS} fillers to free enough \
+         aggregate space for one {SHRINK_TEST_FILLER_TARGETS}-slot allocation"
+    );
+    let before =
+        client.table_dump(IPV4_ROUTE_TARGET_TABLE, false).await?.into_inner();
+
+    // Shrinking each contiguous 3-target run in place leaves a one-slot hole
+    // after two live targets. The table has enough free slots in aggregate for
+    // another 3-target run, but no individual free span is large enough.
+    let removed =
+        shrink_test_route(switch, SHRINK_TEST_FILLER_TARGETS, (203, 0, 113));
+    for cidr in &fillers {
+        delete_ipv4_route_target(client, cidr, &removed).await?;
+    }
+    let after =
+        client.table_dump(IPV4_ROUTE_TARGET_TABLE, false).await?.into_inner();
+    assert_eq!(
+        before.entries.len().checked_sub(after.entries.len()),
+        Some(fillers.len()),
+        "every filler shrink must release one route-target slot"
+    );
+    assert!(
+        usize::try_from(after.size).unwrap() - after.entries.len()
+            >= usize::from(SHRINK_TEST_FILLER_TARGETS),
+        "route-target table must have enough free slots in aggregate"
+    );
+
+    let new_target =
+        shrink_test_route(switch, SHRINK_TEST_FILLER_TARGETS, (198, 51, 100));
+    add_ipv4_route_target(client, victim_cidr, &new_target).await?;
+    victim_routes.push(new_target);
+
+    validate_routes(client, &victim_cidr, &victim_routes).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_add_target_succeeds_when_table_fragmented_v4_over_v6()
+-> TestResult {
+    let switch = &*get_switch().await;
+    let client = &switch.client;
+
+    let victim_cidr: Ipv4Net = "198.51.100.0/24".parse().unwrap();
+    let mut victim_routes: Vec<_> = (1..=SHRINK_TEST_PROBE_TARGETS)
+        .map(|target| shrink_test_route_v6(switch, target, "2001:db8:fffe"))
+        .collect();
+    for route in &victim_routes {
+        add_ipv4_over_ipv6_route_target(client, victim_cidr, route).await?;
+    }
+
+    let fillers = fill_until_ipv4_filler_alloc_unavailable(switch).await?;
+    assert!(
+        fillers.len() >= usize::from(SHRINK_TEST_FILLER_TARGETS),
+        "need at least {SHRINK_TEST_FILLER_TARGETS} fillers to free enough \
+         aggregate space for one {SHRINK_TEST_FILLER_TARGETS}-slot allocation"
+    );
+    let before =
+        client.table_dump(IPV4_ROUTE_TARGET_TABLE, false).await?.into_inner();
+
+    // IPv4 prefixes share this target table regardless of next-hop family.
+    // IPv4 fillers therefore fragment the same space used by the victim's
+    // IPv6 next hops.
+    let removed =
+        shrink_test_route(switch, SHRINK_TEST_FILLER_TARGETS, (203, 0, 113));
+    for cidr in &fillers {
+        delete_ipv4_route_target(client, cidr, &removed).await?;
+    }
+    let after =
+        client.table_dump(IPV4_ROUTE_TARGET_TABLE, false).await?.into_inner();
+    assert_eq!(
+        before.entries.len().checked_sub(after.entries.len()),
+        Some(fillers.len()),
+        "every filler shrink must release one route-target slot"
+    );
+    assert!(
+        usize::try_from(after.size).unwrap() - after.entries.len()
+            >= usize::from(SHRINK_TEST_FILLER_TARGETS),
+        "route-target table must have enough free slots in aggregate"
+    );
+
+    let new_target = shrink_test_route_v6(
+        switch,
+        SHRINK_TEST_FILLER_TARGETS,
+        "2001:db8:fffe",
+    );
+    add_ipv4_over_ipv6_route_target(client, victim_cidr, &new_target).await?;
+    victim_routes.push(new_target);
+
+    let found = client.route_ipv4_get(&victim_cidr).await?;
+    assert_eq!(found.len(), victim_routes.len());
+    for route in &victim_routes {
+        assert!(found.contains(&types::Route::V6(route.clone())));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
