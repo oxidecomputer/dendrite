@@ -751,6 +751,304 @@ impl BfaFile {
         results.sort_by(|a, b| a.name.cmp(&b.name));
         results
     }
+
+    /// Analyze PHV container usage
+    pub fn analyze_phv_usage(&self, gress_filter: Option<&str>) -> PhvUsage {
+        let mut by_type: HashMap<ContainerType, ContainerTypeUsage> = HashMap::new();
+        let mut by_gress: HashMap<String, HashMap<ContainerType, ContainerTypeUsage>> =
+            HashMap::new();
+
+        // Track which containers we've seen to detect chip generation
+        let mut has_mocha = false;
+        let mut has_dark = false;
+        let mut has_tagalong = false;
+
+        for var in self.variables.values() {
+            // Apply gress filter
+            if let Some(filter) = gress_filter {
+                if var.gress != filter {
+                    continue;
+                }
+            }
+
+            for alloc in &var.allocations {
+                if let Some(ct) = ContainerType::from_name(&alloc.container) {
+                    // Track container types seen
+                    match ct.kind {
+                        ContainerKind::Mocha => has_mocha = true,
+                        ContainerKind::Dark => has_dark = true,
+                        ContainerKind::Tagalong => has_tagalong = true,
+                        ContainerKind::Normal => {}
+                    }
+
+                    // Calculate bits used in this allocation
+                    let bits_used = match alloc.bits {
+                        Some((start, end)) => end - start + 1,
+                        None => ct.size.bits(),
+                    };
+
+                    // Update overall usage
+                    let usage = by_type.entry(ct).or_default();
+                    if usage.containers.insert(alloc.container.clone()) {
+                        usage.used += 1;
+                    }
+                    usage.bits_allocated += bits_used;
+
+                    // Update per-gress usage
+                    let gress_usage = by_gress
+                        .entry(var.gress.clone())
+                        .or_default()
+                        .entry(ct)
+                        .or_default();
+                    if gress_usage.containers.insert(alloc.container.clone()) {
+                        gress_usage.used += 1;
+                    }
+                    gress_usage.bits_allocated += bits_used;
+                }
+            }
+        }
+
+        // Determine chip generation
+        let (chip, inventory) = if has_mocha || has_dark {
+            ("tofino2".to_string(), ContainerInventory::tofino2())
+        } else if has_tagalong {
+            ("tofino1".to_string(), ContainerInventory::tofino1())
+        } else {
+            // Default to tofino2 if we can't tell
+            ("tofino2".to_string(), ContainerInventory::tofino2())
+        };
+
+        PhvUsage {
+            chip,
+            inventory,
+            by_type,
+            by_gress,
+        }
+    }
+}
+
+// ============================================================================
+// PHV Container Analysis
+// ============================================================================
+
+/// Container kind (capability level)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ContainerKind {
+    Normal,   // Full ALU operations in MAU
+    Mocha,    // Set operations only in MAU (Tofino2)
+    Dark,     // Container-to-container moves only (Tofino2)
+    Tagalong, // Parser/deparser only, no MAU (Tofino1)
+}
+
+impl ContainerKind {
+    fn prefix(&self) -> &'static str {
+        match self {
+            ContainerKind::Normal => "",
+            ContainerKind::Mocha => "M",
+            ContainerKind::Dark => "D",
+            ContainerKind::Tagalong => "T",
+        }
+    }
+}
+
+/// Container size
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ContainerSize {
+    Byte, // 8-bit
+    Half, // 16-bit
+    Word, // 32-bit
+}
+
+impl ContainerSize {
+    fn suffix(&self) -> &'static str {
+        match self {
+            ContainerSize::Byte => "B",
+            ContainerSize::Half => "H",
+            ContainerSize::Word => "W",
+        }
+    }
+
+    pub fn bits(&self) -> u32 {
+        match self {
+            ContainerSize::Byte => 8,
+            ContainerSize::Half => 16,
+            ContainerSize::Word => 32,
+        }
+    }
+}
+
+/// Full container type (kind + size)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ContainerType {
+    pub kind: ContainerKind,
+    pub size: ContainerSize,
+}
+
+impl ContainerType {
+    /// Parse container type from a container name like "H29", "MH6", "W24", "TB3"
+    pub fn from_name(name: &str) -> Option<Self> {
+        // Container names are: [prefix][size_suffix][number]
+        // Examples: H29, MH6, W24, B3, DB2, TW5
+        let name = name.trim();
+        if name.is_empty() {
+            return None;
+        }
+
+        // Determine kind and remaining string
+        let (kind, rest) = if name.starts_with('M') {
+            (ContainerKind::Mocha, &name[1..])
+        } else if name.starts_with('D') {
+            (ContainerKind::Dark, &name[1..])
+        } else if name.starts_with('T') {
+            (ContainerKind::Tagalong, &name[1..])
+        } else {
+            (ContainerKind::Normal, name)
+        };
+
+        // First char of rest should be size suffix (B, H, or W)
+        let size = match rest.chars().next()? {
+            'B' => ContainerSize::Byte,
+            'H' => ContainerSize::Half,
+            'W' => ContainerSize::Word,
+            _ => return None,
+        };
+
+        // Rest should be a number
+        if rest.len() > 1 && rest[1..].chars().all(|c| c.is_ascii_digit()) {
+            Some(ContainerType { kind, size })
+        } else {
+            None
+        }
+    }
+
+    /// Get the short type name (e.g., "W", "MH", "DB")
+    pub fn short_name(&self) -> String {
+        format!("{}{}", self.kind.prefix(), self.size.suffix())
+    }
+
+    /// Get the display name (e.g., "Word", "Mocha Half", "Dark Byte")
+    pub fn display_name(&self) -> String {
+        let size_name = match self.size {
+            ContainerSize::Byte => "Byte",
+            ContainerSize::Half => "Half",
+            ContainerSize::Word => "Word",
+        };
+        match self.kind {
+            ContainerKind::Normal => size_name.to_string(),
+            ContainerKind::Mocha => format!("Mocha {}", size_name),
+            ContainerKind::Dark => format!("Dark {}", size_name),
+            ContainerKind::Tagalong => format!("Tagalong {}", size_name),
+        }
+    }
+}
+
+/// Container inventory for a chip generation
+#[derive(Debug, Clone)]
+pub struct ContainerInventory {
+    /// Total containers by type
+    pub totals: HashMap<ContainerType, u32>,
+}
+
+impl ContainerInventory {
+    /// Tofino 2 / JBay container inventory
+    pub fn tofino2() -> Self {
+        use ContainerKind::*;
+        use ContainerSize::*;
+
+        let mut totals = HashMap::new();
+
+        // Normal containers
+        totals.insert(ContainerType { kind: Normal, size: Word }, 48);
+        totals.insert(ContainerType { kind: Normal, size: Byte }, 48);
+        totals.insert(ContainerType { kind: Normal, size: Half }, 72);
+
+        // Mocha containers
+        totals.insert(ContainerType { kind: Mocha, size: Word }, 16);
+        totals.insert(ContainerType { kind: Mocha, size: Byte }, 16);
+        totals.insert(ContainerType { kind: Mocha, size: Half }, 24);
+
+        // Dark containers
+        totals.insert(ContainerType { kind: Dark, size: Word }, 16);
+        totals.insert(ContainerType { kind: Dark, size: Byte }, 16);
+        totals.insert(ContainerType { kind: Dark, size: Half }, 24);
+
+        ContainerInventory { totals }
+    }
+
+    /// Tofino 1 container inventory
+    pub fn tofino1() -> Self {
+        use ContainerKind::*;
+        use ContainerSize::*;
+
+        let mut totals = HashMap::new();
+
+        // Normal containers
+        totals.insert(ContainerType { kind: Normal, size: Word }, 64);
+        totals.insert(ContainerType { kind: Normal, size: Byte }, 64);
+        totals.insert(ContainerType { kind: Normal, size: Half }, 96);
+
+        // Tagalong containers
+        totals.insert(ContainerType { kind: Tagalong, size: Word }, 32);
+        totals.insert(ContainerType { kind: Tagalong, size: Byte }, 32);
+        totals.insert(ContainerType { kind: Tagalong, size: Half }, 48);
+
+        ContainerInventory { totals }
+    }
+
+    /// Get total available for a container type
+    pub fn total_for(&self, ct: &ContainerType) -> u32 {
+        self.totals.get(ct).copied().unwrap_or(0)
+    }
+
+    /// Get total containers available
+    #[allow(dead_code)]
+    pub fn total_containers(&self) -> u32 {
+        self.totals.values().sum()
+    }
+
+    /// Get total bits available
+    #[allow(dead_code)]
+    pub fn total_bits(&self) -> u32 {
+        self.totals.iter().map(|(ct, count)| ct.size.bits() * count).sum()
+    }
+}
+
+/// Usage statistics for a single container type
+#[derive(Debug, Clone, Default)]
+pub struct ContainerTypeUsage {
+    /// Number of containers used
+    pub used: u32,
+    /// Total bits allocated (sum of bits used in each container)
+    pub bits_allocated: u32,
+    /// Container names used
+    pub containers: HashSet<String>,
+}
+
+/// Overall PHV usage statistics
+#[derive(Debug, Clone)]
+pub struct PhvUsage {
+    /// Chip generation detected (tofino1 or tofino2)
+    pub chip: String,
+    /// Container inventory for this chip
+    pub inventory: ContainerInventory,
+    /// Usage by container type
+    pub by_type: HashMap<ContainerType, ContainerTypeUsage>,
+    /// Usage by gress
+    pub by_gress: HashMap<String, HashMap<ContainerType, ContainerTypeUsage>>,
+}
+
+impl PhvUsage {
+    /// Total containers used
+    #[allow(dead_code)]
+    pub fn total_containers_used(&self) -> u32 {
+        self.by_type.values().map(|u| u.used).sum()
+    }
+
+    /// Total bits allocated
+    #[allow(dead_code)]
+    pub fn total_bits_allocated(&self) -> u32 {
+        self.by_type.values().map(|u| u.bits_allocated).sum()
+    }
 }
 
 /// Information about an overlap between two variables
@@ -992,4 +1290,140 @@ fn compute_stage_union(
     let union_end = e1.max(e2);
 
     (union_start..=union_end).collect()
+}
+
+/// Print PHV usage summary
+pub fn print_phv_usage(usage: &PhvUsage, detailed: bool) {
+    use ContainerKind::*;
+    use ContainerSize::*;
+
+    println!("{}", "PHV Container Usage".bold());
+    println!("Chip: {}", usage.chip.cyan());
+    println!();
+
+    // Define the order of container types for display
+    let type_order = [
+        // Normal containers
+        ContainerType { kind: Normal, size: Word },
+        ContainerType { kind: Normal, size: Half },
+        ContainerType { kind: Normal, size: Byte },
+        // Mocha containers (Tofino2)
+        ContainerType { kind: Mocha, size: Word },
+        ContainerType { kind: Mocha, size: Half },
+        ContainerType { kind: Mocha, size: Byte },
+        // Dark containers (Tofino2)
+        ContainerType { kind: Dark, size: Word },
+        ContainerType { kind: Dark, size: Half },
+        ContainerType { kind: Dark, size: Byte },
+        // Tagalong containers (Tofino1)
+        ContainerType { kind: Tagalong, size: Word },
+        ContainerType { kind: Tagalong, size: Half },
+        ContainerType { kind: Tagalong, size: Byte },
+    ];
+
+    // Print header
+    println!(
+        "{:<15} {:>7}",
+        "Type", "Usage"
+    );
+    println!("{}", "-".repeat(32));
+
+    let mut total_used = 0u32;
+    let mut total_avail = 0u32;
+
+    // Track current kind for grouping
+    let mut current_kind: Option<ContainerKind> = None;
+
+    for ct in &type_order {
+        let avail = usage.inventory.total_for(ct);
+        if avail == 0 {
+            continue; // Skip container types not available on this chip
+        }
+
+        // Print kind separator
+        if current_kind != Some(ct.kind) {
+            if current_kind.is_some() {
+                println!();
+            }
+            current_kind = Some(ct.kind);
+        }
+
+        let type_usage = usage.by_type.get(ct);
+        let used = type_usage.map(|u| u.used).unwrap_or(0);
+
+        let pct = if avail > 0 {
+            (used as f64 / avail as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        // Color code based on usage percentage
+        let usage_str = format!("{:3}/{:3}", used, avail);
+        let usage_colored = if pct >= 90.0 {
+            usage_str.red()
+        } else if pct >= 70.0 {
+            usage_str.yellow()
+        } else {
+            usage_str.normal()
+        };
+
+        println!(
+            "{:<15} {}  {:5.1}%",
+            ct.display_name().cyan(),
+            usage_colored,
+            pct,
+        );
+
+        total_used += used;
+        total_avail += avail;
+    }
+
+    // Print totals
+    println!("{}", "-".repeat(32));
+    let total_pct = if total_avail > 0 {
+        (total_used as f64 / total_avail as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    println!(
+        "{:<15} {:3}/{:3}  {:5.1}%",
+        "Total".bold(),
+        total_used,
+        total_avail,
+        total_pct,
+    );
+
+    // Per-gress breakdown
+    if usage.by_gress.len() > 1 {
+        println!();
+        println!("{}", "Per-Gress Breakdown".bold());
+
+        for gress in ["ingress", "egress"] {
+            if let Some(gress_usage) = usage.by_gress.get(gress) {
+                let gress_containers: u32 = gress_usage.values().map(|u| u.used).sum();
+                println!("  {}: {} containers", gress.cyan(), gress_containers);
+            }
+        }
+    }
+
+    // Detailed container listing
+    if detailed {
+        println!();
+        println!("{}", "Detailed Container Usage".bold());
+
+        for ct in &type_order {
+            if let Some(type_usage) = usage.by_type.get(ct) {
+                if !type_usage.containers.is_empty() {
+                    let mut containers: Vec<_> = type_usage.containers.iter().collect();
+                    containers.sort();
+                    println!(
+                        "  {}: {}",
+                        ct.short_name().cyan(),
+                        containers.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                    );
+                }
+            }
+        }
+    }
 }

@@ -53,6 +53,22 @@ struct Args {
     summary: bool,
 }
 
+/// Container kind filter for vars command
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum ContainerKindFilter {
+    Normal,
+    Mocha,
+    Dark,
+}
+
+/// Container size filter for vars command
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum ContainerSizeFilter {
+    Word,
+    Half,
+    Byte,
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Dump a binary configuration file
@@ -114,6 +130,14 @@ enum Commands {
         /// Filter by gress (ingress/egress)
         #[arg(short = 'g', long)]
         gress: Option<String>,
+
+        /// Filter by container kind
+        #[arg(long, value_enum)]
+        container_kind: Option<ContainerKindFilter>,
+
+        /// Filter by container size
+        #[arg(long, value_enum)]
+        container_size: Option<ContainerSizeFilter>,
     },
 
     /// Show variables that overlap with a given variable in a BFA file
@@ -125,6 +149,21 @@ enum Commands {
         /// Variable name to find overlaps for
         #[arg(required = true)]
         variable: String,
+    },
+
+    /// Analyze PHV container usage by type and size
+    Phv {
+        /// Input BFA file
+        #[arg(required = true)]
+        bfa_file: PathBuf,
+
+        /// Show detailed breakdown by container
+        #[arg(short = 'd', long)]
+        detailed: bool,
+
+        /// Filter by gress (ingress/egress)
+        #[arg(short = 'g', long)]
+        gress: Option<String>,
     },
 }
 
@@ -1161,9 +1200,13 @@ fn main() -> Result<()> {
             variable,
             container,
             gress,
-        }) => run_vars(bfa_file, search, variable, container, gress),
+            container_kind,
+            container_size,
+        }) => run_vars(bfa_file, search, variable, container, gress, container_kind, container_size),
 
         Some(Commands::Overlaps { bfa_file, variable }) => run_overlaps(bfa_file, variable),
+
+        Some(Commands::Phv { bfa_file, detailed, gress }) => run_phv(bfa_file, detailed, gress),
 
         None => {
             // Backwards compatibility: if a file is provided without subcommand, run dump
@@ -1281,6 +1324,8 @@ fn run_vars(
     variable: Option<String>,
     container: Option<String>,
     gress: Option<String>,
+    container_kind: Option<ContainerKindFilter>,
+    container_size: Option<ContainerSizeFilter>,
 ) -> Result<()> {
     let bfa = bfa::BfaFile::parse(&bfa_file)?;
 
@@ -1320,6 +1365,38 @@ fn run_vars(
     // Filter by gress
     if let Some(ref g) = gress {
         vars.retain(|v| v.gress == *g);
+    }
+
+    // Filter by container kind
+    if let Some(kind_filter) = container_kind {
+        let target_kind = match kind_filter {
+            ContainerKindFilter::Normal => bfa::ContainerKind::Normal,
+            ContainerKindFilter::Mocha => bfa::ContainerKind::Mocha,
+            ContainerKindFilter::Dark => bfa::ContainerKind::Dark,
+        };
+        vars.retain(|v| {
+            v.allocations.iter().any(|a| {
+                bfa::ContainerType::from_name(&a.container)
+                    .map(|ct| ct.kind == target_kind)
+                    .unwrap_or(false)
+            })
+        });
+    }
+
+    // Filter by container size
+    if let Some(size_filter) = container_size {
+        let target_size = match size_filter {
+            ContainerSizeFilter::Word => bfa::ContainerSize::Word,
+            ContainerSizeFilter::Half => bfa::ContainerSize::Half,
+            ContainerSizeFilter::Byte => bfa::ContainerSize::Byte,
+        };
+        vars.retain(|v| {
+            v.allocations.iter().any(|a| {
+                bfa::ContainerType::from_name(&a.container)
+                    .map(|ct| ct.size == target_size)
+                    .unwrap_or(false)
+            })
+        });
     }
 
     // Print variables
@@ -1407,5 +1484,12 @@ fn run_overlaps(bfa_file: PathBuf, variable: String) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn run_phv(bfa_file: PathBuf, detailed: bool, gress: Option<String>) -> Result<()> {
+    let bfa = bfa::BfaFile::parse(&bfa_file)?;
+    let usage = bfa.analyze_phv_usage(gress.as_deref());
+    bfa::print_phv_usage(&usage, detailed);
     Ok(())
 }
