@@ -202,6 +202,8 @@ impl FreeMap {
             return false;
         }
 
+        let mut preexist = std::mem::take(&mut self.freelist);
+        reclaim.append(&mut preexist);
         reclaim.sort();
         let mut idx = 0;
         while idx < reclaim.len() - 1 {
@@ -367,6 +369,24 @@ fn test_reclaim() -> anyhow::Result<()> {
     // satisfy this allocation
     let a = map.alloc(4u16).expect("post-reclaim alloc should succeed");
     assert_eq!(a, 0);
+
+    Ok(())
+}
+
+#[test]
+fn test_reclaim_preserves_existing_freelist() -> anyhow::Result<()> {
+    let mut map = new_freemap(8);
+
+    // Leave a three-slot span in the freelist, allocate its first slot, then
+    // return that slot to the recycle bin.  The physically contiguous free
+    // range [5, 8) is now split between the recycle bin and freelist.
+    assert_eq!(map.alloc(5u16)?, 0);
+    let recycled = map.alloc(1u16)?;
+    assert_eq!(recycled, 5);
+    map.free(recycled, 1u16);
+
+    // Reclaim must preserve and coalesce both sources of free space.
+    assert_eq!(map.alloc(3u16)?, 5);
 
     Ok(())
 }
