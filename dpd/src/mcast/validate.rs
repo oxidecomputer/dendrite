@@ -17,8 +17,6 @@ use common::network::NatTarget;
 use dpd_types::mcast::MulticastTag;
 use omicron_common::address::{
     IPV4_LINK_LOCAL_MULTICAST_SUBNET, IPV4_SSM_SUBNET,
-    IPV6_INTERFACE_LOCAL_MULTICAST_SUBNET, IPV6_LINK_LOCAL_MULTICAST_SUBNET,
-    IPV6_RESERVED_SCOPE_MULTICAST_SUBNET, IPV6_SSM_SUBNET,
     UNDERLAY_MULTICAST_SUBNET,
 };
 
@@ -35,6 +33,8 @@ pub(crate) fn validate_multicast_address(
     addr: IpAddr,
     sources: Option<&[IpSrc]>,
 ) -> DpdResult<()> {
+    validate_source_address_family(addr, sources)?;
+
     // First validate that source addresses are unicast
     validate_source_addresses(sources)?;
 
@@ -43,6 +43,28 @@ pub(crate) fn validate_multicast_address(
         IpAddr::V4(ipv4) => validate_ipv4_multicast(ipv4, sources),
         IpAddr::V6(ipv6) => validate_ipv6_multicast(ipv6, sources),
     }
+}
+
+/// Validates that exact sources use the multicast group's address family.
+fn validate_source_address_family(
+    group: IpAddr,
+    sources: Option<&[IpSrc]>,
+) -> DpdResult<()> {
+    let Some(sources) = sources else {
+        return Ok(());
+    };
+
+    for source in sources {
+        let IpSrc::Exact(source) = source else {
+            continue;
+        };
+        if source.is_ipv4() != group.is_ipv4() {
+            return Err(DpdError::Invalid(format!(
+                "Source IP {source} does not match multicast group address family ({group})",
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Validates the NAT target inner MAC and internal IP address.
@@ -69,10 +91,24 @@ pub(crate) fn validate_nat_target(nat_target: NatTarget) -> DpdResult<()> {
 }
 
 /// Check if an IP address is a Source-Specific Multicast (SSM) address.
+///
+/// [RFC 4607 §1] defines IPv6 SSM as ff3x::/32: sixteen disjoint /32 blocks,
+/// not the broader ff30::/12 prefix. The second 16-bit segment must therefore
+/// be zero. SSM classification gates the sources-required policy in
+/// `validate_ipv4_multicast` and `validate_ipv6_multicast`, so treating a
+/// [RFC 3306] unicast-prefix-based address such as ff3e:20:1234::1 (with an
+/// embedded unicast prefix length (`plen`) of 32) as SSM would reject
+/// otherwise-valid ASM group creation for lacking a source.
+///
+/// [RFC 4607 §1]: https://www.rfc-editor.org/rfc/rfc4607#section-1
+/// [RFC 3306]: https://www.rfc-editor.org/rfc/rfc3306
 pub(crate) fn is_ssm(addr: IpAddr) -> bool {
     match addr {
         IpAddr::V4(ipv4) => IPV4_SSM_SUBNET.contains(ipv4),
-        IpAddr::V6(ipv6) => IPV6_SSM_SUBNET.contains(ipv6),
+        IpAddr::V6(ipv6) => {
+            let segs = ipv6.segments();
+            segs[0] & 0xfff0 == 0xff30 && segs[1] == 0
+        }
     }
 }
 
@@ -107,6 +143,17 @@ fn validate_ipv4_multicast(
                  requires specific sources (IpSrc::Any is not allowed)",
             )));
         }
+
+        // The first /24 of the SSM range is reserved (RFC 4607 §4.3):
+        // 232.0.0.0 must not be used as a destination and 232.0.0.1
+        // through 232.0.0.255 are held for IANA allocation.
+        let octets = addr.octets();
+        if octets[1] == 0 && octets[2] == 0 {
+            return Err(DpdError::Invalid(format!(
+                "{addr} is in the reserved IPv4 SSM subnet \
+                 (232.0.0.0/24, RFC 4607)",
+            )));
+        }
         return Ok(());
     }
 
@@ -131,6 +178,42 @@ fn validate_ipv6_multicast(
         )));
     }
 
+    // Admit only scopes usable for switch-forwarded delivery, independent
+    // of the flags nibble: admin-local (4), site-local (5),
+    // organization-local (8), and global (e). [RFC 7346 §2] reserves 0 and
+    // f, and scopes 1 and 2 never leave a host or link.
+    //
+    // Scopes 6, 7, and 9 through d are unassigned, which [RFC 4291 §2.7]
+    // leaves available for administrators to define. dpd defines none, so
+    // they are refused: no forwarding rule exists for them.
+    //
+    // Realm-local (3) must be defined per network technology and published
+    // in an RFC ([RFC 7346 §3]); only IEEE 802.15.4 has one
+    // ([RFC 7346 §5]), so it is excluded absent an Ethernet realm
+    // definition.
+    //
+    // [RFC 4291 §2.7]: https://www.rfc-editor.org/rfc/rfc4291#section-2.7
+    // [RFC 7346 §2]: https://www.rfc-editor.org/rfc/rfc7346#section-2
+    // [RFC 7346 §3]: https://www.rfc-editor.org/rfc/rfc7346#section-3
+    // [RFC 7346 §5]: https://www.rfc-editor.org/rfc/rfc7346#section-5
+    let scope = addr.segments()[0] & 0x000f;
+    let scope_name = match scope {
+        0x0 | 0xf => Some("reserved"),
+        0x1 => Some("interface-local"),
+        0x2 => Some("link-local"),
+        0x3 => Some("realm-local"),
+        0x4 | 0x5 | 0x8 | 0xe => None,
+        _ => Some("unassigned"),
+    };
+    if let Some(scope_name) = scope_name {
+        return Err(DpdError::Invalid(format!(
+            "{addr} has {scope_name} multicast scope ({scope:#x}), which \
+             cannot be used for multicast groups. Allowed scopes are 0x4 \
+             (admin-local), 0x5 (site-local), 0x8 (organization-local), and \
+             0xe (global)",
+        )));
+    }
+
     // If this is SSM, require specific sources (RFC 4607)
     if is_ssm(addr.into()) {
         if sources.is_none() || sources.unwrap().is_empty() {
@@ -145,22 +228,35 @@ fn validate_ipv6_multicast(
                  and requires specific sources (IpSrc::Any is not allowed)",
             )));
         }
-        return Ok(());
-    }
 
-    // Check reserved subnets
-    let reserved_subnets = [
-        IPV6_LINK_LOCAL_MULTICAST_SUBNET,
-        IPV6_INTERFACE_LOCAL_MULTICAST_SUBNET,
-        IPV6_RESERVED_SCOPE_MULTICAST_SUBNET,
-    ];
-
-    for subnet in &reserved_subnets {
-        if subnet.contains(addr) {
+        // Only the low 32 bits of an SSM block form the group ID.
+        // [RFC 4607 §1] declares ff3x::0:0 through ff3x::3fff:ffff
+        // invalid and reserves ff3x::4000:1 through ff3x::7fff:ffff for
+        // IANA, leaving ff3x::8000:0 through ff3x::ffff:ffff for dynamic
+        // allocation by a host; [RFC 3307 §4.3.2] states that rule as the
+        // group ID falling in 0x80000000 through 0xffffffff. The one
+        // address between those ranges, ff3x::4000:0, is held by
+        // [RFC 4607 §4.3] as a null value.
+        //
+        // RFC 4607 §1 also confines allocation to ff3x::/96 while asking
+        // that all of ff3x::/32 be treated as SSM, which is why `is_ssm`
+        // classifies on the wider prefix and creation is held to the
+        // narrower one.
+        //
+        // [RFC 4607 §1]: https://www.rfc-editor.org/rfc/rfc4607#section-1
+        // [RFC 4607 §4.3]: https://www.rfc-editor.org/rfc/rfc4607#section-4.3
+        // [RFC 3307 §4.3.2]: https://www.rfc-editor.org/rfc/rfc3307#section-4.3.2
+        let segs = addr.segments();
+        let within_prefix =
+            segs[2] == 0 && segs[3] == 0 && segs[4] == 0 && segs[5] == 0;
+        let group_id = (u32::from(segs[6]) << 16) | u32::from(segs[7]);
+        if !within_prefix || group_id < 0x8000_0000 {
             return Err(DpdError::Invalid(format!(
-                "{addr} is in the reserved multicast subnet {subnet}",
+                "{addr} is not a dynamically allocatable IPv6 SSM address \
+                 (ff3x::8000:0 through ff3x::ffff:ffff per RFC 4607)",
             )));
         }
+        return Ok(());
     }
 
     Ok(())
@@ -220,14 +316,28 @@ fn validate_exact_source_address(ip: IpAddr) -> DpdResult<()> {
 
 /// Validates IPv4 source addresses for problematic types.
 fn validate_ipv4_source_address(ipv4: Ipv4Addr) -> DpdResult<()> {
+    // The IANA special-purpose registry (RFC 6890) marks class E
+    // (240.0.0.0/4, reserved by RFC 1112 §4) as "Source: False", so it may
+    // never appear as a source. The 0.0.0.0/8 block ("this host on this
+    // network") is marked "Source: True", since RFC 1122 §3.2.1.3 allows it
+    // before a host learns its address, but the same entry marks it
+    // "Forwardable: False", so a switch may never forward traffic carrying
+    // it and a source filter on it could not match anything. Shared address
+    // space (100.64.0.0/10, RFC 6598) is "Source: True" and not globally
+    // reachable, so it stays allowed: it can source traffic inside an
+    // operator network.
+    let first_octet = ipv4.octets()[0];
     if ipv4.is_loopback()
         || ipv4.is_broadcast()
         || ipv4.is_unspecified()
         || ipv4.is_link_local()
+        || first_octet == 0
+        || first_octet >= 240
     {
         return Err(DpdError::Invalid(format!(
             "Source IP {ipv4} is not a valid source address \
-             (loopback, broadcast, unspecified, and link-local addresses are not allowed)",
+             (loopback, broadcast, unspecified, link-local, 0.0.0.0/8, and \
+             240.0.0.0/4 addresses are not allowed)",
         )));
     }
     Ok(())
@@ -237,13 +347,42 @@ fn validate_ipv4_source_address(ipv4: Ipv4Addr) -> DpdResult<()> {
 fn validate_ipv6_source_address(ipv6: Ipv6Addr) -> DpdResult<()> {
     if ipv6.is_loopback()
         || ipv6.is_unspecified()
-        || ((ipv6.segments()[0] & 0xffc0) == 0xfe80)
+        || ipv6.is_unicast_link_local()
     {
         return Err(DpdError::Invalid(format!(
             "Source IP {ipv6} is not a valid source address \
              (loopback, unspecified, and link-local addresses are not allowed)",
         )));
     }
+
+    // Reject addresses that embed an IPv4 address in an IPv6 source. The
+    // IPv4-mapped and IPv4-compatible forms convert to an Ipv4Addr, so they
+    // would carry IPv4 semantics past the IPv4 source checks above. The
+    // NAT64 well-known prefix does not convert; instead, it is refused
+    // because no standard path yields a multicast source inside it.
+    //
+    // Note: RFC 6052 §3.3 network-specific prefixes are drawn from the
+    // operator's own address space, so recognizing one would require knowing
+    // the configured prefix.
+    let embedded = match ipv6.segments() {
+        [0, 0, 0, 0, 0, 0xffff, ..] => {
+            Some("IPv4-mapped (::ffff:0:0/96, RFC 4291 §2.5.5.2)")
+        }
+        [0, 0, 0, 0, 0, 0, ..] => {
+            Some("IPv4-compatible (::/96, RFC 4291 §2.5.5.1)")
+        }
+        [0x0064, 0xff9b, 0, 0, 0, 0, ..] => {
+            Some("NAT64 well-known (64:ff9b::/96, RFC 6052 §2.1)")
+        }
+        _ => None,
+    };
+    if let Some(form) = embedded {
+        return Err(DpdError::Invalid(format!(
+            "Source IP {ipv6} embeds an IPv4 address, {form}, and is not a \
+             valid IPv6 source address",
+        )));
+    }
+
     Ok(())
 }
 
@@ -395,7 +534,7 @@ mod tests {
 
     #[test]
     fn test_ipv6_ssm_with_sources() {
-        let ssm_addr = Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0, 0x1234);
+        let ssm_addr = Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0x8000, 0x1234);
         let asm_addr = Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 0x1234);
 
         let exact_sources = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
@@ -427,6 +566,110 @@ mod tests {
     }
 
     #[test]
+    fn test_reserved_and_unallocatable_addresses() {
+        let v4_sources =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))];
+        let v6_sources = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x1,
+        )))];
+
+        // The first /24 of IPv4 SSM is reserved (RFC 4607 section 4.3).
+        assert!(
+            validate_ipv4_multicast(
+                Ipv4Addr::new(232, 0, 0, 0),
+                Some(&v4_sources)
+            )
+            .is_err()
+        );
+        assert!(
+            validate_ipv4_multicast(
+                Ipv4Addr::new(232, 0, 0, 1),
+                Some(&v4_sources)
+            )
+            .is_err()
+        );
+
+        // The 232/8 boundary is exact. The rest of the SSM block is
+        // allocatable with sources, and the /8's immediate ASM neighbors
+        // need none.
+        assert!(
+            validate_ipv4_multicast(
+                Ipv4Addr::new(232, 0, 1, 0),
+                Some(&v4_sources)
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_ipv4_multicast(
+                Ipv4Addr::new(232, 255, 255, 255),
+                Some(&v4_sources)
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_ipv4_multicast(Ipv4Addr::new(231, 255, 255, 255), None)
+                .is_ok()
+        );
+        assert!(
+            validate_ipv4_multicast(Ipv4Addr::new(233, 0, 0, 0), None).is_ok()
+        );
+
+        // IPv6 SSM group IDs below 0x80000000 are invalid or held for
+        // IANA allocation (RFC 4607 sections 1 and 4.3).
+        for (hi, lo) in
+            [(0, 0x1234), (0x3fff, 0xffff), (0x4000, 0), (0x7fff, 0xffff)]
+        {
+            assert!(
+                validate_ipv6_multicast(
+                    Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, hi, lo),
+                    Some(&v6_sources)
+                )
+                .is_err(),
+                "group ID {hi:#06x}{lo:04x} should be rejected"
+            );
+        }
+
+        // 0x80000000 is the first dynamically allocatable group ID, and
+        // 0xffffffff the last.
+        for (hi, lo) in [(0x8000u16, 0u16), (0xffff, 0xffff)] {
+            assert!(
+                validate_ipv6_multicast(
+                    Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, hi, lo),
+                    Some(&v6_sources)
+                )
+                .is_ok(),
+                "group ID {hi:#06x}{lo:04x} should be accepted"
+            );
+        }
+
+        // Inside the ff3e::/32 SSM block but outside ff3e::/96, so not a
+        // valid 32-bit group ID.
+        assert!(
+            validate_ipv6_multicast(
+                Ipv6Addr::new(0xff3e, 0, 0x1234, 0, 0, 0, 0, 0x1),
+                Some(&v6_sources)
+            )
+            .is_err()
+        );
+
+        // Unusable and unassigned scope nibbles are rejected across flag
+        // variants, SSM included.
+        for seg0 in [
+            0xff30, 0xff31, 0xff32, 0xff33, 0xff36, 0xff39, 0xff3d, 0xff3f,
+            0xff03, 0xff11, 0xff12, 0xff13, 0xff07, 0xff1a,
+        ] {
+            assert!(
+                validate_ipv6_multicast(
+                    Ipv6Addr::new(seg0, 0, 0, 0, 0, 0, 0x8000, 0x1),
+                    Some(&v6_sources)
+                )
+                .is_err(),
+                "{seg0:x}::/16 should be rejected for its scope"
+            );
+        }
+    }
+
+    #[test]
     fn test_is_ssm_function() {
         // Test IPv4 SSM detection
         assert!(is_ssm(IpAddr::V4(Ipv4Addr::new(232, 0, 0, 1))));
@@ -444,6 +687,11 @@ mod tests {
         assert!(is_ssm(IpAddr::V6(Ipv6Addr::new(
             0xff35, 0, 0, 0, 0, 0, 0, 0x1
         )))); // Site-local scope (5)
+        // RFC 4607 classifies the full /32 as SSM to leave room for possible
+        // future use of the network-prefix field.
+        assert!(is_ssm(IpAddr::V6(Ipv6Addr::new(
+            0xff3e, 0, 0x1234, 0, 0, 0, 0, 0x1
+        ))));
 
         // Not SSM
         assert!(!is_ssm(IpAddr::V6(Ipv6Addr::new(
@@ -452,6 +700,11 @@ mod tests {
         assert!(!is_ssm(IpAddr::V6(Ipv6Addr::new(
             0xff1e, 0, 0, 0, 0, 0, 0, 0x1
         )))); // Flag bit not 3
+        // RFC 3306 unicast-prefix-based ASM address: shares ff30::/12 but has
+        // plen 32 in the second segment, so it is outside ff3e::/32.
+        assert!(!is_ssm(IpAddr::V6(Ipv6Addr::new(
+            0xff3e, 0x0020, 0, 0x1234, 0, 0, 0, 0x1
+        ))));
     }
 
     #[test]
@@ -506,7 +759,9 @@ mod tests {
         )))];
         assert!(
             validate_multicast_address(
-                IpAddr::V6(Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0, 0x1234)),
+                IpAddr::V6(Ipv6Addr::new(
+                    0xff3e, 0, 0, 0, 0, 0, 0x8000, 0x1234
+                )),
                 Some(&ip6_sources)
             )
             .is_ok()
@@ -548,7 +803,9 @@ mod tests {
         // IPv6 SSM without sources
         assert!(
             validate_multicast_address(
-                IpAddr::V6(Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0, 0x1234)),
+                IpAddr::V6(Ipv6Addr::new(
+                    0xff3e, 0, 0, 0, 0, 0, 0x8000, 0x1234
+                )),
                 None
             )
             .is_err()
@@ -561,6 +818,30 @@ mod tests {
                 Some(&ip6_sources)
             )
             .is_ok()
+        );
+
+        // Source and group address families must match.
+        let invalid_v6_source_for_v4_group = vec![IpSrc::Exact(IpAddr::V6(
+            Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
+        ))];
+        assert!(
+            validate_multicast_address(
+                IpAddr::V4(Ipv4Addr::new(232, 1, 2, 3)),
+                Some(&invalid_v6_source_for_v4_group),
+            )
+            .is_err()
+        );
+
+        let invalid_v4_source_for_v6_group =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))];
+        assert!(
+            validate_multicast_address(
+                IpAddr::V6(Ipv6Addr::new(
+                    0xff3e, 0, 0, 0, 0, 0, 0x8000, 0x1234,
+                )),
+                Some(&invalid_v4_source_for_v6_group),
+            )
+            .is_err()
         );
     }
 
@@ -659,6 +940,54 @@ mod tests {
         assert!(
             validate_source_addresses(Some(&invalid_loopback_ipv6)).is_err()
         );
+
+        // ::ffff:192.0.2.1, RFC 4291 §2.5.5.2
+        let invalid_v4_mapped = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0xffff, 0xc000, 0x0201,
+        )))];
+        assert!(validate_source_addresses(Some(&invalid_v4_mapped)).is_err());
+
+        // ::192.0.2.1, RFC 4291 §2.5.5.1
+        let invalid_v4_compat = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0, 0xc000, 0x0201,
+        )))];
+        assert!(validate_source_addresses(Some(&invalid_v4_compat)).is_err());
+
+        // 64:ff9b::192.0.2.1, RFC 6052 §2.1
+        let invalid_nat64 = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
+            0x0064, 0xff9b, 0, 0, 0, 0, 0xc000, 0x0201,
+        )))];
+        assert!(validate_source_addresses(Some(&invalid_nat64)).is_err());
+
+        // A NAT64 network-specific prefix that starts with 64:ff9b but is
+        // not the well-known /96 remains a valid source.
+        let valid_near_nat64 = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
+            0x0064, 0xff9b, 0, 1, 0, 0, 0xc000, 0x0201,
+        )))];
+        assert!(validate_source_addresses(Some(&valid_near_nat64)).is_ok());
+
+        // 0.0.0.0/8, this host on this network, RFC 1122 §3.2.1.3
+        let invalid_this_network =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(0, 1, 2, 3)))];
+        assert!(
+            validate_source_addresses(Some(&invalid_this_network)).is_err()
+        );
+
+        // 240.0.0.0/4, class E, RFC 1112 §4
+        for octets in [[240, 0, 0, 1], [255, 255, 255, 254]] {
+            let invalid_class_e =
+                vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::from(octets)))];
+            assert!(
+                validate_source_addresses(Some(&invalid_class_e)).is_err(),
+                "{octets:?} should be rejected as a class E source"
+            );
+        }
+
+        // The class E boundary is exact: the highest unicast address below
+        // it remains valid as a source.
+        let valid_below_class_e =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(223, 255, 255, 255)))];
+        assert!(validate_source_addresses(Some(&valid_below_class_e)).is_ok());
 
         // No sources should be valid
         assert!(validate_source_addresses(None).is_ok());
