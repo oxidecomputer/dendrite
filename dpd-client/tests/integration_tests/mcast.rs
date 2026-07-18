@@ -24,7 +24,7 @@ const MULTICAST_TEST_IPV6: Ipv6Addr =
     Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 1, 0x1010);
 const MULTICAST_TEST_IPV4_SSM: Ipv4Addr = Ipv4Addr::new(232, 123, 45, 67);
 const MULTICAST_TEST_IPV6_SSM: Ipv6Addr =
-    Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0, 0x1111);
+    Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0xf000, 0x1111);
 const MULTICAST_NAT_IP: Ipv6Addr =
     Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 1);
 const GIMLET_MAC: &str = "11:22:33:44:55:66";
