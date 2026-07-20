@@ -619,7 +619,8 @@ mod tests {
 
     #[test]
     fn port_ids_are_ascii() {
-        let e = PortId::try_from("abč0").expect_err("Should have returned an error");
+        let e = PortId::try_from("abč0")
+            .expect_err("Should have returned an error");
         assert_eq!(e.to_string(), "Invalid switch port ID");
     }
 }
