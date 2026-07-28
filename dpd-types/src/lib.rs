@@ -21,4 +21,5 @@ pub mod snapshot;
 pub mod switch_identifiers;
 pub mod switch_port;
 pub mod table;
+pub mod tag;
 pub mod transceivers;

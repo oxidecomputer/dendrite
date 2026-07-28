@@ -7,7 +7,7 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "12.0.0"
+    "version": "13.0.0"
   },
   "paths": {
     "/all-settings": {
@@ -1058,7 +1058,7 @@
     "/links/tfport_data": {
       "get": {
         "summary": "Collect the link data consumed by `tfportd`.  This app-specific convenience",
-        "description": "routine is meant to reduce the time and traffic expended on this once-per-second operation, by consolidating multiple per-link requests into a single per-switch request.",
+        "description": "routine is meant to reduce the time and traffic expended on this once-per-second operation, by consolidating multiple per-link requests into a single per-switch request.\n\nEach link reports every IPv6 link-local address resident on it, along with the complete owner set for each, so the caller can distinguish its own claims from those of other clients.",
         "operationId": "tfport_data",
         "responses": {
           "200": {
@@ -2372,6 +2372,7 @@
     "/port/{port_id}/settings": {
       "get": {
         "summary": "Get port settings atomically.",
+        "description": "When an owner is named, only that owner's address claims are included, so the response can be round-tripped through `port_settings_apply` without touching other clients' claims.  Without an owner, every address on the port is reported, for observability.",
         "operationId": "port_settings_get",
         "parameters": [
           {
@@ -2385,11 +2386,10 @@
           },
           {
             "in": "query",
-            "name": "tag",
-            "description": "Restrict operations on this port to the provided tag.",
+            "name": "owner",
+            "description": "If present, only state owned by this tag is returned.",
             "schema": {
-              "nullable": true,
-              "type": "string"
+              "$ref": "#/components/schemas/Tag"
             }
           }
         ],
@@ -2414,7 +2414,7 @@
       },
       "post": {
         "summary": "Apply port settings atomically.",
-        "description": "These settings will be applied holistically, and to the extent possible atomically to a given port. In the event of a failure a rollback is attempted. If the rollback fails there will be inconsistent state. This failure mode returns the error code \"rollback failure\". For more details see the docs on the [`PortSettings`] type.",
+        "description": "These settings will be applied holistically, and to the extent possible atomically to a given port. In the event of a failure a rollback is attempted. If the rollback fails there will be inconsistent state. This failure mode returns the error code \"rollback failure\". For more details see the docs on the [`PortSettings`] type.\n\nThe settings are applied on behalf of the named owner: the transaction diffs the request against that owner's existing address claims only, so addresses claimed by other clients are neither visible to nor removable by it.  The `legacy` owner tag is reserved for requests made through earlier API versions and may not be used here.",
         "operationId": "port_settings_apply",
         "parameters": [
           {
@@ -2428,11 +2428,11 @@
           },
           {
             "in": "query",
-            "name": "tag",
-            "description": "Restrict operations on this port to the provided tag.",
+            "name": "owner",
+            "description": "The owner tag the operation acts for.",
+            "required": true,
             "schema": {
-              "nullable": true,
-              "type": "string"
+              "$ref": "#/components/schemas/Tag"
             }
           }
         ],
@@ -2466,8 +2466,44 @@
         }
       },
       "delete": {
-        "summary": "Clear port settings atomically.",
+        "summary": "Clear port settings atomically, regardless of ownership.",
         "operationId": "port_settings_clear",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortSettings"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/port/{port_id}/settings/owner": {
+      "delete": {
+        "summary": "Release one owner's port settings atomically.",
+        "description": "The port's links are removed, and the owner's address claims are released.  Addresses claimed by other clients are removed along with the links that carry them, since link existence is defined by the port settings alone.",
+        "operationId": "port_settings_release",
         "parameters": [
           {
             "in": "path",
@@ -2480,11 +2516,11 @@
           },
           {
             "in": "query",
-            "name": "tag",
-            "description": "Restrict operations on this port to the provided tag.",
+            "name": "owner",
+            "description": "The owner tag the operation acts for.",
+            "required": true,
             "schema": {
-              "nullable": true,
-              "type": "string"
+              "$ref": "#/components/schemas/Tag"
             }
           }
         ],
@@ -3233,6 +3269,7 @@
     "/ports/{port_id}/links/{link_id}/ipv4": {
       "get": {
         "summary": "List the IPv4 addresses associated with a link.",
+        "description": "Each address is returned exactly once, along with the complete set of client tags that have claimed it.",
         "operationId": "link_ipv4_list",
         "parameters": [
           {
@@ -3280,7 +3317,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Ipv4EntryResultsPage"
+                  "$ref": "#/components/schemas/Ipv4OwnedEntryResultsPage"
                 }
               }
             }
@@ -3295,11 +3332,24 @@
         "x-dropshot-pagination": {
           "required": []
         }
-      },
-      "post": {
-        "summary": "Add an IPv4 address to a link.",
-        "operationId": "link_ipv4_create",
+      }
+    },
+    "/ports/{port_id}/links/{link_id}/ipv4/{address}": {
+      "put": {
+        "summary": "Claim an IPv4 address on a link.",
+        "description": "A claim names the owner making it, and claiming is idempotent: the first claim makes the address resident on the link, a claim by another owner shares the already-resident address, and repeating a claim the owner already holds succeeds without changing anything. The address remains resident until every owner has released its claim.\n\nThe `legacy` owner tag is reserved for claims made through earlier API versions and may not be used here.",
+        "operationId": "link_ipv4_claim",
         "parameters": [
+          {
+            "in": "path",
+            "name": "address",
+            "description": "The IPv4 address on which to operate.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "ipv4"
+            }
+          },
           {
             "in": "path",
             "name": "link_id",
@@ -3323,7 +3373,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Ipv4Entry"
+                "$ref": "#/components/schemas/AddressClaim"
               }
             }
           },
@@ -3342,44 +3392,8 @@
         }
       },
       "delete": {
-        "summary": "Clear all IPv4 addresses from a link.",
-        "operationId": "link_ipv4_reset",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "link_id",
-            "description": "The link in the switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/LinkId"
-            }
-          },
-          {
-            "in": "path",
-            "name": "port_id",
-            "description": "The switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/PortId"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "resource updated"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/ports/{port_id}/links/{link_id}/ipv4/{address}": {
-      "delete": {
-        "summary": "Remove an IPv4 address from a link.",
+        "summary": "Remove an IPv4 address from a link, regardless of ownership.",
+        "description": "Every claim on the address is discarded.  To release a single owner's claim, use the address's `owner` subresource instead.",
         "operationId": "link_ipv4_delete",
         "parameters": [
           {
@@ -3424,9 +3438,67 @@
         }
       }
     },
+    "/ports/{port_id}/links/{link_id}/ipv4/{address}/owner": {
+      "delete": {
+        "summary": "Release one owner's claim on an IPv4 address on a link.",
+        "description": "The address remains resident on the link until its last claim is released.  A claim the owner does not hold cannot be released: from that owner's perspective the address does not exist, and the request fails with a 404.",
+        "operationId": "link_ipv4_release",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "address",
+            "description": "The IPv4 address on which to operate.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "ipv4"
+            }
+          },
+          {
+            "in": "path",
+            "name": "link_id",
+            "description": "The link in the switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LinkId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner",
+            "description": "The owner tag the operation acts for.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Tag"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/ports/{port_id}/links/{link_id}/ipv6": {
       "get": {
         "summary": "List the IPv6 addresses associated with a link.",
+        "description": "Each address is returned exactly once, along with the complete set of client tags that have claimed it.",
         "operationId": "link_ipv6_list",
         "parameters": [
           {
@@ -3474,7 +3546,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Ipv6EntryResultsPage"
+                  "$ref": "#/components/schemas/Ipv6OwnedEntryResultsPage"
                 }
               }
             }
@@ -3489,11 +3561,24 @@
         "x-dropshot-pagination": {
           "required": []
         }
-      },
-      "post": {
-        "summary": "Add an IPv6 address to a link.",
-        "operationId": "link_ipv6_create",
+      }
+    },
+    "/ports/{port_id}/links/{link_id}/ipv6/{address}": {
+      "put": {
+        "summary": "Claim an IPv6 address on a link.",
+        "description": "A claim names the owner making it, and claiming is idempotent: the first claim makes the address resident on the link, a claim by another owner shares the already-resident address, and repeating a claim the owner already holds succeeds without changing anything. The address remains resident until every owner has released its claim.\n\nThe `legacy` owner tag is reserved for claims made through earlier API versions and may not be used here.",
+        "operationId": "link_ipv6_claim",
         "parameters": [
+          {
+            "in": "path",
+            "name": "address",
+            "description": "The IPv6 address on which to operate.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "ipv6"
+            }
+          },
           {
             "in": "path",
             "name": "link_id",
@@ -3517,7 +3602,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Ipv6Entry"
+                "$ref": "#/components/schemas/AddressClaim"
               }
             }
           },
@@ -3536,44 +3621,8 @@
         }
       },
       "delete": {
-        "summary": "Clear all IPv6 addresses from a link.",
-        "operationId": "link_ipv6_reset",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "link_id",
-            "description": "The link in the switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/LinkId"
-            }
-          },
-          {
-            "in": "path",
-            "name": "port_id",
-            "description": "The switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/PortId"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "resource updated"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/ports/{port_id}/links/{link_id}/ipv6/{address}": {
-      "delete": {
-        "summary": "Remove an IPv6 address from a link.",
+        "summary": "Remove an IPv6 address from a link, regardless of ownership.",
+        "description": "Every claim on the address is discarded.  To release a single owner's claim, use the address's `owner` subresource instead.",
         "operationId": "link_ipv6_delete",
         "parameters": [
           {
@@ -3602,6 +3651,63 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/PortId"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/ports/{port_id}/links/{link_id}/ipv6/{address}/owner": {
+      "delete": {
+        "summary": "Release one owner's claim on an IPv6 address on a link.",
+        "description": "The address remains resident on the link until its last claim is released.  A claim the owner does not hold cannot be released: from that owner's perspective the address does not exist, and the request fails with a 404.",
+        "operationId": "link_ipv6_release",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "address",
+            "description": "The IPv6 address on which to operate.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "ipv6"
+            }
+          },
+          {
+            "in": "path",
+            "name": "link_id",
+            "description": "The link in the switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LinkId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner",
+            "description": "The owner tag the operation acts for.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Tag"
             }
           }
         ],
@@ -5575,6 +5681,23 @@
   },
   "components": {
     "schemas": {
+      "AddressClaim": {
+        "description": "A request to claim an address on a link for one owner.",
+        "type": "object",
+        "properties": {
+          "owner": {
+            "description": "The owner claiming the address.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Tag"
+              }
+            ]
+          }
+        },
+        "required": [
+          "owner"
+        ]
+      },
       "AnLtStatus": {
         "description": "A collection of the data involved in the autonegiation/link-training process",
         "type": "object",
@@ -6915,27 +7038,6 @@
           "tag"
         ]
       },
-      "Ipv4EntryResultsPage": {
-        "description": "A single page of results",
-        "type": "object",
-        "properties": {
-          "items": {
-            "description": "list of items on this page of results",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Ipv4Entry"
-            }
-          },
-          "next_page": {
-            "nullable": true,
-            "description": "token used to fetch the next page of results (if any)",
-            "type": "string"
-          }
-        },
-        "required": [
-          "items"
-        ]
-      },
       "Ipv4Nat": {
         "description": "represents an IPv4 NAT reservation",
         "type": "object",
@@ -6997,6 +7099,50 @@
         },
         "type": "string",
         "pattern": "^(([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])/([0-9]|1[0-9]|2[0-9]|3[0-2])$"
+      },
+      "Ipv4OwnedEntry": {
+        "description": "An IPv4 address resident on a link, along with the set of owners that have claimed it.",
+        "type": "object",
+        "properties": {
+          "addr": {
+            "description": "The IPv4 address.",
+            "type": "string",
+            "format": "ipv4"
+          },
+          "owners": {
+            "description": "The owners that have claimed this address.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Tag"
+            },
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "addr",
+          "owners"
+        ]
+      },
+      "Ipv4OwnedEntryResultsPage": {
+        "description": "A single page of results",
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "list of items on this page of results",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv4OwnedEntry"
+            }
+          },
+          "next_page": {
+            "nullable": true,
+            "description": "token used to fetch the next page of results (if any)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ]
       },
       "Ipv4Route": {
         "description": "A route for an IPv4 subnet.",
@@ -7124,27 +7270,6 @@
           "tag"
         ]
       },
-      "Ipv6EntryResultsPage": {
-        "description": "A single page of results",
-        "type": "object",
-        "properties": {
-          "items": {
-            "description": "list of items on this page of results",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Ipv6Entry"
-            }
-          },
-          "next_page": {
-            "nullable": true,
-            "description": "token used to fetch the next page of results (if any)",
-            "type": "string"
-          }
-        },
-        "required": [
-          "items"
-        ]
-      },
       "Ipv6Nat": {
         "description": "represents an IPv6 NAT reservation",
         "type": "object",
@@ -7206,6 +7331,50 @@
         },
         "type": "string",
         "pattern": "^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))\\/([0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8])$"
+      },
+      "Ipv6OwnedEntry": {
+        "description": "An IPv6 address resident on a link, along with the set of owners that have claimed it.",
+        "type": "object",
+        "properties": {
+          "addr": {
+            "description": "The IPv6 address.",
+            "type": "string",
+            "format": "ipv6"
+          },
+          "owners": {
+            "description": "The owners that have claimed this address.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Tag"
+            },
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "addr",
+          "owners"
+        ]
+      },
+      "Ipv6OwnedEntryResultsPage": {
+        "description": "A single page of results",
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "list of items on this page of results",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv6OwnedEntry"
+            }
+          },
+          "next_page": {
+            "nullable": true,
+            "description": "token used to fetch the next page of results (if any)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ]
       },
       "Ipv6Route": {
         "description": "A route for an IPv6 subnet.",
@@ -10398,6 +10567,11 @@
           "keys"
         ]
       },
+      "Tag": {
+        "description": "A client identity used to claim ownership of shared switch resources, such as the IP addresses resident on a link.\n\nA tag is any non-empty string.  Well-known tags include `\"omicron\"` (the control plane), `\"tfportd\"` (the tfport daemon), and `\"cli\"` (swadm).\n\nThe tag `\"legacy\"` is reserved: claims made through API versions that predate address ownership, without a tag of their own, are recorded under it.  New claims may not be created with the `\"legacy\"` tag, but claims it holds may be released like any other owner's.",
+        "type": "string",
+        "minLength": 1
+      },
       "TfportData": {
         "description": "The per-link data consumed by tfportd",
         "type": "object",
@@ -10420,11 +10594,12 @@
               }
             ]
           },
-          "link_local": {
-            "nullable": true,
-            "description": "The IPv6 link-local address of the link, if it exists.",
-            "type": "string",
-            "format": "ipv6"
+          "link_locals": {
+            "description": "Every IPv6 link-local address resident on the link, along with the complete set of owners that have claimed it.  This lets tfportd identify its own claim rather than assuming any link-local it sees is one it manages.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv6OwnedEntry"
+            }
           },
           "mac": {
             "description": "The MAC address for the link.",
@@ -10447,6 +10622,7 @@
           "asic_id",
           "ipv6_enabled",
           "link_id",
+          "link_locals",
           "mac",
           "port_id"
         ]

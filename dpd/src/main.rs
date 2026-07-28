@@ -68,6 +68,7 @@ mod macaddrs;
 #[cfg(feature = "multicast")]
 mod mcast;
 mod nat;
+mod owned_addrs;
 mod oxstats;
 mod port_map;
 mod port_settings;

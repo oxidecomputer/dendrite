@@ -11,6 +11,9 @@ use crate::Switch;
 use crate::fault::AutonegTracker;
 use crate::fault::Faultable;
 use crate::fault::LinkUpTracker;
+use crate::owned_addrs::Claimed;
+use crate::owned_addrs::DetachError;
+use crate::owned_addrs::OwnedAddrs;
 use crate::ports::AdminEvent;
 use crate::ports::Event;
 use crate::table::mac;
@@ -26,14 +29,14 @@ use aal::AsicOps;
 use aal::AsicResult;
 use aal::PortHdl;
 use aal::PortUpdate;
-use common::ports::Ipv4Entry;
-use common::ports::Ipv6Entry;
 use common::ports::PortFec;
 use common::ports::PortId;
 use common::ports::PortMedia;
 use common::ports::PortPrbsMode;
 use common::ports::PortSpeed;
 use common::ports::TxEq;
+use dpd_types::link::Ipv4OwnedEntry;
+use dpd_types::link::Ipv6OwnedEntry;
 use dpd_types::link::LinkCreate;
 use dpd_types::link::LinkFsmCounters;
 use dpd_types::link::LinkHistory;
@@ -43,6 +46,7 @@ use dpd_types::link::LinkUpCounter;
 use dpd_types::link::LinkView;
 use dpd_types::link::TfportData;
 use dpd_types::serdes::Ber;
+use dpd_types::tag::Tag;
 use slog::debug;
 use slog::error;
 use slog::info;
@@ -51,6 +55,7 @@ use slog::warn;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::btree_map::Entry;
+use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
@@ -236,10 +241,10 @@ pub struct Link {
     pub link_state: LinkState,
     /// The kind of media in the link.
     pub media: PortMedia,
-    /// A list of IPv4 addresses assigned to this link.
-    pub ipv4: BTreeSet<Ipv4Entry>,
-    /// A list of IPv6 addresses assigned to this link.
-    pub ipv6: BTreeSet<Ipv6Entry>,
+    /// The IPv4 addresses assigned to this link, with their owner tags.
+    pub(crate) ipv4: OwnedAddrs<Ipv4Addr>,
+    /// The IPv6 addresses assigned to this link, with their owner tags.
+    pub(crate) ipv6: OwnedAddrs<Ipv6Addr>,
     /// Tracks the history of linkup/linkdown transitions, allowing us to
     /// detect flapping links.
     pub linkup_tracker: LinkUpTracker,
@@ -291,9 +296,22 @@ impl From<&Link> for TfportData {
             asic_id: m.asic_port_id,
             mac: m.config.mac,
             ipv6_enabled: m.ipv6_enabled,
-            link_local: m.link_local(),
+            link_locals: m
+                .ipv6
+                .iter()
+                .filter(|(addr, _)| is_ipv6_link_local(addr))
+                .map(|(addr, owners)| Ipv6OwnedEntry {
+                    addr: *addr,
+                    owners: owners.clone(),
+                })
+                .collect(),
         }
     }
+}
+
+/// Is this address in the IPv6 link-local unicast range (`fe80::/10`)?
+fn is_ipv6_link_local(addr: &Ipv6Addr) -> bool {
+    (addr.segments()[0] & 0xffc0) == 0xfe80
 }
 
 impl From<Link> for TfportData {
@@ -373,6 +391,23 @@ pub(crate) struct LinkPlumbed {
 impl std::fmt::Display for Link {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}/{}", self.port_id, self.link_id)
+    }
+}
+
+// Convert an ownership detach failure into a DpdError with link context.
+fn detach_error(
+    port_id: PortId,
+    link_id: LinkId,
+    address: IpAddr,
+    e: DetachError,
+) -> DpdError {
+    match e {
+        // From the caller's perspective, an address it does not own does not
+        // exist on the link.
+        DetachError::NotResident | DetachError::NotOwner => {
+            DpdError::NoSuchAddress { port_id, link_id, address }
+        }
+        DetachError::Asic(e) => e,
     }
 }
 
@@ -459,22 +494,14 @@ impl Link {
             fsm_state: asic::PortFsmState::default(),
             link_state: LinkState::Unknown,
             media: PortMedia::None,
-            ipv4: BTreeSet::new(),
-            ipv6: BTreeSet::new(),
+            ipv4: OwnedAddrs::new(),
+            ipv6: OwnedAddrs::new(),
             linkup_tracker: LinkUpTracker::default(),
             autoneg_tracker: AutonegTracker::default(),
 
             config,
             plumbed,
         }
-    }
-
-    /// Return the link-local address for this link, if one has been added.
-    pub fn link_local(&self) -> Option<Ipv6Addr> {
-        self.ipv6
-            .iter()
-            .find(|entry| (entry.addr.segments()[0] & 0xffc0) == 0xfe80)
-            .map(|entry| entry.addr)
     }
 
     /// Return the FEC scheme in use for this link.  If the link has not yet
@@ -692,19 +719,9 @@ impl Switch {
         let link_lock = self.get_link_lock(port_id, link_id)?;
         let mut link = link_lock.lock().unwrap();
 
-        // Delete all addresses in the switch tables for this link.
-        if !link.ipv4.is_empty() {
-            let to_delete = std::mem::take(&mut link.ipv4)
-                .into_iter()
-                .map(|entry| entry.addr);
-            port_ip::ipv4_delete_many(self, link.asic_port_id, to_delete)?;
-        }
-        if !link.ipv6.is_empty() {
-            let to_delete = std::mem::take(&mut link.ipv6)
-                .into_iter()
-                .map(|entry| entry.addr);
-            port_ip::ipv6_delete_many(self, link.asic_port_id, to_delete)?;
-        }
+        // Delete all addresses in the switch tables for this link, regardless
+        // of which clients own them.
+        self.force_release_addresses_locked(&mut link)?;
 
         // Notify the reconciliation task that this link's ASIC resources need
         // to be released.
@@ -714,83 +731,62 @@ impl Switch {
         Ok(())
     }
 
+    /// Release every address resident on the provided link, regardless of
+    /// owner, removing the corresponding ASIC table entries.
+    fn force_release_addresses_locked(&self, link: &mut Link) -> DpdResult<()> {
+        for addr in link.ipv4.addrs().collect::<Vec<_>>() {
+            self.force_release_ipv4_address_locked(link, addr)?;
+        }
+        for addr in link.ipv6.addrs().collect::<Vec<_>>() {
+            self.force_release_ipv6_address_locked(link, addr)?;
+        }
+        Ok(())
+    }
+
     /// Clear all the state associated with all data links.
     pub fn clear_link_state(&self) -> DpdResult<()> {
         let links = self.links.lock().unwrap();
         for link_lock in links.0.values() {
             let mut link = link_lock.lock().unwrap();
-            // Clear all IP addresses.
-            //
-            // Swap out an empty map with the existing one, so that we can
-            // retain an iterable for calling `ipv{4,6}_delete_many`.
-            if !link.ipv4.is_empty() {
-                let to_delete = std::mem::take(&mut link.ipv4)
-                    .into_iter()
-                    .map(|entry| entry.addr);
-                port_ip::ipv4_delete_many(self, link.asic_port_id, to_delete)?;
-            }
-            if !link.ipv6.is_empty() {
-                let to_delete = std::mem::take(&mut link.ipv6)
-                    .into_iter()
-                    .map(|entry| entry.addr);
-                port_ip::ipv6_delete_many(self, link.asic_port_id, to_delete)?;
-            }
+            // Clear all IP addresses, regardless of which clients own them.
+            self.force_release_addresses_locked(&mut link)?;
         }
         Ok(())
     }
 
-    /// Clear any IP addresses associated with all links, optionally restricted
-    /// to a specified string `tag`.
-    pub fn clear_link_addresses(&self, tag: Option<&str>) -> DpdResult<()> {
-        if let Some(tag) = tag {
-            let links = self.links.lock().unwrap();
-            for link_lock in links.0.values() {
-                let mut link = link_lock.lock().unwrap();
-                self.clear_link_addresses_locked(&mut link, tag);
-            }
-            Ok(())
-        } else {
-            self.clear_link_state()
+    /// Release `owner`'s claims on every address of every link.
+    pub fn clear_link_addresses(&self, owner: &Tag) -> DpdResult<()> {
+        let links = self.links.lock().unwrap();
+        for link_lock in links.0.values() {
+            let mut link = link_lock.lock().unwrap();
+            self.clear_link_addresses_locked(&mut link, owner);
         }
+        Ok(())
     }
 
-    fn clear_link_addresses_locked(&self, link: &mut Link, tag: &str) {
-        // Remove all entries from the set with the provided tag.
-        //
-        // TODO-cleanup: It'd be nice to use `drain_filter` here,
-        // but that is unstable.
-        let mut to_remove = Vec::new();
-        link.ipv4.retain(|entry| {
-            if entry.tag == tag {
-                to_remove.push(entry.addr);
-                false
-            } else {
-                true
+    fn clear_link_addresses_locked(&self, link: &mut Link, tag: &Tag) {
+        // Release the tag's ownership of every address it owns.  Addresses
+        // co-owned by other tags remain resident; only the last owner's
+        // detach removes the ASIC entry.  This is a best-effort cleanup, so
+        // failures are logged rather than propagated.
+        for addr in link.ipv4.owned_by(tag).collect::<Vec<_>>() {
+            if let Err(e) = self.remove_ipv4_address_locked(link, addr, tag) {
+                error!(
+                    self.log,
+                    "failed to release IPv4 address {addr} on {link} \
+                     for tag {tag}: {e:?}"
+                );
             }
-        });
-
-        // Delete the entries from the ASIC tables.
-        let _ = port_ip::ipv4_delete_many(
-            self,
-            link.asic_port_id,
-            to_remove.into_iter(),
-        );
-
-        // TODO-cleanup: See note above about `drain_filter`.
-        let mut to_remove = Vec::new();
-        link.ipv6.retain(|entry| {
-            if entry.tag == tag {
-                to_remove.push(entry.addr);
-                false
-            } else {
-                true
+        }
+        for addr in link.ipv6.owned_by(tag).collect::<Vec<_>>() {
+            if let Err(e) = self.remove_ipv6_address_locked(link, addr, tag) {
+                error!(
+                    self.log,
+                    "failed to release IPv6 address {addr} on {link} \
+                     for tag {tag}: {e:?}"
+                );
             }
-        });
-        let _ = port_ip::ipv6_delete_many(
-            self,
-            link.asic_port_id,
-            to_remove.into_iter(),
-        );
+        }
     }
 
     // Update the state of a link with a closure.
@@ -805,16 +801,16 @@ impl Switch {
     // Note that the closure does not need to (but may) change the update time
     // of a link. This method does that update internally, _if the closure
     // succeeds_.
-    fn link_update(
+    fn link_update<T>(
         &self,
         port_id: PortId,
         link_id: LinkId,
-        f: impl FnOnce(&mut Link) -> DpdResult<()>,
-    ) -> DpdResult<()> {
-        let wrapped = |link: &mut Link| -> DpdResult<()> {
-            f(&mut *link)?;
+        f: impl FnOnce(&mut Link) -> DpdResult<T>,
+    ) -> DpdResult<T> {
+        let wrapped = |link: &mut Link| -> DpdResult<T> {
+            let value = f(&mut *link)?;
             link.updated = common::timestamp_ns();
-            Ok(())
+            Ok(value)
         };
         let link_lock = self.get_link_lock(port_id, link_id)?;
         let mut link = link_lock.lock().unwrap();
@@ -1026,207 +1022,375 @@ impl Switch {
         self.link_fetch(port_id, link_id, |link| link.asic_port_id)
     }
 
-    /// Add an IPv4 address to the provided link.
-    pub fn create_ipv4_address_locked(
+    /// Claim ownership of an IPv4 address on the provided link for `owner`,
+    /// programming the ASIC entry if the address is not already resident.
+    ///
+    /// Claiming is idempotent: if the address is already resident under
+    /// other owners, `owner` is added as a co-owner without touching the
+    /// ASIC, and a claim the owner already holds is reported as
+    /// [`Claimed::AlreadyOwned`] without changing anything.
+    pub fn install_ipv4_address_locked(
         &self,
         link: &mut Link,
-        entry: Ipv4Entry,
-    ) -> DpdResult<()> {
-        if link.ipv4.contains(&entry) {
-            Err(DpdError::Exists(format!(
-                "IP address {} already exists",
-                entry.addr
-            )))
-        } else {
-            port_ip::ipv4_add(self, link.asic_port_id, entry.addr)?;
-            link.ipv4.insert(entry);
-            Ok(())
-        }
+        address: Ipv4Addr,
+        owner: &Tag,
+    ) -> DpdResult<Claimed> {
+        let asic_port_id = link.asic_port_id;
+        link.ipv4.attach(address, owner, || {
+            port_ip::ipv4_add(self, asic_port_id, address)
+        })
     }
 
-    /// Add an IPv4 address to the specified link.
-    pub fn create_ipv4_address(
+    /// Claim ownership of an IPv4 address on the specified link for `owner`.
+    /// See [`Switch::install_ipv4_address_locked`].
+    pub fn install_ipv4_address(
         &self,
         port_id: PortId,
         link_id: LinkId,
-        entry: Ipv4Entry,
+        address: Ipv4Addr,
+        owner: &Tag,
+    ) -> DpdResult<Claimed> {
+        self.link_update(port_id, link_id, |link| {
+            self.install_ipv4_address_locked(link, address, owner)
+        })
+    }
+
+    /// Add an IPv4 address to a link with the exclusive semantics of API
+    /// versions predating address ownership: an already-resident address is
+    /// a conflict, regardless of who owns it.  Residency is checked before
+    /// claiming so a failed request leaves no claim behind.
+    pub fn create_ipv4_address_exclusive(
+        &self,
+        port_id: PortId,
+        link_id: LinkId,
+        address: Ipv4Addr,
+        owner: &Tag,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            self.create_ipv4_address_locked(link, entry)
+            if link.ipv4.contains(&address) {
+                return Err(DpdError::Exists(format!(
+                    "{address} already exists on {link}"
+                )));
+            }
+            self.install_ipv4_address_locked(link, address, owner).map(|_| ())
         })
     }
 
     /// List a page of IPv4 addresses associated with the link.
+    ///
+    /// Each address is returned exactly once, with its complete owner set.
     pub fn list_ipv4_addresses(
         &self,
         port_id: PortId,
         link_id: LinkId,
         last_address: Option<Ipv4Addr>,
         limit: usize,
-    ) -> DpdResult<Vec<Ipv4Entry>> {
+    ) -> DpdResult<Vec<Ipv4OwnedEntry>> {
         self.link_fetch(port_id, link_id, |link| {
-            if let Some(addr) = last_address {
-                // Equality only considers the address, so create an entry
-                // with an empty tag.
-                use std::ops::Bound;
-                let entry = Ipv4Entry { tag: String::new(), addr };
-                link.ipv4
-                    .range((Bound::Excluded(entry), Bound::Unbounded))
-                    .take(limit)
-                    .cloned()
-                    .collect()
-            } else {
-                link.ipv4.iter().take(limit).cloned().collect()
-            }
+            link.ipv4
+                .iter_after(last_address)
+                .take(limit)
+                .map(|(addr, owners)| Ipv4OwnedEntry {
+                    addr: *addr,
+                    owners: owners.clone(),
+                })
+                .collect()
         })
     }
 
-    /// Delete one IPv4 address on the provided link.
-    pub fn delete_ipv4_address_locked(
+    /// Release `owner`'s claim on an IPv4 address on the provided link.
+    /// The ASIC entry is released only when the last owner detaches.
+    pub fn remove_ipv4_address_locked(
         &self,
         link: &mut Link,
         address: Ipv4Addr,
+        owner: &Tag,
     ) -> DpdResult<()> {
-        let entry = Ipv4Entry { tag: String::new(), addr: address };
-
-        if link.ipv4.contains(&entry) {
-            port_ip::ipv4_delete(self, link.asic_port_id, address)?;
-            link.ipv4.remove(&entry);
-            Ok(())
-        } else {
-            Err(DpdError::NoSuchAddress {
-                port_id: link.port_id,
-                link_id: link.link_id,
-                address: address.into(),
+        let asic_port_id = link.asic_port_id;
+        link.ipv4
+            .detach(address, owner, || {
+                port_ip::ipv4_delete(self, asic_port_id, address)
             })
-        }
+            .map(|_| ())
+            .map_err(|e| {
+                detach_error(link.port_id, link.link_id, address.into(), e)
+            })
     }
 
-    /// Delete one IPv4 address on the specified link.
-    pub fn delete_ipv4_address(
+    /// Release `owner`'s claim on an IPv4 address on the specified link.
+    /// See [`Switch::remove_ipv4_address_locked`].
+    pub fn remove_ipv4_address(
+        &self,
+        port_id: PortId,
+        link_id: LinkId,
+        address: Ipv4Addr,
+        owner: &Tag,
+    ) -> DpdResult<()> {
+        self.link_update(port_id, link_id, |link| {
+            self.remove_ipv4_address_locked(link, address, owner)
+        })
+    }
+
+    /// Remove one IPv4 address on the provided link, regardless of which
+    /// owners claim it.  Returns the owner set the address had, so callers
+    /// unwinding a transaction can restore exact ownership.
+    pub fn force_release_ipv4_address_locked(
+        &self,
+        link: &mut Link,
+        address: Ipv4Addr,
+    ) -> DpdResult<BTreeSet<Tag>> {
+        let asic_port_id = link.asic_port_id;
+        let owners = link
+            .ipv4
+            .force_release(address, || {
+                port_ip::ipv4_delete(self, asic_port_id, address)
+            })
+            .map_err(|e| {
+                detach_error(link.port_id, link.link_id, address.into(), e)
+            })?;
+        Ok(owners)
+    }
+
+    /// Remove one IPv4 address on the specified link, regardless of which
+    /// owners claim it.
+    pub fn force_release_ipv4_address(
         &self,
         port_id: PortId,
         link_id: LinkId,
         address: Ipv4Addr,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            self.delete_ipv4_address_locked(link, address)
+            let owners =
+                self.force_release_ipv4_address_locked(link, address)?;
+            warn!(
+                self.log,
+                "force-released IPv4 address {address} on {link} \
+                 owned by {owners:?}"
+            );
+            Ok(())
         })
     }
 
-    /// Delete all IPv4 address on the specified link.
-    pub fn reset_ipv4_addresses(
+    /// Remove every IPv4 address on the specified link, regardless of
+    /// ownership.  This preserves the semantics of address reset from API
+    /// versions predating address ownership.
+    pub fn force_release_ipv4_addresses(
         &self,
         port_id: PortId,
         link_id: LinkId,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            while let Some(Ipv4Entry { addr, .. }) = link.ipv4.pop_first() {
-                port_ip::ipv4_delete(self, link.asic_port_id, addr)?;
+            for addr in link.ipv4.addrs().collect::<Vec<_>>() {
+                let owners =
+                    self.force_release_ipv4_address_locked(link, addr)?;
+                warn!(
+                    self.log,
+                    "reset force-released IPv4 address {addr} on {link} \
+                     owned by {owners:?}"
+                );
             }
             Ok(())
         })
     }
 
-    /// Add an IPv6 address to the provided link.
-    pub fn create_ipv6_address_locked(
+    /// Restore an IPv4 address with the given owner set on the provided
+    /// link, programming the ASIC entry if the address is not resident.
+    /// Used to unwind address deletion when a transaction rolls back.
+    pub(crate) fn restore_ipv4_address_locked(
         &self,
         link: &mut Link,
-        entry: Ipv6Entry,
+        address: Ipv4Addr,
+        owners: BTreeSet<Tag>,
     ) -> DpdResult<()> {
-        if link.ipv6.contains(&entry) {
-            Err(DpdError::Exists(format!(
-                "IP address {} already exists",
-                entry.addr
-            )))
-        } else {
-            port_ip::ipv6_add(self, link.asic_port_id, entry.addr)?;
-            link.ipv6.insert(entry);
-            Ok(())
-        }
+        let asic_port_id = link.asic_port_id;
+        link.ipv4.restore(address, owners, || {
+            port_ip::ipv4_add(self, asic_port_id, address)
+        })
     }
 
-    /// Add an IPv6 address to the specified link.
-    pub fn create_ipv6_address(
+    /// Claim ownership of an IPv6 address on the provided link for `owner`,
+    /// programming the ASIC entry if the address is not already resident.
+    ///
+    /// Claiming is idempotent: if the address is already resident under
+    /// other owners, `owner` is added as a co-owner without touching the
+    /// ASIC, and a claim the owner already holds is reported as
+    /// [`Claimed::AlreadyOwned`] without changing anything.
+    pub fn install_ipv6_address_locked(
+        &self,
+        link: &mut Link,
+        address: Ipv6Addr,
+        owner: &Tag,
+    ) -> DpdResult<Claimed> {
+        let asic_port_id = link.asic_port_id;
+        link.ipv6.attach(address, owner, || {
+            port_ip::ipv6_add(self, asic_port_id, address)
+        })
+    }
+
+    /// Claim ownership of an IPv6 address on the specified link for `owner`.
+    /// See [`Switch::install_ipv6_address_locked`].
+    pub fn install_ipv6_address(
         &self,
         port_id: PortId,
         link_id: LinkId,
-        entry: Ipv6Entry,
+        address: Ipv6Addr,
+        owner: &Tag,
+    ) -> DpdResult<Claimed> {
+        self.link_update(port_id, link_id, |link| {
+            self.install_ipv6_address_locked(link, address, owner)
+        })
+    }
+
+    /// Add an IPv6 address to a link with the exclusive semantics of API
+    /// versions predating address ownership: an already-resident address is
+    /// a conflict, regardless of who owns it.  Residency is checked before
+    /// claiming so a failed request leaves no claim behind.
+    pub fn create_ipv6_address_exclusive(
+        &self,
+        port_id: PortId,
+        link_id: LinkId,
+        address: Ipv6Addr,
+        owner: &Tag,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            self.create_ipv6_address_locked(link, entry)
+            if link.ipv6.contains(&address) {
+                return Err(DpdError::Exists(format!(
+                    "{address} already exists on {link}"
+                )));
+            }
+            self.install_ipv6_address_locked(link, address, owner).map(|_| ())
         })
     }
 
     /// List a page of IPv6 addresses associated with the link.
+    ///
+    /// Each address is returned exactly once, with its complete owner set.
     pub fn list_ipv6_addresses(
         &self,
         port_id: PortId,
         link_id: LinkId,
         last_address: Option<Ipv6Addr>,
         limit: usize,
-    ) -> DpdResult<Vec<Ipv6Entry>> {
+    ) -> DpdResult<Vec<Ipv6OwnedEntry>> {
         self.link_fetch(port_id, link_id, |link| {
-            if let Some(addr) = last_address {
-                // Equality only considers the address, so create an entry
-                // with an empty tag.
-                use std::ops::Bound;
-                let entry = Ipv6Entry { tag: String::new(), addr };
-                link.ipv6
-                    .range((Bound::Excluded(entry), Bound::Unbounded))
-                    .take(limit)
-                    .cloned()
-                    .collect()
-            } else {
-                link.ipv6.iter().take(limit).cloned().collect()
-            }
+            link.ipv6
+                .iter_after(last_address)
+                .take(limit)
+                .map(|(addr, owners)| Ipv6OwnedEntry {
+                    addr: *addr,
+                    owners: owners.clone(),
+                })
+                .collect()
         })
     }
 
-    /// Delete one IPv6 address on the provided link.
-    pub fn delete_ipv6_address_locked(
+    /// Release `owner`'s claim on an IPv6 address on the provided link.
+    /// The ASIC entry is released only when the last owner detaches.
+    pub fn remove_ipv6_address_locked(
         &self,
         link: &mut Link,
         address: Ipv6Addr,
+        owner: &Tag,
     ) -> DpdResult<()> {
-        let entry = Ipv6Entry { tag: String::new(), addr: address };
-
-        if link.ipv6.contains(&entry) {
-            port_ip::ipv6_delete(self, link.asic_port_id, address)?;
-            link.ipv6.remove(&entry);
-            Ok(())
-        } else {
-            Err(DpdError::NoSuchAddress {
-                port_id: link.port_id,
-                link_id: link.link_id,
-                address: address.into(),
+        let asic_port_id = link.asic_port_id;
+        link.ipv6
+            .detach(address, owner, || {
+                port_ip::ipv6_delete(self, asic_port_id, address)
             })
-        }
+            .map(|_| ())
+            .map_err(|e| {
+                detach_error(link.port_id, link.link_id, address.into(), e)
+            })
     }
 
-    /// Delete one IPv6 address on the specified link.
-    pub fn delete_ipv6_address(
+    /// Release `owner`'s claim on an IPv6 address on the specified link.
+    /// See [`Switch::remove_ipv6_address_locked`].
+    pub fn remove_ipv6_address(
+        &self,
+        port_id: PortId,
+        link_id: LinkId,
+        address: Ipv6Addr,
+        owner: &Tag,
+    ) -> DpdResult<()> {
+        self.link_update(port_id, link_id, |link| {
+            self.remove_ipv6_address_locked(link, address, owner)
+        })
+    }
+
+    /// Remove one IPv6 address on the provided link, regardless of which
+    /// owners claim it.  Returns the owner set the address had, so callers
+    /// unwinding a transaction can restore exact ownership.
+    pub fn force_release_ipv6_address_locked(
+        &self,
+        link: &mut Link,
+        address: Ipv6Addr,
+    ) -> DpdResult<BTreeSet<Tag>> {
+        let asic_port_id = link.asic_port_id;
+        let owners = link
+            .ipv6
+            .force_release(address, || {
+                port_ip::ipv6_delete(self, asic_port_id, address)
+            })
+            .map_err(|e| {
+                detach_error(link.port_id, link.link_id, address.into(), e)
+            })?;
+        Ok(owners)
+    }
+
+    /// Remove one IPv6 address on the specified link, regardless of which
+    /// owners claim it.
+    pub fn force_release_ipv6_address(
         &self,
         port_id: PortId,
         link_id: LinkId,
         address: Ipv6Addr,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            self.delete_ipv6_address_locked(link, address)
+            let owners =
+                self.force_release_ipv6_address_locked(link, address)?;
+            warn!(
+                self.log,
+                "force-released IPv6 address {address} on {link} \
+                 owned by {owners:?}"
+            );
+            Ok(())
         })
     }
 
-    /// Delete all IPv6 address on the specified link.
-    pub fn reset_ipv6_addresses(
+    /// Remove every IPv6 address on the specified link, regardless of
+    /// ownership.  This preserves the semantics of address reset from API
+    /// versions predating address ownership.
+    pub fn force_release_ipv6_addresses(
         &self,
         port_id: PortId,
         link_id: LinkId,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            while let Some(Ipv6Entry { addr, .. }) = link.ipv6.pop_first() {
-                port_ip::ipv6_delete(self, link.asic_port_id, addr)?;
+            for addr in link.ipv6.addrs().collect::<Vec<_>>() {
+                let owners =
+                    self.force_release_ipv6_address_locked(link, addr)?;
+                warn!(
+                    self.log,
+                    "reset force-released IPv6 address {addr} on {link} \
+                     owned by {owners:?}"
+                );
             }
             Ok(())
+        })
+    }
+
+    /// Restore an IPv6 address with the given owner set on the provided
+    /// link, programming the ASIC entry if the address is not resident.
+    /// Used to unwind address deletion when a transaction rolls back.
+    pub(crate) fn restore_ipv6_address_locked(
+        &self,
+        link: &mut Link,
+        address: Ipv6Addr,
+        owners: BTreeSet<Tag>,
+    ) -> DpdResult<()> {
+        let asic_port_id = link.asic_port_id;
+        link.ipv6.restore(address, owners, || {
+            port_ip::ipv6_add(self, asic_port_id, address)
         })
     }
 
@@ -1852,6 +2016,18 @@ async fn reconcile_link(
     }
 
     if link.config.delete_me {
+        // Both deletion paths (the direct link-delete API and port-settings
+        // transactions) release all addresses before marking the link for
+        // deletion, so this should be a no-op.  Anything that slipped
+        // through would leak its ASIC table entries forever once the link
+        // is dropped from the map, so force-release the stragglers here,
+        // logging rather than failing since the link is going away anyway.
+        if let Err(e) = switch.force_release_addresses_locked(&mut link) {
+            error!(
+                log,
+                "failed to release leftover addresses on link teardown: {e:?}"
+            );
+        }
         switch.free_mac_address(link.config.mac);
         links
             .delete_link(port_id, link_id)

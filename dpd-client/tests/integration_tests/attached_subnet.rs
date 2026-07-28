@@ -111,11 +111,7 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
     // port to the uplink switch port
     let (port_id, link_id) = switch.link_id(test.backplane_port).unwrap();
     let backplane_ip = test.backplane_ip.parse::<Ipv6Addr>().unwrap();
-    let entry = types::Ipv6Entry {
-        addr: backplane_ip,
-        tag: switch.client.inner().tag.clone(),
-    };
-    switch.client.link_ipv6_create(&port_id, &link_id, &entry).await.unwrap();
+    switch.claim_ipv6(&port_id, &link_id, backplane_ip).await.unwrap();
     switch.set_uplink(test.uplink_port, true).await;
 
     // populate the ndp/arp table with the upstream router's mac and IP.
@@ -203,13 +199,9 @@ async fn test_ingress(switch: &Switch, test: &ExternalTest) -> TestResult {
     let gimlet_mac = test.gimlet_mac.parse().unwrap();
     let (port_id, link_id) = switch.link_id(test.backplane_port).unwrap();
     let backplane_ip = test.backplane_ip.parse::<Ipv6Addr>().unwrap();
-    let entry = types::Ipv6Entry {
-        addr: backplane_ip,
-        tag: switch.client.inner().tag.clone(),
-    };
 
     // Create the backplane port on the sidecar, linking to the gimlet
-    switch.client.link_ipv6_create(&port_id, &link_id, &entry).await.unwrap();
+    switch.claim_ipv6(&port_id, &link_id, backplane_ip).await.unwrap();
     let cidr =
         oxnet::Ipv6Net::new(test.gimlet_ip.parse().unwrap(), 64).unwrap();
     let route = types::Ipv6RouteUpdate {

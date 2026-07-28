@@ -14,7 +14,6 @@ use reqwest::StatusCode;
 
 use ::common::ports::Ipv4Entry;
 use ::common::ports::Ipv6Entry;
-use dpd_client::ClientInfo;
 use dpd_client::Error;
 use dpd_client::types;
 use types::PortId;
@@ -26,15 +25,17 @@ use crate::integration_tests::common::prelude::*;
 async fn test_bad_port() -> TestResult {
     let switch = &*get_switch().await;
 
-    let entry = types::Ipv4Entry {
-        addr: "10.10.5.1".parse().unwrap(),
-        tag: switch.client.inner().tag.clone(),
-    };
+    let addr: Ipv4Addr = "10.10.5.1".parse().unwrap();
     let no_such_port = PortId::try_from("qsfp0").unwrap();
 
     let res = switch
         .client
-        .link_ipv4_create(&no_such_port, &types::LinkId(0), &entry)
+        .link_ipv4_claim(
+            &no_such_port,
+            &types::LinkId(0),
+            &addr,
+            &switch.addr_claim(),
+        )
         .await
         .unwrap_err();
     let Error::ErrorResponse(inner) = res else {
@@ -128,8 +129,7 @@ async fn test_ipv4_set() -> TestResult {
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
     // Add one address at a time, assert we get back the new set.
-    let entry = switch.client.ipv4_entry(a);
-    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
+    switch.claim_ipv4(&port_id, &link_id, a).await.unwrap();
     let l = switch
         .client
         .link_ipv4_list_stream(&port_id, &link_id, None)
@@ -139,8 +139,7 @@ async fn test_ipv4_set() -> TestResult {
         .unwrap();
     addr_compare(vec![a], l).unwrap();
 
-    let entry = switch.client.ipv4_entry(b);
-    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
+    switch.claim_ipv4(&port_id, &link_id, b).await.unwrap();
     let l = switch
         .client
         .link_ipv4_list_stream(&port_id, &link_id, None)
@@ -150,8 +149,7 @@ async fn test_ipv4_set() -> TestResult {
         .unwrap();
     addr_compare(vec![a, b], l).unwrap();
 
-    let entry = switch.client.ipv4_entry(c);
-    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
+    switch.claim_ipv4(&port_id, &link_id, c).await.unwrap();
     let l = switch
         .client
         .link_ipv4_list_stream(&port_id, &link_id, None)
@@ -173,21 +171,9 @@ async fn test_ipv4_clear() -> TestResult {
     let c: Ipv4Addr = "10.10.5.3".parse().unwrap();
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &switch.client.ipv4_entry(a))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &switch.client.ipv4_entry(b))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &switch.client.ipv4_entry(c))
-        .await
-        .unwrap();
+    switch.claim_ipv4(&port_id, &link_id, a).await.unwrap();
+    switch.claim_ipv4(&port_id, &link_id, b).await.unwrap();
+    switch.claim_ipv4(&port_id, &link_id, c).await.unwrap();
 
     switch.client.link_ipv4_delete(&port_id, &link_id, &a).await.unwrap();
     switch.client.link_ipv4_delete(&port_id, &link_id, &b).await.unwrap();
@@ -213,21 +199,9 @@ async fn test_ipv4_delete() -> TestResult {
     let c: Ipv4Addr = "10.10.5.3".parse().unwrap();
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &switch.client.ipv4_entry(a))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &switch.client.ipv4_entry(b))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &switch.client.ipv4_entry(c))
-        .await
-        .unwrap();
+    switch.claim_ipv4(&port_id, &link_id, a).await.unwrap();
+    switch.claim_ipv4(&port_id, &link_id, b).await.unwrap();
+    switch.claim_ipv4(&port_id, &link_id, c).await.unwrap();
 
     switch.client.link_ipv4_delete(&port_id, &link_id, &b).await.unwrap();
     let l = switch
@@ -261,11 +235,7 @@ async fn test_ipv6_set() -> TestResult {
     let c: Ipv6Addr = "fe80::240:54ff:fe08:808".parse().unwrap();
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &switch.client.ipv6_entry(a))
-        .await
-        .unwrap();
+    switch.claim_ipv6(&port_id, &link_id, a).await.unwrap();
     let l = switch
         .client
         .link_ipv6_list_stream(&port_id, &link_id, None)
@@ -275,11 +245,7 @@ async fn test_ipv6_set() -> TestResult {
         .unwrap();
     addr_compare(vec![a], l).unwrap();
 
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &switch.client.ipv6_entry(b))
-        .await
-        .unwrap();
+    switch.claim_ipv6(&port_id, &link_id, b).await.unwrap();
     let l = switch
         .client
         .link_ipv6_list_stream(&port_id, &link_id, None)
@@ -289,11 +255,7 @@ async fn test_ipv6_set() -> TestResult {
         .unwrap();
     addr_compare(vec![a, b], l).unwrap();
 
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &switch.client.ipv6_entry(c))
-        .await
-        .unwrap();
+    switch.claim_ipv6(&port_id, &link_id, c).await.unwrap();
     let l = switch
         .client
         .link_ipv6_list_stream(&port_id, &link_id, None)
@@ -314,21 +276,9 @@ async fn test_ipv6_clear() -> TestResult {
     let c: Ipv6Addr = "fe80::240:54ff:fe08:808".parse().unwrap();
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &switch.client.ipv6_entry(a))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &switch.client.ipv6_entry(b))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &switch.client.ipv6_entry(c))
-        .await
-        .unwrap();
+    switch.claim_ipv6(&port_id, &link_id, a).await.unwrap();
+    switch.claim_ipv6(&port_id, &link_id, b).await.unwrap();
+    switch.claim_ipv6(&port_id, &link_id, c).await.unwrap();
 
     switch.client.link_ipv6_delete(&port_id, &link_id, &a).await.unwrap();
     switch.client.link_ipv6_delete(&port_id, &link_id, &b).await.unwrap();
@@ -355,21 +305,9 @@ async fn test_ipv6_delete() -> TestResult {
     let c: Ipv6Addr = "fe80::240:54ff:fe08:808".parse().unwrap();
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &switch.client.ipv6_entry(a))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &switch.client.ipv6_entry(b))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &switch.client.ipv6_entry(c))
-        .await
-        .unwrap();
+    switch.claim_ipv6(&port_id, &link_id, a).await.unwrap();
+    switch.claim_ipv6(&port_id, &link_id, b).await.unwrap();
+    switch.claim_ipv6(&port_id, &link_id, c).await.unwrap();
 
     switch.client.link_ipv6_delete(&port_id, &link_id, &b).await.unwrap();
     let l = switch
@@ -404,26 +342,10 @@ async fn test_reset_all() -> TestResult {
     let ipv4b: Ipv4Addr = "10.10.5.2".parse().unwrap();
     let (port_id, link_id) = switch.link_id(PhysPort(19)).unwrap();
 
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &switch.client.ipv6_entry(ipv6a))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &switch.client.ipv6_entry(ipv6b))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &switch.client.ipv4_entry(ipv4a))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &switch.client.ipv4_entry(ipv4b))
-        .await
-        .unwrap();
+    switch.claim_ipv6(&port_id, &link_id, ipv6a).await.unwrap();
+    switch.claim_ipv6(&port_id, &link_id, ipv6b).await.unwrap();
+    switch.claim_ipv4(&port_id, &link_id, ipv4a).await.unwrap();
+    switch.claim_ipv4(&port_id, &link_id, ipv4b).await.unwrap();
 
     let l = switch
         .client
@@ -479,26 +401,10 @@ async fn test_reset_tag() -> TestResult {
     let (port_id, link_id) = switch.link_id(PhysPort(19)).unwrap();
 
     // Set four addresses
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &switch.client.ipv6_entry(ipv6a))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv6_create(&port_id, &link_id, &switch.client.ipv6_entry(ipv6b))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &switch.client.ipv4_entry(ipv4a))
-        .await
-        .unwrap();
-    switch
-        .client
-        .link_ipv4_create(&port_id, &link_id, &switch.client.ipv4_entry(ipv4b))
-        .await
-        .unwrap();
+    switch.claim_ipv6(&port_id, &link_id, ipv6a).await.unwrap();
+    switch.claim_ipv6(&port_id, &link_id, ipv6b).await.unwrap();
+    switch.claim_ipv4(&port_id, &link_id, ipv4a).await.unwrap();
+    switch.claim_ipv4(&port_id, &link_id, ipv4b).await.unwrap();
 
     // Make sure all four addresses are still there
     let l = switch
@@ -564,99 +470,129 @@ async fn test_reset_tag() -> TestResult {
     Ok(())
 }
 
-// Regression test verifying that creating an IP address that already exists
-// does not succeed silently.
-//
-// This request is a POST, and not idempotent. We previously allowed clients to
-// clobber the addresses of other clients by blindly inserting the addresses
-// into the set for each link. This ensures we return 409 in that case.
+// Claiming an address is idempotent for a single owner, and a second owner
+// may co-claim a resident address.  The old POST-based API returned 409 to
+// prevent clients from silently clobbering each other's addresses; ownership
+// tracking now makes that structural: each owner's claim is recorded, and the
+// address remains until the last owner releases it.
 #[tokio::test]
 #[ignore]
-async fn test_create_existing_ipv4_address_fails() -> TestResult {
+async fn test_reclaim_ipv4_address_idempotent() -> TestResult {
     let switch = &*get_switch().await;
 
-    let entry = types::Ipv4Entry {
-        addr: "10.10.5.1".parse().unwrap(),
-        tag: switch.client.inner().tag.clone(),
-    };
+    let addr: Ipv4Addr = "10.10.5.1".parse().unwrap();
     let port = PortId::try_from("rear0").unwrap();
+    let link = types::LinkId(0);
     switch
         .client
-        .link_ipv4_create(&port, &types::LinkId(0), &entry)
+        .link_ipv4_claim(&port, &link, &addr, &switch.addr_claim())
         .await
-        .expect("Should be able to create IPv4 address");
+        .expect("Should be able to claim IPv4 address");
 
-    // Create the address again, and check that it fails.
-    let res = switch
+    // Claim the address again with the same owner: idempotent success.
+    switch
         .client
-        .link_ipv4_create(&port, &types::LinkId(0), &entry)
+        .link_ipv4_claim(&port, &link, &addr, &switch.addr_claim())
         .await
-        .expect_err("Should not be able to recreate IP address");
-    let Error::ErrorResponse(inner) = res else {
-        panic!("Expected a failure when re-creating an existing address");
-    };
-    assert_eq!(inner.status(), StatusCode::CONFLICT);
+        .expect("Re-claiming an owned address should be idempotent");
+
+    // A different owner may co-claim the same address.
+    let other =
+        types::AddressClaim { owner: types::Tag::try_from("other").unwrap() };
+    switch
+        .client
+        .link_ipv4_claim(&port, &link, &addr, &other)
+        .await
+        .expect("A second owner should be able to co-claim an address");
+
+    // The address is listed once, with both owners.
+    let entries: Vec<types::Ipv4OwnedEntry> = switch
+        .client
+        .link_ipv4_list_stream(&port, &link, None)
+        .try_collect()
+        .await
+        .unwrap();
+    let entry = entries
+        .iter()
+        .find(|e| e.addr == addr)
+        .expect("claimed address should be listed");
+    assert_eq!(
+        entry.owners,
+        vec![other.owner.clone(), switch.owner()],
+        "expected both owners on the claimed address"
+    );
+
+    // Releasing one owner leaves the address in place for the other.
+    switch
+        .client
+        .link_ipv4_release(&port, &link, &addr, &other.owner)
+        .await
+        .expect("Should be able to release one owner's claim");
+    let entries: Vec<types::Ipv4OwnedEntry> = switch
+        .client
+        .link_ipv4_list_stream(&port, &link, None)
+        .try_collect()
+        .await
+        .unwrap();
+    let entry = entries
+        .iter()
+        .find(|e| e.addr == addr)
+        .expect("address should remain while an owner holds a claim");
+    assert_eq!(entry.owners, vec![switch.owner()]);
     Ok(())
 }
 
 #[tokio::test]
 #[ignore]
-async fn test_create_existing_ipv6_address_fails() -> TestResult {
+async fn test_reclaim_ipv6_address_idempotent() -> TestResult {
     let switch = &*get_switch().await;
 
-    let entry = types::Ipv6Entry {
-        addr: "fd00::1".parse().unwrap(),
-        tag: switch.client.inner().tag.clone(),
-    };
+    let addr: Ipv6Addr = "fd00::1".parse().unwrap();
     let port = PortId::try_from("rear0").unwrap();
+    let link = types::LinkId(0);
     switch
         .client
-        .link_ipv6_create(&port, &types::LinkId(0), &entry)
+        .link_ipv6_claim(&port, &link, &addr, &switch.addr_claim())
         .await
-        .expect("Should be able to create IPaddress");
+        .expect("Should be able to claim IPv6 address");
 
-    // Create the address again, and check that it fails.
-    let res = switch
+    // Claim the address again with the same owner: idempotent success.
+    switch
         .client
-        .link_ipv6_create(&port, &types::LinkId(0), &entry)
+        .link_ipv6_claim(&port, &link, &addr, &switch.addr_claim())
         .await
-        .expect_err("Should not be able to recreate IP address");
-    let Error::ErrorResponse(inner) = res else {
-        panic!("Expected a failure when re-creating an existing address");
-    };
-    assert_eq!(inner.status(), StatusCode::CONFLICT);
+        .expect("Re-claiming an owned address should be idempotent");
     Ok(())
 }
 
-// The same tests as above, but adding the IP address to a _different_ link.
+// An address may only be resident on a single link: claiming an address that
+// is already resident on a _different_ link is a conflict, regardless of
+// owner.
 #[tokio::test]
 #[ignore]
-async fn test_create_existing_ipv4_address_on_different_link_fails()
--> TestResult {
+async fn test_claim_existing_ipv4_address_on_different_link_fails() -> TestResult
+{
     let switch = &*get_switch().await;
 
-    let entry = types::Ipv4Entry {
-        addr: "10.10.5.1".parse().unwrap(),
-        tag: switch.client.inner().tag.clone(),
-    };
+    let addr: Ipv4Addr = "10.10.5.1".parse().unwrap();
     let port = PortId::try_from("rear0").unwrap();
     switch
         .client
-        .link_ipv4_create(&port, &types::LinkId(0), &entry)
+        .link_ipv4_claim(&port, &types::LinkId(0), &addr, &switch.addr_claim())
         .await
-        .expect("Should be able to create IPv4 address");
+        .expect("Should be able to claim IPv4 address");
 
-    // Create the address again, and check that it fails.
+    // Claim the address on a different link, and check that it fails.
     let port2 = PortId::try_from("rear1").unwrap();
     let res = switch
         .client
-        .link_ipv4_create(&port2, &types::LinkId(0), &entry)
+        .link_ipv4_claim(&port2, &types::LinkId(0), &addr, &switch.addr_claim())
         .await
         .expect_err(
-            "Should not be able to create existing IP address on new link",
+            "Should not be able to claim an address resident on another link",
         );
     let Error::ErrorResponse(inner) = res else {
-        panic!("Expected a failure when re-creating an existing address");
+        panic!("Expected a failure when claiming an address on another link");
     };
     assert_eq!(inner.status(), StatusCode::CONFLICT);
     Ok(())
@@ -664,32 +600,29 @@ async fn test_create_existing_ipv4_address_on_different_link_fails()
 
 #[tokio::test]
 #[ignore]
-async fn test_create_existing_ipv6_address_on_different_link_fails()
--> TestResult {
+async fn test_claim_existing_ipv6_address_on_different_link_fails() -> TestResult
+{
     let switch = &*get_switch().await;
 
-    let entry = types::Ipv6Entry {
-        addr: "fd00::1".parse().unwrap(),
-        tag: switch.client.inner().tag.clone(),
-    };
+    let addr: Ipv6Addr = "fd00::1".parse().unwrap();
     let port = PortId::try_from("rear0").unwrap();
     switch
         .client
-        .link_ipv6_create(&port, &types::LinkId(0), &entry)
+        .link_ipv6_claim(&port, &types::LinkId(0), &addr, &switch.addr_claim())
         .await
-        .expect("Should be able to create IPaddress");
+        .expect("Should be able to claim IPv6 address");
 
-    // Create the address again, and check that it fails.
+    // Claim the address on a different link, and check that it fails.
     let port2 = PortId::try_from("rear1").unwrap();
     let res = switch
         .client
-        .link_ipv6_create(&port2, &types::LinkId(0), &entry)
+        .link_ipv6_claim(&port2, &types::LinkId(0), &addr, &switch.addr_claim())
         .await
         .expect_err(
-            "Should not be able to create existing IP address on new link",
+            "Should not be able to claim an address resident on another link",
         );
     let Error::ErrorResponse(inner) = res else {
-        panic!("Expected a failure when re-creating an existing address");
+        panic!("Expected a failure when claiming an address on another link");
     };
     assert_eq!(inner.status(), StatusCode::CONFLICT);
     Ok(())

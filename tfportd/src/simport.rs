@@ -136,11 +136,17 @@ async fn simnet_process(g: &Global) -> anyhow::Result<()> {
             error!(g.log, "failed to track link {p}: {e}");
         }
 
-        // sync addresses to the ASIC
+        // Sync addresses to the ASIC.  Only tfportd's own claims are
+        // considered: addresses owned solely by other clients are neither
+        // counted as present (so tfportd will co-claim them if they appear
+        // on the port) nor released when they disappear from the port.
         let asic_v4_addrs: HashSet<Ipv4Addr> = match g
             .client
             .link_ipv4_list_stream(&port_id, &link_id, None)
-            .map_ok(|entry| entry.addr)
+            .try_filter_map(|entry| {
+                let owned = entry.owners.contains(&g.owner);
+                async move { Ok(owned.then_some(entry.addr)) }
+            })
             .try_collect()
             .await
         {
@@ -157,7 +163,10 @@ async fn simnet_process(g: &Global) -> anyhow::Result<()> {
         let asic_v6_addrs: HashSet<Ipv6Addr> = match g
             .client
             .link_ipv6_list_stream(&port_id, &link_id, None)
-            .map_ok(|entry| entry.addr)
+            .try_filter_map(|entry| {
+                let owned = entry.owners.contains(&g.owner);
+                async move { Ok(owned.then_some(entry.addr)) }
+            })
             .try_collect()
             .await
         {
@@ -190,35 +199,39 @@ async fn simnet_process(g: &Global) -> anyhow::Result<()> {
         let to_add_v6 = port_v6_addrs.difference(&asic_v6_addrs);
         let to_del_v6 = asic_v6_addrs.difference(&port_v6_addrs);
 
+        let claim = types::AddressClaim { owner: g.owner.clone() };
+
         for a in to_add_v4 {
-            let entry = g.client.ipv4_entry(*a);
             if let Err(e) =
-                g.client.link_ipv4_create(&port_id, &link_id, &entry).await
+                g.client.link_ipv4_claim(&port_id, &link_id, a, &claim).await
             {
                 error!(g.log, "failed to add v4 address {a}: {e}");
             }
         }
 
         for a in to_del_v4 {
-            if let Err(e) =
-                g.client.link_ipv4_delete(&port_id, &link_id, a).await
+            if let Err(e) = g
+                .client
+                .link_ipv4_release(&port_id, &link_id, a, &g.owner)
+                .await
             {
                 error!(g.log, "failed to delete v4 address {a}: {e}");
             }
         }
 
         for a in to_add_v6 {
-            let entry = g.client.ipv6_entry(*a);
             if let Err(e) =
-                g.client.link_ipv6_create(&port_id, &link_id, &entry).await
+                g.client.link_ipv6_claim(&port_id, &link_id, a, &claim).await
             {
                 error!(g.log, "failed to add v6 address {a}: {e}");
             }
         }
 
         for a in to_del_v6 {
-            if let Err(e) =
-                g.client.link_ipv6_delete(&port_id, &link_id, a).await
+            if let Err(e) = g
+                .client
+                .link_ipv6_release(&port_id, &link_id, a, &g.owner)
+                .await
             {
                 error!(g.log, "failed to delete v6 address {a}: {e}");
             }

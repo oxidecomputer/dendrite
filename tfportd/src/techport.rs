@@ -18,7 +18,6 @@ use tokio::time::sleep;
 use crate::Global;
 use crate::netsupport::{self, get_dhcpv6};
 use common::illumos;
-use dpd_client::ClientInfo;
 use dpd_client::types;
 
 const ICMP6_RA_TYPE: u8 = 134;
@@ -148,14 +147,9 @@ pub async fn sync_dhcp6_addr(g: &Arc<Global>, addr: Ipv6Addr) {
         dpd_client::types::Internal::from_str("int0").unwrap(),
     );
     let link = &types::LinkId(0);
-    let entry = types::Ipv6Entry { tag: g.client.inner().tag.clone(), addr };
-    if let Err(e) = g.client.link_ipv6_create(&port, link, &entry).await {
-        if e.status() != Some(http::StatusCode::CONFLICT) {
-            warn!(
-                g.log,
-                "failed to set up dpd techport dhpv6 address {addr}: {e}"
-            );
-        }
+    let claim = types::AddressClaim { owner: g.owner.clone() };
+    if let Err(e) = g.client.link_ipv6_claim(&port, link, &addr, &claim).await {
+        warn!(g.log, "failed to set up dpd techport dhpv6 address {addr}: {e}");
     } else {
         info!(g.log, "added dhcpv6 address {addr} to asic");
     }
@@ -173,27 +167,27 @@ async fn address_ensure_dpd(g: &Arc<Global>, pfx0: Ipv6Addr, pfx1: Ipv6Addr) {
         );
         let link = &types::LinkId(0);
 
-        // Use the tfportd tag for making dpd entries.
-        let tag = g.client.inner().tag.clone();
+        // Claim the addresses under the tfportd owner tag.  Claims are
+        // idempotent, so re-claiming an address tfportd already holds is
+        // harmless.
+        let claim = types::AddressClaim { owner: g.owner.clone() };
 
-        let addr = types::Ipv6Entry { tag: tag.clone(), addr: addr0 };
-        if let Err(e) = g.client.link_ipv6_create(&port, link, &addr).await {
-            if e.status() != Some(http::StatusCode::CONFLICT) {
-                warn!(g.log, "failed to set up dpd techport address: {e}");
-                sleep(Duration::from_secs(ADDRESS_RETRY_INTERVAL)).await;
-                continue;
-            }
+        if let Err(e) =
+            g.client.link_ipv6_claim(&port, link, &addr0, &claim).await
+        {
+            warn!(g.log, "failed to set up dpd techport address: {e}");
+            sleep(Duration::from_secs(ADDRESS_RETRY_INTERVAL)).await;
+            continue;
         } else {
             info!(g.log, "dpd techport0 addressing setup complete");
         }
 
-        let addr = types::Ipv6Entry { tag: tag.clone(), addr: addr1 };
-        if let Err(e) = g.client.link_ipv6_create(&port, link, &addr).await {
-            if e.status() != Some(http::StatusCode::CONFLICT) {
-                warn!(g.log, "failed to set up dpd techport address: {e}");
-                sleep(Duration::from_secs(ADDRESS_RETRY_INTERVAL)).await;
-                continue;
-            }
+        if let Err(e) =
+            g.client.link_ipv6_claim(&port, link, &addr1, &claim).await
+        {
+            warn!(g.log, "failed to set up dpd techport address: {e}");
+            sleep(Duration::from_secs(ADDRESS_RETRY_INTERVAL)).await;
+            continue;
         } else {
             info!(g.log, "dpd techport1 addressing setup complete");
         }

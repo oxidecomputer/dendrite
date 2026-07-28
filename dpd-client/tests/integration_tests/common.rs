@@ -540,6 +540,43 @@ impl Switch {
         Ok(())
     }
 
+    /// The owner tag used by the test harness when claiming link addresses.
+    pub fn owner(&self) -> types::Tag {
+        types::Tag::try_from(self.client.inner().tag.as_str())
+            .expect("test client tag is a valid owner tag")
+    }
+
+    /// An [`types::AddressClaim`] naming the test harness as owner.
+    pub fn addr_claim(&self) -> types::AddressClaim {
+        types::AddressClaim { owner: self.owner() }
+    }
+
+    /// Claim an IPv4 address on a link for the test harness.
+    pub async fn claim_ipv4(
+        &self,
+        port_id: &PortId,
+        link_id: &types::LinkId,
+        addr: Ipv4Addr,
+    ) -> Result<(), dpd_client::Error<types::Error>> {
+        self.client
+            .link_ipv4_claim(port_id, link_id, &addr, &self.addr_claim())
+            .await
+            .map(|_| ())
+    }
+
+    /// Claim an IPv6 address on a link for the test harness.
+    pub async fn claim_ipv6(
+        &self,
+        port_id: &PortId,
+        link_id: &types::LinkId,
+        addr: Ipv6Addr,
+    ) -> Result<(), dpd_client::Error<types::Error>> {
+        self.client
+            .link_ipv6_claim(port_id, link_id, &addr, &self.addr_claim())
+            .await
+            .map(|_| ())
+    }
+
     pub async fn set_uplink(&self, phys_port: PhysPort, uplink: bool) {
         let (port_id, link_id) = self.link_id(phys_port).unwrap();
         self.client

@@ -7,8 +7,6 @@
 use std::sync::Arc;
 
 use ::common::network::MacAddr;
-use dpd_client::ClientInfo;
-use dpd_client::types::Ipv4Entry;
 use packet::{Endpoint, eth, icmp, ipv4, sidecar};
 
 use crate::integration_tests::common;
@@ -26,11 +24,10 @@ async fn test_service_ipv4_unicast() -> TestResult {
     let router_mac = "02:78:39:45:b9:00";
 
     let (port_id, link_id) = switch.link_id(ingress).unwrap();
-    let entry = Ipv4Entry {
-        addr: router_ip.parse().unwrap(),
-        tag: switch.client.inner().tag.clone(),
-    };
-    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
+    switch
+        .claim_ipv4(&port_id, &link_id, router_ip.parse().unwrap())
+        .await
+        .unwrap();
 
     let send_pkt = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
@@ -69,11 +66,10 @@ async fn test_service_ipv4_unicast_with_nat() -> TestResult {
     let router_mac = "02:78:39:45:b9:00";
 
     let (port_id, link_id) = switch.link_id(ingress).unwrap();
-    let entry = Ipv4Entry {
-        addr: router_ip.parse().unwrap(),
-        tag: switch.client.inner().tag.clone(),
-    };
-    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
+    switch
+        .claim_ipv4(&port_id, &link_id, router_ip.parse().unwrap())
+        .await
+        .unwrap();
 
     let send_pkt = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
@@ -117,11 +113,10 @@ async fn test_service_ipv4_wrong_port() -> TestResult {
     let router_mac = "02:78:39:45:b9:00";
 
     let (port_id, link_id) = switch.link_id(PhysPort(ingress)).unwrap();
-    let entry = Ipv4Entry {
-        addr: router_ip.parse().unwrap(),
-        tag: switch.client.inner().tag.clone(),
-    };
-    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
+    switch
+        .claim_ipv4(&port_id, &link_id, router_ip.parse().unwrap())
+        .await
+        .unwrap();
 
     let send_pkt = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
@@ -151,11 +146,10 @@ async fn test_service_ipv4_unknown_address() -> TestResult {
     let router_mac = "02:78:39:45:b9:00";
 
     let (port_id, link_id) = switch.link_id(PhysPort(ingress)).unwrap();
-    let entry = Ipv4Entry {
-        addr: router_ip.parse().unwrap(),
-        tag: switch.client.inner().tag.clone(),
-    };
-    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
+    switch
+        .claim_ipv4(&port_id, &link_id, router_ip.parse().unwrap())
+        .await
+        .unwrap();
 
     // Mark the port as uplink
     switch.client.link_uplink_set(&port_id, &link_id, true).await.unwrap();
@@ -283,11 +277,10 @@ async fn execute_test_service_arp(uplink: bool) -> TestResult {
     let tgt_mac = switch.get_port_mac(ingress).unwrap();
 
     let (port_id, link_id) = switch.link_id(ingress).unwrap();
-    let entry = Ipv4Entry {
-        addr: tgt_ip.parse().unwrap(),
-        tag: switch.client.inner().tag.clone(),
-    };
-    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
+    switch
+        .claim_ipv4(&port_id, &link_id, tgt_ip.parse().unwrap())
+        .await
+        .unwrap();
 
     let send_pkt = common::gen_arp_reply(
         Endpoint::parse(src_mac, src_ip, 3333).unwrap(),

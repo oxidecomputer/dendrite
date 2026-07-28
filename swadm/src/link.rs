@@ -26,10 +26,12 @@ use common::ports::PortMedia;
 use common::ports::PortPrbsMode;
 use common::ports::PortSpeed;
 use dpd_client::Client;
+use dpd_client::ClientInfo;
 use dpd_client::types;
 
 use crate::IpFamily;
 use crate::LinkPath;
+use crate::misc_err;
 use crate::parse_port_id;
 use crate::switchport::SwitchId;
 
@@ -419,8 +421,8 @@ pub enum Link {
         /// The link path
         #[clap(long)]
         link: LinkPath,
-        /// Dpd tag to use
-        #[clap(long)]
+        /// The owner tag the settings are applied for.
+        #[clap(long, default_value = "cli")]
         tag: String,
         /// The first lane of the port to use for the new link
         #[clap(long)]
@@ -1938,22 +1940,37 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                         }
                     ))?;
             }
-            SetLinkProp::Ip { ip } => match ip {
-                IpAddr::V4(ip) => {
-                    let entry = client.ipv4_entry(ip);
-                    client
-                        .link_ipv4_create(&link.port_id, &link.link_id, &entry)
-                        .await
-                        .context("failed to assign IPv4 address to link")?;
+            SetLinkProp::Ip { ip } => {
+                let owner = types::Tag::try_from(client.inner().tag.as_str())
+                    .map_err(|e| {
+                    misc_err(format!("invalid owner tag: {e}"))
+                })?;
+                let claim = types::AddressClaim { owner };
+                match ip {
+                    IpAddr::V4(ip) => {
+                        client
+                            .link_ipv4_claim(
+                                &link.port_id,
+                                &link.link_id,
+                                &ip,
+                                &claim,
+                            )
+                            .await
+                            .context("failed to assign IPv4 address to link")?;
+                    }
+                    IpAddr::V6(ip) => {
+                        client
+                            .link_ipv6_claim(
+                                &link.port_id,
+                                &link.link_id,
+                                &ip,
+                                &claim,
+                            )
+                            .await
+                            .context("failed to assign IPv6 address to link")?;
+                    }
                 }
-                IpAddr::V6(ip) => {
-                    let entry = client.ipv6_entry(ip);
-                    client
-                        .link_ipv6_create(&link.port_id, &link.link_id, &entry)
-                        .await
-                        .context("failed to assign IPv6 address to link")?;
-                }
-            },
+            }
             SetLinkProp::Ipv6Enabled { enabled } => {
                 client
                     .link_ipv6_enabled_set(
@@ -2155,8 +2172,10 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                     },
                 },
             );
+            let owner = types::Tag::try_from(tag.as_str())
+                .map_err(|e| misc_err(format!("invalid owner tag: {e}")))?;
             client
-                .port_settings_apply(port_id, Some(tag.as_str()), &body)
+                .port_settings_apply(port_id, &owner, &body)
                 .await
                 .context("port settings apply failed")?;
         }

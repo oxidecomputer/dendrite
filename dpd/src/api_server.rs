@@ -8,7 +8,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -22,8 +21,9 @@ use dpd_types::counters::{
 };
 use dpd_types::fault::{Fault, FaultCondition};
 use dpd_types::link::{
-    LinkCreate, LinkFilter, LinkFsmCounters, LinkHistory, LinkId, LinkIpv4Path,
-    LinkIpv6Path, LinkPath, LinkUpCounter, LinkView, MsDuration, TfportData,
+    AddressClaim, Ipv4OwnedEntry, Ipv6OwnedEntry, LinkCreate, LinkFilter,
+    LinkFsmCounters, LinkHistory, LinkId, LinkIpv4Path, LinkIpv6Path, LinkPath,
+    LinkUpCounter, LinkView, MsDuration, TfportData,
 };
 use dpd_types::loopback::{LoopbackIpv4Path, LoopbackIpv6Path};
 #[cfg(feature = "multicast")]
@@ -42,9 +42,7 @@ use dpd_types::nat::{
     NatIpv6PortPath, NatIpv6RangePath, NatToken,
 };
 use dpd_types::oxstats::OximeterMetadata;
-use dpd_types::port::{
-    FreeChannels, LinkSettings, PortIdPathParams, PortSettings, PortSettingsTag,
-};
+use dpd_types::port::{FreeChannels, PortIdPathParams, PortSettings};
 use dpd_types::port_map::BackplaneLink;
 use dpd_types::route::{
     AttachedSubnetToken, Ipv4RouteToken, Ipv4RouteUpdate, Ipv4Routes,
@@ -64,6 +62,7 @@ use dpd_types::switch_identifiers::SwitchIdentifiers;
 use dpd_types::switch_port::{Led, ManagementMode, SwitchPortView};
 use dpd_types::table;
 use dpd_types::table::TableParam;
+use dpd_types::tag::{OwnerFilter, OwnerQuery, Tag};
 use dpd_types::transceivers::Transceiver;
 use dpd_types_versions::{v1, v7};
 use dropshot::BuildError;
@@ -107,6 +106,7 @@ use crate::counters;
 use crate::mcast;
 use crate::nat;
 use crate::oxstats;
+use crate::port_settings::OwnerScope;
 use crate::rpw::Task;
 use crate::switch_port::FixedSideDevice;
 use crate::switch_port::LedState;
@@ -130,6 +130,22 @@ fn client_error(message: impl ToString) -> HttpError {
         ClientErrorStatusCode::BAD_REQUEST,
         message.to_string(),
     )
+}
+
+// Claim-creating operations may not act as the reserved `legacy` owner,
+// which records claims made through API versions predating address
+// ownership.  Operations that release or read claims accept it, so those
+// legacy claims can be inspected and cleaned up.
+fn reject_legacy_owner(owner: &Tag) -> Result<(), HttpError> {
+    if owner.is_legacy() {
+        Err(client_error(format!(
+            "the owner tag \"{}\" is reserved for claims made through \
+             API versions predating address ownership",
+            Tag::LEGACY,
+        )))
+    } else {
+        Ok(())
+    }
 }
 
 // Generate a 501 client error with the provided message.
@@ -1117,7 +1133,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         query: Query<PaginationParams<EmptyScanParams, Ipv4Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Entry>>, HttpError> {
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv4OwnedEntry>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
         let port_id = path.port_id;
@@ -1138,7 +1154,7 @@ impl DpdApi for DpdApiImpl {
         ResultsPage::new(
             entries,
             &EmptyScanParams {},
-            |entry: &Ipv4Entry, _| Ipv4Token { ip: entry.addr },
+            |entry: &Ipv4OwnedEntry, _| Ipv4Token { ip: entry.addr },
         )
         .map(HttpResponseOk)
     }
@@ -1153,23 +1169,51 @@ impl DpdApi for DpdApiImpl {
         let port_id = path.port_id;
         let link_id = path.link_id;
         let entry = entry.into_inner();
+        // Untagged claims from pre-ownership API versions are recorded
+        // under the reserved `legacy` owner.
+        let owner = Tag::legacy_or(Some(entry.tag));
         switch
-            .create_ipv4_address(port_id, link_id, entry)
+            .create_ipv4_address_exclusive(port_id, link_id, entry.addr, &owner)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
 
-    async fn link_ipv4_reset(
+    async fn link_ipv4_claim(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<LinkPath>,
+        path: Path<LinkIpv4Path>,
+        body: TypedBody<AddressClaim>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
-        let port_id = path.port_id;
-        let link_id = path.link_id;
+        let claim = body.into_inner();
+        reject_legacy_owner(&claim.owner)?;
         switch
-            .reset_ipv4_addresses(port_id, link_id)
+            .install_ipv4_address(
+                path.port_id,
+                path.link_id,
+                path.address,
+                &claim.owner,
+            )
             .map(|_| HttpResponseUpdatedNoContent())
+            .map_err(|e| e.into())
+    }
+
+    async fn link_ipv4_release(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<LinkIpv4Path>,
+        query: Query<OwnerQuery>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        let owner = query.into_inner().owner;
+        switch
+            .remove_ipv4_address(
+                path.port_id,
+                path.link_id,
+                path.address,
+                &owner,
+            )
+            .map(|_| HttpResponseDeleted())
             .map_err(|e| e.into())
     }
 
@@ -1179,12 +1223,25 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
-        let port_id = path.port_id;
-        let link_id = path.link_id;
-        let address = path.address;
         switch
-            .delete_ipv4_address(port_id, link_id, address)
+            .force_release_ipv4_address(
+                path.port_id,
+                path.link_id,
+                path.address,
+            )
             .map(|_| HttpResponseDeleted())
+            .map_err(|e| e.into())
+    }
+
+    async fn link_ipv4_reset(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        switch
+            .force_release_ipv4_addresses(path.port_id, path.link_id)
+            .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
 
@@ -1192,7 +1249,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         query: Query<PaginationParams<EmptyScanParams, Ipv6Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Entry>>, HttpError> {
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv6OwnedEntry>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
         let port_id = path.port_id;
@@ -1213,7 +1270,7 @@ impl DpdApi for DpdApiImpl {
         ResultsPage::new(
             entries,
             &EmptyScanParams {},
-            |entry: &Ipv6Entry, _| Ipv6Token { ip: entry.addr },
+            |entry: &Ipv6OwnedEntry, _| Ipv6Token { ip: entry.addr },
         )
         .map(HttpResponseOk)
     }
@@ -1228,23 +1285,51 @@ impl DpdApi for DpdApiImpl {
         let port_id = path.port_id;
         let link_id = path.link_id;
         let entry = entry.into_inner();
+        // Untagged claims from pre-ownership API versions are recorded
+        // under the reserved `legacy` owner.
+        let owner = Tag::legacy_or(Some(entry.tag));
         switch
-            .create_ipv6_address(port_id, link_id, entry)
+            .create_ipv6_address_exclusive(port_id, link_id, entry.addr, &owner)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
 
-    async fn link_ipv6_reset(
+    async fn link_ipv6_claim(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<LinkPath>,
+        path: Path<LinkIpv6Path>,
+        body: TypedBody<AddressClaim>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
-        let port_id = path.port_id;
-        let link_id = path.link_id;
+        let claim = body.into_inner();
+        reject_legacy_owner(&claim.owner)?;
         switch
-            .reset_ipv6_addresses(port_id, link_id)
+            .install_ipv6_address(
+                path.port_id,
+                path.link_id,
+                path.address,
+                &claim.owner,
+            )
             .map(|_| HttpResponseUpdatedNoContent())
+            .map_err(|e| e.into())
+    }
+
+    async fn link_ipv6_release(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<LinkIpv6Path>,
+        query: Query<OwnerQuery>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        let owner = query.into_inner().owner;
+        switch
+            .remove_ipv6_address(
+                path.port_id,
+                path.link_id,
+                path.address,
+                &owner,
+            )
+            .map(|_| HttpResponseDeleted())
             .map_err(|e| e.into())
     }
 
@@ -1254,12 +1339,25 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
-        let port_id = path.port_id;
-        let link_id = path.link_id;
-        let address = path.address;
         switch
-            .delete_ipv6_address(port_id, link_id, address)
+            .force_release_ipv6_address(
+                path.port_id,
+                path.link_id,
+                path.address,
+            )
             .map(|_| HttpResponseDeleted())
+            .map_err(|e| e.into())
+    }
+
+    async fn link_ipv6_reset(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        switch
+            .force_release_ipv6_addresses(path.port_id, path.link_id)
+            .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
 
@@ -1714,8 +1812,9 @@ impl DpdApi for DpdApiImpl {
         arp::reset_ipv6_tag(switch, &tag);
         route::reset_ipv4_tag(switch, &tag).await;
         route::reset_ipv6_tag(switch, &tag).await;
+        let owner = Tag::legacy_or(Some(tag));
         switch
-            .clear_link_addresses(Some(&tag))
+            .clear_link_addresses(&owner)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
@@ -1839,17 +1938,53 @@ impl DpdApi for DpdApiImpl {
     async fn port_settings_apply(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
+        query: Query<OwnerQuery>,
         body: TypedBody<PortSettings>,
     ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
         let switch = rqctx.context();
         let path = path.into_inner();
-        let query = query.into_inner();
-        let port_id = path.port_id;
+        let owner = query.into_inner().owner;
+        let settings = body.into_inner();
+        reject_legacy_owner(&owner)?;
+
+        switch
+            .apply_port_settings(path.port_id, settings, owner)
+            .await
+            .map(HttpResponseOk)
+            .map_err(HttpError::from)
+    }
+
+    async fn port_settings_apply_v1(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+        body: TypedBody<PortSettings>,
+    ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
+        let switch = rqctx.context();
+        let path = path.into_inner();
+        // Untagged requests from pre-ownership API versions act as the
+        // reserved `legacy` owner.
+        let owner = Tag::legacy_or(query.into_inner().tag);
         let settings = body.into_inner();
 
         switch
-            .apply_port_settings(port_id, settings, query.tag)
+            .apply_port_settings(path.port_id, settings, owner)
+            .await
+            .map(HttpResponseOk)
+            .map_err(HttpError::from)
+    }
+
+    async fn port_settings_release(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<PortIdPathParams>,
+        query: Query<OwnerQuery>,
+    ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
+        let switch = rqctx.context();
+        let path = path.into_inner();
+        let owner = query.into_inner().owner;
+
+        switch
+            .clear_port_settings(path.port_id, OwnerScope::Single(owner))
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -1858,15 +1993,31 @@ impl DpdApi for DpdApiImpl {
     async fn port_settings_clear(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
     ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
         let switch = rqctx.context();
         let path = path.into_inner();
-        let query = query.into_inner();
-        let port_id = path.port_id;
 
         switch
-            .clear_port_settings(port_id, query.tag)
+            .clear_port_settings(path.port_id, OwnerScope::All)
+            .await
+            .map(HttpResponseOk)
+            .map_err(HttpError::from)
+    }
+
+    async fn port_settings_clear_v1(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
+        let switch = rqctx.context();
+        let path = path.into_inner();
+        let scope = match query.into_inner().tag {
+            Some(tag) => OwnerScope::Single(Tag::legacy_or(Some(tag))),
+            None => OwnerScope::All,
+        };
+
+        switch
+            .clear_port_settings(path.port_id, scope)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -1875,15 +2026,36 @@ impl DpdApi for DpdApiImpl {
     async fn port_settings_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
+        query: Query<OwnerFilter>,
     ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
         let switch = rqctx.context();
         let path = path.into_inner();
-        let query = query.into_inner();
-        let port_id = path.port_id;
+        let scope = match query.into_inner().owner {
+            Some(owner) => OwnerScope::Single(owner),
+            None => OwnerScope::All,
+        };
 
         switch
-            .get_port_settings(port_id, query.tag)
+            .get_port_settings(path.port_id, scope)
+            .await
+            .map(HttpResponseOk)
+            .map_err(HttpError::from)
+    }
+
+    async fn port_settings_get_v1(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
+        let switch = rqctx.context();
+        let path = path.into_inner();
+        let scope = match query.into_inner().tag {
+            Some(tag) => OwnerScope::Single(Tag::legacy_or(Some(tag))),
+            None => OwnerScope::All,
+        };
+
+        switch
+            .get_port_settings(path.port_id, scope)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -2948,29 +3120,6 @@ pub(crate) fn build_info() -> BuildInfo {
         debug: env!("VERGEN_CARGO_DEBUG").parse().unwrap(),
         opt_level: env!("VERGEN_CARGO_OPT_LEVEL").parse().unwrap(),
         sde_commit_sha: env!("SDE_COMMIT_SHA").to_string(),
-    }
-}
-
-impl From<&crate::link::Link> for LinkSettings {
-    fn from(l: &crate::link::Link) -> Self {
-        let mut addrs: HashSet<IpAddr> = HashSet::new();
-        for a in &l.ipv4 {
-            addrs.insert(a.addr.into());
-        }
-        for a in &l.ipv6 {
-            addrs.insert(a.addr.into());
-        }
-        LinkSettings {
-            params: LinkCreate {
-                lane: Some(l.link_id),
-                speed: l.config.speed,
-                fec: l.config.fec,
-                autoneg: l.config.autoneg,
-                kr: l.config.kr,
-                tx_eq: l.tx_eq,
-            },
-            addrs,
-        }
     }
 }
 
