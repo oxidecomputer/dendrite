@@ -13,7 +13,8 @@ use asic::chaos::{AsicConfig, Chaos, TableChaos};
 use asic::table_chaos;
 use common::table::TableType;
 use dpd_client::types::{
-    LinkCreate, LinkId, LinkSettings, PortFec, PortId, PortSettings, PortSpeed,
+    Ipv6Entry, LinkCreate, LinkId, LinkSettings, PortFec, PortId, PortSettings,
+    PortSpeed,
 };
 use dpd_client::{Client, ROLLBACK_FAILURE_ERROR_CODE};
 use http::status::StatusCode;
@@ -544,4 +545,78 @@ fn random_port_settings() -> PortSettings {
             LinkSettings { params, addrs },
         )]),
     }
+}
+
+// Applying a PortSettings object must not disturb addresses that were added
+// through the direct address API, as tfportd does for the IPv6 link-local it
+// mirrors from the tfport interface into the switch tables.
+//
+// Today the port-settings diff snapshots the resident link state (including
+// all direct-API addresses) as `before`, and the incoming settings as `after`.
+// Any address not present in the settings lands in the delete set, so every
+// apply -- even one carrying settings identical to the link's configuration --
+// deletes the tfportd-owned link-local from the ASIC until tfportd's next
+// poll re-adds it.
+#[tokio::test]
+async fn test_port_settings_reapply_preserves_direct_addresses()
+-> anyhow::Result<()> {
+    let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
+    let (_guard, client) = init_harness("reapply-direct-addrs", &config);
+
+    // Settings as omicron would send them: one link, one routable address,
+    // no link-locals.
+    let mut settings = PortSettings { links: HashMap::new() };
+    settings.links.insert(
+        "0".into(),
+        LinkSettings {
+            params: LinkCreate {
+                lane: None,
+                autoneg: false,
+                kr: true,
+                fec: Some(PortFec::None),
+                speed: PortSpeed::Speed100G,
+                tx_eq: None,
+            },
+            addrs: vec!["203.0.113.47".parse().unwrap()],
+        },
+    );
+
+    let port: PortId = "qsfp0".parse().unwrap();
+    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+
+    // Simulate tfportd: push a link-local through the direct address API,
+    // under tfportd's own tag.
+    let link_local: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
+    client
+        .link_ipv6_create(
+            &port,
+            &LinkId(0),
+            &Ipv6Entry { tag: "tfportd".to_string(), addr: link_local },
+        )
+        .await?;
+
+    let v6 = link_list_ipv6(&client, "qsfp0", "0").await?;
+    assert_eq!(
+        v6.iter().map(|e| e.addr).collect::<Vec<_>>(),
+        vec![link_local],
+        "precondition: the link-local was added via the direct API"
+    );
+
+    // Re-apply the identical settings, as omicron does when reconciling.
+    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+
+    // The role-managed routable address survives...
+    let v4 = link_list_ipv4(&client, "qsfp0", "0").await?;
+    assert_eq!(v4.len(), 1, "settings-managed IPv4 address should survive");
+
+    // ...and the tfportd-owned link-local must survive too.
+    let v6 = link_list_ipv6(&client, "qsfp0", "0").await?;
+    assert_eq!(
+        v6.iter().map(|e| e.addr).collect::<Vec<_>>(),
+        vec![link_local],
+        "re-applying identical port settings must not delete an address \
+         owned by the direct address API"
+    );
+
+    Ok(())
 }
