@@ -13,8 +13,8 @@ use asic::chaos::{AsicConfig, Chaos, TableChaos};
 use asic::table_chaos;
 use common::table::TableType;
 use dpd_client::types::{
-    Ipv6Entry, LinkCreate, LinkId, LinkSettings, PortFec, PortId, PortSettings,
-    PortSpeed,
+    Ipv4Entry, Ipv6Entry, LinkCreate, LinkId, LinkSettings, PortFec, PortId,
+    PortSettings, PortSpeed,
 };
 use dpd_client::{Client, ROLLBACK_FAILURE_ERROR_CODE};
 use http::status::StatusCode;
@@ -617,6 +617,330 @@ async fn test_port_settings_reapply_preserves_direct_addresses()
         "re-applying identical port settings must not delete an address \
          owned by the direct address API"
     );
+
+    Ok(())
+}
+
+// A port-settings transaction only manages the addresses owned by its own
+// tag.  Addresses added by other clients through the direct address API --
+// swadm's "cli" tag, tfportd's link-local mirror -- must survive a settings
+// apply untouched, regardless of address kind.
+#[tokio::test]
+async fn test_port_settings_preserves_foreign_addrs() -> anyhow::Result<()> {
+    let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
+    let (_guard, client) = init_harness("foreign-addrs", &config);
+
+    let mut settings = PortSettings { links: HashMap::new() };
+    settings.links.insert(
+        "0".into(),
+        LinkSettings {
+            params: LinkCreate {
+                lane: None,
+                autoneg: false,
+                kr: true,
+                fec: Some(PortFec::None),
+                speed: PortSpeed::Speed100G,
+                tx_eq: None,
+            },
+            addrs: vec!["203.0.113.47".parse().unwrap()],
+        },
+    );
+
+    let port: PortId = "qsfp0".parse().unwrap();
+    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+
+    // An operator adds a routable IPv4 address via swadm...
+    client
+        .link_ipv4_create(
+            &port,
+            &LinkId(0),
+            &Ipv4Entry {
+                tag: "cli".to_string(),
+                addr: "198.51.100.5".parse().unwrap(),
+            },
+        )
+        .await?;
+    // ...and tfportd mirrors the link-local.
+    let link_local: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
+    client
+        .link_ipv6_create(
+            &port,
+            &LinkId(0),
+            &Ipv6Entry { tag: "tfportd".to_string(), addr: link_local },
+        )
+        .await?;
+
+    // Omicron reconciles with identical settings.
+    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+
+    let v4 = link_list_ipv4(&client, "qsfp0", "0").await?;
+    let mut v4_addrs: Vec<Ipv4Addr> = v4.iter().map(|e| e.addr).collect();
+    v4_addrs.sort();
+    assert_eq!(
+        v4_addrs,
+        vec![
+            "198.51.100.5".parse::<Ipv4Addr>().unwrap(),
+            "203.0.113.47".parse::<Ipv4Addr>().unwrap(),
+        ],
+        "applying port settings must not delete addresses owned by other tags"
+    );
+
+    let v6 = link_list_ipv6(&client, "qsfp0", "0").await?;
+    assert_eq!(
+        v6.iter().map(|e| e.addr).collect::<Vec<_>>(),
+        vec![link_local],
+        "applying port settings must not delete the tfportd link-local"
+    );
+
+    Ok(())
+}
+
+// An address is a refcounted resource keyed by owner tag: a second client
+// attaching to an already-resident address must succeed as an additional
+// owner rather than colliding.  Today the create APIs compare entries by
+// address alone and return 409 for any second tag.
+//
+// The detach half of shared ownership (removing one owner leaves the entry,
+// removing the last owner releases it) requires the tagged-delete API and is
+// covered by tests accompanying that change.
+#[tokio::test]
+async fn test_direct_addr_create_shared_ownership() -> anyhow::Result<()> {
+    let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
+    let (_guard, client) = init_harness("shared-ownership", &config);
+
+    let mut settings = PortSettings { links: HashMap::new() };
+    settings.links.insert(
+        "0".into(),
+        LinkSettings {
+            params: LinkCreate {
+                lane: None,
+                autoneg: false,
+                kr: true,
+                fec: Some(PortFec::None),
+                speed: PortSpeed::Speed100G,
+                tx_eq: None,
+            },
+            addrs: vec![],
+        },
+    );
+    let port: PortId = "qsfp0".parse().unwrap();
+    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+
+    let addr: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
+    client
+        .link_ipv6_create(
+            &port,
+            &LinkId(0),
+            &Ipv6Entry { tag: "tfportd".to_string(), addr },
+        )
+        .await?;
+
+    // A second owner attaches to the same address.
+    client
+        .link_ipv6_create(
+            &port,
+            &LinkId(0),
+            &Ipv6Entry { tag: "cli".to_string(), addr },
+        )
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "attaching a second owner to a resident address must \
+                 succeed: {e}"
+            )
+        })?;
+
+    // A repeat create by the same owner is still a conflict.
+    let err = client
+        .link_ipv6_create(
+            &port,
+            &LinkId(0),
+            &Ipv6Entry { tag: "cli".to_string(), addr },
+        )
+        .await
+        .expect_err("re-attaching the same owner must still conflict");
+    assert_eq!(err.status(), Some(StatusCode::CONFLICT));
+
+    // The address is resident exactly once.
+    let v6 = link_list_ipv6(&client, "qsfp0", "0").await?;
+    assert_eq!(v6.iter().map(|e| e.addr).collect::<Vec<_>>(), vec![addr]);
+
+    Ok(())
+}
+
+// When a failed transaction rolls back an address deletion, the restored
+// entry must keep its original ownership tag.  Rebuilding it with the
+// transaction's tag silently transfers ownership (e.g. tfportd -> omicron),
+// which would let a later tag-scoped reset delete an address it never owned.
+#[tokio::test]
+async fn test_port_settings_rollback_preserves_addr_tags() -> anyhow::Result<()>
+{
+    // Fail every IPv4 address-table add.  The transaction below removes
+    // link 0 (deleting its addresses) and then fails while adding link 1's
+    // IPv4 address, forcing a rollback that must restore link 0's addresses.
+    let config = AsicConfig {
+        radix: TESTING_RADIX,
+        table_entry_add: table_chaos!((TableType::PortAddrIpv4, 1.0)),
+        ..Default::default()
+    };
+    let (_guard, client) = init_harness("rollback-tags", &config);
+
+    // Link 0 carries one settings-managed IPv6 address.  No IPv4 addresses
+    // anywhere on link 0: rolling those back would re-add them through the
+    // very table the chaos config fails.
+    let params = LinkCreate {
+        lane: None,
+        autoneg: false,
+        kr: true,
+        fec: Some(PortFec::None),
+        speed: PortSpeed::Speed100G,
+        tx_eq: None,
+    };
+    let mut settings = PortSettings { links: HashMap::new() };
+    settings.links.insert(
+        "0".into(),
+        LinkSettings {
+            params: params.clone(),
+            addrs: vec!["fd00:1701::e".parse().unwrap()],
+        },
+    );
+
+    let port: PortId = "qsfp0".parse().unwrap();
+    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+
+    // Simulate tfportd: mirror a link-local into the switch through the
+    // direct address API, under tfportd's own tag.
+    let link_local: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
+    client
+        .link_ipv6_create(
+            &port,
+            &LinkId(0),
+            &Ipv6Entry { tag: "tfportd".to_string(), addr: link_local },
+        )
+        .await?;
+
+    // Target: remove link 0 and add link 1 with an IPv4 address.  Deletes
+    // are processed before adds, so link 0's addresses (including the
+    // tfportd link-local) are deleted from the ASIC before the IPv4 add
+    // fails and unwinds the transaction.
+    let mut target = PortSettings { links: HashMap::new() };
+    target.links.insert(
+        "1".into(),
+        LinkSettings { params, addrs: vec!["203.0.113.99".parse().unwrap()] },
+    );
+
+    let err = client
+        .port_settings_apply(&port, Some("omicron"), &target)
+        .await
+        .expect_err("the IPv4 address add must fail");
+    expect_chaos!(err, table_entry_add);
+
+    // The added link must have been rolled back.
+    let err = link_list_ipv4(&client, "qsfp0", "1").await.unwrap_err();
+    expect_not_found!(err);
+
+    // Link 0's addresses must be restored with their original tags.
+    let v6 = link_list_ipv6(&client, "qsfp0", "0").await?;
+    let mut got: Vec<(Ipv6Addr, String)> =
+        v6.iter().map(|e| (e.addr, e.tag.clone())).collect();
+    got.sort();
+    assert_eq!(
+        got,
+        vec![
+            ("fd00:1701::e".parse().unwrap(), "omicron".to_string()),
+            (link_local, "tfportd".to_string()),
+        ],
+        "rolled-back addresses must retain their original ownership tags"
+    );
+
+    Ok(())
+}
+
+// Removing a link through a port-settings transaction must release the ASIC
+// table entries of every address on the link, including addresses owned by
+// other tags such as the tfportd link-local.
+//
+// NOTE: this test passes on main, but only as a side effect of the clobber
+// bug: the transaction's before-image snapshots every resident address
+// regardless of owner, so link removal happens to delete them all.  Once
+// foreign-owned addresses become invisible to a tag-scoped transaction diff,
+// link teardown must explicitly force-release them or their table entries
+// leak permanently.  This test guards that behavior.
+//
+// The chaos ASIC cannot enumerate table entries, but it enforces their
+// existence: re-adding an entry whose key is still resident fails with a
+// collision.  We use that as the observer: tear the link down, recreate it
+// (same ASIC ID), and re-add the same link-local.
+#[tokio::test]
+async fn test_port_settings_remove_link_releases_link_locals()
+-> anyhow::Result<()> {
+    let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
+    let (_guard, client) = init_harness("remove-link-locals", &config);
+
+    let mut settings = PortSettings { links: HashMap::new() };
+    settings.links.insert(
+        "0".into(),
+        LinkSettings {
+            params: LinkCreate {
+                lane: None,
+                autoneg: false,
+                kr: true,
+                fec: Some(PortFec::None),
+                speed: PortSpeed::Speed100G,
+                tx_eq: None,
+            },
+            addrs: vec!["fd00:1701::e".parse().unwrap()],
+        },
+    );
+
+    let port: PortId = "qsfp0".parse().unwrap();
+    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+
+    let link_local: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
+    client
+        .link_ipv6_create(
+            &port,
+            &LinkId(0),
+            &Ipv6Entry { tag: "tfportd".to_string(), addr: link_local },
+        )
+        .await?;
+
+    // Remove the link, then wait out the async teardown.
+    client
+        .port_settings_apply(
+            &port,
+            Some("omicron"),
+            &PortSettings { links: HashMap::new() },
+        )
+        .await?;
+    retry::retry_op(RETRY_INTERVAL, RETRY_MAX, || async {
+        match link_list_ipv6(&client, "qsfp0", "0").await {
+            Err(e) if e.status() == Some(StatusCode::NOT_FOUND) => Ok(()),
+            Err(e) => Err(retry::ReturnCode::Fatal(e.to_string())),
+            Ok(_) => Err(retry::ReturnCode::Retry(
+                "link still not deleted".to_string(),
+            )),
+        }
+    })
+    .await?;
+
+    // Recreate the link (it maps to the same ASIC ID) and re-add the same
+    // link-local.  If the teardown leaked its table entries, this fails
+    // with a collision.
+    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+    client
+        .link_ipv6_create(
+            &port,
+            &LinkId(0),
+            &Ipv6Entry { tag: "tfportd".to_string(), addr: link_local },
+        )
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "link teardown leaked ASIC table entries for the \
+                 link-local: {e}"
+            )
+        })?;
 
     Ok(())
 }
