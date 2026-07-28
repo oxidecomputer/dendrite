@@ -4,6 +4,21 @@
 //
 // Copyright 2025 Oxide Computer Company
 
+// Locate pcap.h.  On macOS the system headers live in the active SDK rather
+// than /usr/include.
+fn pcap_header() -> String {
+    if cfg!(target_os = "macos") {
+        let sdk = std::process::Command::new("xcrun")
+            .args(["--show-sdk-path"])
+            .output()
+            .expect("xcrun --show-sdk-path failed");
+        let sdk = String::from_utf8(sdk.stdout).unwrap();
+        format!("{}/usr/include/pcap.h", sdk.trim())
+    } else {
+        "/usr/include/pcap.h".to_string()
+    }
+}
+
 fn gen_bindings() -> std::io::Result<()> {
     let functions = vec![
         "pcap_open_offline",
@@ -23,7 +38,7 @@ fn gen_bindings() -> std::io::Result<()> {
     ];
     let mut b = bindgen::builder()
         .header("src/c/block.h")
-        .header("/usr/include/pcap.h")
+        .header(pcap_header())
         .use_core();
 
     b = b.clang_arg("-I/usr/lib/gcc/x86_64-linux-gnu/6/include/");
