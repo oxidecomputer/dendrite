@@ -41,12 +41,22 @@ pub mod link {
     pub use crate::v1::link::LinkPath;
     pub use crate::v1::link::LinkState;
     pub use crate::v1::link::LinkUpCounter;
-    pub use crate::v1::link::TfportData;
 
     pub use crate::v11::link::LinkHistory;
 
     pub use crate::v12::link::LinkView;
     pub use crate::v12::link::MsDuration;
+
+    pub use crate::v13::link::AddressClaim;
+    pub use crate::v13::link::Ipv4OwnedEntry;
+    pub use crate::v13::link::Ipv6OwnedEntry;
+    pub use crate::v13::link::TfportData;
+}
+
+pub mod tag {
+    pub use crate::v13::tag::OwnerFilter;
+    pub use crate::v13::tag::OwnerQuery;
+    pub use crate::v13::tag::Tag;
 }
 
 pub mod loopback {
@@ -106,7 +116,6 @@ pub mod port {
     pub use crate::v1::port::PortIpv4Path;
     pub use crate::v1::port::PortIpv6Path;
     pub use crate::v1::port::PortSettings;
-    pub use crate::v1::port::PortSettingsTag;
     pub use crate::v1::port::PortToken;
 }
 

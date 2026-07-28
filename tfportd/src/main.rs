@@ -16,6 +16,7 @@ use anyhow::{anyhow, bail};
 use chrono::prelude::*;
 use dpd_client::Client;
 use dpd_client::ClientState;
+use dpd_client::types;
 use libc::c_int;
 use oxstats::LinkTracker;
 use signal_hook::consts::signal::*;
@@ -115,6 +116,10 @@ pub(crate) struct Opt {
     techport1_prefix: Option<String>,
 }
 
+/// The name under which tfportd identifies itself to dpd, both as a client
+/// and as the owner tag on the resources it claims.
+const CLIENT_NAME: &str = "tfportd";
+
 /// Global state shared by all tasks / threads in the process.
 pub struct Global {
     // Set to false when the program should exit, usually when a signal is
@@ -123,6 +128,8 @@ pub struct Global {
     log: slog::Logger,
     config: Mutex<config::Config>,
     client: Client,
+    // The owner tag under which tfportd claims link addresses in dpd.
+    owner: types::Tag,
     /// Data link used to take packets from the Sidecar.
     pkt_source: String,
     // Handle to a `pcap` interface for collecting incoming packets from the
@@ -264,7 +271,6 @@ async fn main_impl() -> anyhow::Result<()> {
     let opts = Opt::parse();
     let config = config::build_config(&opts)?;
 
-    const CLIENT_NAME: &str = "tfportd";
     let log = common::logging::init(
         CLIENT_NAME,
         &config.log_file,
@@ -367,6 +373,9 @@ async fn main_impl() -> anyhow::Result<()> {
     // Create the link tracker and the receiver for link updates.
     let (link_tracker, link_watch_rx) = LinkTracker::new();
 
+    let owner = types::Tag::try_from(CLIENT_NAME)
+        .map_err(|e| anyhow!("invalid owner tag {CLIENT_NAME:?}: {e}"))?;
+
     // Create the global state shared by all tasks.
     let global = Global {
         running: atomic::AtomicBool::new(true),
@@ -374,6 +383,7 @@ async fn main_impl() -> anyhow::Result<()> {
         config: Mutex::new(config),
         pkt_source: pkt_src,
         client,
+        owner,
         pcap_in,
         pcap_out,
         tfport_to_asic: Mutex::new(BTreeMap::new()),
@@ -501,11 +511,15 @@ async fn sync_only(
     // on the Softnpu xml configuration.
     let pkt_source = config.pkt_source.clone().unwrap_or_default();
 
+    let owner = types::Tag::try_from(CLIENT_NAME)
+        .map_err(|e| anyhow!("invalid owner tag {CLIENT_NAME:?}: {e}"))?;
+
     let global = Global {
         running: atomic::AtomicBool::new(true),
         log,
         config: Mutex::new(config),
         client,
+        owner,
         pkt_source,
         pcap_in,
         pcap_out,

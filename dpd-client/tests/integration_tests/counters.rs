@@ -18,9 +18,6 @@ use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
 use crate::integration_tests::icmp_ipv4;
 use ::common::network::MacAddr;
-use dpd_client::ClientInfo;
-use dpd_client::types::Ipv4Entry;
-use dpd_client::types::Ipv6Entry;
 
 // Run a single drop test.  This sends a packet that we expect to be dropped,
 // and verifies that the expected drop counter is bumped by one.  If the test
@@ -58,12 +55,7 @@ async fn one_drop_test(
 // Add an IPv4 address to a port on the switch
 async fn add_switch_ipv4(switch: &Switch, port: PhysPort, addr: &str) {
     let (port_id, link_id) = switch.link_id(port).unwrap();
-    let entry = Ipv4Entry {
-        addr: addr.parse().unwrap(),
-        tag: switch.client.inner().tag.clone(),
-    };
-
-    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
+    switch.claim_ipv4(&port_id, &link_id, addr.parse().unwrap()).await.unwrap();
 }
 
 /// Assigns the address 10.10.10.11 to port 12 and then sends a packet with
@@ -100,12 +92,10 @@ async fn test_ipv6_switch_addr_miss() -> TestResult {
 
     let switch_ip = "fd00:1122:3344:0100::1";
     let (port_id, link_id) = switch.link_id(assigned).unwrap();
-    let entry = Ipv6Entry {
-        addr: switch_ip.parse().unwrap(),
-        tag: switch.client.inner().tag.clone(),
-    };
-
-    switch.client.link_ipv6_create(&port_id, &link_id, &entry).await.unwrap();
+    switch
+        .claim_ipv6(&port_id, &link_id, switch_ip.parse().unwrap())
+        .await
+        .unwrap();
 
     let packet = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:3344:0200::1", 3333)

@@ -14,6 +14,8 @@ use futures::stream::TryStreamExt;
 use tabwriter::TabWriter;
 
 use dpd_client::Client;
+use dpd_client::ClientInfo;
+use dpd_client::types;
 
 use crate::LinkName;
 use crate::LinkPath;
@@ -43,6 +45,10 @@ pub enum Addr {
         link: LinkName,
         /// The IP address to add.
         addr: IpAddr,
+        /// Claim the address for this owner tag rather than the CLI's own
+        /// tag.
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// Delete an IP address from a link.
     Del {
@@ -50,6 +56,14 @@ pub enum Addr {
         link: LinkName,
         /// The IP address to delete.
         addr: IpAddr,
+        /// Release the claim held by this owner tag rather than the CLI's
+        /// own tag.  The address is removed from the switch only when its
+        /// last owner releases it.
+        #[clap(long, conflicts_with = "force")]
+        tag: Option<String>,
+        /// Remove the address outright, regardless of which clients own it.
+        #[clap(long)]
+        force: bool,
     },
 }
 
@@ -334,28 +348,35 @@ async fn addr_list(
     }
 }
 
+/// Resolve the owner tag for an address operation: an explicit `--tag`
+/// override if given, otherwise the CLI's own tag.
+fn owner_tag(
+    client: &Client,
+    tag: Option<String>,
+) -> anyhow::Result<types::Tag> {
+    let tag = tag.unwrap_or_else(|| client.inner().tag.clone());
+    types::Tag::try_from(tag.as_str())
+        .map_err(|e| misc_err(format!("invalid owner tag: {e}")).into())
+}
+
 async fn addr_add(
     client: &Client,
     link: &LinkPath,
     addr: IpAddr,
+    owner: types::Tag,
 ) -> anyhow::Result<()> {
+    let claim = types::AddressClaim { owner };
     match addr {
-        IpAddr::V4(addr) => {
-            let entry = client.ipv4_entry(addr);
-            client
-                .link_ipv4_create(&link.port_id, &link.link_id, &entry)
-                .await
-                .context("failed to add IPv4 address")
-                .map(|_| ())
-        }
-        IpAddr::V6(addr) => {
-            let entry = client.ipv6_entry(addr);
-            client
-                .link_ipv6_create(&link.port_id, &link.link_id, &entry)
-                .await
-                .context("failed to add IPv6 address")
-                .map(|_| ())
-        }
+        IpAddr::V4(addr) => client
+            .link_ipv4_claim(&link.port_id, &link.link_id, &addr, &claim)
+            .await
+            .context("failed to add IPv4 address")
+            .map(|_| ()),
+        IpAddr::V6(addr) => client
+            .link_ipv6_claim(&link.port_id, &link.link_id, &addr, &claim)
+            .await
+            .context("failed to add IPv6 address")
+            .map(|_| ()),
     }
 }
 
@@ -387,14 +408,28 @@ async fn addr_del(
     client: &Client,
     link: &LinkPath,
     addr: IpAddr,
+    owner: Option<types::Tag>,
 ) -> anyhow::Result<()> {
-    match addr {
-        IpAddr::V4(addr) => client
+    // With an owner, release only that owner's claim; the address is
+    // removed from the switch when its last owner releases it.  Without an
+    // owner, force-remove the address regardless of ownership.
+    match (addr, owner) {
+        (IpAddr::V4(addr), Some(owner)) => client
+            .link_ipv4_release(&link.port_id, &link.link_id, &addr, &owner)
+            .await
+            .context("failed to release IPv4 address")
+            .map(|_| ()),
+        (IpAddr::V4(addr), None) => client
             .link_ipv4_delete(&link.port_id, &link.link_id, &addr)
             .await
             .context("failed to delete IPv4 address")
             .map(|_| ()),
-        IpAddr::V6(addr) => client
+        (IpAddr::V6(addr), Some(owner)) => client
+            .link_ipv6_release(&link.port_id, &link.link_id, &addr, &owner)
+            .await
+            .context("failed to release IPv6 address")
+            .map(|_| ()),
+        (IpAddr::V6(addr), None) => client
             .link_ipv6_delete(&link.port_id, &link.link_id, &addr)
             .await
             .context("failed to delete IPv6 address")
@@ -425,13 +460,25 @@ pub async fn addr_cmd(client: &Client, a: Addr) -> anyhow::Result<()> {
         Addr::List { ipv4, ipv6, parseable, link } => {
             addr_list(client, ipv4, ipv6, parseable, link).await
         }
-        Addr::Add { link, addr } => match &link {
+        Addr::Add { link, addr, tag } => match &link {
             LinkName::Loopback => addr_add_loopback(client, addr).await,
-            LinkName::Link(l) => addr_add(client, l, addr).await,
+            LinkName::Link(l) => {
+                let owner = owner_tag(client, tag)?;
+                addr_add(client, l, addr, owner).await
+            }
         },
-        Addr::Del { link, addr } => match &link {
+        Addr::Del { link, addr, tag, force } => match &link {
             LinkName::Loopback => addr_del_loopback(client, addr).await,
-            LinkName::Link(l) => addr_del(client, l, addr).await,
+            LinkName::Link(l) => {
+                // Default to releasing the CLI's own claim; --tag releases
+                // another owner's claim and --force removes the address
+                // regardless of ownership.
+                let owner = match force {
+                    true => None,
+                    false => Some(owner_tag(client, tag)?),
+                };
+                addr_del(client, l, addr, owner).await
+            }
         },
     }
 }

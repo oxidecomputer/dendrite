@@ -8,8 +8,6 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use ::common::network::MacAddr;
-use dpd_client::ClientInfo;
-use dpd_client::types;
 use packet::Endpoint;
 use packet::eth;
 use packet::icmp;
@@ -65,11 +63,7 @@ async fn execute_ping_reply_test(
     let from = endpoint("e0:d5:5e:67:89:ab", "192.168.10.1");
     let to = endpoint(mac.to_string().as_str(), "192.168.20.1");
 
-    let entry = types::Ipv4Entry {
-        addr: to.get_ipv4("tgt")?,
-        tag: switch.client.inner().tag.clone(),
-    };
-    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
+    switch.claim_ipv4(&port_id, &link_id, to.get_ipv4("tgt")?).await.unwrap();
 
     let mut send_pkt = common::gen_ipv4_ping(icmp::ICMP_ECHO, 0, from, to);
     let mut recv_pkt = common::gen_ipv4_ping(icmp::ICMP_ECHOREPLY, 0, to, from);

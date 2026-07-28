@@ -36,7 +36,6 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use anyhow::Result;
-use dpd_client::ClientInfo;
 use dpd_client::types;
 use slog::debug;
 use slog::error;
@@ -63,8 +62,9 @@ pub struct LinkInfo {
     pub mac: MacAddr,
     /// Is this link configured to support IPv6?
     pub ipv6_enabled: bool,
-    /// The IPv6 link-local address of the link in dpd, if it exists.
-    pub dpd_link_local: Option<Ipv6Addr>,
+    /// Every IPv6 link-local address resident on the link in dpd, along
+    /// with the owners that have claimed it.
+    pub dpd_link_locals: Vec<types::Ipv6OwnedEntry>,
 
     /// The name of the `tfport` device, if it exists.
     pub tfport: Option<String>,
@@ -89,7 +89,7 @@ impl From<&types::TfportData> for LinkInfo {
             asic_id: t.asic_id,
             mac: t.mac.clone().into(),
             ipv6_enabled: t.ipv6_enabled,
-            dpd_link_local: t.link_local,
+            dpd_link_locals: t.link_locals.clone(),
             tfport: None,
             tfport_ifindex: None,
             tfport_link_local: None,
@@ -127,7 +127,7 @@ async fn dpd_port_update(g: &Global, links: &mut LinkMap) -> Result<()> {
         let link =
             links.entry(expected_tfport.clone()).or_insert((&entry).into());
         let entry_mac = entry.mac.into();
-        link.dpd_link_local = entry.link_local;
+        link.dpd_link_locals = entry.link_locals;
 
         // Check to see if the state in dpd matches our in-core state.
         // Neither of these should change, so it's definitely worth logging.
@@ -218,49 +218,113 @@ async fn illumos_port_update(
     Ok(illumos_data.keys().cloned().collect())
 }
 
-// Make sure that any link-local address configured in dpd matches the address
-// set on the local tfport by illumos.
+/// The operations needed to bring our claims on a link's dpd-resident
+/// link-local addresses in line with the tfport state in illumos.
+///
+/// A plan only ever touches claims held by our own owner tag; link-local
+/// addresses claimed exclusively by other owners are never released, and an
+/// address we co-own with another owner only has our claim released.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct LinkLocalPlan {
+    /// Stale claims of ours to release.
+    release: Vec<Ipv6Addr>,
+    /// The illumos link-local address to claim, if we don't already hold a
+    /// claim on it.
+    claim: Option<Ipv6Addr>,
+}
+
+impl LinkLocalPlan {
+    fn is_empty(&self) -> bool {
+        self.release.is_empty() && self.claim.is_none()
+    }
+}
+
+// Compute the operations needed to make our link-local claims in dpd match
+// the address set on the local tfport by illumos.
 //
-// This happens in two steps:
+// The plan considers only the addresses we own (i.e., those whose owner set
+// contains our tag):
 //
-//   1. If there is a link-local address in dpd, we delete it if there is no
-//      link-local address in illumos or if the illumos address is different
-//      than that at dpd (*).
+//   1. Any address we own that doesn't match the illumos link-local address
+//      is stale, and our claim on it is released (*).
 //
-//   2. If there is a link-local address in illumos, we send that to dpd if dpd
-//      doesn't already have a matching address.
+//   2. If we don't own the illumos link-local address, we claim it.
 //
-// If dpd and illumos both have the same link-local address (i.e., Some(dpd) ==
-// Some(illumos)), or neither has an address at all (i.e., None == None), then
-// there is no action to be taken.
+// Addresses owned solely by other clients are invisible to this process:
+// they are theirs to manage, and planning around them must not prevent this
+// function from reaching a fixed point (an empty plan) once our own claims
+// match the illumos state.
 //
 // (*) It would be very weird for the two sides to have different link-local
 //     addresses, since they are derived from the mac address.  This should only
 //     happen if the mac address changes which, as noted in dpd_port_update(),
 //     would also be very weird.
+fn plan_link_local_sync(
+    owner: &types::Tag,
+    dpd_link_locals: &[types::Ipv6OwnedEntry],
+    tfport_link_local: Option<Ipv6Addr>,
+) -> LinkLocalPlan {
+    let owned: BTreeSet<Ipv6Addr> = dpd_link_locals
+        .iter()
+        .filter(|entry| entry.owners.contains(owner))
+        .map(|entry| entry.addr)
+        .collect();
+
+    LinkLocalPlan {
+        release: owned
+            .iter()
+            .copied()
+            .filter(|addr| Some(*addr) != tfport_link_local)
+            .collect(),
+        claim: tfport_link_local.filter(|addr| !owned.contains(addr)),
+    }
+}
+
+// Make sure that our claims on link-local addresses configured in dpd match
+// the address set on the local tfport by illumos.  See
+// plan_link_local_sync() for the reconciliation rules.
 async fn ensure_address_match(g: &Global, link: &LinkInfo) -> Result<()> {
-    if let Some(addr) = link.dpd_link_local
-        && link.dpd_link_local != link.tfport_link_local
-    {
-        warn!(g.log, "deleting stale dpd address: {addr}");
-        g.client
-            .link_ipv6_delete(&link.port_id, &link.link_id, &addr)
+    let plan = plan_link_local_sync(
+        &g.owner,
+        &link.dpd_link_locals,
+        link.tfport_link_local,
+    );
+
+    for addr in &plan.release {
+        warn!(g.log, "releasing stale dpd address: {addr}");
+        match g
+            .client
+            .link_ipv6_release(&link.port_id, &link.link_id, addr, &g.owner)
             .await
-            .context("deleting stale link-local address")?;
+        {
+            Ok(_) => {}
+            // Our snapshot of the dpd state may be stale: a NOT_FOUND means
+            // the claim is already gone.
+            Err(e) if e.status() == Some(http::StatusCode::NOT_FOUND) => {
+                info!(
+                    g.log,
+                    "claim on link-local {addr} on {}/{} already released",
+                    link.port_id,
+                    link.link_id
+                );
+            }
+            Err(e) => {
+                return Err(e).context("releasing stale link-local address");
+            }
+        }
     }
 
-    if let Some(addr) = link.tfport_link_local
-        && link.dpd_link_local != link.tfport_link_local
-    {
-        info!(g.log, "sending new tfport address: {addr}");
+    if let Some(addr) = plan.claim {
+        info!(g.log, "claiming tfport address: {addr}");
         g.client
-            .link_ipv6_create(
+            .link_ipv6_claim(
                 &link.port_id,
                 &link.link_id,
-                &types::Ipv6Entry { tag: g.client.inner().tag.clone(), addr },
+                &addr,
+                &types::AddressClaim { owner: g.owner.clone() },
             )
             .await
-            .context("sending new link-local address")?;
+            .context("claiming link-local address")?;
     }
 
     Ok(())
@@ -329,4 +393,202 @@ pub async fn port_loop(g: Arc<Global>) {
     }
 
     debug!(g.log, "port loop exiting");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tag(name: &str) -> types::Tag {
+        types::Tag::try_from(name).unwrap()
+    }
+
+    fn addr(s: &str) -> Ipv6Addr {
+        s.parse().unwrap()
+    }
+
+    fn entry(a: &str, owners: &[&types::Tag]) -> types::Ipv6OwnedEntry {
+        types::Ipv6OwnedEntry {
+            addr: addr(a),
+            owners: owners.iter().map(|t| (*t).clone()).collect(),
+        }
+    }
+
+    // Model dpd's response to a plan: releasing removes our claim (and the
+    // address once its owner set is empty), claiming adds one.
+    fn apply_plan(
+        owner: &types::Tag,
+        dpd_link_locals: &mut Vec<types::Ipv6OwnedEntry>,
+        plan: &LinkLocalPlan,
+    ) {
+        for release in &plan.release {
+            if let Some(pos) =
+                dpd_link_locals.iter().position(|e| e.addr == *release)
+            {
+                dpd_link_locals[pos].owners.retain(|t| t != owner);
+                if dpd_link_locals[pos].owners.is_empty() {
+                    dpd_link_locals.remove(pos);
+                }
+            }
+        }
+        if let Some(claim) = plan.claim {
+            match dpd_link_locals.iter_mut().find(|e| e.addr == claim) {
+                Some(e) => {
+                    if !e.owners.contains(owner) {
+                        e.owners.push(owner.clone());
+                    }
+                }
+                None => dpd_link_locals.push(types::Ipv6OwnedEntry {
+                    addr: claim,
+                    owners: vec![owner.clone()],
+                }),
+            }
+        }
+    }
+
+    // Assert that after applying `plan`, replanning against the resulting
+    // dpd state produces an empty plan (i.e., reconciliation converges
+    // rather than looping forever).
+    fn assert_fixed_point(
+        owner: &types::Tag,
+        mut dpd_link_locals: Vec<types::Ipv6OwnedEntry>,
+        tfport_link_local: Option<Ipv6Addr>,
+        plan: &LinkLocalPlan,
+    ) {
+        apply_plan(owner, &mut dpd_link_locals, plan);
+        let replan =
+            plan_link_local_sync(owner, &dpd_link_locals, tfport_link_local);
+        assert!(
+            replan.is_empty(),
+            "reconciliation did not converge: second pass still \
+             plans work: {replan:?}"
+        );
+    }
+
+    // The bug this planner replaces: a foreign owner's link-local that
+    // sorts before ours must not be mistaken for our own claim.  The old
+    // code took the first link-local on the link regardless of owner,
+    // tried (and failed) to release it, re-claimed its own address, and
+    // repeated that forever.  With everything already in sync, the plan
+    // must be empty.
+    #[test]
+    fn foreign_link_local_sorting_first_reaches_fixed_point() {
+        let us = tag("tfportd");
+        let them = tag("ddm");
+        let ours = addr("fe80::2");
+        let dpd = vec![entry("fe80::1", &[&them]), entry("fe80::2", &[&us])];
+
+        let plan = plan_link_local_sync(&us, &dpd, Some(ours));
+        assert!(
+            plan.is_empty(),
+            "in-sync state must plan no work, got {plan:?}"
+        );
+        assert_fixed_point(&us, dpd, Some(ours), &plan);
+    }
+
+    // A stale claim of ours is released and the expected address claimed.
+    #[test]
+    fn stale_owned_address_is_replaced() {
+        let us = tag("tfportd");
+        let expected = addr("fe80::2");
+        let dpd = vec![entry("fe80::1", &[&us])];
+
+        let plan = plan_link_local_sync(&us, &dpd, Some(expected));
+        assert_eq!(plan.release, vec![addr("fe80::1")]);
+        assert_eq!(plan.claim, Some(expected));
+        assert_fixed_point(&us, dpd, Some(expected), &plan);
+    }
+
+    // A foreign address is left alone; we just claim our own.
+    #[test]
+    fn foreign_address_is_not_released_when_claiming() {
+        let us = tag("tfportd");
+        let them = tag("ddm");
+        let expected = addr("fe80::2");
+        let dpd = vec![entry("fe80::1", &[&them])];
+
+        let plan = plan_link_local_sync(&us, &dpd, Some(expected));
+        assert!(plan.release.is_empty(), "foreign claim must not be released");
+        assert_eq!(plan.claim, Some(expected));
+        assert_fixed_point(&us, dpd, Some(expected), &plan);
+    }
+
+    // With no illumos link-local, our claim is released; a foreign claim
+    // is not.
+    #[test]
+    fn owned_address_released_when_tfport_has_none() {
+        let us = tag("tfportd");
+        let them = tag("ddm");
+        let dpd = vec![entry("fe80::1", &[&them]), entry("fe80::2", &[&us])];
+
+        let plan = plan_link_local_sync(&us, &dpd, None);
+        assert_eq!(plan.release, vec![addr("fe80::2")]);
+        assert_eq!(plan.claim, None);
+        assert_fixed_point(&us, dpd, None, &plan);
+    }
+
+    // A link with only foreign claims and no illumos address needs no work.
+    #[test]
+    fn foreign_only_link_is_untouched() {
+        let us = tag("tfportd");
+        let them = tag("ddm");
+        let dpd = vec![entry("fe80::1", &[&them])];
+
+        let plan = plan_link_local_sync(&us, &dpd, None);
+        assert!(plan.is_empty(), "foreign-only link must plan no work");
+    }
+
+    // An address we co-own with another client counts as ours: nothing to
+    // do when it matches illumos.
+    #[test]
+    fn co_owned_matching_address_is_in_sync() {
+        let us = tag("tfportd");
+        let them = tag("ddm");
+        let expected = addr("fe80::1");
+        let dpd = vec![entry("fe80::1", &[&them, &us])];
+
+        let plan = plan_link_local_sync(&us, &dpd, Some(expected));
+        assert!(plan.is_empty(), "co-owned in-sync address needs no work");
+    }
+
+    // Releasing a stale co-owned address only drops our claim; the other
+    // owner keeps the address, and reconciliation still converges.
+    #[test]
+    fn stale_co_owned_address_release_converges() {
+        let us = tag("tfportd");
+        let them = tag("ddm");
+        let expected = addr("fe80::2");
+        let dpd = vec![entry("fe80::1", &[&them, &us])];
+
+        let plan = plan_link_local_sync(&us, &dpd, Some(expected));
+        assert_eq!(plan.release, vec![addr("fe80::1")]);
+        assert_eq!(plan.claim, Some(expected));
+
+        let mut after = dpd.clone();
+        apply_plan(&us, &mut after, &plan);
+        assert_eq!(
+            after,
+            vec![entry("fe80::1", &[&them]), entry("fe80::2", &[&us])],
+            "the other owner must retain its claim"
+        );
+        assert_fixed_point(&us, dpd, Some(expected), &plan);
+    }
+
+    // If we somehow hold claims on several link-locals, all the stale ones
+    // are released in one pass and reconciliation converges.
+    #[test]
+    fn multiple_owned_addresses_converge() {
+        let us = tag("tfportd");
+        let expected = addr("fe80::2");
+        let dpd = vec![
+            entry("fe80::1", &[&us]),
+            entry("fe80::2", &[&us]),
+            entry("fe80::3", &[&us]),
+        ];
+
+        let plan = plan_link_local_sync(&us, &dpd, Some(expected));
+        assert_eq!(plan.release, vec![addr("fe80::1"), addr("fe80::3")]);
+        assert_eq!(plan.claim, None);
+        assert_fixed_point(&us, dpd, Some(expected), &plan);
+    }
 }

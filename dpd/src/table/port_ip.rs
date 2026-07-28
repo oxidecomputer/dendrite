@@ -234,18 +234,6 @@ pub fn ipv4_delete(s: &Switch, port: u16, ipv4: Ipv4Addr) -> DpdResult<()> {
         })
 }
 
-/// Delete many IPv4 address from the ASIC tables.
-pub fn ipv4_delete_many<'a>(
-    s: &'a Switch,
-    port: u16,
-    addrs: impl Iterator<Item = Ipv4Addr> + 'a,
-) -> DpdResult<()> {
-    for addr in addrs {
-        let _ = ipv4_delete(s, port, addr);
-    }
-    Ok(())
-}
-
 fn ipv6_add_work(s: &Switch, port: u16, ipv6: Ipv6Addr) -> DpdResult<()> {
     let (claim_key, drop_key) = match_keys_ipv6(ipv6, port);
 
@@ -355,16 +343,4 @@ pub fn ipv6_counter_fetch(
     force_sync: bool,
 ) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<Ipv6MatchKey>(force_sync, TableType::PortAddrIpv6)
-}
-
-/// Delete many IPv6 address from the ASIC tables.
-pub fn ipv6_delete_many<'a>(
-    s: &'a Switch,
-    port: u16,
-    addrs: impl Iterator<Item = Ipv6Addr> + 'a,
-) -> DpdResult<()> {
-    for addr in addrs {
-        let _ = ipv6_delete(s, port, addr);
-    }
-    Ok(())
 }

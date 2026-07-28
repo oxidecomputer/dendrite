@@ -39,6 +39,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (13, ADDR_OWNERSHIP),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
     (10, ASIC_DETAILS),
@@ -1020,19 +1021,60 @@ pub trait DpdApi {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// List the IPv4 addresses associated with a link.
+    ///
+    /// Each address is returned exactly once, along with the complete set of
+    /// client tags that have claimed it.
     #[endpoint {
         method = GET,
+        versions = VERSION_ADDR_OWNERSHIP..,
         path = "/ports/{port_id}/links/{link_id}/ipv4",
     }]
     async fn link_ipv4_list(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
         query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv4Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Entry>>, HttpError>;
+    ) -> Result<
+        HttpResponseOk<ResultsPage<latest::link::Ipv4OwnedEntry>>,
+        HttpError,
+    >;
+
+    /// List the IPv4 addresses associated with a link.
+    #[endpoint {
+        method = GET,
+        versions = ..VERSION_ADDR_OWNERSHIP,
+        path = "/ports/{port_id}/links/{link_id}/ipv4",
+        operation_id = "link_ipv4_list",
+    }]
+    async fn link_ipv4_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkPath>,
+        query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv4Token>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Entry>>, HttpError> {
+        Self::link_ipv4_list(rqctx, path, query).await.map(|resp| {
+            resp.map(|page| ResultsPage {
+                next_page: page.next_page,
+                items: page
+                    .items
+                    .into_iter()
+                    .map(|entry| Ipv4Entry {
+                        // Earlier versions carry a single tag per address;
+                        // report the first owner in sorted order.
+                        tag: entry
+                            .owners
+                            .first()
+                            .map(ToString::to_string)
+                            .unwrap_or_default(),
+                        addr: entry.addr,
+                    })
+                    .collect(),
+            })
+        })
+    }
 
     /// Add an IPv4 address to a link.
     #[endpoint {
         method = POST,
+        versions = ..VERSION_ADDR_OWNERSHIP,
         path = "/ports/{port_id}/links/{link_id}/ipv4",
     }]
     async fn link_ipv4_create(
@@ -1041,17 +1083,49 @@ pub trait DpdApi {
         entry: TypedBody<Ipv4Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /// Clear all IPv4 addresses from a link.
+    /// Claim an IPv4 address on a link.
+    ///
+    /// A claim names the owner making it, and claiming is idempotent: the
+    /// first claim makes the address resident on the link, a claim by
+    /// another owner shares the already-resident address, and repeating a
+    /// claim the owner already holds succeeds without changing anything.
+    /// The address remains resident until every owner has released its
+    /// claim.
+    ///
+    /// The `legacy` owner tag is reserved for claims made through earlier
+    /// API versions and may not be used here.
     #[endpoint {
-        method = DELETE,
-        path = "/ports/{port_id}/links/{link_id}/ipv4",
+        method = PUT,
+        versions = VERSION_ADDR_OWNERSHIP..,
+        path = "/ports/{port_id}/links/{link_id}/ipv4/{address}",
     }]
-    async fn link_ipv4_reset(
+    async fn link_ipv4_claim(
         rqctx: RequestContext<Self::Context>,
-        path: Path<latest::link::LinkPath>,
+        path: Path<latest::link::LinkIpv4Path>,
+        body: TypedBody<latest::link::AddressClaim>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /// Remove an IPv4 address from a link.
+    /// Release one owner's claim on an IPv4 address on a link.
+    ///
+    /// The address remains resident on the link until its last claim is
+    /// released.  A claim the owner does not hold cannot be released: from
+    /// that owner's perspective the address does not exist, and the request
+    /// fails with a 404.
+    #[endpoint {
+        method = DELETE,
+        versions = VERSION_ADDR_OWNERSHIP..,
+        path = "/ports/{port_id}/links/{link_id}/ipv4/{address}/owner",
+    }]
+    async fn link_ipv4_release(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkIpv4Path>,
+        query: Query<latest::tag::OwnerQuery>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /// Remove an IPv4 address from a link, regardless of ownership.
+    ///
+    /// Every claim on the address is discarded.  To release a single
+    /// owner's claim, use the address's `owner` subresource instead.
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv4/{address}",
@@ -1061,20 +1135,72 @@ pub trait DpdApi {
         path: Path<latest::link::LinkIpv4Path>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
+    /// Clear all IPv4 addresses from a link.
+    #[endpoint {
+        method = DELETE,
+        versions = ..VERSION_ADDR_OWNERSHIP,
+        path = "/ports/{port_id}/links/{link_id}/ipv4",
+    }]
+    async fn link_ipv4_reset(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
     /// List the IPv6 addresses associated with a link.
+    ///
+    /// Each address is returned exactly once, along with the complete set of
+    /// client tags that have claimed it.
     #[endpoint {
         method = GET,
+        versions = VERSION_ADDR_OWNERSHIP..,
         path = "/ports/{port_id}/links/{link_id}/ipv6",
     }]
     async fn link_ipv6_list(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
         query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv6Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Entry>>, HttpError>;
+    ) -> Result<
+        HttpResponseOk<ResultsPage<latest::link::Ipv6OwnedEntry>>,
+        HttpError,
+    >;
+
+    /// List the IPv6 addresses associated with a link.
+    #[endpoint {
+        method = GET,
+        versions = ..VERSION_ADDR_OWNERSHIP,
+        path = "/ports/{port_id}/links/{link_id}/ipv6",
+        operation_id = "link_ipv6_list",
+    }]
+    async fn link_ipv6_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkPath>,
+        query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv6Token>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Entry>>, HttpError> {
+        Self::link_ipv6_list(rqctx, path, query).await.map(|resp| {
+            resp.map(|page| ResultsPage {
+                next_page: page.next_page,
+                items: page
+                    .items
+                    .into_iter()
+                    .map(|entry| Ipv6Entry {
+                        // Earlier versions carry a single tag per address;
+                        // report the first owner in sorted order.
+                        tag: entry
+                            .owners
+                            .first()
+                            .map(ToString::to_string)
+                            .unwrap_or_default(),
+                        addr: entry.addr,
+                    })
+                    .collect(),
+            })
+        })
+    }
 
     /// Add an IPv6 address to a link.
     #[endpoint {
         method = POST,
+        versions = ..VERSION_ADDR_OWNERSHIP,
         path = "/ports/{port_id}/links/{link_id}/ipv6",
     }]
     async fn link_ipv6_create(
@@ -1083,17 +1209,49 @@ pub trait DpdApi {
         entry: TypedBody<Ipv6Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /// Clear all IPv6 addresses from a link.
+    /// Claim an IPv6 address on a link.
+    ///
+    /// A claim names the owner making it, and claiming is idempotent: the
+    /// first claim makes the address resident on the link, a claim by
+    /// another owner shares the already-resident address, and repeating a
+    /// claim the owner already holds succeeds without changing anything.
+    /// The address remains resident until every owner has released its
+    /// claim.
+    ///
+    /// The `legacy` owner tag is reserved for claims made through earlier
+    /// API versions and may not be used here.
     #[endpoint {
-        method = DELETE,
-        path = "/ports/{port_id}/links/{link_id}/ipv6",
+        method = PUT,
+        versions = VERSION_ADDR_OWNERSHIP..,
+        path = "/ports/{port_id}/links/{link_id}/ipv6/{address}",
     }]
-    async fn link_ipv6_reset(
+    async fn link_ipv6_claim(
         rqctx: RequestContext<Self::Context>,
-        path: Path<latest::link::LinkPath>,
+        path: Path<latest::link::LinkIpv6Path>,
+        body: TypedBody<latest::link::AddressClaim>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /// Remove an IPv6 address from a link.
+    /// Release one owner's claim on an IPv6 address on a link.
+    ///
+    /// The address remains resident on the link until its last claim is
+    /// released.  A claim the owner does not hold cannot be released: from
+    /// that owner's perspective the address does not exist, and the request
+    /// fails with a 404.
+    #[endpoint {
+        method = DELETE,
+        versions = VERSION_ADDR_OWNERSHIP..,
+        path = "/ports/{port_id}/links/{link_id}/ipv6/{address}/owner",
+    }]
+    async fn link_ipv6_release(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkIpv6Path>,
+        query: Query<latest::tag::OwnerQuery>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /// Remove an IPv6 address from a link, regardless of ownership.
+    ///
+    /// Every claim on the address is discarded.  To release a single
+    /// owner's claim, use the address's `owner` subresource instead.
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv6/{address}",
@@ -1102,6 +1260,17 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkIpv6Path>,
     ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /// Clear all IPv6 addresses from a link.
+    #[endpoint {
+        method = DELETE,
+        versions = ..VERSION_ADDR_OWNERSHIP,
+        path = "/ports/{port_id}/links/{link_id}/ipv6",
+    }]
+    async fn link_ipv6_reset(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Get a link's MAC address.
     #[endpoint {
@@ -1628,16 +1797,71 @@ pub trait DpdApi {
      * attempted. If the rollback fails there will be inconsistent state. This
      * failure mode returns the error code "rollback failure". For more details see
      * the docs on the [`PortSettings`] type.
+     *
+     * The settings are applied on behalf of the named owner: the transaction
+     * diffs the request against that owner's existing address claims only, so
+     * addresses claimed by other clients are neither visible to nor removable
+     * by it.  The `legacy` owner tag is reserved for requests made through
+     * earlier API versions and may not be used here.
      */
     #[endpoint {
         method = POST,
+        versions = VERSION_ADDR_OWNERSHIP..,
         path = "/port/{port_id}/settings"
     }]
     async fn port_settings_apply(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
-        query: Query<latest::port::PortSettingsTag>,
+        query: Query<latest::tag::OwnerQuery>,
         body: TypedBody<latest::port::PortSettings>,
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /**
+     * Apply port settings atomically.
+     */
+    #[endpoint {
+        method = POST,
+        versions = ..VERSION_ADDR_OWNERSHIP,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_apply",
+    }]
+    async fn port_settings_apply_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::port::PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+        body: TypedBody<latest::port::PortSettings>,
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /**
+     * Release one owner's port settings atomically.
+     *
+     * The port's links are removed, and the owner's address claims are
+     * released.  Addresses claimed by other clients are removed along with
+     * the links that carry them, since link existence is defined by the
+     * port settings alone.
+     */
+    #[endpoint {
+        method = DELETE,
+        versions = VERSION_ADDR_OWNERSHIP..,
+        path = "/port/{port_id}/settings/owner"
+    }]
+    async fn port_settings_release(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::port::PortIdPathParams>,
+        query: Query<latest::tag::OwnerQuery>,
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /**
+     * Clear port settings atomically, regardless of ownership.
+     */
+    #[endpoint {
+        method = DELETE,
+        versions = VERSION_ADDR_OWNERSHIP..,
+        path = "/port/{port_id}/settings"
+    }]
+    async fn port_settings_clear(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::port::PortIdPathParams>,
     ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
 
     /**
@@ -1645,12 +1869,33 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = DELETE,
-        path = "/port/{port_id}/settings"
+        versions = ..VERSION_ADDR_OWNERSHIP,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_clear",
     }]
-    async fn port_settings_clear(
+    async fn port_settings_clear_v1(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
-        query: Query<latest::port::PortSettingsTag>,
+        query: Query<v1::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /**
+     * Get port settings atomically.
+     *
+     * When an owner is named, only that owner's address claims are included,
+     * so the response can be round-tripped through `port_settings_apply`
+     * without touching other clients' claims.  Without an owner, every
+     * address on the port is reported, for observability.
+     */
+    #[endpoint {
+        method = GET,
+        versions = VERSION_ADDR_OWNERSHIP..,
+        path = "/port/{port_id}/settings"
+    }]
+    async fn port_settings_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::port::PortIdPathParams>,
+        query: Query<latest::tag::OwnerFilter>,
     ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
 
     /**
@@ -1658,12 +1903,14 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
-        path = "/port/{port_id}/settings"
+        versions = ..VERSION_ADDR_OWNERSHIP,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_get",
     }]
-    async fn port_settings_get(
+    async fn port_settings_get_v1(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
-        query: Query<latest::port::PortSettingsTag>,
+        query: Query<v1::port::PortSettingsTag>,
     ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
 
     /// Get switch identifiers.
@@ -1706,13 +1953,63 @@ pub trait DpdApi {
     /// routine is meant to reduce the time and traffic expended on this once-per-
     /// second operation, by consolidating multiple per-link requests into a single
     /// per-switch request.
+    ///
+    /// Each link reports every IPv6 link-local address resident on it, along
+    /// with the complete owner set for each, so the caller can distinguish
+    /// its own claims from those of other clients.
     #[endpoint {
         method = GET,
+        versions = VERSION_ADDR_OWNERSHIP..,
         path = "/links/tfport_data",
     }]
     async fn tfport_data(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseOk<Vec<latest::link::TfportData>>, HttpError>;
+
+    /// Collect the link data consumed by `tfportd`.  This app-specific convenience
+    /// routine is meant to reduce the time and traffic expended on this once-per-
+    /// second operation, by consolidating multiple per-link requests into a single
+    /// per-switch request.
+    #[endpoint {
+        method = GET,
+        versions = ..VERSION_ADDR_OWNERSHIP,
+        path = "/links/tfport_data",
+        operation_id = "tfport_data",
+    }]
+    async fn tfport_data_v1(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<Vec<v1::link::TfportData>>, HttpError> {
+        let links = Self::tfport_data(rqctx).await?.0;
+        Ok(HttpResponseOk(
+            links
+                .into_iter()
+                .map(|data| v1::link::TfportData {
+                    port_id: data.port_id,
+                    link_id: data.link_id,
+                    asic_id: data.asic_id,
+                    mac: data.mac,
+                    ipv6_enabled: data.ipv6_enabled,
+                    // Earlier versions carry a single link-local address
+                    // with no notion of ownership, and their consumer
+                    // (tfportd) interprets it as the address it pushed.
+                    // Report the first address claimed by tfportd -- even
+                    // pre-ownership tfportd binaries claim under their own
+                    // tag -- falling back to the first in sorted order when
+                    // tfportd holds no claim.
+                    link_local: data
+                        .link_locals
+                        .iter()
+                        .find(|entry| {
+                            entry.owners.iter().any(|owner| {
+                                owner.as_str() == latest::tag::Tag::TFPORTD
+                            })
+                        })
+                        .or_else(|| data.link_locals.first())
+                        .map(|entry| entry.addr),
+                })
+                .collect(),
+        ))
+    }
 
     /**
      * Get NAT generation number

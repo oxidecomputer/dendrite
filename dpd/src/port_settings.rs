@@ -9,16 +9,17 @@ use crate::DpdResult;
 use crate::Switch;
 use crate::link::Link;
 use crate::link::LinkParams;
+use crate::owned_addrs::Claimed;
 use aal::AsicOps;
-use common::ports::Ipv4Entry;
-use common::ports::Ipv6Entry;
 use common::ports::PortFec;
 use common::ports::PortId;
 use common::ports::PortSpeed;
 use common::ports::TxEq;
+use dpd_types::link::LinkCreate;
 use dpd_types::link::LinkId;
 use dpd_types::port::LinkSettings;
 use dpd_types::port::PortSettings;
+use dpd_types::tag::Tag;
 use slog::Logger;
 use slog::debug;
 use slog::error;
@@ -31,6 +32,19 @@ use std::net::Ipv6Addr;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
+
+/// The ownership scope a port-settings transaction acts under.
+#[derive(Clone, Debug)]
+pub enum OwnerScope {
+    /// The transaction sees every address claim on the port, regardless of
+    /// owner.  A transaction in this scope cannot create or release
+    /// per-owner claims, so it is only suitable for reads and force clears.
+    All,
+    /// The transaction acts for a single owner: its snapshots and diffs are
+    /// scoped to that owner's address claims, so claims held by other
+    /// clients are neither visible to nor removable by it.
+    Single(Tag),
+}
 
 /// A change set is a plan for how to add, delete and modify a set of objects
 /// with type `V` indexed by type `K`.
@@ -104,17 +118,33 @@ struct LinkSpec {
     pub tx_eq: Option<TxEq>,
 }
 
-impl From<&Link> for LinkSpec {
-    fn from(p: &Link) -> Self {
+impl LinkSpec {
+    /// Snapshot the state of a resident link as seen by the transaction's
+    /// ownership scope.
+    ///
+    /// Under a single-owner scope, only the addresses claimed by that owner
+    /// are included: addresses attached by other clients (e.g. tfportd's
+    /// link-local mirror, or an operator using swadm) are invisible to the
+    /// transaction's diff and therefore cannot be clobbered by it.
+    fn scoped(link: &Link, scope: &OwnerScope) -> Self {
+        let (ipv4, ipv6) = match scope {
+            OwnerScope::Single(owner) => (
+                link.ipv4.owned_by(owner).collect(),
+                link.ipv6.owned_by(owner).collect(),
+            ),
+            OwnerScope::All => {
+                (link.ipv4.addrs().collect(), link.ipv6.addrs().collect())
+            }
+        };
         Self {
-            speed: p.config.speed,
-            fec: p.config.fec,
-            autoneg: p.config.autoneg,
-            kr: p.config.kr,
-            tx_eq: p.tx_eq,
-            delete_me: p.config.delete_me,
-            ipv4: p.ipv4.iter().map(|x| x.addr).collect(),
-            ipv6: p.ipv6.iter().map(|x| x.addr).collect(),
+            speed: link.config.speed,
+            fec: link.config.fec,
+            autoneg: link.config.autoneg,
+            kr: link.config.kr,
+            tx_eq: link.tx_eq,
+            delete_me: link.config.delete_me,
+            ipv4,
+            ipv6,
         }
     }
 }
@@ -362,7 +392,7 @@ impl PortSettingsDiff {
     fn remove_link(
         ctx: &mut Context<'_>,
         link_id: LinkId,
-        spec: &LinkSpec,
+        _spec: &LinkSpec,
         rb: &mut Rollback,
     ) -> DpdResult<()> {
         debug!(ctx.log, "removing link");
@@ -377,14 +407,31 @@ impl PortSettingsDiff {
             Ok(())
         });
 
-        // Delete the IPv4 addresses
-        for addr in spec.ipv4.iter().copied() {
-            Self::addr_del_v4(ctx, &mut link, rb, addr)?;
+        // The whole link is going away, so release every address resident on
+        // it, regardless of which clients own it.  Each release captures the
+        // address's complete owner set so that a rollback restores exact
+        // ownership rather than adopting the addresses under this
+        // transaction's tag.
+        let switch = ctx.switch;
+        for addr in link.ipv4.addrs().collect::<Vec<_>>() {
+            let owners =
+                switch.force_release_ipv4_address_locked(&mut link, addr)?;
+            rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
+                let switch = ctx.switch;
+                let link_lock = ctx.link(link_id)?;
+                let mut link = link_lock.lock().unwrap();
+                switch.restore_ipv4_address_locked(&mut link, addr, owners)
+            });
         }
-
-        // Delete the IPv6 addresses
-        for addr in spec.ipv6.iter().copied() {
-            Self::addr_del_v6(ctx, &mut link, rb, addr)?;
+        for addr in link.ipv6.addrs().collect::<Vec<_>>() {
+            let owners =
+                switch.force_release_ipv6_address_locked(&mut link, addr)?;
+            rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
+                let switch = ctx.switch;
+                let link_lock = ctx.link(link_id)?;
+                let mut link = link_lock.lock().unwrap();
+                switch.restore_ipv6_address_locked(&mut link, addr, owners)
+            });
         }
 
         Ok(())
@@ -464,19 +511,24 @@ impl PortSettingsDiff {
         addr: Ipv4Addr,
     ) -> DpdResult<()> {
         trace!(ctx.log, "ipv4 add {addr}");
-        // Create address on ASIC first.
-        let entry =
-            Ipv4Entry { tag: ctx.tag.clone().unwrap_or("".into()), addr };
+        // Claim ownership for this transaction's owner, creating the address
+        // on the ASIC if it is not already resident.
+        let owner = ctx.owner()?.clone();
         let switch = ctx.switch;
-        switch.create_ipv4_address_locked(link, entry)?;
+        let claimed = switch.install_ipv4_address_locked(link, addr, &owner)?;
 
         let link_id = link.link_id;
-        rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
-            let switch = ctx.switch;
-            let link_lock = ctx.link(link_id)?;
-            let mut link = link_lock.lock().unwrap();
-            switch.delete_ipv4_address_locked(&mut link, addr)
-        });
+        if claimed != Claimed::AlreadyOwned {
+            rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
+                let switch = ctx.switch;
+                let link_lock = ctx.link(link_id)?;
+                let mut link = link_lock.lock().unwrap();
+                // Release only this transaction's claim: if the address was
+                // already resident under another owner, it must survive the
+                // rollback.
+                switch.remove_ipv4_address_locked(&mut link, addr, &owner)
+            });
+        }
         Ok(())
     }
 
@@ -487,17 +539,21 @@ impl PortSettingsDiff {
         addr: Ipv4Addr,
     ) -> DpdResult<()> {
         trace!(ctx.log, "ipv4 del {addr}");
-        let entry =
-            Ipv4Entry { tag: ctx.tag.clone().unwrap_or("".into()), addr };
+        // Release only this transaction's claim on the address.  The diff is
+        // computed from an owner-scoped snapshot, so the owner is known to
+        // hold a claim; the ASIC entry goes away only if it was the last one.
+        let owner = ctx.owner()?.clone();
         let switch = ctx.switch;
         let link_id = link.link_id;
-        switch.delete_ipv4_address_locked(link, addr)?;
+        switch.remove_ipv4_address_locked(link, addr, &owner)?;
 
         rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
             let switch = ctx.switch;
             let link_lock = ctx.link(link_id)?;
             let mut link = link_lock.lock().unwrap();
-            switch.create_ipv4_address_locked(&mut link, entry)
+            switch
+                .install_ipv4_address_locked(&mut link, addr, &owner)
+                .map(|_| ())
         });
         Ok(())
     }
@@ -509,19 +565,24 @@ impl PortSettingsDiff {
         addr: Ipv6Addr,
     ) -> DpdResult<()> {
         trace!(ctx.log, "ipv6 add {addr}");
-        // Create address on ASIC first.
-        let entry =
-            Ipv6Entry { tag: ctx.tag.clone().unwrap_or("".into()), addr };
+        // Claim ownership for this transaction's owner, creating the address
+        // on the ASIC if it is not already resident.
+        let owner = ctx.owner()?.clone();
         let switch = ctx.switch;
         let link_id = link.link_id;
-        switch.create_ipv6_address_locked(link, entry)?;
+        let claimed = switch.install_ipv6_address_locked(link, addr, &owner)?;
 
-        rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
-            let switch = ctx.switch;
-            let link_lock = ctx.link(link_id)?;
-            let mut link = link_lock.lock().unwrap();
-            switch.delete_ipv6_address_locked(&mut link, addr)
-        });
+        if claimed != Claimed::AlreadyOwned {
+            rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
+                let switch = ctx.switch;
+                let link_lock = ctx.link(link_id)?;
+                let mut link = link_lock.lock().unwrap();
+                // Release only this transaction's claim: if the address was
+                // already resident under another owner, it must survive the
+                // rollback.
+                switch.remove_ipv6_address_locked(&mut link, addr, &owner)
+            });
+        }
         Ok(())
     }
 
@@ -532,19 +593,57 @@ impl PortSettingsDiff {
         addr: Ipv6Addr,
     ) -> DpdResult<()> {
         trace!(ctx.log, "ipv6 del {addr}");
+        // Release only this transaction's claim on the address.  The diff is
+        // computed from an owner-scoped snapshot, so the owner is known to
+        // hold a claim; the ASIC entry goes away only if it was the last one.
+        let owner = ctx.owner()?.clone();
         let switch = ctx.switch;
         let link_id = link.link_id;
-        switch.delete_ipv6_address_locked(link, addr)?;
+        switch.remove_ipv6_address_locked(link, addr, &owner)?;
 
         rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
-            let entry =
-                Ipv6Entry { tag: ctx.tag.clone().unwrap_or("".into()), addr };
             let switch = ctx.switch;
             let link_lock = ctx.link(link_id)?;
             let mut link = link_lock.lock().unwrap();
-            switch.create_ipv6_address_locked(&mut link, entry)
+            switch
+                .install_ipv6_address_locked(&mut link, addr, &owner)
+                .map(|_| ())
         });
         Ok(())
+    }
+}
+
+/// Project a resident link into the API's `LinkSettings` shape.
+///
+/// Under a single-owner scope, only the addresses claimed by that owner are
+/// included: a client that round-trips its own settings through GET and
+/// apply neither sees nor clobbers addresses claimed by other clients.  The
+/// all-owners scope sees every address.
+fn link_settings_view(link: &Link, scope: &OwnerScope) -> LinkSettings {
+    let addrs = match scope {
+        OwnerScope::Single(owner) => link
+            .ipv4
+            .owned_by(owner)
+            .map(IpAddr::V4)
+            .chain(link.ipv6.owned_by(owner).map(IpAddr::V6))
+            .collect(),
+        OwnerScope::All => link
+            .ipv4
+            .addrs()
+            .map(IpAddr::V4)
+            .chain(link.ipv6.addrs().map(IpAddr::V6))
+            .collect(),
+    };
+    LinkSettings {
+        params: LinkCreate {
+            lane: Some(link.link_id),
+            speed: link.config.speed,
+            fec: link.config.fec,
+            autoneg: link.config.autoneg,
+            kr: link.config.kr,
+            tx_eq: link.tx_eq,
+        },
+        addrs,
     }
 }
 
@@ -582,18 +681,18 @@ struct Context<'a> {
     port_id: PortId,
     switch: &'a Switch,
     link_map: MutexGuard<'a, crate::link::LinkMap>,
-    tag: Option<String>,
+    scope: OwnerScope,
     log: Logger,
     rollback: bool,
 }
 
 macro_rules! context {
-    ($port_id:expr, $switch:expr) => {
+    ($port_id:expr, $switch:expr, $scope:expr) => {
         Context {
             port_id: $port_id,
             switch: $switch,
             link_map: $switch.links.lock().unwrap(),
-            tag: None,
+            scope: $scope,
             log: $switch.log.clone(),
             rollback: false,
         }
@@ -605,23 +704,41 @@ impl Context<'_> {
         self.link_map.get_link(self.port_id, link_id)
     }
 
+    /// The owner this transaction claims and releases addresses for.
+    ///
+    /// Only a single-owner transaction may create or release per-owner
+    /// claims; the all-owners scope has no identity to record claims under.
+    /// In practice this is unreachable, since only apply transactions
+    /// create claims and they always carry an owner.
+    fn owner(&self) -> DpdResult<&Tag> {
+        match &self.scope {
+            OwnerScope::Single(owner) => Ok(owner),
+            OwnerScope::All => Err(DpdError::Invalid(
+                "this operation requires an owner tag".to_string(),
+            )),
+        }
+    }
+
     fn link_spec(&mut self, link_id: LinkId) -> DpdResult<LinkSpec> {
         let link_lock = self.link_map.get_link(self.port_id, link_id)?;
         let link = link_lock.lock().unwrap();
-        Ok(LinkSpec::from(&*link))
+        Ok(LinkSpec::scoped(&link, &self.scope))
     }
 }
 
 impl Switch {
     /// Apply port settings as an atomic transaction.
+    ///
+    /// The transaction acts for `owner`: its diff is computed against the
+    /// addresses that owner has claimed, so claims held by other clients
+    /// are neither visible to nor removable by it.
     pub async fn apply_port_settings(
         &self,
         port_id: PortId,
         settings: PortSettings,
-        tag: Option<String>,
+        owner: Tag,
     ) -> DpdResult<PortSettings> {
-        let mut ctx = context!(port_id, self);
-        ctx.tag = tag;
+        let mut ctx = context!(port_id, self, OwnerScope::Single(owner));
 
         let mut diff = PortSettingsDiff::calculate(&mut ctx, &settings)?;
         trace!(self.log, "port settings diff: {:#?}", diff);
@@ -631,13 +748,17 @@ impl Switch {
     }
 
     /// Clear port settings as an atomic transaction.
+    ///
+    /// Every link on the port is removed under either scope: link existence
+    /// is defined by the port settings alone, so addresses claimed by other
+    /// clients are removed along with the links that carry them.  The scope
+    /// determines the view returned to the caller.
     pub async fn clear_port_settings(
         &self,
         port_id: PortId,
-        tag: Option<String>,
+        scope: OwnerScope,
     ) -> DpdResult<PortSettings> {
-        let mut ctx = context!(port_id, self);
-        ctx.tag = tag;
+        let mut ctx = context!(port_id, self, scope);
 
         let settings = PortSettings::default();
         let mut diff = PortSettingsDiff::calculate(&mut ctx, &settings)?;
@@ -651,10 +772,9 @@ impl Switch {
     pub async fn get_port_settings(
         &self,
         port_id: PortId,
-        tag: Option<String>,
+        scope: OwnerScope,
     ) -> DpdResult<PortSettings> {
-        let mut ctx = context!(port_id, self);
-        ctx.tag = tag;
+        let mut ctx = context!(port_id, self, scope);
         Self::get_port_settings_locked(&mut ctx, false)
     }
 
@@ -691,7 +811,10 @@ impl Switch {
                     if ignore_deleting && link.config.delete_me {
                         None
                     } else {
-                        Some(((*link_id).into(), LinkSettings::from(&*link)))
+                        Some((
+                            (*link_id).into(),
+                            link_settings_view(&link, &ctx.scope),
+                        ))
                     }
                 } else {
                     None

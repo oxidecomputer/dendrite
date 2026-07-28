@@ -159,15 +159,16 @@ where
     Ok(())
 }
 
-impl TableTest for types::Ipv4Entry {
+impl TableTest for types::Ipv4OwnedEntry {
     async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
         switch
             .client
-            .link_ipv4_create(
+            .link_ipv4_claim(
                 &port_id,
                 &link_id,
-                &switch.client.ipv4_entry(gen_ipv4_addr(idx)),
+                &gen_ipv4_addr(idx),
+                &switch.addr_claim(),
             )
             .await
     }
@@ -198,19 +199,22 @@ async fn test_ipv4_full() -> TestResult {
     // The limit for the switch port addresses is half the size of the table
     // because each address consumes two table entries: one to "accept" on the
     // correct port and one to "drop" on all the other ports.
-    test_table_capacity::<types::Ipv4Entry, (), ()>(SWITCH_IPV4_ADDRS_SIZE / 2)
-        .await
+    test_table_capacity::<types::Ipv4OwnedEntry, (), ()>(
+        SWITCH_IPV4_ADDRS_SIZE / 2,
+    )
+    .await
 }
 
-impl TableTest for types::Ipv6Entry {
+impl TableTest for types::Ipv6OwnedEntry {
     async fn insert_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
         switch
             .client
-            .link_ipv6_create(
+            .link_ipv6_claim(
                 &port_id,
                 &link_id,
-                &switch.client.ipv6_entry(gen_ipv6_addr(idx)),
+                &gen_ipv6_addr(idx),
+                &switch.addr_claim(),
             )
             .await
     }
@@ -241,8 +245,10 @@ async fn test_ipv6_full() -> TestResult {
     // The limit for the switch port addresses is half the size of the table
     // because each address consumes two table entries: one to "accept" on the
     // correct port and one to "drop" on all the other ports.
-    test_table_capacity::<types::Ipv6Entry, (), ()>(SWITCH_IPV6_ADDRS_SIZE / 2)
-        .await
+    test_table_capacity::<types::Ipv6OwnedEntry, (), ()>(
+        SWITCH_IPV6_ADDRS_SIZE / 2,
+    )
+    .await
 }
 
 impl TableTest for types::ArpEntry {

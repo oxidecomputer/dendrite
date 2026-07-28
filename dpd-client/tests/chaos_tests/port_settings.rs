@@ -13,8 +13,8 @@ use asic::chaos::{AsicConfig, Chaos, TableChaos};
 use asic::table_chaos;
 use common::table::TableType;
 use dpd_client::types::{
-    Ipv4Entry, Ipv6Entry, LinkCreate, LinkId, LinkSettings, PortFec, PortId,
-    PortSettings, PortSpeed,
+    AddressClaim, LinkCreate, LinkId, LinkSettings, PortFec, PortId,
+    PortSettings, PortSpeed, Tag,
 };
 use dpd_client::{Client, ROLLBACK_FAILURE_ERROR_CODE};
 use http::status::StatusCode;
@@ -27,6 +27,16 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use tokio::time::Duration;
 
 const TESTING_RADIX: usize = 33;
+
+// Build an owner tag from a literal.
+fn owner(s: &str) -> Tag {
+    Tag::try_from(s).expect("test owner tags are valid")
+}
+
+// Build an address claim for an owner given as a literal.
+fn claim(s: &str) -> AddressClaim {
+    AddressClaim { owner: owner(s) }
+}
 // For tests that may need to be retried multiple times before the server has
 // reached a stable state, how frequently should they be retried and when should
 // we give up?
@@ -137,7 +147,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
     let err = client
         .port_settings_apply(
             &"qsfp0".parse().unwrap(),
-            Some("chaos"),
+            &owner("chaos"),
             &settings,
         )
         .await
@@ -178,7 +188,7 @@ async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
     client
         .port_settings_apply(
             &"qsfp0".parse().unwrap(),
-            Some("chaos"),
+            &owner("chaos"),
             &settings,
         )
         .await?;
@@ -217,7 +227,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     client
         .port_settings_apply(
             &"qsfp0".parse().unwrap(),
-            Some("chaos"),
+            &owner("chaos"),
             &settings,
         )
         .await?;
@@ -253,7 +263,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     client
         .port_settings_apply(
             &"qsfp0".parse().unwrap(),
-            Some("chaos"),
+            &owner("chaos"),
             &settings,
         )
         .await?;
@@ -289,7 +299,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     client
         .port_settings_apply(
             &"qsfp0".parse().unwrap(),
-            Some("chaos"),
+            &owner("chaos"),
             &settings,
         )
         .await?;
@@ -303,7 +313,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     // Clear all settings
 
     client
-        .port_settings_clear(&"qsfp0".parse().unwrap(), Some("chaos"))
+        .port_settings_release(&"qsfp0".parse().unwrap(), &owner("chaos"))
         .await?;
 
     // The addresses are all cleared synchronously, but the link deletion is
@@ -365,7 +375,8 @@ async fn test_port_settings_txn_sweep() -> anyhow::Result<()> {
         let target = random_port_settings();
         print!("current/target: {}", Comparison::new(&current, &target));
 
-        match client.port_settings_apply(&port, Some("chaos"), &target).await {
+        match client.port_settings_apply(&port, &owner("chaos"), &target).await
+        {
             Ok(mut returned) => {
                 sort_addrs(&mut returned);
                 // Verify that what the server attempted to configure matches
@@ -443,7 +454,7 @@ async fn test_port_settings_txn_par_sweep() -> anyhow::Result<()> {
             let target = random_port_settings();
 
             match client
-                .port_settings_apply(&port, Some("chaos"), &target)
+                .port_settings_apply(&port, &owner("chaos"), &target)
                 .await
             {
                 Ok(mut returned) => {
@@ -493,8 +504,10 @@ async fn current_port_settings(
     client: &Client,
     port: &PortId,
 ) -> anyhow::Result<PortSettings> {
-    let mut settings =
-        client.port_settings_get(port, Some("chaos")).await?.into_inner();
+    let mut settings = client
+        .port_settings_get(port, Some(&owner("chaos")))
+        .await?
+        .into_inner();
     sort_addrs(&mut settings);
     Ok(settings)
 }
@@ -582,17 +595,13 @@ async fn test_port_settings_reapply_preserves_direct_addresses()
     );
 
     let port: PortId = "qsfp0".parse().unwrap();
-    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+    client.port_settings_apply(&port, &owner("omicron"), &settings).await?;
 
     // Simulate tfportd: push a link-local through the direct address API,
     // under tfportd's own tag.
     let link_local: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
     client
-        .link_ipv6_create(
-            &port,
-            &LinkId(0),
-            &Ipv6Entry { tag: "tfportd".to_string(), addr: link_local },
-        )
+        .link_ipv6_claim(&port, &LinkId(0), &link_local, &claim("tfportd"))
         .await?;
 
     let v6 = link_list_ipv6(&client, "qsfp0", "0").await?;
@@ -603,7 +612,7 @@ async fn test_port_settings_reapply_preserves_direct_addresses()
     );
 
     // Re-apply the identical settings, as omicron does when reconciling.
-    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+    client.port_settings_apply(&port, &owner("omicron"), &settings).await?;
 
     // The role-managed routable address survives...
     let v4 = link_list_ipv4(&client, "qsfp0", "0").await?;
@@ -647,31 +656,25 @@ async fn test_port_settings_preserves_foreign_addrs() -> anyhow::Result<()> {
     );
 
     let port: PortId = "qsfp0".parse().unwrap();
-    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+    client.port_settings_apply(&port, &owner("omicron"), &settings).await?;
 
     // An operator adds a routable IPv4 address via swadm...
     client
-        .link_ipv4_create(
+        .link_ipv4_claim(
             &port,
             &LinkId(0),
-            &Ipv4Entry {
-                tag: "cli".to_string(),
-                addr: "198.51.100.5".parse().unwrap(),
-            },
+            &"198.51.100.5".parse().unwrap(),
+            &claim("cli"),
         )
         .await?;
     // ...and tfportd mirrors the link-local.
     let link_local: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
     client
-        .link_ipv6_create(
-            &port,
-            &LinkId(0),
-            &Ipv6Entry { tag: "tfportd".to_string(), addr: link_local },
-        )
+        .link_ipv6_claim(&port, &LinkId(0), &link_local, &claim("tfportd"))
         .await?;
 
     // Omicron reconciles with identical settings.
-    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+    client.port_settings_apply(&port, &owner("omicron"), &settings).await?;
 
     let v4 = link_list_ipv4(&client, "qsfp0", "0").await?;
     let mut v4_addrs: Vec<Ipv4Addr> = v4.iter().map(|e| e.addr).collect();
@@ -696,13 +699,12 @@ async fn test_port_settings_preserves_foreign_addrs() -> anyhow::Result<()> {
 }
 
 // An address is a refcounted resource keyed by owner tag: a second client
-// attaching to an already-resident address must succeed as an additional
-// owner rather than colliding.  Today the create APIs compare entries by
-// address alone and return 409 for any second tag.
+// claiming an already-resident address becomes an additional owner rather
+// than colliding, and a repeat claim by an existing owner is idempotent.
 //
-// The detach half of shared ownership (removing one owner leaves the entry,
-// removing the last owner releases it) requires the tagged-delete API and is
-// covered by tests accompanying that change.
+// The release half of shared ownership (removing one owner leaves the entry,
+// removing the last owner releases it) is covered by
+// test_direct_addr_tagged_detach.
 #[tokio::test]
 async fn test_direct_addr_create_shared_ownership() -> anyhow::Result<()> {
     let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
@@ -724,24 +726,14 @@ async fn test_direct_addr_create_shared_ownership() -> anyhow::Result<()> {
         },
     );
     let port: PortId = "qsfp0".parse().unwrap();
-    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+    client.port_settings_apply(&port, &owner("omicron"), &settings).await?;
 
     let addr: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
-    client
-        .link_ipv6_create(
-            &port,
-            &LinkId(0),
-            &Ipv6Entry { tag: "tfportd".to_string(), addr },
-        )
-        .await?;
+    client.link_ipv6_claim(&port, &LinkId(0), &addr, &claim("tfportd")).await?;
 
     // A second owner attaches to the same address.
     client
-        .link_ipv6_create(
-            &port,
-            &LinkId(0),
-            &Ipv6Entry { tag: "cli".to_string(), addr },
-        )
+        .link_ipv6_claim(&port, &LinkId(0), &addr, &claim("cli"))
         .await
         .map_err(|e| {
             anyhow::anyhow!(
@@ -750,20 +742,18 @@ async fn test_direct_addr_create_shared_ownership() -> anyhow::Result<()> {
             )
         })?;
 
-    // A repeat create by the same owner is still a conflict.
-    let err = client
-        .link_ipv6_create(
-            &port,
-            &LinkId(0),
-            &Ipv6Entry { tag: "cli".to_string(), addr },
-        )
+    // A repeat claim by the same owner is idempotent.
+    client
+        .link_ipv6_claim(&port, &LinkId(0), &addr, &claim("cli"))
         .await
-        .expect_err("re-attaching the same owner must still conflict");
-    assert_eq!(err.status(), Some(StatusCode::CONFLICT));
+        .map_err(|e| {
+            anyhow::anyhow!("re-claiming an owned address is idempotent: {e}")
+        })?;
 
-    // The address is resident exactly once.
+    // The address is resident exactly once, with both owners recorded once.
     let v6 = link_list_ipv6(&client, "qsfp0", "0").await?;
     assert_eq!(v6.iter().map(|e| e.addr).collect::<Vec<_>>(), vec![addr]);
+    assert_eq!(v6[0].owners.to_vec(), vec![owner("cli"), owner("tfportd")]);
 
     Ok(())
 }
@@ -806,17 +796,13 @@ async fn test_port_settings_rollback_preserves_addr_tags() -> anyhow::Result<()>
     );
 
     let port: PortId = "qsfp0".parse().unwrap();
-    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+    client.port_settings_apply(&port, &owner("omicron"), &settings).await?;
 
     // Simulate tfportd: mirror a link-local into the switch through the
     // direct address API, under tfportd's own tag.
     let link_local: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
     client
-        .link_ipv6_create(
-            &port,
-            &LinkId(0),
-            &Ipv6Entry { tag: "tfportd".to_string(), addr: link_local },
-        )
+        .link_ipv6_claim(&port, &LinkId(0), &link_local, &claim("tfportd"))
         .await?;
 
     // Target: remove link 0 and add link 1 with an IPv4 address.  Deletes
@@ -830,7 +816,7 @@ async fn test_port_settings_rollback_preserves_addr_tags() -> anyhow::Result<()>
     );
 
     let err = client
-        .port_settings_apply(&port, Some("omicron"), &target)
+        .port_settings_apply(&port, &owner("omicron"), &target)
         .await
         .expect_err("the IPv4 address add must fail");
     expect_chaos!(err, table_entry_add);
@@ -839,16 +825,16 @@ async fn test_port_settings_rollback_preserves_addr_tags() -> anyhow::Result<()>
     let err = link_list_ipv4(&client, "qsfp0", "1").await.unwrap_err();
     expect_not_found!(err);
 
-    // Link 0's addresses must be restored with their original tags.
+    // Link 0's addresses must be restored with their original owners.
     let v6 = link_list_ipv6(&client, "qsfp0", "0").await?;
-    let mut got: Vec<(Ipv6Addr, String)> =
-        v6.iter().map(|e| (e.addr, e.tag.clone())).collect();
+    let mut got: Vec<(Ipv6Addr, Vec<Tag>)> =
+        v6.iter().map(|e| (e.addr, e.owners.to_vec())).collect();
     got.sort();
     assert_eq!(
         got,
         vec![
-            ("fd00:1701::e".parse().unwrap(), "omicron".to_string()),
-            (link_local, "tfportd".to_string()),
+            ("fd00:1701::e".parse().unwrap(), vec![owner("omicron")]),
+            (link_local, vec![owner("tfportd")]),
         ],
         "rolled-back addresses must retain their original ownership tags"
     );
@@ -894,22 +880,18 @@ async fn test_port_settings_remove_link_releases_link_locals()
     );
 
     let port: PortId = "qsfp0".parse().unwrap();
-    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+    client.port_settings_apply(&port, &owner("omicron"), &settings).await?;
 
     let link_local: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
     client
-        .link_ipv6_create(
-            &port,
-            &LinkId(0),
-            &Ipv6Entry { tag: "tfportd".to_string(), addr: link_local },
-        )
+        .link_ipv6_claim(&port, &LinkId(0), &link_local, &claim("tfportd"))
         .await?;
 
     // Remove the link, then wait out the async teardown.
     client
         .port_settings_apply(
             &port,
-            Some("omicron"),
+            &owner("omicron"),
             &PortSettings { links: HashMap::new() },
         )
         .await?;
@@ -927,13 +909,9 @@ async fn test_port_settings_remove_link_releases_link_locals()
     // Recreate the link (it maps to the same ASIC ID) and re-add the same
     // link-local.  If the teardown leaked its table entries, this fails
     // with a collision.
-    client.port_settings_apply(&port, Some("omicron"), &settings).await?;
+    client.port_settings_apply(&port, &owner("omicron"), &settings).await?;
     client
-        .link_ipv6_create(
-            &port,
-            &LinkId(0),
-            &Ipv6Entry { tag: "tfportd".to_string(), addr: link_local },
-        )
+        .link_ipv6_claim(&port, &LinkId(0), &link_local, &claim("tfportd"))
         .await
         .map_err(|e| {
             anyhow::anyhow!(
@@ -941,6 +919,268 @@ async fn test_port_settings_remove_link_releases_link_locals()
                  link-local: {e}"
             )
         })?;
+
+    Ok(())
+}
+
+// Apply empty settings to qsfp0, giving tests a link with no addresses.
+async fn apply_empty_link(
+    client: &Client,
+    tag: &str,
+) -> anyhow::Result<PortId> {
+    let mut settings = PortSettings { links: HashMap::new() };
+    settings.links.insert(
+        "0".into(),
+        LinkSettings {
+            params: LinkCreate {
+                lane: None,
+                autoneg: false,
+                kr: true,
+                fec: Some(PortFec::None),
+                speed: PortSpeed::Speed100G,
+                tx_eq: None,
+            },
+            addrs: vec![],
+        },
+    );
+    let port: PortId = "qsfp0".parse().unwrap();
+    client.port_settings_apply(&port, &owner(tag), &settings).await?;
+    Ok(port)
+}
+
+// Detaching one owner of a co-owned address must leave the address (and its
+// ASIC entry) in place; detaching the last owner must release both.
+#[tokio::test]
+async fn test_direct_addr_tagged_detach() -> anyhow::Result<()> {
+    let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
+    let (_guard, client) = init_harness("tagged-detach", &config);
+    let port = apply_empty_link(&client, "omicron").await?;
+
+    let addr: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
+    client.link_ipv6_claim(&port, &LinkId(0), &addr, &claim("tfportd")).await?;
+    client.link_ipv6_claim(&port, &LinkId(0), &addr, &claim("cli")).await?;
+
+    // The list reports one entry with the complete owner set.
+    let v6 = link_list_ipv6(&client, "qsfp0", "0").await?;
+    assert_eq!(v6.len(), 1);
+    assert_eq!(v6[0].addr, addr);
+    assert_eq!(v6[0].owners.to_vec(), vec![owner("cli"), owner("tfportd")],);
+
+    // Detaching a non-last owner leaves the address resident.
+    client.link_ipv6_release(&port, &LinkId(0), &addr, &owner("cli")).await?;
+    let v6 = link_list_ipv6(&client, "qsfp0", "0").await?;
+    assert_eq!(v6.len(), 1, "co-owned address must survive a tagged detach");
+    assert_eq!(v6[0].owners.to_vec(), vec![owner("tfportd")]);
+
+    // Detaching the last owner releases the address.  This would fail if
+    // the first detach had already removed the ASIC entry.
+    client
+        .link_ipv6_release(&port, &LinkId(0), &addr, &owner("tfportd"))
+        .await?;
+    let v6 = link_list_ipv6(&client, "qsfp0", "0").await?;
+    assert!(v6.is_empty(), "last-owner detach must remove the address");
+
+    // Recreating the address succeeds: the ASIC entry was released, not
+    // leaked.
+    client
+        .link_ipv6_claim(&port, &LinkId(0), &addr, &claim("tfportd"))
+        .await
+        .map_err(|e| {
+        anyhow::anyhow!("last-owner detach leaked the ASIC entry: {e}")
+    })?;
+
+    Ok(())
+}
+
+// A tag that does not own an address cannot release it.
+#[tokio::test]
+async fn test_direct_addr_foreign_owner_guard() -> anyhow::Result<()> {
+    let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
+    let (_guard, client) = init_harness("foreign-owner-guard", &config);
+    let port = apply_empty_link(&client, "omicron").await?;
+
+    let addr: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
+    client.link_ipv6_claim(&port, &LinkId(0), &addr, &claim("tfportd")).await?;
+
+    let err = client
+        .link_ipv6_release(&port, &LinkId(0), &addr, &owner("cli"))
+        .await
+        .expect_err("a foreign tag must not be able to release an address");
+    expect_not_found!(err);
+
+    let v6 = link_list_ipv6(&client, "qsfp0", "0").await?;
+    assert_eq!(v6.len(), 1);
+    assert_eq!(
+        v6[0].owners.to_vec(),
+        vec![owner("tfportd")],
+        "a failed foreign detach must not change ownership"
+    );
+
+    Ok(())
+}
+
+// An untagged delete is the legacy/admin path: it removes the address
+// outright, regardless of how many owners it has.
+#[tokio::test]
+async fn test_direct_addr_untagged_force_release() -> anyhow::Result<()> {
+    let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
+    let (_guard, client) = init_harness("untagged-force-release", &config);
+    let port = apply_empty_link(&client, "omicron").await?;
+
+    let addr: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
+    for tag in ["tfportd", "cli"] {
+        client.link_ipv6_claim(&port, &LinkId(0), &addr, &claim(tag)).await?;
+    }
+
+    client.link_ipv6_delete(&port, &LinkId(0), &addr).await?;
+    let v6 = link_list_ipv6(&client, "qsfp0", "0").await?;
+    assert!(v6.is_empty(), "an untagged delete must remove the address");
+
+    // The ASIC entry was released along with it.
+    client
+        .link_ipv6_claim(&port, &LinkId(0), &addr, &claim("tfportd"))
+        .await
+        .map_err(|e| {
+        anyhow::anyhow!("untagged delete leaked the ASIC entry: {e}")
+    })?;
+
+    Ok(())
+}
+
+// Releasing one owner's claims removes only the addresses that owner held
+// exclusively; co-owned addresses remain under their other owners.  A force
+// delete removes an address regardless of ownership.
+#[tokio::test]
+async fn test_addr_release_owner_scoped() -> anyhow::Result<()> {
+    let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
+    let (_guard, client) = init_harness("tagged-reset", &config);
+    let port = apply_empty_link(&client, "omicron").await?;
+
+    // 198.51.100.1 owned by cli alone; 198.51.100.2 co-owned by cli and
+    // tfportd; 198.51.100.3 owned by tfportd alone.
+    let exclusive: Ipv4Addr = "198.51.100.1".parse().unwrap();
+    let shared: Ipv4Addr = "198.51.100.2".parse().unwrap();
+    let foreign: Ipv4Addr = "198.51.100.3".parse().unwrap();
+    for (tag, addr) in [
+        ("cli", exclusive),
+        ("cli", shared),
+        ("tfportd", shared),
+        ("tfportd", foreign),
+    ] {
+        client.link_ipv4_claim(&port, &LinkId(0), &addr, &claim(tag)).await?;
+    }
+
+    // Releasing cli's claims removes only the address it exclusively owned.
+    for addr in [exclusive, shared] {
+        client
+            .link_ipv4_release(&port, &LinkId(0), &addr, &owner("cli"))
+            .await?;
+    }
+    let v4 = link_list_ipv4(&client, "qsfp0", "0").await?;
+    let got: Vec<(Ipv4Addr, Vec<Tag>)> =
+        v4.iter().map(|e| (e.addr, e.owners.to_vec())).collect();
+    assert_eq!(
+        got,
+        vec![
+            (shared, vec![owner("tfportd")]),
+            (foreign, vec![owner("tfportd")]),
+        ],
+        "an owner release must remove only that owner's claims"
+    );
+
+    // A force delete removes the rest, regardless of ownership.
+    for addr in [shared, foreign] {
+        client.link_ipv4_delete(&port, &LinkId(0), &addr).await?;
+    }
+    let v4 = link_list_ipv4(&client, "qsfp0", "0").await?;
+    assert!(v4.is_empty(), "a force delete must remove every address");
+
+    Ok(())
+}
+
+// A tagged port-settings GET reports only the addresses owned by that tag,
+// so a client that round-trips its own settings neither sees nor clobbers
+// foreign addresses.  An untagged GET sees everything.
+#[tokio::test]
+async fn test_port_settings_get_tag_scoped() -> anyhow::Result<()> {
+    let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
+    let (_guard, client) = init_harness("tag-scoped-get", &config);
+
+    let omicron_addr = "203.0.113.47".parse().unwrap();
+    let mut settings = PortSettings { links: HashMap::new() };
+    settings.links.insert(
+        "0".into(),
+        LinkSettings {
+            params: LinkCreate {
+                lane: None,
+                autoneg: false,
+                kr: true,
+                fec: Some(PortFec::None),
+                speed: PortSpeed::Speed100G,
+                tx_eq: None,
+            },
+            addrs: vec![omicron_addr],
+        },
+    );
+    let port: PortId = "qsfp0".parse().unwrap();
+    client.port_settings_apply(&port, &owner("omicron"), &settings).await?;
+
+    // Other clients attach their own addresses.
+    client
+        .link_ipv4_claim(
+            &port,
+            &LinkId(0),
+            &"198.51.100.5".parse().unwrap(),
+            &claim("cli"),
+        )
+        .await?;
+    let link_local: Ipv6Addr = "fe80::aa40:25ff:fe05:702".parse().unwrap();
+    client
+        .link_ipv6_claim(&port, &LinkId(0), &link_local, &claim("tfportd"))
+        .await?;
+
+    // A tagged GET sees only that tag's addresses.
+    let got = client.port_settings_get(&port, Some(&owner("omicron"))).await?;
+    let link = &got.links["0"];
+    assert_eq!(
+        link.addrs,
+        vec![omicron_addr],
+        "a tagged GET must report only the tag's own addresses"
+    );
+
+    // Applying the round-tripped settings changes nothing for anyone else.
+    let mut roundtrip = PortSettings { links: HashMap::new() };
+    roundtrip.links.insert(
+        "0".into(),
+        LinkSettings {
+            params: got.links["0"].params.clone(),
+            addrs: got.links["0"].addrs.clone(),
+        },
+    );
+    client.port_settings_apply(&port, &owner("omicron"), &roundtrip).await?;
+    let v4 = link_list_ipv4(&client, "qsfp0", "0").await?;
+    assert_eq!(
+        v4.iter().map(|e| e.addr).collect::<Vec<_>>(),
+        vec![
+            "198.51.100.5".parse::<Ipv4Addr>().unwrap(),
+            "203.0.113.47".parse::<Ipv4Addr>().unwrap(),
+        ],
+        "round-tripping tagged settings must not clobber foreign addresses"
+    );
+
+    // An untagged GET sees every resident address.
+    let got = client.port_settings_get(&port, None).await?;
+    let mut all: Vec<std::net::IpAddr> = got.links["0"].addrs.clone();
+    all.sort();
+    assert_eq!(
+        all,
+        vec![
+            "198.51.100.5".parse::<std::net::IpAddr>().unwrap(),
+            "203.0.113.47".parse::<std::net::IpAddr>().unwrap(),
+            std::net::IpAddr::V6(link_local),
+        ],
+        "an untagged GET must report every resident address"
+    );
 
     Ok(())
 }
