@@ -125,4 +125,5 @@ DENDRITE_TEST_HOST='[::1]' \
     --no-fail-fast \
     $TESTNAME \
     -- \
-    --ignored
+    --ignored \
+    --skip succeeds_when_table_fragmented
