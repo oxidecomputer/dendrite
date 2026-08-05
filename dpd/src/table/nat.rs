@@ -7,6 +7,7 @@
 use dpd_types::table;
 use std::convert::TryInto;
 use std::fmt;
+use std::hash::Hash;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use slog::debug;
@@ -18,8 +19,58 @@ use crate::Switch;
 use crate::table::*;
 use common::network::{MacAddr, NatTarget};
 
+/// An IP address family with a NAT ingress table, tying the address type to
+/// its p4 table and the corresponding match key and action types.
+pub trait NatFamily: Copy + fmt::Display {
+    const TABLE: TableType;
+    const NAME: &'static str;
+    type MatchKey: MatchParse + Hash + fmt::Display;
+    type Action: ActionParse;
+
+    fn match_key(self, low: u16, high: u16) -> Self::MatchKey;
+    fn action(tgt: NatTarget) -> Self::Action;
+}
+
+impl NatFamily for Ipv4Addr {
+    const TABLE: TableType = TableType::NatIngressIpv4;
+    const NAME: &'static str = "ipv4";
+    type MatchKey = Ipv4MatchKey;
+    type Action = Ipv4Action;
+
+    fn match_key(self, low: u16, high: u16) -> Ipv4MatchKey {
+        Ipv4MatchKey::new(self, low, high)
+    }
+
+    fn action(tgt: NatTarget) -> Ipv4Action {
+        Ipv4Action::Forward {
+            target: tgt.internal_ip,
+            inner_mac: tgt.inner_mac,
+            vni: tgt.vni.as_u32(),
+        }
+    }
+}
+
+impl NatFamily for Ipv6Addr {
+    const TABLE: TableType = TableType::NatIngressIpv6;
+    const NAME: &'static str = "ipv6";
+    type MatchKey = Ipv6MatchKey;
+    type Action = Ipv6Action;
+
+    fn match_key(self, low: u16, high: u16) -> Ipv6MatchKey {
+        Ipv6MatchKey::new(self, low, high)
+    }
+
+    fn action(tgt: NatTarget) -> Ipv6Action {
+        Ipv6Action::Forward {
+            target: tgt.internal_ip,
+            inner_mac: tgt.inner_mac,
+            vni: tgt.vni.as_u32(),
+        }
+    }
+}
+
 #[derive(MatchParse, Hash)]
-struct Ipv6MatchKey {
+pub struct Ipv6MatchKey {
     dst_addr: Ipv6Addr,
 
     #[match_xlate(name = "l4_dst_port", type = "range")]
@@ -45,7 +96,7 @@ impl fmt::Display for Ipv6MatchKey {
 }
 
 #[derive(MatchParse, Hash)]
-struct Ipv4MatchKey {
+pub struct Ipv4MatchKey {
     dst_addr: Ipv4Addr,
 
     #[match_xlate(name = "l4_dst_port", type = "range")]
@@ -71,116 +122,57 @@ impl fmt::Display for Ipv4MatchKey {
 }
 
 #[derive(ActionParse)]
-enum Ipv6Action {
+pub enum Ipv6Action {
     #[action_xlate(name = "forward_ipv6_to")]
     Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
 
 #[derive(ActionParse)]
-enum Ipv4Action {
+pub enum Ipv4Action {
     #[action_xlate(name = "forward_ipv4_to")]
     Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
 
-pub fn add_ipv6_entry(
+pub fn add_entry<A: NatFamily>(
     s: &Switch,
-    nat_ip: Ipv6Addr,
+    nat_ip: A,
     nat_port_low: u16,
     nat_port_high: u16,
     tgt: NatTarget,
 ) -> DpdResult<()> {
-    let match_key = Ipv6MatchKey::new(nat_ip, nat_port_low, nat_port_high);
-    let action_key = Ipv6Action::Forward {
-        target: tgt.internal_ip,
-        inner_mac: tgt.inner_mac,
-        vni: tgt.vni.as_u32(),
-    };
+    let match_key = nat_ip.match_key(nat_port_low, nat_port_high);
+    let action_key = A::action(tgt);
 
     debug!(s.log, "add nat entry {} -> {:?}", match_key, tgt);
 
-    s.table_entry_add(TableType::NatIngressIpv6, &match_key, &action_key)
+    s.table_entry_add(A::TABLE, &match_key, &action_key)
 }
 
-pub fn delete_ipv6_entry(
+pub fn delete_entry<A: NatFamily>(
     s: &Switch,
-    nat_ip: Ipv6Addr,
+    nat_ip: A,
     nat_port_low: u16,
     nat_port_high: u16,
 ) -> DpdResult<()> {
-    let match_key = Ipv6MatchKey::new(nat_ip, nat_port_low, nat_port_high);
+    let match_key = nat_ip.match_key(nat_port_low, nat_port_high);
     debug!(s.log, "remove nat entry {}", match_key);
-    s.table_entry_del(TableType::NatIngressIpv6, &match_key)
+    s.table_entry_del(A::TABLE, &match_key)
 }
 
-pub fn reset_ipv6(s: &Switch) -> DpdResult<()> {
-    s.table_clear(TableType::NatIngressIpv6)
+pub fn reset<A: NatFamily>(s: &Switch) -> DpdResult<()> {
+    s.table_clear(A::TABLE)
 }
 
-pub fn add_ipv4_entry(
-    s: &Switch,
-    nat_ip: Ipv4Addr,
-    nat_port_low: u16,
-    nat_port_high: u16,
-    tgt: NatTarget,
-) -> DpdResult<()> {
-    let match_key = Ipv4MatchKey::new(nat_ip, nat_port_low, nat_port_high);
-    let action_key = Ipv4Action::Forward {
-        target: tgt.internal_ip,
-        inner_mac: tgt.inner_mac,
-        vni: tgt.vni.as_u32(),
-    };
-
-    debug!(s.log, "add nat entry {} -> {:?}", match_key, tgt);
-
-    s.table_entry_add(TableType::NatIngressIpv4, &match_key, &action_key)
-}
-
-pub fn delete_ipv4_entry(
-    s: &Switch,
-    nat_ip: Ipv4Addr,
-    nat_port_low: u16,
-    nat_port_high: u16,
-) -> DpdResult<()> {
-    let match_key = Ipv4MatchKey::new(nat_ip, nat_port_low, nat_port_high);
-    debug!(s.log, "remove nat entry {}", match_key);
-    s.table_entry_del(TableType::NatIngressIpv4, &match_key)
-}
-
-pub fn ipv4_table_dump(
+pub fn table_dump<A: NatFamily>(
     s: &Switch,
     from_hardware: bool,
 ) -> DpdResult<table::Table> {
-    s.table_dump::<Ipv4MatchKey, Ipv4Action>(
-        TableType::NatIngressIpv4,
-        from_hardware,
-    )
+    s.table_dump::<A::MatchKey, A::Action>(A::TABLE, from_hardware)
 }
 
-pub fn ipv6_table_dump(
-    s: &Switch,
-    from_hardware: bool,
-) -> DpdResult<table::Table> {
-    s.table_dump::<Ipv6MatchKey, Ipv6Action>(
-        TableType::NatIngressIpv6,
-        from_hardware,
-    )
-}
-
-pub fn ipv4_counter_fetch(
+pub fn counter_fetch<A: NatFamily>(
     s: &Switch,
     force_sync: bool,
 ) -> DpdResult<Vec<table::TableCounterEntry>> {
-    s.counter_fetch::<Ipv4MatchKey>(force_sync, TableType::NatIngressIpv4)
-}
-
-pub fn ipv6_counter_fetch(
-    s: &Switch,
-    force_sync: bool,
-) -> DpdResult<Vec<table::TableCounterEntry>> {
-    s.counter_fetch::<Ipv6MatchKey>(force_sync, TableType::NatIngressIpv6)
-}
-
-/// Delete many IPv6 address from the ASIC tables.
-pub fn reset_ipv4(s: &Switch) -> DpdResult<()> {
-    s.table_clear(TableType::NatIngressIpv4)
+    s.counter_fetch::<A::MatchKey>(force_sync, A::TABLE)
 }
