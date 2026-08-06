@@ -105,13 +105,14 @@ use crate::attached_subnet;
 use crate::counters;
 #[cfg(feature = "multicast")]
 use crate::mcast;
+use crate::nat;
 use crate::oxstats;
 use crate::rpw::Task;
 use crate::switch_port::FixedSideDevice;
 use crate::switch_port::LedState;
 use crate::transceivers::PowerState;
 use crate::types::DpdError;
-use crate::{Switch, arp, loopback, nat, ports, route};
+use crate::{Switch, arp, loopback, ports, route};
 use common::attached_subnet::AttachedSubnetEntry;
 use common::nat::{Ipv4Nat, Ipv6Nat};
 use common::network::{InstanceTarget, MacAddr, NatTarget};
@@ -1422,7 +1423,7 @@ impl DpdApi for DpdApiImpl {
             WhichPage::Next(Ipv6Token { ip }) => Some(*ip),
         };
 
-        let entries = nat::get_ipv6_addrs_range(
+        let entries = nat::get_addrs_range(
             switch,
             last_addr,
             usize::try_from(max).expect("invalid usize"),
@@ -1449,7 +1450,7 @@ impl DpdApi for DpdApiImpl {
             WhichPage::Next(NatToken { port }) => Some(*port),
         };
 
-        let entries = nat::get_ipv6_mappings_range(
+        let entries = nat::get_mappings_range(
             switch,
             params.ipv6,
             port,
@@ -1469,8 +1470,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseOk<NatTarget>, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
-        match nat::get_ipv6_mapping(switch, params.ipv6, params.low, params.low)
-        {
+        match nat::get_mapping(switch, params.ipv6, params.low, params.low) {
             Ok(tgt) => Ok(HttpResponseOk(tgt)),
             Err(e) => Err(e.into()),
         }
@@ -1483,7 +1483,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
-        match nat::set_ipv6_mapping(
+        match nat::add_mapping(
             switch,
             params.ipv6,
             params.low,
@@ -1501,7 +1501,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
-        nat::clear_ipv6_mapping(switch, params.ipv6, params.low, params.low)
+        nat::remove_mapping(switch, params.ipv6, params.low, params.low)
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
     }
@@ -1511,7 +1511,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
 
-        match nat::reset_ipv6(switch) {
+        match nat::reset::<Ipv6Addr>(switch) {
             Ok(_) => Ok(HttpResponseUpdatedNoContent()),
             Err(e) => Err(e.into()),
         }
@@ -1530,7 +1530,7 @@ impl DpdApi for DpdApiImpl {
             WhichPage::Next(Ipv4Token { ip }) => Some(*ip),
         };
 
-        let entries = nat::get_ipv4_addrs_range(
+        let entries = nat::get_addrs_range(
             switch,
             last_addr,
             usize::try_from(max).expect("invalid usize"),
@@ -1558,7 +1558,7 @@ impl DpdApi for DpdApiImpl {
             WhichPage::Next(NatToken { port }) => Some(*port),
         };
 
-        let entries = nat::get_ipv4_mappings_range(
+        let entries = nat::get_mappings_range(
             switch,
             params.ipv4,
             port,
@@ -1578,8 +1578,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseOk<NatTarget>, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
-        match nat::get_ipv4_mapping(switch, params.ipv4, params.low, params.low)
-        {
+        match nat::get_mapping(switch, params.ipv4, params.low, params.low) {
             Ok(tgt) => Ok(HttpResponseOk(tgt)),
             Err(e) => Err(e.into()),
         }
@@ -1592,7 +1591,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
-        match nat::set_ipv4_mapping(
+        match nat::add_mapping(
             switch,
             params.ipv4,
             params.low,
@@ -1610,7 +1609,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
-        nat::clear_ipv4_mapping(switch, params.ipv4, params.low, params.low)
+        nat::remove_mapping(switch, params.ipv4, params.low, params.low)
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
     }
@@ -1620,7 +1619,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
 
-        match nat::reset_ipv4(switch) {
+        match nat::reset::<Ipv4Addr>(switch) {
             Ok(_) => Ok(HttpResponseUpdatedNoContent()),
             Err(e) => Err(e.into()),
         }
@@ -1744,11 +1743,11 @@ impl DpdApi for DpdApiImpl {
             error!(switch.log, "failed to clear all link state: {:?}", e);
             err = Some(e);
         }
-        if let Err(e) = nat::reset_ipv4(switch) {
+        if let Err(e) = nat::reset::<Ipv4Addr>(switch) {
             error!(switch.log, "failed to reset ipv4 nat table: {:?}", e);
             err = Some(e);
         }
-        if let Err(e) = nat::reset_ipv6(switch) {
+        if let Err(e) = nat::reset::<Ipv6Addr>(switch) {
             error!(switch.log, "failed to reset ipv6 nat table: {:?}", e);
             err = Some(e);
         }
@@ -1913,7 +1912,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseOk<i64>, HttpError> {
         let switch = rqctx.context();
 
-        Ok(HttpResponseOk(nat::get_nat_generation(switch)))
+        Ok(HttpResponseOk(nat::generation(switch)))
     }
 
     async fn nat_trigger_update(
