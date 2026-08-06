@@ -11,7 +11,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Bound;
 
 use crate::Switch;
-use crate::table::nat;
+use crate::table;
+use crate::table::nat::{add_entry, delete_entry};
 use crate::types::{DpdError, DpdResult};
 use common::nat::{Ipv4Nat, Ipv6Nat};
 use common::network::NatTarget;
@@ -44,6 +45,14 @@ impl PortRange {
 
     fn overlaps(self, other: PortRange) -> bool {
         self.low <= other.high && self.high >= other.low
+    }
+
+    pub(crate) fn low(self) -> u16 {
+        self.low
+    }
+
+    pub(crate) fn high(self) -> u16 {
+        self.high
     }
 }
 
@@ -277,7 +286,7 @@ pub fn set_ipv6_mapping(
         }
     };
 
-    match nat::add_ipv6_entry(switch, nat_ip, low, high, tgt) {
+    match add_entry(switch, nat_ip, l4_ports, tgt) {
         Err(e) => {
             error!(switch.log, "failed to add {}: {:?}", full, e);
             Err(e)
@@ -311,12 +320,7 @@ pub fn clear_ipv6_mapping(
             nat.ipv6_mappings.remove(&nat_ip);
         }
         let full = ipv6_entry(nat_ip, &ent);
-        return match nat::delete_ipv6_entry(
-            switch,
-            nat_ip,
-            ent.l4_ports.low,
-            ent.l4_ports.high,
-        ) {
+        return match delete_entry(switch, nat_ip, ent.l4_ports) {
             Err(e) => {
                 error!(switch.log, "failed to clear {}: {:?}", full, e);
                 Err(e)
@@ -452,7 +456,7 @@ pub fn set_ipv4_mapping(
         }
     };
 
-    match nat::add_ipv4_entry(switch, nat_ip, low, high, tgt) {
+    match add_entry(switch, nat_ip, l4_ports, tgt) {
         Err(e) => {
             error!(switch.log, "failed to add nat entry {}: {:?}", full, e);
             Err(e)
@@ -501,12 +505,7 @@ pub fn clear_ipv4_mapping(
             nat.ipv4_mappings.remove(&nat_ip);
         }
         let full = ipv4_entry(nat_ip, &ent);
-        return match nat::delete_ipv4_entry(
-            switch,
-            nat_ip,
-            ent.l4_ports.low,
-            ent.l4_ports.high,
-        ) {
+        return match delete_entry(switch, nat_ip, ent.l4_ports) {
             Err(e) => {
                 error!(switch.log, "failed to clear {}: {:?}", full, e);
                 Err(e)
@@ -561,12 +560,7 @@ pub fn clear_overlapping_mappings_v4(
         for idx in mappings_to_delete {
             let ent = mappings.remove(idx);
             let full = ipv4_entry(nat_ip, &ent);
-            match nat::delete_ipv4_entry(
-                switch,
-                nat_ip,
-                ent.l4_ports.low,
-                ent.l4_ports.high,
-            ) {
+            match delete_entry(switch, nat_ip, ent.l4_ports) {
                 Err(e) => {
                     error!(switch.log, "failed to clear {}: {:?}", full, e);
                     return Err(e);
@@ -606,12 +600,7 @@ pub fn clear_overlapping_mappings_v6(
         for idx in mappings_to_delete {
             let ent = mappings.remove(idx);
             let full = ipv6_entry(nat_ip, &ent);
-            match nat::delete_ipv6_entry(
-                switch,
-                nat_ip,
-                ent.l4_ports.low,
-                ent.l4_ports.high,
-            ) {
+            match delete_entry(switch, nat_ip, ent.l4_ports) {
                 Err(e) => {
                     error!(switch.log, "failed to clear {}: {:?}", full, e);
                     return Err(e);
@@ -632,27 +621,17 @@ pub fn clear_overlapping_mappings_v6(
 pub fn reset_ipv6(switch: &Switch) -> DpdResult<()> {
     let mut nat = switch.nat.lock().unwrap();
 
-    debug!(switch.log, "resetting ipv6 nat tables");
+    table::nat::reset::<Ipv6Addr>(switch)?;
     nat.ipv6_mappings.clear();
-    if let Err(e) = nat::reset_ipv6(switch) {
-        error!(switch.log, "failed to reset ipv6 nat table: {:?}", e);
-        Err(e)
-    } else {
-        Ok(())
-    }
+    Ok(())
 }
 
 pub fn reset_ipv4(switch: &Switch) -> DpdResult<()> {
     let mut nat = switch.nat.lock().unwrap();
 
-    debug!(switch.log, "resetting ipv4 nat tables");
+    table::nat::reset::<Ipv4Addr>(switch)?;
     nat.ipv4_mappings.clear();
-    if let Err(e) = nat::reset_ipv4(switch) {
-        error!(switch.log, "failed to reset ipv4 nat table: {:?}", e);
-        Err(e)
-    } else {
-        Ok(())
-    }
+    Ok(())
 }
 
 pub fn set_nat_generation(switch: &Switch, generation: i64) {
