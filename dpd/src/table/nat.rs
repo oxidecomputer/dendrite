@@ -19,11 +19,18 @@ use crate::Switch;
 use crate::table::*;
 use common::network::{MacAddr, NatTarget};
 
-/// An IP address family with a NAT ingress table, tying the address type to
-/// the operations on its p4 table.
+/// An IP address family with a NAT ingress table.  Implementors provide the
+/// family-specific p4 table and its match key and action types; the table
+/// operations are provided methods built on those.
 pub(crate) trait NatFamily: Copy + fmt::Display {
     const TABLE: TableType;
     const NAME: &'static str;
+
+    type MatchKey: MatchParse + Hash + fmt::Display;
+    type Action: ActionParse;
+
+    fn match_key(self, low: u16, high: u16) -> Self::MatchKey;
+    fn action(tgt: NatTarget) -> Self::Action;
 
     fn add_entry(
         self,
@@ -31,13 +38,28 @@ pub(crate) trait NatFamily: Copy + fmt::Display {
         low: u16,
         high: u16,
         tgt: NatTarget,
-    ) -> DpdResult<()>;
-    fn delete_entry(self, s: &Switch, low: u16, high: u16) -> DpdResult<()>;
-    fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<table::Table>;
+    ) -> DpdResult<()> {
+        let key = self.match_key(low, high);
+        debug!(s.log, "add nat entry {} -> {:?}", key, tgt);
+        s.table_entry_add(Self::TABLE, &key, &Self::action(tgt))
+    }
+
+    fn delete_entry(self, s: &Switch, low: u16, high: u16) -> DpdResult<()> {
+        let key = self.match_key(low, high);
+        debug!(s.log, "remove nat entry {}", key);
+        s.table_entry_del(Self::TABLE, &key)
+    }
+
+    fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<table::Table> {
+        s.table_dump::<Self::MatchKey, Self::Action>(Self::TABLE, from_hardware)
+    }
+
     fn counter_fetch(
         s: &Switch,
         force_sync: bool,
-    ) -> DpdResult<Vec<table::TableCounterEntry>>;
+    ) -> DpdResult<Vec<table::TableCounterEntry>> {
+        s.counter_fetch::<Self::MatchKey>(force_sync, Self::TABLE)
+    }
 
     fn reset(s: &Switch) -> DpdResult<()> {
         debug!(s.log, "resetting {} nat table", Self::NAME);
@@ -51,34 +73,19 @@ impl NatFamily for Ipv4Addr {
     const TABLE: TableType = TableType::NatIngressIpv4;
     const NAME: &'static str = "ipv4";
 
-    fn add_entry(
-        self,
-        s: &Switch,
-        low: u16,
-        high: u16,
-        tgt: NatTarget,
-    ) -> DpdResult<()> {
-        let action = Ipv4Action::Forward {
+    type MatchKey = Ipv4MatchKey;
+    type Action = Ipv4Action;
+
+    fn match_key(self, low: u16, high: u16) -> Ipv4MatchKey {
+        Ipv4MatchKey::new(self, low, high)
+    }
+
+    fn action(tgt: NatTarget) -> Ipv4Action {
+        Ipv4Action::Forward {
             target: tgt.internal_ip,
             inner_mac: tgt.inner_mac,
             vni: tgt.vni.as_u32(),
-        };
-        add(s, Self::TABLE, Ipv4MatchKey::new(self, low, high), action, tgt)
-    }
-
-    fn delete_entry(self, s: &Switch, low: u16, high: u16) -> DpdResult<()> {
-        delete(s, Self::TABLE, Ipv4MatchKey::new(self, low, high))
-    }
-
-    fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<table::Table> {
-        s.table_dump::<Ipv4MatchKey, Ipv4Action>(Self::TABLE, from_hardware)
-    }
-
-    fn counter_fetch(
-        s: &Switch,
-        force_sync: bool,
-    ) -> DpdResult<Vec<table::TableCounterEntry>> {
-        s.counter_fetch::<Ipv4MatchKey>(force_sync, Self::TABLE)
+        }
     }
 }
 
@@ -86,62 +93,24 @@ impl NatFamily for Ipv6Addr {
     const TABLE: TableType = TableType::NatIngressIpv6;
     const NAME: &'static str = "ipv6";
 
-    fn add_entry(
-        self,
-        s: &Switch,
-        low: u16,
-        high: u16,
-        tgt: NatTarget,
-    ) -> DpdResult<()> {
-        let action = Ipv6Action::Forward {
+    type MatchKey = Ipv6MatchKey;
+    type Action = Ipv6Action;
+
+    fn match_key(self, low: u16, high: u16) -> Ipv6MatchKey {
+        Ipv6MatchKey::new(self, low, high)
+    }
+
+    fn action(tgt: NatTarget) -> Ipv6Action {
+        Ipv6Action::Forward {
             target: tgt.internal_ip,
             inner_mac: tgt.inner_mac,
             vni: tgt.vni.as_u32(),
-        };
-        add(s, Self::TABLE, Ipv6MatchKey::new(self, low, high), action, tgt)
+        }
     }
-
-    fn delete_entry(self, s: &Switch, low: u16, high: u16) -> DpdResult<()> {
-        delete(s, Self::TABLE, Ipv6MatchKey::new(self, low, high))
-    }
-
-    fn table_dump(s: &Switch, from_hardware: bool) -> DpdResult<table::Table> {
-        s.table_dump::<Ipv6MatchKey, Ipv6Action>(Self::TABLE, from_hardware)
-    }
-
-    fn counter_fetch(
-        s: &Switch,
-        force_sync: bool,
-    ) -> DpdResult<Vec<table::TableCounterEntry>> {
-        s.counter_fetch::<Ipv6MatchKey>(force_sync, Self::TABLE)
-    }
-}
-
-fn add<M, A>(
-    s: &Switch,
-    table: TableType,
-    key: M,
-    action: A,
-    tgt: NatTarget,
-) -> DpdResult<()>
-where
-    M: MatchParse + Hash + fmt::Display,
-    A: ActionParse,
-{
-    debug!(s.log, "add nat entry {} -> {:?}", key, tgt);
-    s.table_entry_add(table, &key, &action)
-}
-
-fn delete<M>(s: &Switch, table: TableType, key: M) -> DpdResult<()>
-where
-    M: MatchParse + Hash + fmt::Display,
-{
-    debug!(s.log, "remove nat entry {}", key);
-    s.table_entry_del(table, &key)
 }
 
 #[derive(MatchParse, Hash)]
-struct Ipv6MatchKey {
+pub(crate) struct Ipv6MatchKey {
     dst_addr: Ipv6Addr,
 
     #[match_xlate(name = "l4_dst_port", type = "range")]
@@ -167,7 +136,7 @@ impl fmt::Display for Ipv6MatchKey {
 }
 
 #[derive(MatchParse, Hash)]
-struct Ipv4MatchKey {
+pub(crate) struct Ipv4MatchKey {
     dst_addr: Ipv4Addr,
 
     #[match_xlate(name = "l4_dst_port", type = "range")]
@@ -193,13 +162,13 @@ impl fmt::Display for Ipv4MatchKey {
 }
 
 #[derive(ActionParse)]
-enum Ipv6Action {
+pub(crate) enum Ipv6Action {
     #[action_xlate(name = "forward_ipv6_to")]
     Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
 
 #[derive(ActionParse)]
-enum Ipv4Action {
+pub(crate) enum Ipv4Action {
     #[action_xlate(name = "forward_ipv4_to")]
     Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
