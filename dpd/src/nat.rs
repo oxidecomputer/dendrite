@@ -11,7 +11,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Bound;
 
 use crate::Switch;
-use crate::table::nat::{self, NatFamily};
+use crate::table::nat::NatFamily;
 use crate::types::{DpdError, DpdResult};
 use common::nat::{Ipv4Nat, Ipv6Nat};
 use common::network::NatTarget;
@@ -184,7 +184,7 @@ impl<A: NatFamily + Ord> NatMap<A> {
             return Err(DpdError::Exists("conflicting mapping".into()));
         };
 
-        match nat::add_entry(switch, nat_ip, ports.low, ports.high, tgt) {
+        match nat_ip.add_entry(switch, ports.low, ports.high, tgt) {
             Err(e) => {
                 error!(switch.log, "failed to add {}: {:?}", full, e);
                 Err(e)
@@ -216,9 +216,8 @@ impl<A: NatFamily + Ord> NatMap<A> {
                 self.mappings.remove(&nat_ip);
             }
             let full = format!("{nat_ip}/{ent}");
-            return match nat::delete_entry(
+            return match nat_ip.delete_entry(
                 switch,
-                nat_ip,
                 ent.ports.low,
                 ent.ports.high,
             ) {
@@ -257,12 +256,8 @@ impl<A: NatFamily + Ord> NatMap<A> {
             for idx in mappings_to_delete {
                 let ent = entries.remove(idx);
                 let full = format!("{nat_ip}/{ent}");
-                match nat::delete_entry(
-                    switch,
-                    nat_ip,
-                    ent.ports.low,
-                    ent.ports.high,
-                ) {
+                match nat_ip.delete_entry(switch, ent.ports.low, ent.ports.high)
+                {
                     Err(e) => {
                         error!(switch.log, "failed to clear {}: {:?}", full, e);
                         return Err(e);
@@ -281,19 +276,8 @@ impl<A: NatFamily + Ord> NatMap<A> {
     }
 
     fn reset(&mut self, switch: &Switch) -> DpdResult<()> {
-        debug!(switch.log, "resetting {} nat tables", A::NAME);
         self.mappings.clear();
-        if let Err(e) = nat::reset::<A>(switch) {
-            error!(
-                switch.log,
-                "failed to reset {} nat table: {:?}",
-                A::NAME,
-                e
-            );
-            Err(e)
-        } else {
-            Ok(())
-        }
+        A::reset(switch)
     }
 }
 

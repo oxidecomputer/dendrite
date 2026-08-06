@@ -19,6 +19,8 @@ use aal::TableOps;
 use common::table::TableType;
 use dpd_types::table as dpd_table;
 
+use nat::NatFamily;
+
 pub mod arp_ipv4;
 pub mod attached_subnet_v4;
 pub mod attached_subnet_v6;
@@ -234,10 +236,10 @@ pub fn get_entries(
         }
         TableType::ArpIpv4 => arp_ipv4::table_dump(switch, from_hardware),
         TableType::NatIngressIpv4 => {
-            nat::table_dump::<Ipv4Addr>(switch, from_hardware)
+            Ipv4Addr::table_dump(switch, from_hardware)
         }
         TableType::NatIngressIpv6 => {
-            nat::table_dump::<Ipv6Addr>(switch, from_hardware)
+            Ipv6Addr::table_dump(switch, from_hardware)
         }
         TableType::AttachedSubnetIpv4 => {
             attached_subnet_v4::table_dump(switch, from_hardware)
@@ -330,10 +332,10 @@ pub fn get_counters(
         TableType::ArpIpv4 => arp_ipv4::counter_fetch(switch, force_sync),
         TableType::PortMacAddress => mac::counter_fetch(switch, force_sync),
         TableType::NatIngressIpv4 => {
-            nat::counter_fetch::<Ipv4Addr>(switch, force_sync)
+            Ipv4Addr::counter_fetch(switch, force_sync)
         }
         TableType::NatIngressIpv6 => {
-            nat::counter_fetch::<Ipv6Addr>(switch, force_sync)
+            Ipv6Addr::counter_fetch(switch, force_sync)
         }
         TableType::PortAddrIpv4 => {
             port_ip::ipv4_counter_fetch(switch, force_sync)
