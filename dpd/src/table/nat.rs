@@ -18,6 +18,7 @@ use aal_macros::*;
 use crate::Switch;
 use crate::nat::PortRange;
 use crate::table::*;
+use common::nat::{Ipv4Nat, Ipv6Nat};
 use common::network::{MacAddr, NatTarget};
 
 pub(crate) trait NatAddress: Copy + Ord + fmt::Display {
@@ -26,9 +27,12 @@ pub(crate) trait NatAddress: Copy + Ord + fmt::Display {
 
     type MatchKey: MatchParse + Hash + fmt::Display;
     type Action: ActionParse;
+    type Reservation;
 
     fn match_key(self, ports: PortRange) -> Self::MatchKey;
     fn action(tgt: NatTarget) -> Self::Action;
+    fn reservation(self, ports: PortRange, tgt: NatTarget)
+    -> Self::Reservation;
 }
 
 pub(crate) fn add_entry<A: NatAddress>(
@@ -79,6 +83,7 @@ impl NatAddress for Ipv4Addr {
 
     type MatchKey = Ipv4MatchKey;
     type Action = Ipv4Action;
+    type Reservation = Ipv4Nat;
 
     fn match_key(self, ports: PortRange) -> Ipv4MatchKey {
         Ipv4MatchKey::new(self, ports.low(), ports.high())
@@ -91,6 +96,15 @@ impl NatAddress for Ipv4Addr {
             vni: tgt.vni.as_u32(),
         }
     }
+
+    fn reservation(self, ports: PortRange, tgt: NatTarget) -> Ipv4Nat {
+        Ipv4Nat {
+            external: self,
+            low: ports.low(),
+            high: ports.high(),
+            target: tgt,
+        }
+    }
 }
 
 impl NatAddress for Ipv6Addr {
@@ -99,6 +113,7 @@ impl NatAddress for Ipv6Addr {
 
     type MatchKey = Ipv6MatchKey;
     type Action = Ipv6Action;
+    type Reservation = Ipv6Nat;
 
     fn match_key(self, ports: PortRange) -> Ipv6MatchKey {
         Ipv6MatchKey::new(self, ports.low(), ports.high())
@@ -109,6 +124,15 @@ impl NatAddress for Ipv6Addr {
             target: tgt.internal_ip,
             inner_mac: tgt.inner_mac,
             vni: tgt.vni.as_u32(),
+        }
+    }
+
+    fn reservation(self, ports: PortRange, tgt: NatTarget) -> Ipv6Nat {
+        Ipv6Nat {
+            external: self,
+            low: ports.low(),
+            high: ports.high(),
+            target: tgt,
         }
     }
 }

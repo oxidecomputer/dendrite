@@ -101,7 +101,7 @@ pub async fn nat_workflow(
         wait(timer.clone()).await;
         debug!(log, "starting nat reconciliation");
 
-        let generation = nat::get_nat_generation(&switch);
+        let generation = nat::generation(&switch);
         debug!(log, "we are currently at nat generation: {}", generation);
 
         let mut updates =
@@ -216,7 +216,7 @@ fn apply_updates(
         }
         // update gen if nat entry update was successful
         generation = entry.r#gen;
-        nat::set_nat_generation(switch, generation);
+        nat::set_generation(switch, generation);
     }
     generation
 }
