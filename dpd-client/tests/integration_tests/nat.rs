@@ -6,10 +6,12 @@
 
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use anyhow::anyhow;
 use oxnet::Ipv6Net;
+use reqwest::StatusCode;
 
 use ::common::network::MacAddr;
 use ::common::network::Vni;
@@ -701,4 +703,409 @@ async fn test_ingress_ipv6_udp() -> TestResult {
 async fn test_ingress_ipv6_tcp() -> TestResult {
     let switch = &*get_switch().await;
     test_ingress_ipv6(switch, L4Protocol::Tcp).await
+}
+
+fn nat_tag(tag: &str) -> types::NatTag {
+    tag.parse().expect("valid NAT tag")
+}
+
+fn test_target(vni: u32) -> types::NatTarget {
+    types::NatTarget {
+        internal_ip: "fd00:1122:7788:0101::4".parse().unwrap(),
+        inner_mac: MacAddr::new(2, 4, 6, 8, 10, 12).into(),
+        vni: Vni::new(vni).unwrap().into(),
+    }
+}
+
+fn v4_nat(
+    external: Ipv4Addr,
+    low: u16,
+    high: u16,
+    target: &types::NatTarget,
+) -> types::Ipv4Nat {
+    types::Ipv4Nat { external, low, high, target: target.clone() }
+}
+
+fn v6_nat(
+    external: Ipv6Addr,
+    low: u16,
+    high: u16,
+    target: &types::NatTarget,
+) -> types::Ipv6Nat {
+    types::Ipv6Nat { external, low, high, target: target.clone() }
+}
+
+async fn tagged_v4(
+    switch: &Switch,
+    tag: &types::NatTag,
+) -> Vec<types::Ipv4Nat> {
+    switch
+        .client
+        .nat_tagged_ipv4_list_stream(tag, None)
+        .try_collect()
+        .await
+        .expect("should be able to list tagged IPv4 NAT entries")
+}
+
+async fn tagged_v6(
+    switch: &Switch,
+    tag: &types::NatTag,
+) -> Vec<types::Ipv6Nat> {
+    switch
+        .client
+        .nat_tagged_ipv6_list_stream(tag, None)
+        .try_collect()
+        .await
+        .expect("should be able to list tagged IPv6 NAT entries")
+}
+
+async fn list_v4(switch: &Switch, external: &Ipv4Addr) -> Vec<types::Ipv4Nat> {
+    switch
+        .client
+        .nat_ipv4_list_stream(external, None)
+        .try_collect()
+        .await
+        .expect("should be able to list IPv4 NAT entries")
+}
+
+async fn apply_v4_expect_status(
+    switch: &Switch,
+    tag: &types::NatTag,
+    request: &[types::Ipv4Nat],
+    status: StatusCode,
+) {
+    let err = switch
+        .client
+        .nat_tagged_ipv4_apply(tag, &request.to_vec())
+        .await
+        .expect_err("tagged NAT apply should fail");
+    let dpd_client::Error::ErrorResponse(inner) = err else {
+        panic!("expected an error response, got: {err:?}");
+    };
+    assert_eq!(inner.status(), status);
+}
+
+// Apply `request` expecting every entry to fail as a conflict, and return
+// the failure reasons.
+async fn apply_v4_expect_conflicts(
+    switch: &Switch,
+    tag: &types::NatTag,
+    request: &[types::Ipv4Nat],
+) -> Vec<String> {
+    let result = switch
+        .client
+        .nat_tagged_ipv4_apply(tag, &request.to_vec())
+        .await
+        .expect("tagged NAT apply should succeed")
+        .into_inner();
+    assert!(result.added.is_empty());
+    assert!(result.unchanged.is_empty());
+    assert!(result.removed.is_empty());
+    assert!(result.remove_failures.is_empty());
+    assert_eq!(result.add_failures.len(), request.len());
+    result.add_failures.into_iter().map(|f| f.error).collect()
+}
+
+// A tagged apply only affects entries carrying its tag: untagged entries
+// survive, and applying an empty set removes exactly the tagged entries.
+#[tokio::test]
+#[ignore]
+async fn test_tagged_apply_isolation() -> TestResult {
+    let switch = &*get_switch().await;
+    let client = &switch.client;
+    let tgt = test_target(222);
+
+    let ext_untagged = Ipv4Addr::new(10, 0, 0, 1);
+    let ext_tagged = Ipv4Addr::new(10, 0, 0, 2);
+    let ext6_untagged = "fd00:9999::1".parse::<Ipv6Addr>().unwrap();
+    let ext6_tagged = "fd00:9999::2".parse::<Ipv6Addr>().unwrap();
+
+    client.nat_ipv4_create(&ext_untagged, 100, 199, &tgt).await?;
+    client.nat_ipv6_create(&ext6_untagged, 100, 199, &tgt).await?;
+
+    let tag = nat_tag("svc-a");
+    let req_v4 = vec![
+        v4_nat(ext_tagged, 1000, 1999, &tgt),
+        v4_nat(ext_tagged, 2000, 2999, &tgt),
+    ];
+    let req_v6 = vec![v6_nat(ext6_tagged, 1000, 1999, &tgt)];
+    let result =
+        client.nat_tagged_ipv4_apply(&tag, &req_v4).await?.into_inner();
+    assert_eq!(result.added.len(), 2);
+    assert!(result.unchanged.is_empty());
+    assert!(result.removed.is_empty());
+    assert!(result.add_failures.is_empty());
+    assert!(result.remove_failures.is_empty());
+    let result =
+        client.nat_tagged_ipv6_apply(&tag, &req_v6).await?.into_inner();
+    assert_eq!(result.added.len(), 1);
+    assert!(result.add_failures.is_empty());
+    assert!(result.remove_failures.is_empty());
+
+    // The tagged listings show exactly the applied set.
+    assert_eq!(tagged_v4(switch, &tag).await, req_v4);
+    assert_eq!(tagged_v6(switch, &tag).await, req_v6);
+
+    // The untagged entries are untouched.
+    assert_eq!(list_v4(switch, &ext_untagged).await.len(), 1);
+
+    // Applying an empty set removes only the tagged entries.
+    let result =
+        client.nat_tagged_ipv4_apply(&tag, &vec![]).await?.into_inner();
+    assert_eq!(result.removed.len(), 2);
+    let result =
+        client.nat_tagged_ipv6_apply(&tag, &vec![]).await?.into_inner();
+    assert_eq!(result.removed.len(), 1);
+    assert!(tagged_v4(switch, &tag).await.is_empty());
+    assert!(tagged_v6(switch, &tag).await.is_empty());
+
+    assert_eq!(list_v4(switch, &ext_untagged).await.len(), 1);
+    let v6_untagged: Vec<types::Ipv6Nat> =
+        client.nat_ipv6_list_stream(&ext6_untagged, None).try_collect().await?;
+    assert_eq!(v6_untagged.len(), 1);
+
+    Ok(())
+}
+
+// An identical untagged entry is not adopted: any entry not carrying the
+// tag is a conflict, and the untagged entry is left untouched.
+#[tokio::test]
+#[ignore]
+async fn test_tagged_apply_no_adoption() -> TestResult {
+    let switch = &*get_switch().await;
+    let client = &switch.client;
+    let tgt = test_target(333);
+    let ext = Ipv4Addr::new(10, 0, 1, 1);
+
+    client.nat_ipv4_create(&ext, 1024, 2047, &tgt).await?;
+    let before = list_v4(switch, &ext).await;
+
+    let tag = nat_tag("svc-adopt");
+    let request = vec![v4_nat(ext, 1024, 2047, &tgt)];
+    apply_v4_expect_conflicts(switch, &tag, &request).await;
+
+    // The untagged entry is untouched and remains untagged.
+    assert_eq!(list_v4(switch, &ext).await, before);
+    assert!(tagged_v4(switch, &tag).await.is_empty());
+
+    Ok(())
+}
+
+// Re-applying the same set is a no-op: everything is reported unchanged.
+#[tokio::test]
+#[ignore]
+async fn test_tagged_apply_idempotent() -> TestResult {
+    let switch = &*get_switch().await;
+    let client = &switch.client;
+    let tgt = test_target(222);
+    let ext = Ipv4Addr::new(10, 0, 2, 1);
+    let ext6 = "fd00:9999::3".parse::<Ipv6Addr>().unwrap();
+
+    let tag = nat_tag("svc-idem");
+    let req_v4 =
+        vec![v4_nat(ext, 1000, 1999, &tgt), v4_nat(ext, 2000, 2999, &tgt)];
+    let req_v6 = vec![v6_nat(ext6, 1000, 1999, &tgt)];
+    let result =
+        client.nat_tagged_ipv4_apply(&tag, &req_v4).await?.into_inner();
+    assert_eq!(result.added.len(), 2);
+    let result =
+        client.nat_tagged_ipv6_apply(&tag, &req_v6).await?.into_inner();
+    assert_eq!(result.added.len(), 1);
+
+    let result =
+        client.nat_tagged_ipv4_apply(&tag, &req_v4).await?.into_inner();
+    assert_eq!(result.unchanged.len(), 2);
+    assert!(result.added.is_empty());
+    assert!(result.removed.is_empty());
+    let result =
+        client.nat_tagged_ipv6_apply(&tag, &req_v6).await?.into_inner();
+    assert_eq!(result.unchanged.len(), 1);
+    assert!(result.added.is_empty());
+    assert!(result.removed.is_empty());
+
+    assert_eq!(tagged_v4(switch, &tag).await, req_v4);
+    assert_eq!(tagged_v6(switch, &tag).await, req_v6);
+
+    Ok(())
+}
+
+// Retargeting an entry replaces it, and out-of-band deletion through the
+// classic per-entry API is healed by the next apply.
+#[tokio::test]
+#[ignore]
+async fn test_tagged_apply_heals_drift() -> TestResult {
+    let switch = &*get_switch().await;
+    let client = &switch.client;
+    let tgt = test_target(222);
+    let ext = Ipv4Addr::new(10, 0, 3, 1);
+
+    let tag = nat_tag("svc-drift");
+    let request = vec![v4_nat(ext, 1000, 1999, &tgt)];
+    let result =
+        client.nat_tagged_ipv4_apply(&tag, &request).await?.into_inner();
+    assert_eq!(result.added.len(), 1);
+
+    // Retargeting the same port range removes the old entry and adds the
+    // new one.
+    let tgt2 = test_target(555);
+    let retarget = vec![v4_nat(ext, 1000, 1999, &tgt2)];
+    let result =
+        client.nat_tagged_ipv4_apply(&tag, &retarget).await?.into_inner();
+    assert_eq!(result.removed.len(), 1);
+    assert_eq!(result.added.len(), 1);
+    assert_eq!(
+        client.nat_ipv4_get(&ext, 1000).await?.into_inner(),
+        tgt2,
+        "retarget should be visible through the classic API",
+    );
+
+    // The classic API remains tag-oblivious: it can delete a tagged entry.
+    client.nat_ipv4_delete(&ext, 1000).await?;
+    assert!(tagged_v4(switch, &tag).await.is_empty());
+
+    // The next apply heals the drift.
+    let result =
+        client.nat_tagged_ipv4_apply(&tag, &retarget).await?.into_inner();
+    assert_eq!(result.added.len(), 1);
+    assert!(result.unchanged.is_empty());
+    assert_eq!(tagged_v4(switch, &tag).await, retarget);
+
+    Ok(())
+}
+
+// Tagged listings paginate across external addresses and skip entries
+// not carrying the tag.
+#[tokio::test]
+#[ignore]
+async fn test_tagged_list_pagination() -> TestResult {
+    let switch = &*get_switch().await;
+    let client = &switch.client;
+    let tgt = test_target(222);
+
+    let addrs = [
+        Ipv4Addr::new(10, 0, 4, 1),
+        Ipv4Addr::new(10, 0, 4, 2),
+        Ipv4Addr::new(10, 0, 4, 3),
+    ];
+    let ext6 = "fd00:9999::4".parse::<Ipv6Addr>().unwrap();
+
+    // Interleave entries the listing must skip: an untagged entry and an
+    // entry carrying another tag, both on addresses the tag also uses.
+    client.nat_ipv4_create(&addrs[1], 7000, 7999, &tgt).await?;
+    let other = nat_tag("svc-other");
+    let other_request = vec![v4_nat(addrs[0], 8000, 8999, &tgt)];
+    client.nat_tagged_ipv4_apply(&other, &other_request).await?;
+
+    let tag = nat_tag("svc-page");
+    let mut req_v4 = Vec::new();
+    for addr in addrs {
+        for low in [1000, 3000, 5000] {
+            req_v4.push(v4_nat(addr, low, low + 999, &tgt));
+        }
+    }
+    let req_v6 =
+        vec![v6_nat(ext6, 1000, 1999, &tgt), v6_nat(ext6, 2000, 2999, &tgt)];
+    let result =
+        client.nat_tagged_ipv4_apply(&tag, &req_v4).await?.into_inner();
+    assert_eq!(result.added.len(), 9);
+    let result =
+        client.nat_tagged_ipv6_apply(&tag, &req_v6).await?.into_inner();
+    assert_eq!(result.added.len(), 2);
+
+    // Stream with a small page size to force pagination; the stitched
+    // result must be exactly the applied set, in (address, low) order.
+    let paged: Vec<types::Ipv4Nat> = client
+        .nat_tagged_ipv4_list_stream(&tag, NonZeroU32::new(2))
+        .try_collect()
+        .await?;
+    assert_eq!(paged, req_v4);
+
+    let paged6: Vec<types::Ipv6Nat> = client
+        .nat_tagged_ipv6_list_stream(&tag, NonZeroU32::new(1))
+        .try_collect()
+        .await?;
+    assert_eq!(paged6, req_v6);
+
+    assert_eq!(tagged_v4(switch, &other).await, other_request);
+
+    Ok(())
+}
+
+// Invalid requests are rejected as a whole; tag conflicts are
+// reported per-entry without blocking the rest of the request.
+#[tokio::test]
+#[ignore]
+async fn test_tagged_apply_conflicts() -> TestResult {
+    let switch = &*get_switch().await;
+    let client = &switch.client;
+    let tgt = test_target(222);
+    let tgt2 = test_target(555);
+    let ext = Ipv4Addr::new(10, 0, 5, 1);
+
+    // An untagged entry and an entry carrying another tag.
+    client.nat_ipv4_create(&ext, 1024, 2047, &tgt).await?;
+    let other = nat_tag("svc-other");
+    let other_request = vec![v4_nat(ext, 3000, 3999, &tgt)];
+    client.nat_tagged_ipv4_apply(&other, &other_request).await?;
+
+    let tag = nat_tag("svc-conflict");
+    let snapshot = list_v4(switch, &ext).await;
+
+    // Every flavor of tag conflict is reported per-entry, with
+    // nothing applied:
+    // - identical key as the untagged entry, but a different target
+    // - overlap with the untagged entry
+    // - identical to an entry carrying another tag
+    // - overlap with an entry carrying another tag
+    for entry in [
+        v4_nat(ext, 1024, 2047, &tgt2),
+        v4_nat(ext, 2000, 2500, &tgt),
+        v4_nat(ext, 3000, 3999, &tgt),
+        v4_nat(ext, 3500, 4500, &tgt),
+    ] {
+        apply_v4_expect_conflicts(switch, &tag, &[entry]).await;
+        assert_eq!(list_v4(switch, &ext).await, snapshot);
+        assert!(tagged_v4(switch, &tag).await.is_empty());
+    }
+
+    // Overlap within the request itself is invalid and rejected wholesale.
+    let request =
+        vec![v4_nat(ext, 5000, 5999, &tgt), v4_nat(ext, 5500, 6500, &tgt)];
+    apply_v4_expect_status(switch, &tag, &request, StatusCode::BAD_REQUEST)
+        .await;
+
+    // So is an invalid port range.
+    let request = vec![v4_nat(ext, 7000, 6000, &tgt)];
+    apply_v4_expect_status(switch, &tag, &request, StatusCode::BAD_REQUEST)
+        .await;
+
+    // Nothing was applied by any of the failed requests.
+    assert_eq!(list_v4(switch, &ext).await, snapshot);
+    assert!(tagged_v4(switch, &tag).await.is_empty());
+    assert_eq!(tagged_v4(switch, &other).await, other_request);
+
+    // A conflicting entry does not block the valid entries alongside it.
+    let request =
+        vec![v4_nat(ext, 2000, 2500, &tgt), v4_nat(ext, 5000, 5999, &tgt)];
+    let result =
+        client.nat_tagged_ipv4_apply(&tag, &request).await?.into_inner();
+    assert_eq!(result.added, vec![v4_nat(ext, 5000, 5999, &tgt)]);
+    assert_eq!(result.add_failures.len(), 1);
+    assert_eq!(result.add_failures[0].entry, v4_nat(ext, 2000, 2500, &tgt));
+    assert!(result.remove_failures.is_empty());
+    assert_eq!(
+        tagged_v4(switch, &tag).await,
+        vec![v4_nat(ext, 5000, 5999, &tgt)]
+    );
+
+    // Dropping the conflicting entry from the next apply converges: the
+    // added entry is unchanged and nothing is removed.
+    let request = vec![v4_nat(ext, 5000, 5999, &tgt)];
+    let result =
+        client.nat_tagged_ipv4_apply(&tag, &request).await?.into_inner();
+    assert_eq!(result.unchanged.len(), 1);
+    assert!(result.removed.is_empty());
+    assert!(result.add_failures.is_empty());
+
+    Ok(())
 }

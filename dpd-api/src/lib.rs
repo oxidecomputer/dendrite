@@ -39,6 +39,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (13, NAT_TAGGED_APPLY),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
     (10, ASIC_DETAILS),
@@ -1353,6 +1354,7 @@ pub trait DpdApi {
     /**
      * Clear all IPv6 NAT mappings.
      */
+    // Note: this clears every mapping, including tagged entries.
     #[endpoint {
         method = DELETE,
         path = "/nat/ipv6"
@@ -1436,6 +1438,7 @@ pub trait DpdApi {
     /**
      * Clear all IPv4 NAT mappings.
      */
+    // Note: this clears every mapping, including tagged entries.
     #[endpoint {
         method = DELETE,
         path = "/nat/ipv4"
@@ -1443,6 +1446,92 @@ pub trait DpdApi {
     async fn nat_ipv4_reset(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Apply the complete set of IPv4 NAT entries for a tag.
+     *
+     * The request body is the full desired set of IPv4 NAT entries for this
+     * tag; dpd diffs it against current state and converges, creating missing
+     * entries and removing tagged entries absent from the request.
+     *
+     * An invalid request (a malformed port range or entries that overlap
+     * within the request) is rejected wholesale.  Otherwise every entry is
+     * attempted: entries that conflict with mappings not carrying this tag
+     * and entries whose dataplane update fails are reported per-entry in
+     * `add_failures`/`remove_failures` rather than failing the request.
+     *
+     * Re-applying the same set is idempotent and performs no dataplane
+     * operations.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/nat/tagged/{tag}/ipv4",
+        versions = VERSION_NAT_TAGGED_APPLY..,
+    }]
+    async fn nat_tagged_ipv4_apply(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::nat::NatTagPath>,
+        body: TypedBody<Vec<Ipv4Nat>>,
+    ) -> Result<HttpResponseOk<latest::nat::NatTaggedApplyResultV4>, HttpError>;
+
+    /**
+     * Apply the complete set of IPv6 NAT entries for a tag.
+     *
+     * The request body is the full desired set of IPv6 NAT entries for this
+     * tag; dpd diffs it against current state and converges, creating missing
+     * entries and removing tagged entries absent from the request.
+     *
+     * An invalid request (a malformed port range or entries that overlap
+     * within the request) is rejected wholesale.  Otherwise every entry is
+     * attempted: entries that conflict with mappings not carrying this tag
+     * and entries whose dataplane update fails are reported per-entry in
+     * `add_failures`/`remove_failures` rather than failing the request.
+     *
+     * Re-applying the same set is idempotent and performs no dataplane
+     * operations.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/nat/tagged/{tag}/ipv6",
+        versions = VERSION_NAT_TAGGED_APPLY..,
+    }]
+    async fn nat_tagged_ipv6_apply(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::nat::NatTagPath>,
+        body: TypedBody<Vec<Ipv6Nat>>,
+    ) -> Result<HttpResponseOk<latest::nat::NatTaggedApplyResultV6>, HttpError>;
+
+    /**
+     * Get all of the IPv4 NAT entries carrying a tag.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/nat/tagged/{tag}/ipv4",
+        versions = VERSION_NAT_TAGGED_APPLY..,
+    }]
+    async fn nat_tagged_ipv4_list(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::nat::NatTagPath>,
+        query: Query<
+            PaginationParams<EmptyScanParams, latest::nat::NatTaggedV4Token>,
+        >,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Nat>>, HttpError>;
+
+    /**
+     * Get all of the IPv6 NAT entries carrying a tag.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/nat/tagged/{tag}/ipv6",
+        versions = VERSION_NAT_TAGGED_APPLY..,
+    }]
+    async fn nat_tagged_ipv6_list(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::nat::NatTagPath>,
+        query: Query<
+            PaginationParams<EmptyScanParams, latest::nat::NatTaggedV6Token>,
+        >,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Nat>>, HttpError>;
 
     /**
      * Get all of the external subnets with internal mappings
@@ -1525,7 +1614,8 @@ pub trait DpdApi {
     /// - All ARP or NDP table entries.
     /// - All routes
     /// - All links on all switch ports
-    // Note: This endpoint does not clear multicast groups.
+    // Note: This endpoint does not clear multicast groups or tagged NAT
+    // entries.
     // TODO-security: This endpoint should probably not exist.
     #[endpoint {
         method = DELETE,

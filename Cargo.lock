@@ -7288,6 +7288,7 @@ dependencies = [
  "oxnet",
  "regex",
  "reqwest 0.13.2",
+ "serde_json",
  "slog",
  "tabwriter",
  "tokio",
