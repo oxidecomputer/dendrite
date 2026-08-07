@@ -7,7 +7,7 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "12.0.0"
+    "version": "13.0.0"
   },
   "paths": {
     "/all-settings": {
@@ -2208,6 +2208,214 @@
         "responses": {
           "204": {
             "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/nat/tagged/{tag}/ipv4": {
+      "get": {
+        "summary": "Get all of the IPv4 NAT entries carrying a tag.",
+        "operationId": "nat_tagged_ipv4_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NatTag"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "description": "Maximum number of items returned by a single call",
+            "schema": {
+              "nullable": true,
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "description": "Token returned by previous call to retrieve the subsequent page",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ipv4NatResultsPage"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-dropshot-pagination": {
+          "required": []
+        }
+      },
+      "put": {
+        "summary": "Apply the complete set of IPv4 NAT entries for a tag.",
+        "description": "The request body is the full desired set of IPv4 NAT entries for this tag; dpd diffs it against current state and converges, creating missing entries and removing tagged entries absent from the request.\n\nAn invalid request (a malformed port range or entries that overlap within the request) is rejected wholesale.  Otherwise every entry is attempted: entries that conflict with mappings not carrying this tag and entries whose dataplane update fails are reported per-entry in `add_failures`/`remove_failures` rather than failing the request.\n\nRe-applying the same set is idempotent and performs no dataplane operations.",
+        "operationId": "nat_tagged_ipv4_apply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NatTag"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Array_of_Ipv4Nat",
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Ipv4Nat"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NatTaggedApplyResultV4"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/nat/tagged/{tag}/ipv6": {
+      "get": {
+        "summary": "Get all of the IPv6 NAT entries carrying a tag.",
+        "operationId": "nat_tagged_ipv6_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NatTag"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "description": "Maximum number of items returned by a single call",
+            "schema": {
+              "nullable": true,
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "description": "Token returned by previous call to retrieve the subsequent page",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ipv6NatResultsPage"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-dropshot-pagination": {
+          "required": []
+        }
+      },
+      "put": {
+        "summary": "Apply the complete set of IPv6 NAT entries for a tag.",
+        "description": "The request body is the full desired set of IPv6 NAT entries for this tag; dpd diffs it against current state and converges, creating missing entries and removing tagged entries absent from the request.\n\nAn invalid request (a malformed port range or entries that overlap within the request) is rejected wholesale.  Otherwise every entry is attempted: entries that conflict with mappings not carrying this tag and entries whose dataplane update fails are reported per-entry in `add_failures`/`remove_failures` rather than failing the request.\n\nRe-applying the same set is idempotent and performs no dataplane operations.",
+        "operationId": "nat_tagged_ipv6_apply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NatTag"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Array_of_Ipv6Nat",
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Ipv6Nat"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NatTaggedApplyResultV6"
+                }
+              }
+            }
           },
           "4XX": {
             "$ref": "#/components/responses/Error"
@@ -6965,6 +7173,22 @@
           "target"
         ]
       },
+      "Ipv4NatFailure": {
+        "description": "An IPv4 NAT entry that could not be applied, along with the reason.",
+        "type": "object",
+        "properties": {
+          "entry": {
+            "$ref": "#/components/schemas/Ipv4Nat"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry",
+          "error"
+        ]
+      },
       "Ipv4NatResultsPage": {
         "description": "A single page of results",
         "type": "object",
@@ -7172,6 +7396,22 @@
           "high",
           "low",
           "target"
+        ]
+      },
+      "Ipv6NatFailure": {
+        "description": "An IPv6 NAT entry that could not be applied, along with the reason.",
+        "type": "object",
+        "properties": {
+          "entry": {
+            "$ref": "#/components/schemas/Ipv6Nat"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry",
+          "error"
         ]
       },
       "Ipv6NatResultsPage": {
@@ -8691,6 +8931,102 @@
         },
         "required": [
           "members"
+        ]
+      },
+      "NatTaggedApplyResultV4": {
+        "description": "The result of applying a tagged set of IPv4 NAT entries.",
+        "type": "object",
+        "properties": {
+          "add_failures": {
+            "description": "Entries that could not be created, either because they conflict with mappings not carrying this tag or because the update failed.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv4NatFailure"
+            }
+          },
+          "added": {
+            "description": "Entries created.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv4Nat"
+            }
+          },
+          "remove_failures": {
+            "description": "Entries that could not be removed; non-empty only on partial failure.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv4NatFailure"
+            }
+          },
+          "removed": {
+            "description": "Tagged entries removed because they were absent from the request.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv4Nat"
+            }
+          },
+          "unchanged": {
+            "description": "Entries already present under this tag and identical to the request.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv4Nat"
+            }
+          }
+        },
+        "required": [
+          "add_failures",
+          "added",
+          "remove_failures",
+          "removed",
+          "unchanged"
+        ]
+      },
+      "NatTaggedApplyResultV6": {
+        "description": "The result of applying a tagged set of IPv6 NAT entries.",
+        "type": "object",
+        "properties": {
+          "add_failures": {
+            "description": "Entries that could not be created, either because they conflict with mappings not carrying this tag or because the update failed.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv6NatFailure"
+            }
+          },
+          "added": {
+            "description": "Entries created.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv6Nat"
+            }
+          },
+          "remove_failures": {
+            "description": "Entries that could not be removed; non-empty only on partial failure.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv6NatFailure"
+            }
+          },
+          "removed": {
+            "description": "Tagged entries removed because they were absent from the request.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv6Nat"
+            }
+          },
+          "unchanged": {
+            "description": "Entries already present under this tag and identical to the request.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ipv6Nat"
+            }
+          }
+        },
+        "required": [
+          "add_failures",
+          "added",
+          "remove_failures",
+          "removed",
+          "unchanged"
         ]
       },
       "NatTarget": {
@@ -10712,6 +11048,13 @@
       },
       "MulticastTag": {
         "description": "Tag for identifying and authorizing multicast group operations.\n\nTag format: 1 to 80 ASCII bytes containing alphanumeric characters, hyphens, underscores, colons, or periods. Default format is `{uuid}:{group_ip}`.",
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9_.:-]+$",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "NatTag": {
+        "description": "A tag identifying a set of NAT entries.\n\nTag format: 1 to 80 ASCII bytes containing alphanumeric characters, hyphens, underscores, colons, or periods.",
         "type": "string",
         "pattern": "^[a-zA-Z0-9_.:-]+$",
         "minLength": 1,

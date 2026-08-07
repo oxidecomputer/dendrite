@@ -39,7 +39,8 @@ use dpd_types::mcast::{
 use dpd_types::misc::{BuildInfo, TagPath};
 use dpd_types::nat::{
     NatIpv4Path, NatIpv4PortPath, NatIpv4RangePath, NatIpv6Path,
-    NatIpv6PortPath, NatIpv6RangePath, NatToken,
+    NatIpv6PortPath, NatIpv6RangePath, NatTagPath, NatTaggedApplyResultV4,
+    NatTaggedApplyResultV6, NatTaggedV4Token, NatTaggedV6Token, NatToken,
 };
 use dpd_types::oxstats::OximeterMetadata;
 use dpd_types::port::{
@@ -1623,6 +1624,94 @@ impl DpdApi for DpdApiImpl {
             Ok(_) => Ok(HttpResponseUpdatedNoContent()),
             Err(e) => Err(e.into()),
         }
+    }
+
+    async fn nat_tagged_ipv4_apply(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<NatTagPath>,
+        body: TypedBody<Vec<Ipv4Nat>>,
+    ) -> Result<HttpResponseOk<NatTaggedApplyResultV4>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let tag = path.into_inner().tag;
+        let requested = body.into_inner();
+        nat::apply_tagged_mappings_v4(switch, &tag, &requested)
+            .map(HttpResponseOk)
+            .map_err(HttpError::from)
+    }
+
+    async fn nat_tagged_ipv6_apply(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<NatTagPath>,
+        body: TypedBody<Vec<Ipv6Nat>>,
+    ) -> Result<HttpResponseOk<NatTaggedApplyResultV6>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let tag = path.into_inner().tag;
+        let requested = body.into_inner();
+        nat::apply_tagged_mappings_v6(switch, &tag, &requested)
+            .map(HttpResponseOk)
+            .map_err(HttpError::from)
+    }
+
+    async fn nat_tagged_ipv4_list(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<NatTagPath>,
+        query: Query<PaginationParams<EmptyScanParams, NatTaggedV4Token>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Nat>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let tag = path.into_inner().tag;
+        let pag_params = query.into_inner();
+        let max = rqctx.page_limit(&pag_params)?.get();
+
+        let last = match &pag_params.page {
+            WhichPage::First(..) => None,
+            WhichPage::Next(NatTaggedV4Token { ip, port }) => {
+                Some((*ip, *port))
+            }
+        };
+
+        let entries = nat::get_mappings_by_tag_range(
+            switch,
+            &tag,
+            last,
+            usize::try_from(max).expect("invalid usize"),
+        );
+
+        Ok(HttpResponseOk(ResultsPage::new(
+            entries,
+            &EmptyScanParams {},
+            |e: &Ipv4Nat, _| NatTaggedV4Token { ip: e.external, port: e.low },
+        )?))
+    }
+
+    async fn nat_tagged_ipv6_list(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<NatTagPath>,
+        query: Query<PaginationParams<EmptyScanParams, NatTaggedV6Token>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Nat>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let tag = path.into_inner().tag;
+        let pag_params = query.into_inner();
+        let max = rqctx.page_limit(&pag_params)?.get();
+
+        let last = match &pag_params.page {
+            WhichPage::First(..) => None,
+            WhichPage::Next(NatTaggedV6Token { ip, port }) => {
+                Some((*ip, *port))
+            }
+        };
+
+        let entries = nat::get_mappings_by_tag_range(
+            switch,
+            &tag,
+            last,
+            usize::try_from(max).expect("invalid usize"),
+        );
+
+        Ok(HttpResponseOk(ResultsPage::new(
+            entries,
+            &EmptyScanParams {},
+            |e: &Ipv6Nat, _| NatTaggedV6Token { ip: e.external, port: e.low },
+        )?))
     }
 
     async fn attached_subnet_list(

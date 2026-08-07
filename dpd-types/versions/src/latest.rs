@@ -96,6 +96,17 @@ pub mod nat {
     pub use crate::v1::nat::NatIpv6PortPath;
     pub use crate::v1::nat::NatIpv6RangePath;
     pub use crate::v1::nat::NatToken;
+
+    pub use crate::v13::nat::Ipv4NatFailure;
+    pub use crate::v13::nat::Ipv6NatFailure;
+    pub use crate::v13::nat::NatTag;
+    pub use crate::v13::nat::NatTagPath;
+    pub use crate::v13::nat::NatTaggedApplyResultV4;
+    pub use crate::v13::nat::NatTaggedApplyResultV6;
+    pub use crate::v13::nat::NatTaggedV4Token;
+    pub use crate::v13::nat::NatTaggedV6Token;
+
+    pub use crate::impls::nat::NatTagParseError;
 }
 
 pub mod port {

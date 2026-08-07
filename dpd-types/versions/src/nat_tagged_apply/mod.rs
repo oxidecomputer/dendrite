@@ -4,13 +4,10 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-//! Functional code for the latest versions of types.
+//! Version `NAT_TAGGED_APPLY` of the DPD API.
+//!
+//! Adds a tag on NAT entries, an endpoint for declaratively applying the
+//! complete set of NAT entries for a tag, and endpoints for listing the
+//! entries carrying a tag.
 
-mod link;
-pub(crate) mod mcast;
-pub(crate) mod nat;
-mod port_map;
-mod route;
-mod serdes;
-mod table;
-mod transceivers;
+pub mod nat;
