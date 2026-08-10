@@ -381,6 +381,7 @@ mod tests {
 
     use std::net::{IpAddr, Ipv6Addr};
 
+    #[cfg(target_os = "illumos")]
     #[test]
     fn test_updates() {
         let opts1 = Opt {
