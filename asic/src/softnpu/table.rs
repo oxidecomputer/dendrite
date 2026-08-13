@@ -112,7 +112,7 @@ impl TableOps<Handle> for Table {
         trace!(hdl.log, "match_data:\n{:#?}", match_data);
         trace!(hdl.log, "action_data:\n{:#?}", action_data);
 
-        let keyset_data = keyset_data(match_data.fields, self.type_);
+        let keyset_data = keyset_data(match_data.fields, self.type_)?;
 
         let (action, parameter_data) = match (
             self.type_,
@@ -121,6 +121,16 @@ impl TableOps<Handle> for Table {
             // TODO: implement mappings for natv6 actions
             (TableType::PortAddrIpv4, "claimv4") => ("local", Vec::new()),
             (TableType::PortAddrIpv6, "claimv6") => ("local", Vec::new()),
+            // dpd only emits claimv6_rid for a non-default router, which
+            // sidecar-lite's P4 cannot represent.
+            (TableType::PortAddrIpv6, "claimv6_rid") => {
+                return Err(AsicError::InvalidArg(
+                    "softnpu (sidecar-lite) supports only the default \
+                     router; cannot claim an address for a non-default \
+                     router"
+                        .to_string(),
+                ));
+            }
             (TableType::RouteIdxIpv4, "index") => {
                 let mut params = Vec::new();
                 for arg in action_data.args.iter() {
@@ -573,7 +583,7 @@ impl TableOps<Handle> for Table {
         trace!(hdl.log, "table: {name}");
         trace!(hdl.log, "match_data:\n{:#?}", match_data);
 
-        let keyset_data = keyset_data(match_data.fields, self.type_);
+        let keyset_data = keyset_data(match_data.fields, self.type_)?;
 
         trace!(hdl.log, "sending request to softnpu");
         trace!(hdl.log, "table: {name}");
@@ -608,9 +618,35 @@ impl TableOps<Handle> for Table {
 
 /// Extract keys from `match_data` and ensure that they are
 /// in a data structure with the correct length
-fn keyset_data(match_data: Vec<MatchEntryField>, table: TableType) -> Vec<u8> {
+fn keyset_data(
+    match_data: Vec<MatchEntryField>,
+    table: TableType,
+) -> AsicResult<Vec<u8>> {
     let mut keyset_data: Vec<u8> = Vec::new();
     for m in match_data {
+        // sidecar-lite's P4 has no router_id key, so the field cannot be
+        // serialized. The default router (0) maps onto sidecar-lite's only
+        // table by omitting the field; any other router is unsupported.
+        if m.name == "router_id" {
+            let rid = match &m.value {
+                MatchEntryValue::Value(ValueTypes::U64(v)) => *v,
+                MatchEntryValue::Value(ValueTypes::Ptr(v)) => {
+                    v.iter().fold(0u64, |acc, b| (acc << 8) | u64::from(*b))
+                }
+                x => {
+                    return Err(AsicError::InvalidArg(format!(
+                        "router_id must be an exact match: {x:?}"
+                    )));
+                }
+            };
+            if rid != 0 {
+                return Err(AsicError::InvalidArg(format!(
+                    "softnpu (sidecar-lite) supports only the default \
+                     router; cannot program router {rid}"
+                )));
+            }
+            continue;
+        }
         match m.value {
             // Exact match
             MatchEntryValue::Value(x) => {
@@ -701,7 +737,7 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: TableType) -> Vec<u8> {
             }
         }
     }
-    keyset_data
+    Ok(keyset_data)
 }
 
 fn serialize_value_type(x: &ValueTypes, data: &mut Vec<u8>) {
