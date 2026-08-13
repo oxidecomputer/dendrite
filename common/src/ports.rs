@@ -89,9 +89,6 @@ macro_rules! make_port_type {
             type Err = &'static str;
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {
-                if s.len() <= $prefix.len() {
-                    return Err("Invalid port kind");
-                }
                 if !s.is_ascii() {
                     return Err("Port IDs must be ASCII");
                 }
