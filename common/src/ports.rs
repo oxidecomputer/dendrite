@@ -89,10 +89,13 @@ macro_rules! make_port_type {
             type Err = &'static str;
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {
-                if s.len() <= $prefix.len() {
-                    return Err("Invalid port kind");
+                if !s.is_ascii() {
+                    return Err("Port IDs must be ASCII");
                 }
-                let (head, tail) = s.split_at($prefix.len());
+                let Some((head, tail)) = s.split_at_checked($prefix.len())
+                else {
+                    return Err("Invalid port kind");
+                };
                 if head.eq_ignore_ascii_case($prefix) {
                     tail.parse::<u8>()
                         .map_err(|_| "Invalid port index")
@@ -605,4 +608,16 @@ pub struct XcvrSettings {
     pub fec: Option<PortFec>,
     /// Equalization settings
     pub tx_eq: Option<TxEq>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_ids_are_ascii() {
+        let e = PortId::try_from("abč0")
+            .expect_err("Should have returned an error");
+        assert_eq!(e.to_string(), "Invalid switch port ID");
+    }
 }

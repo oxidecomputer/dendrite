@@ -21,5 +21,4 @@ slog-term.workspace = true
 slog-async.workspace = true
 smf.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
-
+tokio = { workspace = true, features = [ "full" ] }
