@@ -21,6 +21,7 @@ oxide-tokio-rt.workspace = true
 oxnet.workspace = true
 regex.workspace = true
 reqwest.workspace = true
+serde_json.workspace = true
 slog.workspace = true
 tabwriter.workspace = true
 tokio.workspace = true
