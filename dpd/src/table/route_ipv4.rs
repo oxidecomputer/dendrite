@@ -4,6 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use dpd_types::route::RouterId;
 use dpd_types::table;
 use std::convert::TryInto;
 use std::net::Ipv4Addr;
@@ -41,6 +42,8 @@ enum RouteAction {
 // Used to identify entries in the route->index table
 #[derive(MatchParse, Hash, Debug)]
 struct RouteKey {
+    #[match_xlate(type = "value")]
+    router_id: u8,
     #[match_xlate(type = "lpm")]
     dst_addr: Ipv4Net,
 }
@@ -55,17 +58,19 @@ enum IndexAction {
 /// Add an entry to the route->index table
 pub fn add_route_index(
     s: &Switch,
+    rid: RouterId,
     cidr: &Ipv4Net,
     idx: u16,
     slots: u8,
 ) -> DpdResult<()> {
     let action_data = IndexAction::Index { idx, slots };
 
-    let match_key = RouteKey { dst_addr: *cidr };
+    let match_key = RouteKey { router_id: rid.0, dst_addr: *cidr };
 
     match s.table_entry_add(TableType::RouteIdxIpv4, &match_key, &action_data) {
         Ok(()) => {
             info!(s.log, "added ipv4 route index";
+		    "router_id" => %rid,
 		    "route" => %cidr,
 		    "index" => %idx,
             "slots" => %slots);
@@ -73,6 +78,7 @@ pub fn add_route_index(
         }
         Err(e) => {
             error!(s.log, "failed to add ipv4 route index";
+		    "router_id" => %rid,
 		    "route" => %cidr,
 		    "index" => %idx,
 		    "slots" => %slots,
@@ -83,13 +89,22 @@ pub fn add_route_index(
 }
 
 /// Remove an entry from the route->index table
-pub fn delete_route_index(s: &Switch, cidr: &Ipv4Net) -> DpdResult<()> {
-    let match_key = RouteKey { dst_addr: *cidr };
+pub fn delete_route_index(
+    s: &Switch,
+    rid: RouterId,
+    cidr: &Ipv4Net,
+) -> DpdResult<()> {
+    let match_key = RouteKey { router_id: rid.0, dst_addr: *cidr };
 
     s.table_entry_del(TableType::RouteIdxIpv4, &match_key)
-        .map(|_| info!(s.log, "deleted ipv4 index"; "route" => %cidr))
+        .map(|_| {
+            info!(s.log, "deleted ipv4 index";
+		"router_id" => %rid,
+		"route" => %cidr)
+        })
         .map_err(|e| {
             error!(s.log, "failed to delete ipv4 index";
+		"router_id" => %rid,
 		"route" => %cidr,
 		"error" => %e);
             e

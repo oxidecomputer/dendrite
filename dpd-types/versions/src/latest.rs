@@ -52,6 +52,8 @@ pub mod link {
 pub mod loopback {
     pub use crate::v1::loopback::LoopbackIpv4Path;
     pub use crate::v1::loopback::LoopbackIpv6Path;
+
+    pub use crate::v13::loopback::RouterLoopbackIpv6Path;
 }
 
 pub mod mcast {
@@ -141,6 +143,13 @@ pub mod route {
 
     pub use crate::v6::route::Ipv4RouteUpdate;
     pub use crate::v6::route::RouteTargetIpv4Path;
+
+    pub use crate::v13::route::RouterId;
+    pub use crate::v13::route::RouterPath;
+    pub use crate::v13::route::RouterRoutePathV4;
+    pub use crate::v13::route::RouterRoutePathV6;
+    pub use crate::v13::route::RouterRouteTargetIpv4Path;
+    pub use crate::v13::route::RouterRouteTargetIpv6Path;
 }
 
 pub mod serdes {

@@ -39,6 +39,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (13, MULTI_ROUTER),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
     (10, ASIC_DETAILS),
@@ -492,6 +493,193 @@ pub trait DpdApi {
     ) -> Result<HttpResponseDeleted, HttpError> {
         Self::route_ipv4_delete_target(rqctx, path.map(Into::into)).await
     }
+
+    /**
+     * Fetch the IPv6 routes configured on the given router, mapping IPv6
+     * CIDR blocks to the switch port used for sending out that traffic, and
+     * optionally a gateway.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/router/{router_id}/route/ipv6",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_route_ipv6_list(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterPath>,
+        query: Query<
+            PaginationParams<EmptyScanParams, latest::route::Ipv6RouteToken>,
+        >,
+    ) -> Result<HttpResponseOk<ResultsPage<latest::route::Ipv6Routes>>, HttpError>;
+
+    /**
+     * Get a single IPv6 route on the given router, by its IPv6 CIDR block.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/router/{router_id}/route/ipv6/{cidr}",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_route_ipv6_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterRoutePathV6>,
+    ) -> Result<HttpResponseOk<Vec<latest::route::Ipv6Route>>, HttpError>;
+
+    /**
+     * Route an IPv6 subnet to a link and a nexthop gateway on the given
+     * router.
+     *
+     * This call can be used to create a new single-path route or to add new
+     * targets to a multipath route.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/router/{router_id}/route/ipv6",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_route_ipv6_add(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterPath>,
+        update: TypedBody<latest::route::Ipv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Route an IPv6 subnet to a link and a nexthop gateway on the given
+     * router.
+     *
+     * This call can be used to create a new single-path route or to replace
+     * any existing routes with a new single-path route.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/router/{router_id}/route/ipv6",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_route_ipv6_set(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterPath>,
+        update: TypedBody<latest::route::Ipv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Remove an IPv6 route on the given router, by its IPv6 CIDR block.
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/router/{router_id}/route/ipv6/{cidr}",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_route_ipv6_delete(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterRoutePathV6>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /**
+     * Remove a single target for the given IPv6 subnet on the given router.
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/router/{router_id}/route/ipv6/{cidr}/{port_id}/{link_id}/{tgt_ip}",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_route_ipv6_delete_target(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterRouteTargetIpv6Path>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /**
+     * Fetch the IPv4 routes configured on the given router, mapping IPv4
+     * CIDR blocks to the switch port used for sending out that traffic, and
+     * optionally a gateway.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/router/{router_id}/route/ipv4",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_route_ipv4_list(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterPath>,
+        query: Query<
+            PaginationParams<EmptyScanParams, latest::route::Ipv4RouteToken>,
+        >,
+    ) -> Result<HttpResponseOk<ResultsPage<latest::route::Ipv4Routes>>, HttpError>;
+
+    /**
+     * Get the configured route for the given IPv4 subnet on the given router.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/router/{router_id}/route/ipv4/{cidr}",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_route_ipv4_get(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterRoutePathV4>,
+    ) -> Result<HttpResponseOk<Vec<latest::route::Route>>, HttpError>;
+
+    /**
+     * Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6) on
+     * the given router.
+     *
+     * This call can be used to create a new single-path route or to add new
+     * targets to a multipath route.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/router/{router_id}/route/ipv4",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_route_ipv4_add(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterPath>,
+        update: TypedBody<latest::route::Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6) on
+     * the given router.
+     *
+     * This call can be used to create a new single-path route or to replace
+     * any existing routes with a new single-path route.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/router/{router_id}/route/ipv4",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_route_ipv4_set(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterPath>,
+        update: TypedBody<latest::route::Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Remove all targets for the given subnet on the given router.
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/router/{router_id}/route/ipv4/{cidr}",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_route_ipv4_delete(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterRoutePathV4>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /**
+     * Remove a single target for the given IPv4 subnet on the given router
+     * (IPv4 or IPv6 next hop).
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/router/{router_id}/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_route_ipv4_delete_target(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterRouteTargetIpv4Path>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
 
     /// List all switch ports on the system.
     #[endpoint {
@@ -1275,6 +1463,36 @@ pub trait DpdApi {
     async fn loopback_ipv6_delete(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::loopback::LoopbackIpv6Path>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /**
+     * Add a loopback IPv6 address, claiming it for the given router.
+     *
+     * Packets destined to this address are routed using the given router's
+     * tables rather than the default router's.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/router/{router_id}/loopback/ipv6",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_loopback_ipv6_create(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterPath>,
+        val: TypedBody<Ipv6Entry>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Remove one loopback IPv6 address claimed by the given router.
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/router/{router_id}/loopback/ipv6/{ipv6}",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_loopback_ipv6_delete(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::loopback::RouterLoopbackIpv6Path>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**

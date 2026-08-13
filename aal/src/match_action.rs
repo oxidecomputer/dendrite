@@ -404,6 +404,16 @@ impl TryFrom<&ValueTypes> for u8 {
     }
 }
 
+impl TryFrom<ValueTypes> for u8 {
+    type Error = &'static str;
+
+    fn try_from(v: ValueTypes) -> Result<Self, Self::Error> {
+        (&v).try_into()
+    }
+}
+
+unwrap_value_entry!(u8);
+
 impl From<u16> for ValueTypes {
     fn from(v: u16) -> ValueTypes {
         ValueTypes::U64(v as u64)

@@ -9,6 +9,7 @@ use std::convert::TryInto;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 
+use dpd_types::route::RouterId;
 use slog::error;
 use slog::info;
 
@@ -46,6 +47,8 @@ enum ActionV4 {
 enum ActionV6 {
     #[action_xlate(name = "claimv6")]
     ClaimIpv6,
+    #[action_xlate(name = "claimv6_rid")]
+    ClaimIpv6Rid { router_id: u8 },
     #[action_xlate(name = "dropv6")]
     DropIpv6,
 }
@@ -119,16 +122,32 @@ pub fn loopback_ipv4_delete(s: &Switch, ipv4: Ipv4Addr) -> DpdResult<()> {
         })
 }
 
-pub fn loopback_ipv6_add(s: &Switch, ipv6: Ipv6Addr) -> DpdResult<()> {
+pub fn loopback_ipv6_add(
+    s: &Switch,
+    ipv6: Ipv6Addr,
+    rid: RouterId,
+) -> DpdResult<()> {
     let claim_key = Ipv6MatchKey {
         dst_addr: ipv6,
         in_port: MatchMask { val: 0u16.into(), mask: 0u16.into() },
     };
-    s.table_entry_add(TableType::PortAddrIpv6, &claim_key, &ActionV6::ClaimIpv6)
-        .map(|_| info!(s.log, "added ipv6 loopback"; "addr" => %ipv6))
+    // Router 0 is the default table, which packets are already assigned to
+    // at parse time, so the plain claim action suffices.
+    let action = if rid.0 == 0 {
+        ActionV6::ClaimIpv6
+    } else {
+        ActionV6::ClaimIpv6Rid { router_id: rid.0 }
+    };
+    s.table_entry_add(TableType::PortAddrIpv6, &claim_key, &action)
+        .map(|_| {
+            info!(s.log, "added ipv6 loopback";
+		"addr" => %ipv6,
+		"router_id" => %rid)
+        })
         .inspect_err(|e| {
             error!(s.log, "failed to add ipv6 loopback";
 		"addr" => %ipv6,
+		"router_id" => %rid,
 		"error" => %e);
         })
 }
