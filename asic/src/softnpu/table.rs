@@ -121,15 +121,22 @@ impl TableOps<Handle> for Table {
             // TODO: implement mappings for natv6 actions
             (TableType::PortAddrIpv4, "claimv4") => ("local", Vec::new()),
             (TableType::PortAddrIpv6, "claimv6") => ("local", Vec::new()),
-            // dpd only emits claimv6_rid for a non-default router, which
-            // sidecar-lite's P4 cannot represent.
             (TableType::PortAddrIpv6, "claimv6_rid") => {
-                return Err(AsicError::InvalidArg(
-                    "softnpu (sidecar-lite) supports only the default \
-                     router; cannot claim an address for a non-default \
-                     router"
-                        .to_string(),
-                ));
+                let rid = action_data
+                    .args
+                    .iter()
+                    .find(|a| a.name == "router_id")
+                    .and_then(|a| match &a.value {
+                        ValueTypes::U64(v) => Some(*v as u8),
+                        ValueTypes::Ptr(_) => None,
+                    })
+                    .ok_or_else(|| {
+                        AsicError::InvalidArg(
+                            "claimv6_rid requires a router_id argument"
+                                .to_string(),
+                        )
+                    })?;
+                ("local_rid", vec![rid])
             }
             (TableType::RouteIdxIpv4, "index") => {
                 let mut params = Vec::new();
@@ -624,9 +631,8 @@ fn keyset_data(
 ) -> AsicResult<Vec<u8>> {
     let mut keyset_data: Vec<u8> = Vec::new();
     for m in match_data {
-        // sidecar-lite's P4 has no router_id key, so the field cannot be
-        // serialized. The default router (0) maps onto sidecar-lite's only
-        // table by omitting the field; any other router is unsupported.
+        // sidecar-lite keys its route index tables on an exact bit<8>
+        // router_id ahead of the lpm destination; serialize it as one byte.
         if m.name == "router_id" {
             let rid = match &m.value {
                 MatchEntryValue::Value(ValueTypes::U64(v)) => *v,
@@ -639,12 +645,7 @@ fn keyset_data(
                     )));
                 }
             };
-            if rid != 0 {
-                return Err(AsicError::InvalidArg(format!(
-                    "softnpu (sidecar-lite) supports only the default \
-                     router; cannot program router {rid}"
-                )));
-            }
+            keyset_data.push(rid as u8);
             continue;
         }
         match m.value {
