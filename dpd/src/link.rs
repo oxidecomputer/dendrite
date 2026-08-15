@@ -1259,6 +1259,12 @@ impl Switch {
         link_id: LinkId,
         tx_eq: TxEq,
     ) -> DpdResult<()> {
+        if tx_eq.iter().all(Option::is_none) {
+            return Err(DpdError::Invalid(format!(
+                "At least one tap must be assigned in this command: {tx_eq:#?}"
+            )));
+        }
+
         self.link_update(port_id, link_id, |link| {
             link.tx_eq.merge(&tx_eq);
             link.plumbed.tx_eq_pushed = false;

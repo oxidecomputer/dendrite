@@ -43,6 +43,7 @@ use aal::{ActionParse, AsicError, MatchParse};
 use common::counters::CounterId;
 use common::network::MacAddr;
 use common::ports::PortId;
+use common::ports::TxEq;
 use common::table::TableType;
 use dpd_types::switch_identifiers::SwitchIdentifiers;
 use table::Table;
@@ -766,7 +767,7 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
                         autoneg: true,
                         kr: true,
                         lane: Some(dpd_types::link::LinkId(0)),
-                        tx_eq: None,
+                        tx_eq: TxEq::default(),
                     };
                     Some((*port_id, create))
                 } else {

@@ -6,6 +6,7 @@
 
 use std::hash::Hash;
 
+use common::ports::TxEqSwHw;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -238,6 +239,14 @@ pub trait AsicOps {
     /// Get the full set of physical ports inventoried by the ASIC and/or
     /// supporting software.
     fn get_connectors(&self) -> Vec<Connector>;
+
+    /// Fetch the per-lane tx equalization settings for the specified port.
+    ///
+    /// Result order corresponds to lane order.
+    fn port_tx_eq_get(
+        &self,
+        port_hdl: PortHdl,
+    ) -> AsicResult<impl Iterator<Item = AsicResult<TxEqSwHw>>>;
 
     /// Set the transceiver equalization settings for this port
     fn port_tx_eq_set(

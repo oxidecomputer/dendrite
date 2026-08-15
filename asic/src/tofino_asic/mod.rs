@@ -311,6 +311,13 @@ impl AsicOps for Handle {
         bf_wrapper::register_handler(tx)
     }
 
+    fn port_tx_eq_get(
+        &self,
+        port_hdl: PortHdl,
+    ) -> AsicResult<impl Iterator<Item = TxEq>> {
+        serdes::port_tx_eq_get(self, port_hdl)
+    }
+
     /// Update all of the per-lane eq settings for the specified port.
     fn port_tx_eq_set(
         &self,

@@ -111,7 +111,8 @@ impl From<&Link> for LinkSpec {
             fec: p.config.fec,
             autoneg: p.config.autoneg,
             kr: p.config.kr,
-            tx_eq: p.tx_eq,
+            // TODO::cfzimmerman: can we remove the option here too?
+            tx_eq: Some(p.tx_eq),
             delete_me: p.config.delete_me,
             ipv4: p.ipv4.iter().map(|x| x.addr).collect(),
             ipv6: p.ipv6.iter().map(|x| x.addr).collect(),
@@ -126,7 +127,7 @@ impl From<&LinkSettings> for LinkSpec {
             fec: l.params.fec,
             autoneg: l.params.autoneg,
             kr: l.params.kr,
-            tx_eq: l.params.tx_eq,
+            tx_eq: Some(l.params.tx_eq),
             delete_me: false,
             ipv4: l
                 .addrs

@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use common::ports::TxEqSwHw;
 use slog::{Logger, o};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -131,11 +132,6 @@ impl Handle {
             mgmt_config,
             update_tx: Mutex::new(None),
         })
-    }
-
-    pub fn port_tx_eq_get(&self, port_hdl: PortHdl) -> AsicResult<i32> {
-        let ports = self.ports.lock().unwrap();
-        Ok(get_port(&ports, port_hdl)?.tx_eq)
     }
 
     pub fn is_model(&self) -> bool {
@@ -284,6 +280,20 @@ impl AsicOps for Handle {
 
     fn port_autoneg_get(&self, _port_hdl: PortHdl) -> AsicResult<bool> {
         Ok(false)
+    }
+
+    fn port_tx_eq_get(
+        &self,
+        port_hdl: PortHdl,
+    ) -> AsicResult<impl Iterator<Item = AsicResult<common::ports::TxEqSwHw>>>
+    {
+        let mut ports = self.ports.lock().unwrap();
+        let tx_eq = TxEq {
+            main: Some(self::get_port_mut(&mut ports, port_hdl)?.tx_eq),
+            ..Default::default()
+        };
+        Ok((0..self.port_get_lane_cnt(port_hdl)?)
+            .map(move |_| Ok(TxEqSwHw { sw: tx_eq, hw: tx_eq })))
     }
 
     fn port_tx_eq_set(

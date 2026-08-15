@@ -634,8 +634,9 @@ impl TxEq {
         .into_iter()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = Option<i32>> {
-        [self.pre2, self.pre1, self.main, self.post1, self.post2].into_iter()
+    pub fn iter(&self) -> impl Iterator<Item = &Option<i32>> {
+        [&self.pre2, &self.pre1, &self.main, &self.post1, &self.post2]
+            .into_iter()
     }
 }
 

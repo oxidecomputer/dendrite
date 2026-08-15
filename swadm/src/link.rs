@@ -222,11 +222,13 @@ pub enum GetSerdes {
 }
 
 #[derive(Debug, Subcommand)]
-/// Diagnostic commands to updated the settings of a link's SERDES
+/// Diagnostic commands to update the settings of a link's SERDES
 pub enum SetSerdes {
-    /// Update the tx equalization settings for this port.  Only the main setting is
-    /// required.  All others will default to 0. Note: to set a negative value,
-    /// you must use the "=" option syntax.  e.g., "--pre1=-1"
+    /// Update the tx equalization settings for this port. At least
+    /// one field must be specified. Unset fields use the existing tap
+    /// value if one exists. Otherwise they default to zero.
+    ///
+    /// To set a negative value, you must use the "=" syntax. e.g., "--pre1=-1"
     #[clap(visible_alias = "txeq")]
     TxEq {
         /// The link path, specified as `switch_port/link`.

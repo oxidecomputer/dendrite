@@ -50,7 +50,7 @@ fn port_encoding_mode(dev_id: i32, port_id: u16) -> AsicResult<LaneEncoding> {
 /// Get the number of lanes configured for this port
 pub(crate) fn lane_count(hdl: &Handle, port: PortHdl) -> AsicResult<u32> {
     match hdl.phys_ports.lock().unwrap().get_tofino_port(port)?.channels.len() {
-        n if n < 1 || n > 8 => {
+        n if !(1..=8).contains(&n) => {
             Err(AsicError::Internal(format!("configured port has {n} lanes")))
         }
         n => Ok(n as u32),
@@ -268,20 +268,15 @@ fn lane_tx_eq_get(
     Ok(TxEqHwSw { sw, hw })
 }
 
-/// Collect all of the per-lane eq settings for the specified port.
+/// Returns the per-lane eq settings for the specified port.
 ///
-/// The returned value contains a vector of `TxEqHwSw` structures, indexed by
-/// the logical lane ID within the link.
+/// Result indexes correspond to link lane IDs.
 pub fn port_tx_eq_get(
     hdl: &Handle,
     port: PortHdl,
-) -> AsicResult<Vec<TxEqHwSw>> {
+) -> AsicResult<impl Iterator<Item = AsicResult<TxEqHwSw>>> {
     let lanes = lane_count(hdl, port)?;
-    let mut rval = Vec::with_capacity(lanes as usize);
-    for lane in 0..lanes {
-        rval.push(lane_tx_eq_get(hdl, port, lane)?)
-    }
-    Ok(rval)
+    Ok((0..lanes).map(move |lane| lane_tx_eq_get(hdl, port, lane)))
 }
 
 /// Update the currently applied tx eq settings in both the hardware and the
