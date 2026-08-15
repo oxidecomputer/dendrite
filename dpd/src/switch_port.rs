@@ -31,6 +31,7 @@ use common::ports::QsfpPort;
 use common::ports::RearPort;
 use common::ports::TxEq;
 use common::ports::XcvrSettings;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 /// Return the backplane link information, if this is a rear port.
@@ -73,35 +74,27 @@ struct XcvrDefaultsEntry {
 pub fn load_xcvr_defaults(
     csv_file: &str,
 ) -> anyhow::Result<BTreeMap<String, XcvrSettings>> {
-    let mut rdr = csv::ReaderBuilder::new()
+    csv::ReaderBuilder::new()
         .has_headers(false)
         .comment(Some(b'#'))
         .from_path(csv_file)
-        .with_context(|| format!("parsing xcvr config file {csv_file}"))?;
-
-    let mut settings = BTreeMap::new();
-    for entry in rdr.deserialize() {
-        let e: XcvrDefaultsEntry = entry?;
-
-        let tx_eq = if e.pre2.is_some()
-            || e.pre1.is_some()
-            || e.main.is_some()
-            || e.post2.is_some()
-            || e.post1.is_some()
-        {
-            Some(TxEq {
-                pre2: e.pre2,
-                pre1: e.pre1,
-                main: e.main,
-                post1: e.post1,
-                post2: e.post2,
-            })
-        } else {
-            None
-        };
-        settings.insert(e.mpn, XcvrSettings { tx_eq, fec: e.fec });
-    }
-    Ok(settings)
+        .with_context(|| format!("parsing xcvr config file {csv_file}"))?
+        .deserialize()
+        .map(|entry| {
+            let xcvr: XcvrDefaultsEntry = entry?;
+            let settings = XcvrSettings {
+                fec: xcvr.fec,
+                tx_eq: TxEq {
+                    pre1: xcvr.pre1,
+                    pre2: xcvr.pre2,
+                    main: xcvr.main,
+                    post2: xcvr.post2,
+                    post1: xcvr.post1,
+                },
+            };
+            Ok((xcvr.mpn, settings))
+        })
+        .collect()
 }
 
 /// The physical ports on the switch.
@@ -310,34 +303,39 @@ pub enum FixedSideDevice {
 }
 
 impl crate::Switch {
-    /// If this port's transceiver has an alternate set of tx_eq default values,
-    /// apply them now.  We first check for an explicit override value from the
-    /// admin, then for an alternate default for this xcvr type.
+    /// Write tx_eq values to the port.
+    ///
+    /// Each tap is the first of these set to `Some`:
+    /// - A user config at `link.tx_eq`
+    /// - A default config in `self.switch_ports`
+    /// - Some(0)
     pub fn push_tx_eq(
         &self,
         link: &Link,
         mpn: &Option<String>,
     ) -> DpdResult<()> {
-        let port_hdl = link.port_hdl;
+        let mut tx_eq = mpn
+            .as_ref()
+            .and_then(|mpn| self.switch_ports.xcvr_defaults.get(mpn))
+            .map(|xcvr| xcvr.tx_eq)
+            .unwrap_or_default();
+        tx_eq.merge(&link.tx_eq);
 
-        if let Some(tx_eq) = match (link.tx_eq, &mpn) {
-            (Some(user_defined), _) => Some(user_defined),
-            (None, Some(mpn)) => {
-                self.switch_ports.xcvr_defaults.get(mpn).and_then(|x| x.tx_eq)
-            }
-            (_, _) => None,
-        } {
-            let mpn = mpn
-                .clone()
-                .unwrap_or_else(|| "unknown transceiver".to_string());
-            slog::debug!(
-                self.log,
-                "Applying alternate tx settings for {link} ({mpn}): {tx_eq:?}"
-            );
-            self.asic_hdl
-                .port_tx_eq_set(port_hdl, &tx_eq)
-                .map_err(DpdError::Switch)?;
-        }
+        let mpn = mpn
+            .as_deref()
+            .map(Cow::from)
+            .unwrap_or_else(|| "unknown transceiver".into());
+        let mpn: &str = mpn.as_ref();
+
+        slog::debug!(
+            self.log,
+            "Applying alternate tx settings for {link} ({mpn}): {tx_eq:?}",
+        );
+
+        self.asic_hdl
+            .port_tx_eq_set(link.port_hdl, &tx_eq)
+            .map_err(DpdError::Switch)?;
+
         Ok(())
     }
 

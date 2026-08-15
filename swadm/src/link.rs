@@ -1179,6 +1179,9 @@ async fn link_serdes_tx_eq_set(
     post1: Option<i32>,
     post2: Option<i32>,
 ) -> anyhow::Result<()> {
+    // TODO::cory
+    // Need to reject if all None!
+
     let settings = types::TxEq { pre2, pre1, main, post1, post2 };
     let port = link.port_id;
     let link = link.link_id;

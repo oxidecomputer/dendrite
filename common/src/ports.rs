@@ -567,6 +567,8 @@ pub struct PortData {
 /// Parameters to adjust the transceiver equalization settings for a link on a
 /// switch.  These parameters match those available on a tofino-based sidecar,
 /// and may need to be adapted when we move to a new switch ASIC.
+///
+/// Leaving a field `None` defers to the default / current config.
 #[derive(
     Clone,
     Copy,
@@ -584,6 +586,57 @@ pub struct TxEq {
     pub main: Option<i32>,
     pub post2: Option<i32>,
     pub post1: Option<i32>,
+}
+
+impl TxEq {
+    /// Overwrites any fields of `self` for which `other` has
+    /// specified an explicit tx eq value.
+    ///
+    /// ```
+    /// let mut curr = TxEq {
+    ///     pre2: None,
+    ///     pre1: None,
+    ///     main: Some(1),
+    ///     post1: Some(-1),
+    ///     post2: None,
+    /// };
+    ///
+    /// let cmd = TxEq {
+    ///     pre2: Some(1),
+    ///     pre1: None,
+    ///     main: Some(2),
+    ///     post1: None,
+    ///     post2: None,
+    /// };
+    ///
+    /// assert_eq!(curr.merge(&cmd), TxEq {
+    ///     pre2: Some(1),
+    ///     pre1: None,
+    ///     main: Some(2),
+    ///     post1: Some(-1),
+    ///     post2: None,
+    /// });
+    /// ```
+    pub fn merge(&mut self, other: &Self) {
+        for (curr, cmd) in self.iter_mut().zip(other.iter()) {
+            *curr = cmd.or(*curr);
+        }
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Option<i32>> {
+        [
+            &mut self.pre2,
+            &mut self.pre1,
+            &mut self.main,
+            &mut self.post1,
+            &mut self.post2,
+        ]
+        .into_iter()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Option<i32>> {
+        [self.pre2, self.pre1, self.main, self.post1, self.post2].into_iter()
+    }
 }
 
 /// This represents the software-determined equalization value initially
@@ -604,5 +657,5 @@ pub struct XcvrSettings {
     /// FEC setting
     pub fec: Option<PortFec>,
     /// Equalization settings
-    pub tx_eq: Option<TxEq>,
+    pub tx_eq: TxEq,
 }

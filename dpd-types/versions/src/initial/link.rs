@@ -153,9 +153,10 @@ pub struct LinkCreate {
     pub kr: bool,
 
     /// Transceiver equalization adjustment parameters.
-    /// This defaults to `None`.
+    ///
+    /// Unspecified fields defer to default values.
     #[serde(default)]
-    pub tx_eq: Option<TxEq>,
+    pub tx_eq: TxEq,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]

@@ -228,8 +228,8 @@ pub struct Link {
     /// enablement is not enforced by dpd; it is a hint to tfportd which is
     /// responsible for configuring the corresponding illumos port.
     pub ipv6_enabled: bool,
-    /// Optional transceiver equalization settings
-    pub tx_eq: Option<TxEq>,
+    /// Transceiver equalization settings
+    pub tx_eq: TxEq,
     /// Latest top-level port FSM state
     pub fsm_state: asic::PortFsmState,
     /// The state of the link.
@@ -405,7 +405,6 @@ pub struct LinkParams {
 
 impl Link {
     /// Create a new logical link on a provided switch port.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         port_id: PortId,
         link_id: LinkId,
@@ -1261,7 +1260,7 @@ impl Switch {
         tx_eq: TxEq,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            link.tx_eq = Some(tx_eq);
+            link.tx_eq.merge(&tx_eq);
             link.plumbed.tx_eq_pushed = false;
             self.reconciler.trigger(port_id, link_id);
             Ok(())
