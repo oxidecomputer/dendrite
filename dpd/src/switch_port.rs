@@ -7,6 +7,7 @@
 //! Types for describing and managing physical ports on the Sidecar switch.
 
 use anyhow::Context;
+use common::ports::TxEqCmd;
 use dpd_types::port_map::BackplaneLink;
 use dpd_types::switch_port::Led;
 use dpd_types::switch_port::LedPolicy;
@@ -73,35 +74,38 @@ struct XcvrDefaultsEntry {
 pub fn load_xcvr_defaults(
     csv_file: &str,
 ) -> anyhow::Result<BTreeMap<String, XcvrSettings>> {
-    let mut rdr = csv::ReaderBuilder::new()
+    csv::ReaderBuilder::new()
         .has_headers(false)
         .comment(Some(b'#'))
         .from_path(csv_file)
-        .with_context(|| format!("parsing xcvr config file {csv_file}"))?;
+        .with_context(|| format!("parsing xcvr config file {csv_file}"))?
+        .deserialize()
+        .map(|record| {
+            let config: XcvrDefaultsEntry = record?;
+            let mut non_default_ct = 0;
 
-    let mut settings = BTreeMap::new();
-    for entry in rdr.deserialize() {
-        let e: XcvrDefaultsEntry = entry?;
+            let mut unwrap_and_count = |tap: Option<i32>| -> i32 {
+                non_default_ct += tap.is_some() as u8;
+                tap.unwrap_or_default()
+            };
 
-        let tx_eq = if e.pre2.is_some()
-            || e.pre1.is_some()
-            || e.main.is_some()
-            || e.post2.is_some()
-            || e.post1.is_some()
-        {
-            Some(TxEq {
-                pre2: e.pre2,
-                pre1: e.pre1,
-                main: e.main,
-                post1: e.post1,
-                post2: e.post2,
-            })
-        } else {
-            None
-        };
-        settings.insert(e.mpn, XcvrSettings { tx_eq, fec: e.fec });
-    }
-    Ok(settings)
+            let taps = TxEq {
+                pre2: unwrap_and_count(config.pre2),
+                pre1: unwrap_and_count(config.pre1),
+                main: unwrap_and_count(config.main),
+                post1: unwrap_and_count(config.post1),
+                post2: unwrap_and_count(config.post2),
+            };
+
+            let tx_eq = if non_default_ct == 0 {
+                TxEqCmd::Preset
+            } else {
+                TxEqCmd::Tofino(taps)
+            };
+
+            Ok((config.mpn, XcvrSettings { tx_eq, fec: config.fec }))
+        })
+        .collect()
 }
 
 /// The physical ports on the switch.
@@ -313,31 +317,25 @@ impl crate::Switch {
     /// If this port's transceiver has an alternate set of tx_eq default values,
     /// apply them now.  We first check for an explicit override value from the
     /// admin, then for an alternate default for this xcvr type.
-    pub fn push_tx_eq(
-        &self,
-        link: &Link,
-        mpn: &Option<String>,
-    ) -> DpdResult<()> {
-        let port_hdl = link.port_hdl;
+    pub fn push_tx_eq(&self, link: &Link, mpn: Option<&str>) -> DpdResult<()> {
+        let tx_eq = link.tx_eq.or_else(|| {
+            self.switch_ports.xcvr_defaults.get(mpn).and_then(|x| x.tx_eq)
+        });
 
-        if let Some(tx_eq) = match (link.tx_eq, &mpn) {
-            (Some(user_defined), _) => Some(user_defined),
-            (None, Some(mpn)) => {
-                self.switch_ports.xcvr_defaults.get(mpn).and_then(|x| x.tx_eq)
-            }
-            (_, _) => None,
-        } {
-            let mpn = mpn
-                .clone()
-                .unwrap_or_else(|| "unknown transceiver".to_string());
-            slog::debug!(
-                self.log,
-                "Applying alternate tx settings for {link} ({mpn}): {tx_eq:?}"
-            );
-            self.asic_hdl
-                .port_tx_eq_set(port_hdl, &tx_eq)
-                .map_err(DpdError::Switch)?;
-        }
+        let Some(tx_eq) = tx_eq else {
+            return Ok(());
+        };
+
+        slog::debug!(
+            self.log,
+            "Applying alternate tx settings for {link} ({}): {tx_eq:?}",
+            mpn.unwrap_or("unknown transceiver")
+        );
+
+        self.asic_hdl
+            .port_tx_eq_set(link.port_hdl, &tx_eq)
+            .map_err(DpdError::Switch)?;
+
         Ok(())
     }
 

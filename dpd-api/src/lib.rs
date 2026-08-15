@@ -13,8 +13,9 @@ use common::{
     attached_subnet::AttachedSubnetEntry,
     nat::{Ipv4Nat, Ipv6Nat},
     network::{InstanceTarget, MacAddr, NatTarget},
-    ports::{Ipv4Entry, Ipv6Entry, PortId, PortPrbsMode, TxEq, TxEqSwHw},
+    ports::{Ipv4Entry, Ipv6Entry, PortId, PortPrbsMode},
 };
+
 use dpd_types::oxstats;
 use dpd_types_versions::{latest, v1, v4, v7};
 use dropshot::{
@@ -2566,7 +2567,7 @@ pub trait DpdApi {
     async fn link_tx_eq_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-    ) -> Result<HttpResponseOk<Vec<TxEqSwHw>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<crate::v1::serdes::TxEqSwHw>>, HttpError>;
 
     /**
      * Update the per-lane tx eq settings for all lanes on this link
@@ -2578,7 +2579,7 @@ pub trait DpdApi {
     async fn link_tx_eq_set(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-        args: TypedBody<TxEq>,
+        args: TypedBody<crate::v1::serdes::TxEq>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**

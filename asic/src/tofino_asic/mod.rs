@@ -317,8 +317,7 @@ impl AsicOps for Handle {
         port_hdl: PortHdl,
         settings: &TxEq,
     ) -> AsicResult<()> {
-        let settings = serdes::TxEqSettings::from(*settings);
-        serdes::port_tx_eq_set(self, port_hdl, &settings)
+        serdes::port_tx_eq_set(self, port_hdl, settings)
     }
 }
 

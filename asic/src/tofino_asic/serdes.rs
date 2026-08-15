@@ -8,9 +8,10 @@
 #![allow(non_snake_case)]
 #![allow(clippy::manual_range_contains)]
 
+use common::ports::TxEq;
+use common::ports::TxEqHwSw;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::convert::From;
 
 use crate::tofino_asic::genpd::*;
 use crate::tofino_asic::ports;
@@ -179,55 +180,6 @@ pub fn port_rx_sig_info_get(
     Ok(rval)
 }
 
-/// There are two groups of TxEqSettings: the one cached in the software and the
-/// one currently set in the hardware.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct TxEqHwSw {
-    /// Value cached in software
-    pub sw: TxEqSettings,
-    /// The value actually in use by the hardware
-    pub hw: TxEqSettings,
-}
-
-/// Tx equalization settings
-#[derive(Clone, Default, Debug, Deserialize, Serialize, JsonSchema)]
-pub struct TxEqSettings {
-    /// Precursor 2
-    pub pre2: i32,
-    /// Precursor 1
-    pub pre1: i32,
-    /// Main
-    pub main: i32,
-    /// Postcursor 1
-    pub post1: i32,
-    /// Postcursor 2
-    pub post2: i32,
-}
-
-impl From<TxEqSettings> for common::ports::TxEq {
-    fn from(txeq: TxEqSettings) -> Self {
-        common::ports::TxEq {
-            pre1: Some(txeq.pre1),
-            pre2: Some(txeq.pre2),
-            main: Some(txeq.main),
-            post2: Some(txeq.post2),
-            post1: Some(txeq.post1),
-        }
-    }
-}
-
-impl From<common::ports::TxEq> for TxEqSettings {
-    fn from(txeq: common::ports::TxEq) -> Self {
-        TxEqSettings {
-            pre1: txeq.pre1.unwrap_or(0),
-            pre2: txeq.pre2.unwrap_or(0),
-            main: txeq.main.unwrap_or(0),
-            post2: txeq.post2.unwrap_or(0),
-            post1: txeq.post1.unwrap_or(0),
-        }
-    }
-}
-
 // Fetch the currently applied tx eq settings for the specified port and
 // logical lane
 fn lane_tx_eq_get(
@@ -236,7 +188,7 @@ fn lane_tx_eq_get(
     lane: u32,
 ) -> AsicResult<TxEqHwSw> {
     let port_id = ports::to_asic_id(hdl, port)?;
-    let mut sw = TxEqSettings::default();
+    let mut sw = TxEq::default();
     unsafe {
         bf_tof2_serdes_tx_taps_get(
             hdl.dev_id,
@@ -250,7 +202,7 @@ fn lane_tx_eq_get(
         )
         .check_error("fetching sw tx eq settings")?;
     }
-    let mut hw = TxEqSettings::default();
+    let mut hw = TxEq::default();
     unsafe {
         bf_tof2_serdes_tx_taps_hw_get(
             hdl.dev_id,
@@ -290,7 +242,7 @@ pub fn lane_tx_eq_set(
     hdl: &Handle,
     port: PortHdl,
     lane: u32,
-    settings: &TxEqSettings,
+    settings: &TxEq,
 ) -> AsicResult<()> {
     let port_id = ports::to_asic_id(hdl, port)?;
     let lanes = lane_count(hdl, port)?;
@@ -320,7 +272,7 @@ pub fn lane_tx_eq_set(
 pub fn port_tx_eq_set(
     hdl: &Handle,
     port: PortHdl,
-    settings: &TxEqSettings,
+    settings: &TxEq,
 ) -> AsicResult<()> {
     let lanes = lane_count(hdl, port)?;
     for lane in 0..lanes {

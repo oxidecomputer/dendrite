@@ -564,45 +564,45 @@ pub struct PortData {
     pub mac: MacAddr,
 }
 
-/// Parameters to adjust the transceiver equalization settings for a link on a
-/// switch.  These parameters match those available on a tofino-based sidecar,
-/// and may need to be adapted when we move to a new switch ASIC.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    Eq,
-    PartialEq,
-    Deserialize,
-    Serialize,
-    JsonSchema,
-)]
-pub struct TxEq {
-    pub pre1: Option<i32>,
-    pub pre2: Option<i32>,
-    pub main: Option<i32>,
-    pub post2: Option<i32>,
-    pub post1: Option<i32>,
+#[derive(Clone, Copy, Default, Debug)]
+pub enum TxEqCmd {
+    #[default]
+    Preset,
+    Tofino(TxEq),
 }
 
-/// This represents the software-determined equalization value initially
-/// assigned to the transceiver and the value actually being used by the
-/// hardware.  The values may differ on transceivers that are capable of tuning
-/// their own settings at run time.
-#[derive(
-    Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema,
-)]
-pub struct TxEqSwHw {
+/// Tx equalization settings
+#[derive(Clone, Copy, Default, Debug)]
+pub struct TxEq {
+    /// Precursor 2
+    pub pre2: i32,
+    /// Precursor 1
+    pub pre1: i32,
+    /// Main
+    pub main: i32,
+    /// Postcursor 1
+    pub post1: i32,
+    /// Postcursor 2
+    pub post2: i32,
+}
+
+/// There are two groups of TxEqSettings: the one cached in the software and the
+/// one currently set in the hardware.
+///
+/// These differ when the hardware actively optimizes equalization settings.
+#[derive(Clone, Copy, Debug)]
+pub struct TxEqHwSw {
+    /// Value cached in software
     pub sw: TxEq,
+    /// The value actually in use by the hardware
     pub hw: TxEq,
 }
 
 /// Default transceiver settings
-#[derive(Clone, Default, Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Default, Debug)]
 pub struct XcvrSettings {
     /// FEC setting
     pub fec: Option<PortFec>,
     /// Equalization settings
-    pub tx_eq: Option<TxEq>,
+    pub tx_eq: TxEqCmd,
 }

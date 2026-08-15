@@ -34,6 +34,7 @@ use common::ports::PortMedia;
 use common::ports::PortPrbsMode;
 use common::ports::PortSpeed;
 use common::ports::TxEq;
+use common::ports::TxEqCmd;
 use dpd_types::link::LinkCreate;
 use dpd_types::link::LinkFsmCounters;
 use dpd_types::link::LinkHistory;
@@ -229,7 +230,7 @@ pub struct Link {
     /// responsible for configuring the corresponding illumos port.
     pub ipv6_enabled: bool,
     /// Optional transceiver equalization settings
-    pub tx_eq: Option<TxEq>,
+    pub tx_eq: TxEqCmd,
     /// Latest top-level port FSM state
     pub fsm_state: asic::PortFsmState,
     /// The state of the link.
@@ -400,7 +401,7 @@ pub struct LinkParams {
     pub fec: Option<PortFec>,
     pub autoneg: bool,
     pub kr: bool,
-    pub tx_eq: Option<TxEq>,
+    pub tx_eq: TxEqCmd,
 }
 
 impl Link {
@@ -1946,7 +1947,7 @@ async fn reconcile_link(
     }
 
     if link.config.enabled && !link.plumbed.tx_eq_pushed {
-        if let Err(e) = switch.push_tx_eq(&link, &mpn) {
+        if let Err(e) = switch.push_tx_eq(&link, mpn.as_deref()) {
             record_plumb_failure(
                 switch,
                 &mut link,

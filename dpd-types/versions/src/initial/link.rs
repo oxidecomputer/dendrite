@@ -8,13 +8,14 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 use common::{
     network::MacAddr,
-    ports::{PortFec, PortId, PortMedia, PortSpeed, TxEq},
+    ports::{PortFec, PortId, PortMedia, PortSpeed},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::fault::Fault;
 use super::port::PortPrbsMode;
+use super::serdes::TxEq;
 
 /// An identifier for a link within a switch port.
 ///

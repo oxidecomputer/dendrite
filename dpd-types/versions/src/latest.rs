@@ -157,6 +157,8 @@ pub mod serdes {
     pub use crate::v1::serdes::Polarity;
     pub use crate::v1::serdes::RxSigInfo;
     pub use crate::v1::serdes::SerdesEye;
+    pub use crate::v1::serdes::TxEq;
+    pub use crate::v1::serdes::TxEqSwHw;
 }
 
 pub mod snapshot {

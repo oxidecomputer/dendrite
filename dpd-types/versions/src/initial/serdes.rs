@@ -168,3 +168,37 @@ pub struct Ber {
     /// Aggregate BER on the link.
     pub total_ber: f32,
 }
+
+/// Parameters to adjust the transceiver equalization settings for a link on a
+/// switch.  These parameters match those available on a tofino-based sidecar,
+/// and may need to be adapted when we move to a new switch ASIC.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+)]
+pub struct TxEq {
+    pub pre1: Option<i32>,
+    pub pre2: Option<i32>,
+    pub main: Option<i32>,
+    pub post2: Option<i32>,
+    pub post1: Option<i32>,
+}
+
+/// This represents the software-determined equalization value initially
+/// assigned to the transceiver and the value actually being used by the
+/// hardware.  The values may differ on transceivers that are capable of tuning
+/// their own settings at run time.
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema,
+)]
+pub struct TxEqSwHw {
+    pub sw: TxEq,
+    pub hw: TxEq,
+}
