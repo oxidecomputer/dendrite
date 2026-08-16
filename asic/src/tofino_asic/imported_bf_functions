@@ -15,6 +15,7 @@ bf_drv_device_type_get
 
 # Board-related
 bf_bd_is_this_port_internal
+bf_bd_port_serdes_tx_params_get
 
 # multicast manager calls
 bf_mc_init

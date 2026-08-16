@@ -90,13 +90,8 @@ use dropshot::WhichPage;
 use slog::{debug, error, info, o};
 use slog_error_chain::InlineErrorChain;
 
-#[cfg(feature = "softnpu")]
-use aal::AsicOps;
-#[cfg(feature = "softnpu")]
-use common::ports::TxEq;
-
 #[cfg(any(feature = "softnpu", feature = "tofino_asic"))]
-use common::ports::TxEqSwHw;
+use aal::{AsicOps, AsicResult};
 
 use crate::attached_subnet;
 use crate::counters;
@@ -2590,49 +2585,23 @@ impl DpdApi for DpdApiImpl {
         ))
     }
 
-    #[cfg(feature = "tofino_asic")]
+    #[cfg(any(feature = "tofino_asic", feature = "softnpu"))]
     async fn link_tx_eq_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<LinkPath>,
     ) -> Result<HttpResponseOk<Vec<common::ports::TxEqSwHw>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
-        let port_id = params.port_id;
-        let link_id = params.link_id;
-        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
+        let port_handle =
+            switch.link_id_to_hdl(params.port_id, params.link_id)?;
+
         Ok(HttpResponseOk(
-            serdes::port_tx_eq_get(&switch.asic_hdl, port_handle)
+            switch
+                .asic_hdl
+                .port_tx_eq_get(port_handle)
                 .map_err(|e| HttpError::from(DpdError::from(e)))?
-                .into_iter()
-                .map(|t| TxEqSwHw { sw: t.sw.into(), hw: t.hw.into() })
-                .collect(),
-        ))
-    }
-
-    #[cfg(feature = "softnpu")]
-    async fn link_tx_eq_get(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<Vec<common::ports::TxEqSwHw>>, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let params = path.into_inner();
-        let port_id = params.port_id;
-        let link_id = params.link_id;
-        let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
-        let lane_cnt = switch
-            .asic_hdl
-            .port_get_lane_cnt(port_handle)
-            .map_err(|e| HttpError::from(DpdError::from(e)))?;
-
-        let tx_eq = switch
-            .asic_hdl
-            .port_tx_eq_get(port_handle)
-            .map_err(|e| HttpError::from(DpdError::from(e)))?;
-        let softnpu_tx_eq = TxEq { main: Some(tx_eq), ..Default::default() };
-        Ok(HttpResponseOk(
-            (0..lane_cnt)
-                .map(|_| TxEqSwHw { sw: softnpu_tx_eq, hw: softnpu_tx_eq })
-                .collect(),
+                .collect::<AsicResult<_>>()
+                .map_err(|e| HttpError::from(DpdError::from(e)))?,
         ))
     }
 
@@ -2647,47 +2616,26 @@ impl DpdApi for DpdApiImpl {
         ))
     }
 
-    #[cfg(feature = "tofino_asic")]
+    #[cfg(any(feature = "tofino_asic", feature = "softnpu"))]
     async fn link_tx_eq_set(
         rqctx: RequestContext<Self::Context>,
         path: Path<LinkPath>,
-        args: TypedBody<common::ports::TxEq>,
+        args: TypedBody<common::ports::TxEqConfig>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
-        let port_id = params.port_id;
-        let link_id = params.link_id;
-        let settings = args.into_inner();
 
         switch
-            .set_link_tx_eq(port_id, link_id, settings)
+            .set_link_tx_eq(params.port_id, params.link_id, args.into_inner())
             .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(|e| e.into())
-    }
-
-    #[cfg(feature = "softnpu")]
-    async fn link_tx_eq_set(
-        rqctx: RequestContext<Self::Context>,
-        path: Path<LinkPath>,
-        args: TypedBody<common::ports::TxEq>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let params = path.into_inner();
-        let port_id = params.port_id;
-        let link_id = params.link_id;
-
-        let settings = args.into_inner();
-        switch
-            .set_link_tx_eq(port_id, link_id, settings)
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(|e| e.into())
+            .map_err(HttpError::from)
     }
 
     #[cfg(not(any(feature = "tofino_asic", feature = "softnpu")))]
     async fn link_tx_eq_set(
         _rqctx: RequestContext<Self::Context>,
         _path: Path<LinkPath>,
-        _args: TypedBody<common::ports::TxEq>,
+        _args: TypedBody<common::ports::TxEqConfig>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         Err(HttpError::for_unavail(
             None,
@@ -2962,8 +2910,8 @@ impl From<&crate::link::Link> for LinkSettings {
                 fec: l.config.fec,
                 autoneg: l.config.autoneg,
                 kr: l.config.kr,
-                tx_eq: l.tx_eq,
-                allow_ddm_traffic: l.config.allow_ddm_traffic,
+                tx_eq: l.tx_eq.taps().copied().map(|t| t.into()),
+                allow_ddm_traffic: false,
             },
             addrs,
         }

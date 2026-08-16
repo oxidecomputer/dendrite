@@ -15,10 +15,10 @@ use common::ports::Ipv6Entry;
 use common::ports::PortFec;
 use common::ports::PortId;
 use common::ports::PortSpeed;
-use common::ports::TxEq;
 use dpd_types::link::LinkId;
 use dpd_types::port::LinkSettings;
 use dpd_types::port::PortSettings;
+use dpd_types::port::TxEqConfig;
 use slog::Logger;
 use slog::debug;
 use slog::error;
@@ -101,7 +101,7 @@ struct LinkSpec {
     pub delete_me: bool,
     pub ipv4: BTreeSet<Ipv4Addr>,
     pub ipv6: BTreeSet<Ipv6Addr>,
-    pub tx_eq: Option<TxEq>,
+    pub tx_eq: TxEqConfig,
     pub allow_ddm_traffic: bool,
 }
 
@@ -128,7 +128,7 @@ impl From<&LinkSettings> for LinkSpec {
             fec: l.params.fec,
             autoneg: l.params.autoneg,
             kr: l.params.kr,
-            tx_eq: l.params.tx_eq,
+            tx_eq: l.params.tx_eq.into(),
             delete_me: false,
             ipv4: l
                 .addrs
