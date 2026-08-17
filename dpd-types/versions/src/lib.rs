@@ -41,6 +41,8 @@ pub mod v10;
 pub mod v11;
 #[path = "prbs_error_tracking/mod.rs"]
 pub mod v12;
+#[path = "add_uplink_to_link_settings/mod.rs"]
+pub mod v13;
 #[path = "attached_subnets/mod.rs"]
 pub mod v3;
 #[path = "v4_over_v6_routes/mod.rs"]

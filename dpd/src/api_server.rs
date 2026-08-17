@@ -2970,6 +2970,7 @@ impl From<&crate::link::Link> for LinkSettings {
                 tx_eq: l.tx_eq,
             },
             addrs,
+            uplink: l.config.uplink,
         }
     }
 }

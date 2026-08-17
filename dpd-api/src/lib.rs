@@ -39,6 +39,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (13, ADD_UPLINK_TO_LINK_SETTINGS),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
     (10, ASIC_DETAILS),
@@ -1631,6 +1632,7 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = POST,
+        versions = VERSION_ADD_UPLINK_TO_LINK_SETTINGS..,
         path = "/port/{port_id}/settings"
     }]
     async fn port_settings_apply(
@@ -1641,13 +1643,73 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
 
     /**
+     * Apply port settings atomically.
+     *
+     * These settings will be applied holistically, and to the extent possible
+     * atomically to a given port. In the event of a failure a rollback is
+     * attempted. If the rollback fails there will be inconsistent state. This
+     * failure mode returns the error code "rollback failure". For more details see
+     * the docs on the [`PortSettings`] type.
+     */
+    #[endpoint {
+        method = POST,
+        versions = ..VERSION_ADD_UPLINK_TO_LINK_SETTINGS,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_apply",
+    }]
+    async fn port_settings_apply_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::port::PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+        body: TypedBody<v1::port::PortSettings>,
+    ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
+        Self::port_settings_apply(rqctx, path, query, body.map(Into::into))
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /**
      * Clear port settings atomically.
      */
     #[endpoint {
         method = DELETE,
+        versions = VERSION_ADD_UPLINK_TO_LINK_SETTINGS..,
         path = "/port/{port_id}/settings"
     }]
     async fn port_settings_clear(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::port::PortIdPathParams>,
+        query: Query<latest::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /**
+     * Clear port settings atomically.
+     */
+    #[endpoint {
+        method = DELETE,
+        versions = ..VERSION_ADD_UPLINK_TO_LINK_SETTINGS,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_clear",
+    }]
+    async fn port_settings_clear_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::port::PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
+        Self::port_settings_clear(rqctx, path, query)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /**
+     * Get port settings atomically.
+     */
+    #[endpoint {
+        method = GET,
+        versions = VERSION_ADD_UPLINK_TO_LINK_SETTINGS..,
+        path = "/port/{port_id}/settings"
+    }]
+    async fn port_settings_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
         query: Query<latest::port::PortSettingsTag>,
@@ -1658,13 +1720,19 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
-        path = "/port/{port_id}/settings"
+        versions = ..VERSION_ADD_UPLINK_TO_LINK_SETTINGS,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_get",
     }]
-    async fn port_settings_get(
+    async fn port_settings_get_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<latest::port::PortIdPathParams>,
-        query: Query<latest::port::PortSettingsTag>,
-    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+        path: Path<v1::port::PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
+        Self::port_settings_get(rqctx, path, query)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
 
     /// Get switch identifiers.
     ///

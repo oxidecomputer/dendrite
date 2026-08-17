@@ -2145,6 +2145,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 String::from("0"),
                 types::LinkSettings {
                     addrs: Vec::default(),
+                    uplink: true,
                     params: types::LinkCreate {
                         autoneg,
                         fec: fec.map(|f| f.into()),

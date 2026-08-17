@@ -102,6 +102,7 @@ struct LinkSpec {
     pub ipv4: BTreeSet<Ipv4Addr>,
     pub ipv6: BTreeSet<Ipv6Addr>,
     pub tx_eq: Option<TxEq>,
+    pub uplink: bool,
 }
 
 impl From<&Link> for LinkSpec {
@@ -115,6 +116,7 @@ impl From<&Link> for LinkSpec {
             delete_me: p.config.delete_me,
             ipv4: p.ipv4.iter().map(|x| x.addr).collect(),
             ipv6: p.ipv6.iter().map(|x| x.addr).collect(),
+            uplink: p.config.uplink,
         }
     }
 }
@@ -144,6 +146,7 @@ impl From<&LinkSettings> for LinkSpec {
                 )
                 .copied()
                 .collect(),
+            uplink: l.uplink,
         }
     }
 }
@@ -332,6 +335,7 @@ impl PortSettingsDiff {
         );
 
         link.config.enabled = true;
+        link.config.uplink = spec.uplink;
         ctx.link_map.insert_link(link)?;
         let link_lock = ctx
             .link_map
@@ -405,12 +409,14 @@ impl PortSettingsDiff {
         let kr_before = spec.before.kr;
         let txeq_before = spec.before.tx_eq;
         let delete_before = spec.before.delete_me;
+        let uplink_before = spec.before.uplink;
         link.config.speed = spec.after.speed;
         link.config.fec = spec.after.fec;
         link.config.autoneg = spec.after.autoneg;
         link.config.kr = spec.after.kr;
         link.tx_eq = spec.after.tx_eq;
         link.config.delete_me = false;
+        link.config.uplink = spec.after.uplink;
         if spec.before.tx_eq != spec.after.tx_eq {
             link.plumbed.tx_eq_pushed = false;
         }
@@ -423,6 +429,7 @@ impl PortSettingsDiff {
             link.config.kr = kr_before;
             link.tx_eq = txeq_before;
             link.config.delete_me = delete_before;
+            link.config.uplink = uplink_before;
             Ok(())
         });
 

@@ -100,14 +100,15 @@ pub mod nat {
 
 pub mod port {
     pub use crate::v1::port::FreeChannels;
-    pub use crate::v1::port::LinkSettings;
     pub use crate::v1::port::PortCreateParams;
     pub use crate::v1::port::PortIdPathParams;
     pub use crate::v1::port::PortIpv4Path;
     pub use crate::v1::port::PortIpv6Path;
-    pub use crate::v1::port::PortSettings;
     pub use crate::v1::port::PortSettingsTag;
     pub use crate::v1::port::PortToken;
+
+    pub use crate::v13::port::LinkSettings;
+    pub use crate::v13::port::PortSettings;
 }
 
 pub mod port_map {

@@ -7,7 +7,7 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "12.0.0"
+    "version": "13.0.0"
   },
   "paths": {
     "/all-settings": {
@@ -7961,11 +7961,16 @@
           },
           "params": {
             "$ref": "#/components/schemas/LinkCreate"
+          },
+          "uplink": {
+            "description": "This link is expected to be connected to the outside world, and should only accept inbound traffic that matches a NAT mapping.",
+            "type": "boolean"
           }
         },
         "required": [
           "addrs",
-          "params"
+          "params",
+          "uplink"
         ]
       },
       "LinkState": {

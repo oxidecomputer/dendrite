@@ -130,6 +130,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
                 tx_eq: None,
             },
             addrs: vec!["203.0.113.47".parse().unwrap()],
+            uplink: true,
         },
     );
 
@@ -171,6 +172,7 @@ async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
                 tx_eq: None,
             },
             addrs: vec!["203.0.113.47".parse().unwrap()],
+            uplink: true,
         },
     );
 
@@ -210,6 +212,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
                 tx_eq: None,
             },
             addrs: vec!["203.0.113.47".parse().unwrap()],
+            uplink: true,
         },
     );
 
@@ -246,6 +249,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
                 "fd00:1701::c".parse().unwrap(),
                 "fd00:1701::d".parse().unwrap(),
             ],
+            uplink: true,
         },
     );
 
@@ -282,6 +286,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
                 "203.0.113.47".parse().unwrap(),
                 "fd00:1701::d".parse().unwrap(),
             ],
+            uplink: true,
         },
     );
 
@@ -541,7 +546,7 @@ fn random_port_settings() -> PortSettings {
     PortSettings {
         links: HashMap::from([(
             link_id.to_string(),
-            LinkSettings { params, addrs },
+            LinkSettings { params, addrs, uplink: true },
         )]),
     }
 }
