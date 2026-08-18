@@ -6,9 +6,10 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use common::network::MacAddr;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use super::network::MacAddr;
 
 /// Represents the mapping of an IP address to a MAC address.
 #[derive(Deserialize, Serialize, JsonSchema)]

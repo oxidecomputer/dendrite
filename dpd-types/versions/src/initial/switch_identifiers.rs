@@ -8,12 +8,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-// Re-export fuse types from aal.
-pub use aal::{
-    ChipRevision, DisabledFeatures, FrequencySettings, FuseData,
-    ManufacturingData, PartInfo,
-};
-
 /// Identifiers for a switch.
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 pub struct SwitchIdentifiers {

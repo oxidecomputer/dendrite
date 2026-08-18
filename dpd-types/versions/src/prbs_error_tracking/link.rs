@@ -4,14 +4,14 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use common::{
-    network::MacAddr,
-    ports::{PortFec, PortId, PortMedia, PortPrbsMode, PortSpeed},
-};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::v1;
+use crate::v1::network::MacAddr;
+use crate::v1::port::{PortFec, PortId, PortMedia, PortSpeed};
+
+use super::port::PortPrbsMode;
 
 // `MsDuration` lives alongside `LinkView` because it is the body type for the
 // link-scoped PRBS bit-error measurement endpoint introduced in this version.

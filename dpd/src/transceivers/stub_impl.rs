@@ -15,11 +15,9 @@ use crate::Switch;
 use crate::types::DpdError;
 use crate::types::DpdResult;
 use common::ports::QsfpPort;
+use dpd_types::transceivers::{Datapath, Monitors, PowerState};
 use tokio::sync::RwLockReadGuard;
 use transceiver_controller::Controller;
-use transceiver_controller::Datapath;
-use transceiver_controller::Monitors;
-use transceiver_controller::PowerState;
 
 impl Switch {
     pub async fn reset_transceiver(

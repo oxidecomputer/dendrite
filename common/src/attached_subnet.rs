@@ -4,23 +4,4 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use oxnet::IpNet;
-use std::fmt;
-
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
-use crate::network::InstanceTarget;
-
-/** represents an external subnet mapping */
-#[derive(Debug, Copy, Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
-pub struct AttachedSubnetEntry {
-    pub subnet: IpNet,
-    pub tgt: InstanceTarget,
-}
-
-impl fmt::Display for AttachedSubnetEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}->{}", self.subnet, self.tgt)
-    }
-}
+pub use dpd_types::attached_subnet::AttachedSubnetEntry;

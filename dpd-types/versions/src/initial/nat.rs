@@ -9,6 +9,26 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::network::NatTarget;
+
+/** represents an IPv6 NAT reservation */
+#[derive(Debug, Copy, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct Ipv6Nat {
+    pub external: Ipv6Addr,
+    pub low: u16,
+    pub high: u16,
+    pub target: NatTarget,
+}
+
+/** represents an IPv4 NAT reservation */
+#[derive(Debug, Copy, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct Ipv4Nat {
+    pub external: Ipv4Addr,
+    pub low: u16,
+    pub high: u16,
+    pub target: NatTarget,
+}
+
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct NatIpv4Path {
     pub ipv4: Ipv4Addr,

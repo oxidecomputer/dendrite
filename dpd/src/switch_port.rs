@@ -10,12 +10,12 @@ use anyhow::Context;
 use dpd_types::port_map::BackplaneLink;
 use dpd_types::switch_port::Led;
 use dpd_types::switch_port::LedPolicy;
+use dpd_types::switch_port::LedState;
 use dpd_types::switch_port::ManagementMode;
 use dpd_types::switch_port::SwitchPortView;
 use dpd_types::transceivers::QsfpDevice;
 use serde::Deserialize;
 use tokio::sync::Mutex;
-pub use transceiver_controller::message::LedState;
 
 use crate::link::Link;
 use crate::port_map::PortMap;
@@ -382,8 +382,14 @@ impl crate::Switch {
             self.acquire_transceiver_resources(qsfp_port).await?;
         let led_policy =
             sp.led_policy_mut().ok_or(DpdError::NotAQsfpPort { port_id })?;
-        let result =
-            controller.set_leds(module_id_from_qsfp(qsfp_port), state).await?;
+        let result = controller
+            .set_leds(
+                module_id_from_qsfp(qsfp_port),
+                crate::transceivers::conversions::led_state_to_controller(
+                    state,
+                ),
+            )
+            .await?;
         if result.is_success() {
             *led_policy = LedPolicy::Override;
             Ok(())
@@ -437,7 +443,13 @@ impl crate::Switch {
         let controller = self.transceiver_controller().await?;
         let result = controller.leds(module_id_from_qsfp(qsfp_port)).await?;
         if result.is_success() {
-            Ok(Led { policy, state: result.data[0] })
+            Ok(Led {
+                policy,
+                state:
+                    crate::transceivers::conversions::led_state_from_controller(
+                        result.data[0],
+                    ),
+            })
         } else {
             Err(DpdError::from(
                 result.error_iter().next().map(|(_, err)| err).unwrap(),
@@ -470,7 +482,14 @@ impl crate::Switch {
                     .await
                     .led_policy()
                     .unwrap();
-                out.insert(port_id, Led { policy, state });
+                out.insert(
+                    port_id,
+                    Led {
+                        policy,
+                        state: crate::transceivers::conversions::
+                            led_state_from_controller(state),
+                    },
+                );
             }
             Ok(out)
         } else {

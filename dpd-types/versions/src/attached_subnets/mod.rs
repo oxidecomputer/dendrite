@@ -6,7 +6,9 @@
 
 //! Version `ATTACHED_SUBNETS` of the DPD API.
 //!
-//! Added attached subnet management endpoints with `SubnetPath` and
-//! `AttachedSubnetToken`.
+//! Added attached subnet management endpoints with `AttachedSubnetEntry`,
+//! `InstanceTarget`, `SubnetPath`, and `AttachedSubnetToken`.
 
+pub mod attached_subnet;
+pub mod network;
 pub mod route;

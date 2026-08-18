@@ -6,10 +6,15 @@
 
 //! Functional code for the latest versions of types.
 
+mod attached_subnet;
 mod link;
 pub(crate) mod mcast;
+mod nat;
+pub(crate) mod network;
+pub(crate) mod port;
 mod port_map;
 mod route;
 mod serdes;
-mod table;
+mod switch_identifiers;
+pub(crate) mod table;
 mod transceivers;

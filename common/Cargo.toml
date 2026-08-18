@@ -10,6 +10,7 @@ multicast = []
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
+dpd-types.workspace = true
 oxnet.workspace = true
 rand.workspace = true
 serde.workspace = true

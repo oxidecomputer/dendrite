@@ -6,13 +6,12 @@
 
 use std::hash::Hash;
 
-use schemars::JsonSchema;
-use serde::Deserialize;
-use serde::Serialize;
 use thiserror::Error;
 
 use common::ports::{PortFec, PortMedia, PortPrbsMode, PortSpeed, TxEq};
 use common::table::TableType;
+
+pub use dpd_types::table::{TableEntryAction, TableEntryKey};
 
 mod fuse;
 pub use fuse::*;
@@ -334,13 +333,4 @@ pub enum PortUpdate {
     },
 }
 
-/// For a counter, this contains the number of bytes, packets, or both that were
-/// counted.
-/// XXX: Ideally this would be a data-bearing enum, with variants for Pkts,
-/// Bytes, and PktsAndBytes.  However OpenApi doesn't yet have the necessary
-/// support, so we're left with this clumsier representation.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
-pub struct CounterData {
-    pub pkts: Option<u64>,
-    pub bytes: Option<u64>,
-}
+pub use dpd_types::counters::CounterData;
