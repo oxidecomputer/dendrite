@@ -7,6 +7,7 @@ name = "aal"
 version = "0.1.0"
 dependencies = [
  "common 0.1.0",
+ "dpd-types",
  "oximeter",
  "oxnet",
  "schemars 0.8.22",
@@ -954,6 +955,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "dpd-types",
  "oxnet",
  "rand 0.9.3",
  "schemars 0.8.22",
@@ -1710,12 +1712,9 @@ dependencies = [
 name = "dpd-api"
 version = "0.1.0"
 dependencies = [
- "common 0.1.0",
- "dpd-types",
  "dpd-types-versions",
  "dropshot 0.17.1",
  "dropshot-api-manager-types",
- "transceiver-controller",
 ]
 
 [[package]]
@@ -1781,26 +1780,21 @@ dependencies = [
 name = "dpd-types"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "dpd-types-versions",
- "omicron-common",
- "schemars 0.8.22",
- "serde",
 ]
 
 [[package]]
 name = "dpd-types-versions"
 version = "0.1.0"
 dependencies = [
- "aal",
- "common 0.1.0",
+ "chrono",
  "dropshot 0.17.1",
  "omicron-common",
  "oxnet",
+ "rand 0.9.3",
  "schemars 0.8.22",
  "serde",
  "thiserror 2.0.18",
- "transceiver-controller",
  "uuid",
 ]
 

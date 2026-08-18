@@ -6,15 +6,12 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use common::{
-    network::MacAddr,
-    ports::{PortFec, PortId, PortMedia, PortSpeed, TxEq},
-};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::fault::Fault;
-use super::port::PortPrbsMode;
+use super::network::MacAddr;
+use super::port::{PortFec, PortId, PortMedia, PortPrbsMode, PortSpeed, TxEq};
 
 /// An identifier for a link within a switch port.
 ///

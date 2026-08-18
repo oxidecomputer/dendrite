@@ -13,7 +13,7 @@ use chrono::Utc;
 use common::ports::PortId;
 use common::table::TableType;
 use dpd_types::link::{LinkId, LinkState};
-use dpd_types::oxstats::{OximeterConfig, OximeterMetadata};
+use dpd_types::oxstats::{OximeterConfig, OximeterMetadata, SledIdentifiers};
 use dpd_types::switch_identifiers::SwitchIdentifiers;
 
 use slog::{debug, error, info, o, warn};
@@ -21,7 +21,6 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use omicron_common::api::internal::nexus::{ProducerEndpoint, ProducerKind};
-use omicron_common::api::internal::shared::SledIdentifiers;
 use omicron_common::backoff::{
     BackoffError, retry_notify, retry_policy_internal_service_aggressive,
 };

@@ -13,6 +13,10 @@ use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
+#[cfg(feature = "tofino_asic")]
+use asic::tofino_asic::serdes;
+#[cfg(feature = "tofino_asic")]
+use asic::tofino_asic::stats;
 use dpd_types::arp::{
     ArpEntry, ArpToken, Ipv4ArpParam, Ipv4Token, Ipv6ArpParam, Ipv6Token,
 };
@@ -61,10 +65,10 @@ use dpd_types::snapshot::{
     TableDumpOptions,
 };
 use dpd_types::switch_identifiers::SwitchIdentifiers;
-use dpd_types::switch_port::{Led, ManagementMode, SwitchPortView};
+use dpd_types::switch_port::{Led, LedState, ManagementMode, SwitchPortView};
 use dpd_types::table;
 use dpd_types::table::TableParam;
-use dpd_types::transceivers::Transceiver;
+use dpd_types::transceivers::{Datapath, Monitors, PowerState, Transceiver};
 use dpd_types_versions::{v1, v7};
 use dropshot::BuildError;
 use dropshot::ClientErrorStatusCode;
@@ -85,13 +89,6 @@ use dropshot::VersionPolicy;
 use dropshot::WhichPage;
 use slog::{debug, error, info, o};
 use slog_error_chain::InlineErrorChain;
-use transceiver_controller::Datapath;
-use transceiver_controller::Monitors;
-
-#[cfg(feature = "tofino_asic")]
-use asic::tofino_asic::serdes;
-#[cfg(feature = "tofino_asic")]
-use asic::tofino_asic::stats;
 
 #[cfg(feature = "softnpu")]
 use aal::AsicOps;
@@ -109,8 +106,6 @@ use crate::nat;
 use crate::oxstats;
 use crate::rpw::Task;
 use crate::switch_port::FixedSideDevice;
-use crate::switch_port::LedState;
-use crate::transceivers::PowerState;
 use crate::types::DpdError;
 use crate::{Switch, arp, loopback, ports, route};
 use common::attached_subnet::AttachedSubnetEntry;

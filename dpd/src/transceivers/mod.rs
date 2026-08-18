@@ -11,7 +11,9 @@
 use crate::types::DpdResult;
 use dpd_types::transceivers::QsfpDevice;
 use transceiver_controller::Identifier;
-pub use transceiver_controller::PowerState;
+
+#[cfg_attr(not(feature = "tofino_asic"), allow(dead_code))]
+pub(crate) mod conversions;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "tofino_asic")] {
@@ -184,9 +186,9 @@ mod mpn_test {
     // has been sucessfully read from the transceiver, then we would expect
     // xcvr_mpn() to return Ok(Some("name of part")).
     fn test_mpn_present() {
-        pub use transceiver_controller::Oui;
-        pub use transceiver_controller::Vendor;
-        pub use transceiver_controller::VendorInfo;
+        use dpd_types::transceivers::{
+            Identifier as ApiIdentifier, Oui, Vendor, VendorInfo,
+        };
 
         let vendor = Vendor {
             name: "name".to_string(),
@@ -196,8 +198,10 @@ mod mpn_test {
             serial: "serial".to_string(),
             date: None,
         };
-        let vendor_info =
-            VendorInfo { identifier: Identifier::Soldered, vendor };
+        let vendor_info = VendorInfo {
+            identifier: ApiIdentifier(Identifier::Soldered.to_string()),
+            vendor,
+        };
 
         let transceiver = Transceiver::Supported(TransceiverInfo {
             vendor_info: Some(vendor_info),

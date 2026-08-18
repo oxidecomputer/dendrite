@@ -4,10 +4,10 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-//! Version `ASIC_DETAILS` of the DPD API.
-//!
-//! Added `lotnum` and `fuse` fields to `SwitchIdentifiers`.
-//! Updated `OximeterConfig` and `OximeterMetadata` to use the new identifiers.
+use crate::latest::attached_subnet::AttachedSubnetEntry;
 
-pub mod oxstats;
-pub mod switch_identifiers;
+impl std::fmt::Display for AttachedSubnetEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}->{}", self.subnet, self.tgt)
+    }
+}
