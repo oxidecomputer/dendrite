@@ -23,6 +23,7 @@ mod attached;
 mod compliance;
 mod counters;
 mod link;
+mod multicast;
 mod nat;
 mod route;
 mod snapshot;
@@ -65,6 +66,11 @@ enum Commands {
     Nat {
         #[command(subcommand)]
         cmd: nat::Nat,
+    },
+    #[clap(visible_alias = "mcast")]
+    Multicast {
+        #[command(subcommand)]
+        cmd: multicast::Multicast,
     },
     #[clap(visible_alias = "attsub")]
     AttachedSubnet {
@@ -212,7 +218,7 @@ async fn build_info(client: &Client) -> anyhow::Result<()> {
 
 fn main() -> anyhow::Result<()> {
     oxide_tokio_rt::run_builder(
-        &mut oxide_tokio_rt::Builder::new_current_thread(),
+        oxide_tokio_rt::Builder::new_current_thread(),
         main_impl(),
     )
 }
@@ -243,6 +249,9 @@ async fn main_impl() -> anyhow::Result<()> {
             attached::attsub_cmd(&client, p).await
         }
         Commands::Nat { cmd: p } => nat::nat_cmd(&client, p).await,
+        Commands::Multicast { cmd } => {
+            multicast::multicast_cmd(&client, cmd).await
+        }
         Commands::Counters { cmd: c } => counters::ctrs_cmd(&client, c).await,
         Commands::SwitchPort { cmd: p } => {
             switchport::switch_cmd(&client, p).await
