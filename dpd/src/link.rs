@@ -338,7 +338,7 @@ pub struct LinkConfig {
     /// should only accept inbound traffic that matches a NAT mapping.
     pub uplink: bool,
 
-    /// This links should allow ddm traffic for multirack setups
+    /// This link should allow ddm traffic for multirack setups
     pub allow_ddm_traffic: bool,
 }
 
