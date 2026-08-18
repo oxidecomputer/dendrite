@@ -90,7 +90,7 @@ parking_lot = "0.12"
 pretty_assertions = "1.4"
 proc-macro2 = "1.0"
 progenitor = "0.14"
-rand = "0.9"
+rand = "0.10"
 regex = "1.12"
 regress = "0.11"
 reqwest = { version = "0.13", default-features = false }
