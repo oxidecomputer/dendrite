@@ -4,9 +4,9 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use common::ports::{PortFec, PortSpeed, TxEq};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use v1::port::{PortFec, PortSpeed, TxEq};
 
 use crate::v1;
 
