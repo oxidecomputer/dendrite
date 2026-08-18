@@ -411,6 +411,7 @@ impl Switch {
             autoneg: true,
             kr: true,
             tx_eq: None,
+            allow_ddm_traffic: false,
         };
         let params = match &autoconfig_links {
             Some(links) => links

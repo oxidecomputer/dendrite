@@ -382,6 +382,7 @@ async fn compliance_ports_setup(
             autoneg,
             kr,
             tx_eq: None,
+            allow_ddm_traffic: false,
         };
 
         match client.link_create(&port_id, &params).await {

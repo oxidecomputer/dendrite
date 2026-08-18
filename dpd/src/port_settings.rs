@@ -102,6 +102,7 @@ struct LinkSpec {
     pub ipv4: BTreeSet<Ipv4Addr>,
     pub ipv6: BTreeSet<Ipv6Addr>,
     pub tx_eq: Option<TxEq>,
+    pub allow_ddm_traffic: bool,
 }
 
 impl From<&Link> for LinkSpec {
@@ -115,6 +116,7 @@ impl From<&Link> for LinkSpec {
             delete_me: p.config.delete_me,
             ipv4: p.ipv4.iter().map(|x| x.addr).collect(),
             ipv6: p.ipv6.iter().map(|x| x.addr).collect(),
+            allow_ddm_traffic: p.config.allow_ddm_traffic,
         }
     }
 }
@@ -144,6 +146,7 @@ impl From<&LinkSettings> for LinkSpec {
                 )
                 .copied()
                 .collect(),
+            allow_ddm_traffic: l.params.allow_ddm_traffic,
         }
     }
 }
@@ -314,6 +317,7 @@ impl PortSettingsDiff {
             kr: spec.kr,
             tx_eq: spec.tx_eq,
             fec: spec.fec,
+            allow_ddm_traffic: spec.allow_ddm_traffic,
         };
         let port_id = ctx.port_id;
         let asic_port_id = ctx.switch.port_link_to_asic_id(port_id, link_id)?;

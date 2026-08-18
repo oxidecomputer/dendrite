@@ -445,6 +445,10 @@ pub enum Link {
         #[clap(long)]
         kr: bool,
 
+        /// Whether DDM traffic is allowed on this link.
+        #[clap(long)]
+        allow_ddm_traffic: bool,
+
         /// Uniform equalization parameter to apply to all cursors.
         #[clap(long)]
         tx_eq: Option<i32>,
@@ -498,6 +502,10 @@ pub struct LinkCreate {
     /// This is generally only appropriate for backplane links.
     #[clap(short, long)]
     kr: bool,
+
+    /// If provided, allow DDM traffic on the link.
+    #[clap(long)]
+    allow_ddm_traffic: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Subcommand)]
@@ -1635,7 +1643,15 @@ fn apply_filter(
 
 pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
     match link {
-        Link::Create(LinkCreate { port_id, speed, lane, fec, autoneg, kr }) => {
+        Link::Create(LinkCreate {
+            port_id,
+            speed,
+            lane,
+            fec,
+            autoneg,
+            kr,
+            allow_ddm_traffic,
+        }) => {
             let params = types::LinkCreate {
                 lane,
                 speed: speed.into(),
@@ -1643,6 +1659,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 autoneg,
                 kr,
                 tx_eq: None,
+                allow_ddm_traffic,
             };
             let link_id = client
                 .link_create(&port_id, &params)
@@ -2115,6 +2132,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
             fec,
             autoneg,
             kr,
+            allow_ddm_traffic,
             tx_eq,
             pre1,
             pre2,
@@ -2146,6 +2164,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 types::LinkSettings {
                     addrs: Vec::default(),
                     params: types::LinkCreate {
+                        allow_ddm_traffic,
                         autoneg,
                         fec: fec.map(|f| f.into()),
                         kr,

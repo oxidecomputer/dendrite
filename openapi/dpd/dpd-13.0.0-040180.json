@@ -7,7 +7,7 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "12.0.0"
+    "version": "13.0.0"
   },
   "paths": {
     "/all-settings": {
@@ -7640,6 +7640,11 @@
         "description": "Parameters used to create a link on a switch port.",
         "type": "object",
         "properties": {
+          "allow_ddm_traffic": {
+            "description": "Whether DDM traffic is allowed on this link.\n\nThis defaults to `false`.",
+            "default": false,
+            "type": "boolean"
+          },
           "autoneg": {
             "description": "Whether the link is configured to autonegotiate with its peer during link training.\n\nThis is generally only true for backplane links, and defaults to `false`.",
             "default": false,
