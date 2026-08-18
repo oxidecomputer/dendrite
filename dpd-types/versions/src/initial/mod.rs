@@ -17,6 +17,8 @@ pub mod loopback;
 pub mod mcast;
 pub mod misc;
 pub mod nat;
+pub mod network;
+pub mod oxstats;
 pub mod port;
 pub mod port_map;
 pub mod route;

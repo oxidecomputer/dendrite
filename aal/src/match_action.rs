@@ -71,9 +71,11 @@ impl MatchData {
 
 /// The MatchParse trait defines the behavior needed to convert a high-level
 /// Match field into our intermediate representation.
-pub trait MatchParse {
+pub trait MatchParse: crate::TableEntryKey {
     /// Return all the names and values of the key fields as strings
-    fn key_values(&self) -> BTreeMap<String, String>;
+    fn key_values(&self) -> BTreeMap<String, String> {
+        crate::TableEntryKey::key_values(self)
+    }
     /// Convert the key Struct to a MatchData struct
     fn key_to_ir(&self) -> AsicResult<MatchData>;
     /// Convert a MatchData struct back into the original match key format
@@ -108,12 +110,16 @@ pub struct ActionArg {
 
 /// The ActionParse trait defines the behavior needed to convert a high-level
 /// Action Enum into our intermediate representation.
-pub trait ActionParse {
+pub trait ActionParse: crate::TableEntryAction {
     /// Return the name of the action as a string
-    fn action_name(&self) -> String;
+    fn action_name(&self) -> String {
+        crate::TableEntryAction::action_name(self)
+    }
     /// Return the names and values of the arguments to the action as a vector
     /// of strings
-    fn action_args(&self) -> BTreeMap<String, String>;
+    fn action_args(&self) -> BTreeMap<String, String> {
+        crate::TableEntryAction::action_args(self)
+    }
     /// Convert an Action enum into the ActionData format
     fn action_to_ir(&self) -> AsicResult<ActionData>;
     /// Convert and ActionData struct back into the original Action enum

@@ -4,12 +4,42 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use common::ports::PortId;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use transceiver_controller::message::LedState;
 
+use super::port::PortId;
 use super::transceivers::QsfpDevice;
+
+/// The state of a module's attention LED, on the Sidecar front IO panel.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    JsonSchema,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LedState {
+    /// The LED is off.
+    ///
+    /// This indicates that the port is disabled or not working at all.
+    Off,
+    /// The LED is solid on.
+    ///
+    /// This indicates that the port is working as expected and enabled.
+    On,
+    /// The LED is blinking.
+    ///
+    /// This is used to draw attention to the port, such as to indicate a fault
+    /// or to locate a port for servicing.
+    Blink,
+}
 
 /// How a switch port is managed.
 ///

@@ -4,46 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use std::net::{Ipv4Addr, Ipv6Addr};
-
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
-use crate::network::NatTarget;
-
-/** represents an IPv6 NAT reservation */
-#[derive(Debug, Copy, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct Ipv6Nat {
-    pub external: Ipv6Addr,
-    pub low: u16,
-    pub high: u16,
-    pub target: NatTarget,
-}
-
-impl PartialEq for Ipv6Nat {
-    fn eq(&self, other: &Self) -> bool {
-        self.external == other.external
-            && self.low == other.low
-            && self.high == other.high
-    }
-}
-
-/** represents an IPv4 NAT reservation */
-#[derive(Debug, Copy, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct Ipv4Nat {
-    pub external: Ipv4Addr,
-    pub low: u16,
-    pub high: u16,
-    pub target: NatTarget,
-}
-
-impl PartialEq for Ipv4Nat {
-    fn eq(&self, other: &Self) -> bool {
-        self.external == other.external
-            && self.low == other.low
-            && self.high == other.high
-    }
-}
+pub use dpd_types::nat::{Ipv4Nat, Ipv6Nat};
 
 #[cfg(test)]
 mod tests {
