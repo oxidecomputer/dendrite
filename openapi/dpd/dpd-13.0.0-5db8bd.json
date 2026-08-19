@@ -7641,7 +7641,7 @@
         "type": "object",
         "properties": {
           "allow_ddm_traffic": {
-            "description": "Whether DDM traffic is allowed on this link.\n\nThis defaults to `false`.",
+            "description": "Whether DDM traffic is allowed on this link.\n\nThis only applies to the qsfp front ports. Rear ports always have DDM enabled, regardless of this setting.\n\nThe actual effect of this is to enable IPv6 routing on front ports and ensure they are not an uplink.\n\nThis defaults to `false`.",
             "default": false,
             "type": "boolean"
           },

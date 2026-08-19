@@ -42,6 +42,12 @@ pub struct LinkCreate {
 
     /// Whether DDM traffic is allowed on this link.
     ///
+    /// This only applies to the qsfp front ports. Rear ports always have DDM
+    /// enabled, regardless of this setting.
+    ///
+    /// The actual effect of this is to enable IPv6 routing on front ports and
+    /// ensure they are not an uplink.
+    ///
     /// This defaults to `false`.
     #[serde(default)]
     pub allow_ddm_traffic: bool,
