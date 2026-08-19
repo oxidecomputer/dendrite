@@ -446,6 +446,9 @@ pub enum Link {
         kr: bool,
 
         /// Whether DDM traffic is allowed on this link.
+        ///
+        /// This setting only applies to qsfp front ports. Rear ports always
+        /// have DDM enabled.
         #[clap(long)]
         allow_ddm_traffic: bool,
 
@@ -504,6 +507,9 @@ pub struct LinkCreate {
     kr: bool,
 
     /// If provided, allow DDM traffic on the link.
+    ///
+    /// This setting only applies to qsfp front ports. Rear ports always have
+    /// DDM enabled.
     #[clap(long)]
     allow_ddm_traffic: bool,
 }

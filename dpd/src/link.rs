@@ -338,7 +338,10 @@ pub struct LinkConfig {
     /// should only accept inbound traffic that matches a NAT mapping.
     pub uplink: bool,
 
-    /// This link should allow ddm traffic for multirack setups
+    /// This link should allow DDM traffic for multirack setups.
+    ///
+    /// This setting only applies to qsfp front ports. Rear ports always have
+    /// DDM enabled.
     pub allow_ddm_traffic: bool,
 }
 
