@@ -403,21 +403,60 @@ impl PortSettingsDiff {
         let link_lock = ctx.link(link_id)?;
         let mut link = link_lock.lock().unwrap();
 
-        let speed_before = spec.before.speed;
-        let fec_before = spec.before.fec;
-        let an_before = spec.before.autoneg;
-        let kr_before = spec.before.kr;
-        let txeq_before = spec.before.tx_eq;
-        let delete_before = spec.before.delete_me;
-        link.config.speed = spec.after.speed;
-        link.config.fec = spec.after.fec;
-        link.config.autoneg = spec.after.autoneg;
-        link.config.kr = spec.after.kr;
-        link.tx_eq = spec.after.tx_eq;
+        let Modify { before, after } = spec;
+
+        let &LinkSpec {
+            speed: speed_before,
+            fec: fec_before,
+            autoneg: an_before,
+            kr: kr_before,
+            delete_me: delete_before,
+            ipv4: ref ipv4_before,
+            ipv6: ref ipv6_before,
+            tx_eq: tx_eq_before,
+            allow_ddm_traffic: allow_ddm_traffic_before,
+        } = before;
+
+        let &LinkSpec {
+            speed: speed_after,
+            fec: fec_after,
+            autoneg: an_after,
+            kr: kr_after,
+            delete_me: _,
+            ipv4: ref ipv4_after,
+            ipv6: ref ipv6_after,
+            tx_eq: tx_eq_after,
+            allow_ddm_traffic: allow_ddm_traffic_after,
+        } = after;
+
+        debug_assert_eq!(
+            link.config.allow_ddm_traffic,
+            allow_ddm_traffic_before,
+        );
+
+        let ipv6_enabled_before = link.ipv6_enabled;
+        let uplink_before = link.config.uplink;
+
+        if allow_ddm_traffic_before != allow_ddm_traffic_after {
+            let is_front_port = matches!(ctx.port_id, PortId::Qsfp(_));
+
+            // Following the logic from Link::new(). Would be nice to factor it out.
+            link.ipv6_enabled = !is_front_port || allow_ddm_traffic_after;
+            link.config.uplink = is_front_port && !allow_ddm_traffic_after;
+        }
+
+        link.config.speed = speed_after;
+        link.config.fec = fec_after;
+        link.config.autoneg = an_after;
+        link.config.kr = kr_after;
+        link.tx_eq = tx_eq_after;
         link.config.delete_me = false;
-        if spec.before.tx_eq != spec.after.tx_eq {
+        link.config.allow_ddm_traffic = allow_ddm_traffic_after;
+
+        if tx_eq_before != tx_eq_after {
             link.plumbed.tx_eq_pushed = false;
         }
+
         rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
             let link_lock = ctx.link(link_id)?;
             let mut link = link_lock.lock().unwrap();
@@ -425,17 +464,20 @@ impl PortSettingsDiff {
             link.config.fec = fec_before;
             link.config.autoneg = an_before;
             link.config.kr = kr_before;
-            link.tx_eq = txeq_before;
+            link.tx_eq = tx_eq_before;
             link.config.delete_me = delete_before;
+            link.config.allow_ddm_traffic = allow_ddm_traffic_before;
+            link.ipv6_enabled = ipv6_enabled_before;
+            link.config.uplink = uplink_before;
             Ok(())
         });
 
         // ipv4 addrs
         let v4_add: BTreeSet<Ipv4Addr> =
-            spec.after.ipv4.difference(&spec.before.ipv4).copied().collect();
+            ipv4_after.difference(ipv4_before).copied().collect();
 
         let v4_del: BTreeSet<Ipv4Addr> =
-            spec.before.ipv4.difference(&spec.after.ipv4).copied().collect();
+            ipv4_before.difference(ipv4_after).copied().collect();
 
         for addr in v4_add {
             Self::addr_add_v4(ctx, &mut link, rb, addr)?;
@@ -446,10 +488,10 @@ impl PortSettingsDiff {
 
         // ipv6 addrs
         let v6_add: BTreeSet<Ipv6Addr> =
-            spec.after.ipv6.difference(&spec.before.ipv6).copied().collect();
+            ipv6_after.difference(ipv6_before).copied().collect();
 
         let v6_del: BTreeSet<Ipv6Addr> =
-            spec.before.ipv6.difference(&spec.after.ipv6).copied().collect();
+            ipv6_before.difference(ipv6_after).copied().collect();
 
         for addr in v6_add {
             Self::addr_add_v6(ctx, &mut link, rb, addr)?;
