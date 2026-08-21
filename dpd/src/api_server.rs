@@ -2963,6 +2963,7 @@ impl From<&crate::link::Link> for LinkSettings {
                 autoneg: l.config.autoneg,
                 kr: l.config.kr,
                 tx_eq: l.tx_eq,
+                allow_ddm_traffic: l.config.allow_ddm_traffic,
             },
             addrs,
         }

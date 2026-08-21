@@ -767,6 +767,7 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
                         kr: true,
                         lane: Some(dpd_types::link::LinkId(0)),
                         tx_eq: None,
+                        allow_ddm_traffic: false,
                     };
                     Some((*port_id, create))
                 } else {

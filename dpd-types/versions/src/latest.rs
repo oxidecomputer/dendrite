@@ -39,7 +39,6 @@ pub mod fault {
 }
 
 pub mod link {
-    pub use crate::v1::link::LinkCreate;
     pub use crate::v1::link::LinkEvent;
     pub use crate::v1::link::LinkFilter;
     pub use crate::v1::link::LinkFsmCounter;
@@ -56,6 +55,8 @@ pub mod link {
 
     pub use crate::v12::link::LinkView;
     pub use crate::v12::link::MsDuration;
+
+    pub use crate::v13::link::LinkCreate;
 }
 
 pub mod loopback {
@@ -130,7 +131,6 @@ pub mod port {
     pub use crate::v1::port::InternalPort;
     pub use crate::v1::port::Ipv4Entry;
     pub use crate::v1::port::Ipv6Entry;
-    pub use crate::v1::port::LinkSettings;
     pub use crate::v1::port::PORT_COUNT_INTERNAL;
     pub use crate::v1::port::PORT_COUNT_QSFP;
     pub use crate::v1::port::PORT_COUNT_REAR;
@@ -141,14 +141,16 @@ pub mod port {
     pub use crate::v1::port::PortIpv4Path;
     pub use crate::v1::port::PortIpv6Path;
     pub use crate::v1::port::PortMedia;
-    pub use crate::v1::port::PortSettings;
     pub use crate::v1::port::PortSettingsTag;
     pub use crate::v1::port::PortSpeed;
     pub use crate::v1::port::PortToken;
+
     pub use crate::v1::port::QsfpPort;
     pub use crate::v1::port::RearPort;
     pub use crate::v1::port::TxEq;
     pub use crate::v1::port::TxEqSwHw;
+    pub use crate::v13::port::LinkSettings;
+    pub use crate::v13::port::PortSettings;
 
     pub use crate::v12::port::PortPrbsMode;
 }

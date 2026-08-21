@@ -121,6 +121,7 @@ async fn simnet_process(g: &Global) -> anyhow::Result<()> {
                     autoneg: false,
                     kr: false,
                     tx_eq: None,
+                    allow_ddm_traffic: false,
                 };
                 if let Err(e) = g.client.link_create(&port_id, &params).await {
                     error!(
