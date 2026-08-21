@@ -108,16 +108,11 @@ impl FrontPortHandle {
 
     /// Given a PortHdl, return the front-panel port it maps to
     pub fn from_port_hdl(hdl: &Handle, port_hdl: PortHdl) -> AsicResult<Self> {
-        let connector = match port_hdl.connector {
-            Connector::CPU => match hdl.eth_connector_id {
-                Some(id) => Ok(id),
-                None => {
-                    Err(AsicError::InvalidArg("no CPU ports found".to_string()))
-                }
-            },
-            Connector::QSFP(c) => Ok(c),
-        }?;
-        Ok(FrontPortHandle::new(hdl.dev_id, connector, port_hdl.channel))
+        Ok(FrontPortHandle::new(
+            hdl.dev_id,
+            hdl.connector_id(port_hdl.connector)?,
+            port_hdl.channel,
+        ))
     }
 
     /// Get the first front-panel port.  Whether this is actually "first" in any

@@ -529,6 +529,23 @@ impl AsicOps for Handle {
         Ok(())
     }
 
+    fn connector_tx_eq_defaults(
+        &self,
+        _: Connector,
+    ) -> impl ExactSizeIterator<Item = AsicResult<(u8, common::ports::TxEq)>>
+    {
+        std::iter::empty()
+    }
+
+    fn port_tx_eq_get(
+        &self,
+        _: PortHdl,
+    ) -> AsicResult<
+        impl ExactSizeIterator<Item = AsicResult<common::ports::TxEqSwHw>>,
+    > {
+        Ok(std::iter::empty())
+    }
+
     fn port_prbs_set(
         &self,
         _port_hdl: PortHdl,

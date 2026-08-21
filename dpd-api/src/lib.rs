@@ -29,6 +29,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (14, EXPLICIT_TXEQ),
     (13, ALLOW_DDM_TRAFFIC),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
@@ -2654,6 +2655,23 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
+        versions = ..VERSION_EXPLICIT_TXEQ,
+        path = "/ports/{port_id}/links/{link_id}/serdes/tx_eq",
+        operation_id = "link_tx_eq_get"
+    }]
+    async fn link_tx_eq_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<v1::port::TxEqSwHw>>, HttpError> {
+        Ok(Self::link_tx_eq_get(rqctx, path)
+            .await?
+            .map(|inner| inner.into_iter().map(Into::into).collect()))
+    }
+
+    /// Get the tx eq settings for each lane on this link.
+    #[endpoint {
+        method = GET,
+        versions = VERSION_EXPLICIT_TXEQ..,
         path = "/ports/{port_id}/links/{link_id}/serdes/tx_eq",
     }]
     async fn link_tx_eq_get(
@@ -2666,12 +2684,29 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = PUT,
+        versions = ..VERSION_EXPLICIT_TXEQ,
+        path = "/ports/{port_id}/links/{link_id}/serdes/tx_eq",
+        operation_id = "link_tx_eq_set"
+    }]
+    async fn link_tx_eq_set_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkPath>,
+        args: TypedBody<v1::port::TxEq>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::link_tx_eq_set(rqctx, path, args.map(|tx_eq| Some(tx_eq).into()))
+            .await
+    }
+
+    /// Update the tx eq settings for all lanes on this link
+    #[endpoint {
+        method = PUT,
+        versions = VERSION_EXPLICIT_TXEQ..,
         path = "/ports/{port_id}/links/{link_id}/serdes/tx_eq",
     }]
     async fn link_tx_eq_set(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-        args: TypedBody<latest::port::TxEq>,
+        args: TypedBody<latest::port::TxEqConfig>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**

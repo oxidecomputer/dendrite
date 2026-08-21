@@ -7,6 +7,7 @@
 //! Types for describing and managing physical ports on the Sidecar switch.
 
 use anyhow::Context;
+use dpd_types::port::TxEqConfig;
 use dpd_types::port_map::BackplaneLink;
 use dpd_types::switch_port::Led;
 use dpd_types::switch_port::LedPolicy;
@@ -24,6 +25,7 @@ use crate::transceivers::FakeQsfpModule;
 use crate::types::DpdError;
 use crate::types::DpdResult;
 use aal::AsicOps;
+use aal::PortHdl;
 use common::ports::InternalPort;
 use common::ports::PortFec;
 use common::ports::PortId;
@@ -68,42 +70,6 @@ struct XcvrDefaultsEntry {
     pub post2: Option<i32>,
 }
 
-/// Parse the provided CSV file, extracting optional settings for a
-/// subset of our supported transceivers.
-pub fn load_xcvr_defaults(
-    csv_file: &str,
-) -> anyhow::Result<BTreeMap<String, XcvrSettings>> {
-    let mut rdr = csv::ReaderBuilder::new()
-        .has_headers(false)
-        .comment(Some(b'#'))
-        .from_path(csv_file)
-        .with_context(|| format!("parsing xcvr config file {csv_file}"))?;
-
-    let mut settings = BTreeMap::new();
-    for entry in rdr.deserialize() {
-        let e: XcvrDefaultsEntry = entry?;
-
-        let tx_eq = if e.pre2.is_some()
-            || e.pre1.is_some()
-            || e.main.is_some()
-            || e.post2.is_some()
-            || e.post1.is_some()
-        {
-            Some(TxEq {
-                pre2: e.pre2,
-                pre1: e.pre1,
-                main: e.main,
-                post1: e.post1,
-                post2: e.post2,
-            })
-        } else {
-            None
-        };
-        settings.insert(e.mpn, XcvrSettings { tx_eq, fec: e.fec });
-    }
-    Ok(settings)
-}
-
 /// The physical ports on the switch.
 ///
 /// This is really the container for almost all of Dendrite's state about the
@@ -119,13 +85,28 @@ pub struct SwitchPorts {
     /// we find transceivers that do not work correctly with the default values
     /// assigned by the SDE.  Both the SDE defaults and these settings may be
     /// explicitly overridden by per-link settings configured by the admin.
-    pub xcvr_defaults: BTreeMap<String, XcvrSettings>,
+    pub xcvr_mpn_defaults: BTreeMap<String, XcvrSettings>,
+    /// The SDE default settings referenced above.
+    /// These only apply to ports without per-MPN settings or
+    /// an active user config.
+    ///
+    /// This may be empty if no asic handle was passed
+    /// to the constructor, which is often the case in tests.
+    pub xcvr_board_defaults: BTreeMap<PortHdl, TxEq>,
 }
 
 impl SwitchPorts {
+    /// Builds a new instance tracking metadata about the ports on a switch.
+    ///
+    /// If the asic handle is provided, this loads and caches useful board map
+    /// settings from the SDE.
+    ///
+    /// If the transceiver defaults file is provided, this reads and caches
+    /// a map of device configs that supercede what is found in the SDE board map.
     pub fn new(
         revision: SidecarRevision,
-        xcvr_defaults_file: &Option<String>,
+        xcvr_defaults_file: Option<&str>,
+        handle: Option<&asic::Handle>,
     ) -> anyhow::Result<Self> {
         let port_map = PortMap::new(revision);
         let ports = port_map
@@ -133,12 +114,20 @@ impl SwitchPorts {
             .copied()
             .map(|port_id| (port_id, Mutex::new(SwitchPort::new(port_id))))
             .collect();
-        let xcvr_defaults = match xcvr_defaults_file {
-            Some(f) => load_xcvr_defaults(f)?,
-            None => BTreeMap::new(),
-        };
 
-        Ok(Self { port_map, ports, xcvr_defaults })
+        let xcvr_mpn_defaults = xcvr_defaults_file
+            .map(self::load_xcvr_defaults)
+            .transpose()?
+            .unwrap_or_default();
+
+        // It should be fatal if this fails. On tofino, we're basically reading
+        // the board defaults file from a hash map in the SDE.
+        let xcvr_board_defaults = handle
+            .map(|asic| self::load_board_defaults(&port_map, asic).collect())
+            .transpose()?
+            .unwrap_or_default();
+
+        Ok(Self { port_map, ports, xcvr_mpn_defaults, xcvr_board_defaults })
     }
 
     pub fn verify_exists(&self, port_id: PortId) -> DpdResult<()> {
@@ -281,6 +270,50 @@ impl From<&SwitchPort> for SwitchPortView {
     }
 }
 
+/// Parse the provided CSV file, extracting optional settings for a
+/// subset of our supported transceivers.
+fn load_xcvr_defaults(
+    csv_file: &str,
+) -> anyhow::Result<BTreeMap<String, XcvrSettings>> {
+    csv::ReaderBuilder::new()
+        .has_headers(false)
+        .comment(Some(b'#'))
+        .from_path(csv_file)
+        .with_context(|| format!("parsing xcvr config file {csv_file}"))?
+        .deserialize()
+        .map(|entry| {
+            let e: XcvrDefaultsEntry = entry?;
+            let tx_eq =
+                TxEqConfig::from(Some(dpd_types_versions::v1::port::TxEq {
+                    pre2: e.pre2,
+                    pre1: e.pre1,
+                    main: e.main,
+                    post1: e.post1,
+                    post2: e.post2,
+                }));
+            Ok((e.mpn, XcvrSettings { tx_eq, fec: e.fec }))
+        })
+        .collect()
+}
+
+fn load_board_defaults(
+    port_map: &PortMap,
+    handle: &asic::Handle,
+) -> impl Iterator<Item = anyhow::Result<(PortHdl, TxEq)>> {
+    port_map
+        .connectors()
+        .copied()
+        .flat_map(|connector| {
+            handle
+                .connector_tx_eq_defaults(connector)
+                .zip(std::iter::repeat(connector))
+        })
+        .map(|(info, connector)| {
+            let (channel, settings) = info?;
+            Ok((PortHdl { connector, channel }, settings))
+        })
+}
+
 /// Data specific to each kind of fixed-side switch port.
 #[derive(Clone, Debug)]
 pub enum FixedSideDevice {
@@ -313,34 +346,34 @@ impl crate::Switch {
     /// If this port's transceiver has an alternate set of tx_eq default values,
     /// apply them now.  We first check for an explicit override value from the
     /// admin, then for an alternate default for this xcvr type.
-    pub fn push_tx_eq(
-        &self,
-        link: &Link,
-        mpn: &Option<String>,
-    ) -> DpdResult<()> {
-        let port_hdl = link.port_hdl;
+    pub fn push_tx_eq(&self, link: &Link, mpn: Option<&str>) -> DpdResult<()> {
+        let tx_eq = link
+            .tx_eq
+            .taps()
+            .or_else(|| {
+                self.switch_ports.xcvr_mpn_defaults.get(mpn?)?.tx_eq.taps()
+            })
+            .or_else(|| {
+                self.switch_ports.xcvr_board_defaults.get(&link.port_hdl)
+            })
+            .copied();
 
-        if let Some(tx_eq) = match (link.tx_eq, &mpn) {
-            (Some(user_defined), _) => Some(user_defined),
-            (None, Some(mpn)) => {
-                self.switch_ports.xcvr_defaults.get(mpn).and_then(|x| x.tx_eq)
-            }
-            (_, _) => None,
-        } {
-            let mpn = mpn
-                .clone()
-                .unwrap_or_else(|| "unknown transceiver".to_string());
-            slog::debug!(
-                self.log,
-                "Applying alternate tx settings for {link} ({mpn}): {tx_eq:?}"
-            );
-            self.asic_hdl
-                .port_tx_eq_set(port_hdl, &tx_eq)
-                .map_err(DpdError::Switch)?;
-        }
+        let Some(tx_eq) = tx_eq else {
+            return Ok(());
+        };
+
+        slog::debug!(
+            self.log,
+            "Applying alternate tx settings for {link} ({}): {tx_eq:?}",
+            mpn.unwrap_or("unknown transceiver")
+        );
+
+        self.asic_hdl
+            .port_tx_eq_set(link.port_hdl, &tx_eq)
+            .map_err(DpdError::Switch)?;
+
         Ok(())
     }
-
     /// Return the standard FEC method (if any) for the transceiver plugged into
     /// this port.
     ///
@@ -353,7 +386,11 @@ impl crate::Switch {
     /// also fail.
     pub fn qsfp_default_fec(&self, qsfp_mpn: &str) -> DpdResult<PortFec> {
         slog::debug!(self.log, "looking up default FEC for {qsfp_mpn}");
-        match self.switch_ports.xcvr_defaults.get(qsfp_mpn).and_then(|x| x.fec)
+        match self
+            .switch_ports
+            .xcvr_mpn_defaults
+            .get(qsfp_mpn)
+            .and_then(|x| x.fec)
         {
             Some(fec) => Ok(fec),
             None => Err(DpdError::Missing(

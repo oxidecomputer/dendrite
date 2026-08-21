@@ -8,9 +8,11 @@
 #![allow(non_snake_case)]
 #![allow(clippy::manual_range_contains)]
 
+use aal::Connector;
+use common::ports::TxEq;
+use common::ports::TxEqSwHw;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::convert::From;
 
 use crate::tofino_asic::genpd::*;
 use crate::tofino_asic::ports;
@@ -179,69 +181,20 @@ pub fn port_rx_sig_info_get(
     Ok(rval)
 }
 
-/// There are two groups of TxEqSettings: the one cached in the software and the
-/// one currently set in the hardware.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct TxEqHwSw {
-    /// Value cached in software
-    pub sw: TxEqSettings,
-    /// The value actually in use by the hardware
-    pub hw: TxEqSettings,
-}
-
-/// Tx equalization settings
-#[derive(Clone, Default, Debug, Deserialize, Serialize, JsonSchema)]
-pub struct TxEqSettings {
-    /// Precursor 2
-    pub pre2: i32,
-    /// Precursor 1
-    pub pre1: i32,
-    /// Main
-    pub main: i32,
-    /// Postcursor 1
-    pub post1: i32,
-    /// Postcursor 2
-    pub post2: i32,
-}
-
-impl From<TxEqSettings> for common::ports::TxEq {
-    fn from(txeq: TxEqSettings) -> Self {
-        common::ports::TxEq {
-            pre1: Some(txeq.pre1),
-            pre2: Some(txeq.pre2),
-            main: Some(txeq.main),
-            post2: Some(txeq.post2),
-            post1: Some(txeq.post1),
-        }
-    }
-}
-
-impl From<common::ports::TxEq> for TxEqSettings {
-    fn from(txeq: common::ports::TxEq) -> Self {
-        TxEqSettings {
-            pre1: txeq.pre1.unwrap_or(0),
-            pre2: txeq.pre2.unwrap_or(0),
-            main: txeq.main.unwrap_or(0),
-            post2: txeq.post2.unwrap_or(0),
-            post1: txeq.post1.unwrap_or(0),
-        }
-    }
-}
-
 // Fetch the currently applied tx eq settings for the specified port and
-// logical lane
-fn lane_tx_eq_get(
+// logical lane.
+pub fn lane_tx_eq_get(
     hdl: &Handle,
     port: PortHdl,
-    lane: u32,
-) -> AsicResult<TxEqHwSw> {
+    lane: u8,
+) -> AsicResult<TxEqSwHw> {
     let port_id = ports::to_asic_id(hdl, port)?;
-    let mut sw = TxEqSettings::default();
+    let mut sw = TxEq::default();
     unsafe {
         bf_tof2_serdes_tx_taps_get(
             hdl.dev_id,
             port_id as i32,
-            lane,
+            lane.into(),
             &mut sw.pre2,
             &mut sw.pre1,
             &mut sw.main,
@@ -250,12 +203,12 @@ fn lane_tx_eq_get(
         )
         .check_error("fetching sw tx eq settings")?;
     }
-    let mut hw = TxEqSettings::default();
+    let mut hw = TxEq::default();
     unsafe {
         bf_tof2_serdes_tx_taps_hw_get(
             hdl.dev_id,
             port_id as i32,
-            lane,
+            lane.into(),
             &mut hw.pre2,
             &mut hw.pre1,
             &mut hw.main,
@@ -265,23 +218,7 @@ fn lane_tx_eq_get(
         .check_error("fetching hw tx eq settings")?
     };
 
-    Ok(TxEqHwSw { sw, hw })
-}
-
-/// Collect all of the per-lane eq settings for the specified port.
-///
-/// The returned value contains a vector of `TxEqHwSw` structures, indexed by
-/// the logical lane ID within the link.
-pub fn port_tx_eq_get(
-    hdl: &Handle,
-    port: PortHdl,
-) -> AsicResult<Vec<TxEqHwSw>> {
-    let lanes = lane_count(hdl, port)?;
-    let mut rval = Vec::with_capacity(lanes as usize);
-    for lane in 0..lanes {
-        rval.push(lane_tx_eq_get(hdl, port, lane)?)
-    }
-    Ok(rval)
+    Ok(TxEqSwHw { sw, hw })
 }
 
 /// Update the currently applied tx eq settings in both the hardware and the
@@ -290,7 +227,7 @@ pub fn lane_tx_eq_set(
     hdl: &Handle,
     port: PortHdl,
     lane: u32,
-    settings: &TxEqSettings,
+    settings: &TxEq,
 ) -> AsicResult<()> {
     let port_id = ports::to_asic_id(hdl, port)?;
     let lanes = lane_count(hdl, port)?;
@@ -320,7 +257,7 @@ pub fn lane_tx_eq_set(
 pub fn port_tx_eq_set(
     hdl: &Handle,
     port: PortHdl,
-    settings: &TxEqSettings,
+    settings: &TxEq,
 ) -> AsicResult<()> {
     let lanes = lane_count(hdl, port)?;
     for lane in 0..lanes {
@@ -333,6 +270,67 @@ pub fn port_tx_eq_set(
             .check_error("setting tx eq override")?;
     }
     Ok(())
+}
+
+/// Returns the board default tx equalization settings for the
+/// given connector and channel.
+///
+/// Informed by the SDE board map:
+///
+/// <https://github.com/oxidecomputer/tofino-sde/tree/oxide/pkgsrc/bf-platforms/platforms/sidecar/src/board-maps>
+pub fn connector_tx_eq_default(
+    handle: &Handle,
+    connector: Connector,
+    channel: u8,
+) -> AsicResult<TxEq> {
+    let mut port_info = bf_pltfm_port_info_t {
+        conn_id: handle.connector_id(connector)?,
+        chnl_id: channel.into(),
+    };
+
+    // Either encoding mode should work because we set the same config
+    // for both. This is not true to the actual encoding mode used
+    // by the port, but querying that adds failure cases that will rely
+    // on this conclusion anyway.
+    //
+    // - Definition: https://github.com/oxidecomputer/tofino-sde/blob/oxide/pkgsrc/bf-platforms/drivers/include/bf_bd_cfg/bf_bd_cfg_bd_map.h#L101
+    // - Where this is assigned: https://github.com/oxidecomputer/tofino-sde/blob/oxide/pkgsrc/bf-platforms/platforms/sidecar/src/platform_mgr/board.c#L200
+    // - Where this is read: https://github.com/oxidecomputer/tofino-sde/blob/oxide/pkgsrc/bf-platforms/drivers/src/bf_bd_cfg/bf_bd_cfg_intf.c#L727-L731
+    let encoding = bf_pltfm_encoding_type__BF_PLTFM_ENCODING_NRZ;
+
+    // Any of the options other than `unknown` should work because we set the
+    // same config for all.
+    //
+    // - Assignment: https://github.com/oxidecomputer/tofino-sde/blob/oxide/pkgsrc/bf-platforms/platforms/sidecar/src/platform_mgr/board.c#L203-L216
+    // - MAX: https://github.com/oxidecomputer/tofino-sde/blob/oxide/pkgsrc/bf-platforms/drivers/include/bf_bd_cfg/bf_bd_cfg_bd_map.h#L20
+    // - No unknown: https://github.com/oxidecomputer/tofino-sde/blob/oxide/pkgsrc/bf-platforms/drivers/src/bf_bd_cfg/bf_bd_cfg_intf.c#L706-L711
+    let qsfpdd = bf_pltfm_qsfpdd_type_t_BF_PLTFM_QSFPDD_OPT;
+
+    let mut taps = bf_pltfm_serdes_lane_tx_eq_t {
+        tx_main: 0,
+        tx_pre1: 0,
+        tx_pre2: 0,
+        tx_post1: 0,
+        tx_post2: 0,
+    };
+
+    unsafe {
+        bf_bd_port_serdes_tx_params_get(
+            &mut port_info,
+            qsfpdd,
+            &mut taps,
+            encoding,
+        )
+        .check_error("fetching board default tx eq settings")?;
+    }
+
+    Ok(TxEq {
+        pre2: taps.tx_pre2,
+        pre1: taps.tx_pre1,
+        main: taps.tx_main,
+        post1: taps.tx_post1,
+        post2: taps.tx_post2,
+    })
 }
 
 // Fetch the state of the Rx Decision Feedback Equalizer adaptation for the

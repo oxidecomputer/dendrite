@@ -8,7 +8,9 @@ use std::hash::Hash;
 
 use thiserror::Error;
 
-use common::ports::{PortFec, PortMedia, PortPrbsMode, PortSpeed, TxEq};
+use common::ports::{
+    PortFec, PortMedia, PortPrbsMode, PortSpeed, TxEq, TxEqSwHw,
+};
 use common::table::TableType;
 
 pub use dpd_types::table::{TableEntryAction, TableEntryKey};
@@ -245,12 +247,34 @@ pub trait AsicOps {
         settings: &TxEq,
     ) -> AsicResult<()>;
 
+    /// Read the current transceiver equalization settings on this port.
+    /// Returns an ordered iterator mapping each lane to its [`TxEqSwHw`] settings.
+    ///
+    /// - The outer error indicates failure accessing the port.
+    /// - The iterator error indicates failure accessing the specific lane.
+    fn port_tx_eq_get(
+        &self,
+        port_hdl: PortHdl,
+    ) -> AsicResult<impl ExactSizeIterator<Item = AsicResult<TxEqSwHw>>>;
+
     /// For the given connector, return a list of all of its channels which have
     /// not yet been assigned to a logical port.
     fn connector_avail_channels(
         &self,
         connector: Connector,
     ) -> AsicResult<Vec<u8>>;
+
+    /// Returns the tx equalization settings configured for this
+    /// connector in the SDE board map.
+    ///
+    /// These aren't necessarily the _current_ tx eq settings if runtime
+    /// modifications have been made.
+    ///
+    /// Returns an iterator mapping each u8 channel to its settings.
+    fn connector_tx_eq_defaults(
+        &self,
+        connector: Connector,
+    ) -> impl ExactSizeIterator<Item = AsicResult<(u8, TxEq)>>;
 
     /// Get sidecar identifiers of the device being managed.
     fn get_sidecar_identifiers(&self) -> AsicResult<impl SidecarIdentifiers>;

@@ -133,11 +133,6 @@ impl Handle {
         })
     }
 
-    pub fn port_tx_eq_get(&self, port_hdl: PortHdl) -> AsicResult<i32> {
-        let ports = self.ports.lock().unwrap();
-        Ok(get_port(&ports, port_hdl)?.tx_eq)
-    }
-
     pub fn is_model(&self) -> bool {
         true
     }
@@ -292,8 +287,31 @@ impl AsicOps for Handle {
         tx_eq: &TxEq,
     ) -> AsicResult<()> {
         let mut ports = self.ports.lock().unwrap();
-        get_port_mut(&mut ports, port_hdl)?.tx_eq = tx_eq.main.unwrap_or(0);
+        get_port_mut(&mut ports, port_hdl)?.tx_eq = tx_eq.main;
         Ok(())
+    }
+
+    fn port_tx_eq_get(
+        &self,
+        port_hdl: PortHdl,
+    ) -> AsicResult<
+        impl ExactSizeIterator<Item = AsicResult<common::ports::TxEqSwHw>>,
+    > {
+        let tx_eq_main =
+            self::get_port(&self.ports.lock().unwrap(), port_hdl)?.tx_eq;
+        let tx_eq = TxEq { main: tx_eq_main, ..Default::default() };
+
+        let lanes = self.port_get_lane_cnt(port_hdl)?;
+
+        Ok((0..lanes)
+            .map(move |_| Ok(common::ports::TxEqSwHw { hw: tx_eq, sw: tx_eq })))
+    }
+
+    fn connector_tx_eq_defaults(
+        &self,
+        _: Connector,
+    ) -> impl ExactSizeIterator<Item = AsicResult<(u8, TxEq)>> {
+        std::iter::once(Ok((0, TxEq::default())))
     }
 
     fn port_autoneg_set(

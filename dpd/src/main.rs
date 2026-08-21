@@ -275,7 +275,8 @@ impl Switch {
 
         let switch_ports = SwitchPorts::new(
             get_sidecar_revision(&config)?,
-            &config.xcvr_defaults,
+            config.xcvr_defaults.as_deref(),
+            Some(&asic_hdl),
         )?;
 
         let counters = counters::init(&asic_hdl)

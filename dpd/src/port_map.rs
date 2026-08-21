@@ -160,6 +160,11 @@ impl PortMap {
     pub fn port_ids(&self) -> impl Iterator<Item = &PortId> {
         self.id_to_connector.keys()
     }
+
+    /// Returns an iterator over all unique `Connector`s.
+    pub fn connectors(&self) -> impl Iterator<Item = &Connector> {
+        self.connector_to_id.keys()
+    }
 }
 
 fn rev_ab_port_map() -> BTreeMap<PortId, Connector> {

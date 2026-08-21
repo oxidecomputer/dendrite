@@ -221,28 +221,63 @@ pub enum GetSerdes {
     },
 }
 
+/// Diagnostic commands to update the settings of a link's SERDES
 #[derive(Debug, Subcommand)]
-/// Diagnostic commands to updated the settings of a link's SERDES
 pub enum SetSerdes {
-    /// Update the tx equalization settings for this port.  Only the main setting is
-    /// required.  All others will default to 0. Note: to set a negative value,
-    /// you must use the "=" option syntax.  e.g., "--pre1=-1"
-    #[clap(visible_alias = "txeq")]
+    /// Update the tx equalization settings for this port.
+    #[clap(
+        visible_alias = "txeq",
+        after_help = r#"
+Examples:
+    Set every tx eq tap on this link to -1:
+        swadm link serdes set txeq "rear0/0" all -1
+
+    Reset the link tx eq settings to their initial state:
+        swadm link serdes set txeq "rear0/0" default
+
+    Declare full tx eq settings on this link:
+        swadm link serdes set txeq "rear0/0" taps --pre2 0 --pre1 0 --main 25 --post1 -5 --post2 0"#
+    )]
     TxEq {
         /// The link path, specified as `switch_port/link`.
         ///
         /// For example `rear0/0` is the first link on the rear0 switch port.
         link_path: LinkPath,
-        #[clap(long)]
-        pre2: Option<i32>,
-        #[clap(long)]
-        pre1: Option<i32>,
-        #[clap(long)]
-        main: Option<i32>,
-        #[clap(long)]
-        post1: Option<i32>,
-        #[clap(long)]
-        post2: Option<i32>,
+
+        #[command(subcommand)]
+        options: TxEqOptions,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TxEqOptions {
+    /// Commands the switch to reset its tx equalization parameters on this
+    /// link to whatever was assigned at start time.
+    Default,
+
+    /// Configures the same value for every tap on this link.
+    All {
+        /// Command every tap on the link to this signed integer.
+        #[clap(value_name = "TAP", allow_hyphen_values(true))]
+        all: i32,
+    },
+
+    /// Configures each tap on the link. All five must be declared.
+    Taps {
+        #[clap(long, allow_hyphen_values(true))]
+        pre2: i32,
+
+        #[clap(long, allow_hyphen_values(true))]
+        pre1: i32,
+
+        #[clap(long, allow_hyphen_values(true))]
+        main: i32,
+
+        #[clap(long, allow_hyphen_values(true))]
+        post1: i32,
+
+        #[clap(long, allow_hyphen_values(true))]
+        post2: i32,
     },
 }
 
@@ -1151,8 +1186,8 @@ macro_rules! print_txeq_fields {
     ($label:expr, $all:ident, $($field_path:ident).+) => {
         print!("{:6}", $label);
         for lane in & $all {
-            let sw = lane.sw.$($field_path).+.unwrap_or(0);
-            let hw = lane.hw.$($field_path).+.unwrap_or(0);
+            let sw = lane.sw.$($field_path).+;
+            let hw = lane.hw.$($field_path).+;
             print!("  {:>3} ({:>3})", sw.to_string(), hw.to_string());
         }
         println!();
@@ -1183,21 +1218,35 @@ async fn link_serdes_tx_eq_get(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn link_serdes_tx_eq_set(
     client: &Client,
     link: LinkPath,
-    pre2: Option<i32>,
-    pre1: Option<i32>,
-    main: Option<i32>,
-    post1: Option<i32>,
-    post2: Option<i32>,
+    args: TxEqOptions,
 ) -> anyhow::Result<()> {
-    let settings = types::TxEq { pre2, pre1, main, post1, post2 };
-    let port = link.port_id;
-    let link = link.link_id;
+    let settings = match args {
+        TxEqOptions::Default => types::TxEqConfig::Preset,
+        TxEqOptions::All { all: tap } => {
+            types::TxEqConfig::Custom(types::TxEq2 {
+                pre2: tap,
+                pre1: tap,
+                main: tap,
+                post1: tap,
+                post2: tap,
+            })
+        }
+        TxEqOptions::Taps { pre2, pre1, main, post1, post2 } => {
+            types::TxEqConfig::Custom(types::TxEq2 {
+                pre2,
+                pre1,
+                main,
+                post1,
+                post2,
+            })
+        }
+    };
+
     client
-        .link_tx_eq_set(&port, &link, &settings)
+        .link_tx_eq_set(&link.port_id, &link.link_id, &settings)
         .await
         .map(|r| r.into_inner())
         .context("failed to set tx eq settings")?;
@@ -2113,19 +2162,10 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 }
             },
             Serdes::Set { cmd: set } => match set {
-                SetSerdes::TxEq {
-                    link_path,
-                    pre2,
-                    pre1,
-                    main,
-                    post1,
-                    post2,
-                } => {
-                    link_serdes_tx_eq_set(
-                        client, link_path, pre2, pre1, main, post1, post2,
-                    )
-                    .await
-                    .context("failed to set tx eq values")?;
+                SetSerdes::TxEq { link_path, options } => {
+                    link_serdes_tx_eq_set(client, link_path, options)
+                        .await
+                        .context("failed to set tx eq values")?;
                 }
             },
         },
@@ -2146,6 +2186,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
             post1,
             post2,
         } => {
+            // TODO::cory: should this be migrated or not?
             let port_id = &link.port_id;
             let mut body = types::PortSettings { links: HashMap::default() };
 

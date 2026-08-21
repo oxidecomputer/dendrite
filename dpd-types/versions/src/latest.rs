@@ -147,12 +147,15 @@ pub mod port {
 
     pub use crate::v1::port::QsfpPort;
     pub use crate::v1::port::RearPort;
-    pub use crate::v1::port::TxEq;
-    pub use crate::v1::port::TxEqSwHw;
+
+    pub use crate::v12::port::PortPrbsMode;
+
     pub use crate::v13::port::LinkSettings;
     pub use crate::v13::port::PortSettings;
 
-    pub use crate::v12::port::PortPrbsMode;
+    pub use crate::v14::txeq::TxEq;
+    pub use crate::v14::txeq::TxEqConfig;
+    pub use crate::v14::txeq::TxEqSwHw;
 }
 
 pub mod port_map {

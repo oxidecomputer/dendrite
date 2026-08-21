@@ -12,7 +12,7 @@ use crate::network::MacAddr;
 pub use dpd_types::port::{
     InternalPort, Ipv4Entry, Ipv6Entry, PORT_COUNT_INTERNAL, PORT_COUNT_QSFP,
     PORT_COUNT_REAR, PortFec, PortId, PortMedia, PortPrbsMode, PortSpeed,
-    QsfpPort, RearPort, TxEq, TxEqSwHw,
+    QsfpPort, RearPort, TxEq, TxEqConfig, TxEqSwHw,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
@@ -46,5 +46,5 @@ pub struct XcvrSettings {
     /// FEC setting
     pub fec: Option<PortFec>,
     /// Equalization settings
-    pub tx_eq: Option<TxEq>,
+    pub tx_eq: TxEqConfig,
 }

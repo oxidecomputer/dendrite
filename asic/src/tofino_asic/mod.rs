@@ -317,8 +317,35 @@ impl AsicOps for Handle {
         port_hdl: PortHdl,
         settings: &TxEq,
     ) -> AsicResult<()> {
-        let settings = serdes::TxEqSettings::from(*settings);
-        serdes::port_tx_eq_set(self, port_hdl, &settings)
+        serdes::port_tx_eq_set(self, port_hdl, settings)
+    }
+
+    fn port_tx_eq_get(
+        &self,
+        port_hdl: PortHdl,
+    ) -> AsicResult<impl ExactSizeIterator<Item = AsicResult<TxEqSwHw>>> {
+        let lanes = serdes::lane_count(self, port_hdl)?;
+        let lanes = u8::try_from(lanes).map_err(|e| {
+            AsicError::Internal(format!(
+                "Any reasonable lane count should fit in a u8. Found lanes = {lanes:?}: {e:?}"
+            ))
+        })?;
+
+        Ok((0..lanes)
+            .map(move |lane| serdes::lane_tx_eq_get(self, port_hdl, lane)))
+    }
+
+    fn connector_tx_eq_defaults(
+        &self,
+        connector: Connector,
+    ) -> impl ExactSizeIterator<Item = AsicResult<(u8, TxEq)>> {
+        (0..tofino_common::ports::CHANNELS_PER_SWITCH_PORT).map(
+            move |channel| {
+                let tx_eq =
+                    serdes::connector_tx_eq_default(self, connector, channel)?;
+                Ok((channel, tx_eq))
+            },
+        )
     }
 }
 
@@ -471,6 +498,17 @@ impl Handle {
     /// to the SDE that its requests will fail.
     pub fn clear_qsfp_state(&self) {
         qsfp::clear_transceiver_tx();
+    }
+
+    /// Returns the board map ID of the given connector or an error
+    /// if ID couldn't be determined.
+    pub fn connector_id(&self, conn: Connector) -> AsicResult<u32> {
+        match (conn, self.eth_connector_id) {
+            (Connector::QSFP(id), _) | (Connector::CPU, Some(id)) => Ok(id),
+            (Connector::CPU, None) => {
+                Err(AsicError::InvalidArg("no CPU ports found".to_string()))
+            }
+        }
     }
 }
 

@@ -33,7 +33,6 @@ use common::ports::PortId;
 use common::ports::PortMedia;
 use common::ports::PortPrbsMode;
 use common::ports::PortSpeed;
-use common::ports::TxEq;
 use dpd_types::link::LinkCreate;
 use dpd_types::link::LinkFsmCounters;
 use dpd_types::link::LinkHistory;
@@ -42,6 +41,7 @@ use dpd_types::link::LinkState;
 use dpd_types::link::LinkUpCounter;
 use dpd_types::link::LinkView;
 use dpd_types::link::TfportData;
+use dpd_types::port::TxEqConfig;
 use dpd_types::serdes::Ber;
 use slog::debug;
 use slog::error;
@@ -229,7 +229,7 @@ pub struct Link {
     /// responsible for configuring the corresponding illumos port.
     pub ipv6_enabled: bool,
     /// Optional transceiver equalization settings
-    pub tx_eq: Option<TxEq>,
+    pub tx_eq: TxEqConfig,
     /// Latest top-level port FSM state
     pub fsm_state: asic::PortFsmState,
     /// The state of the link.
@@ -406,7 +406,7 @@ pub struct LinkParams {
     pub fec: Option<PortFec>,
     pub autoneg: bool,
     pub kr: bool,
-    pub tx_eq: Option<TxEq>,
+    pub tx_eq: TxEqConfig,
     pub allow_ddm_traffic: bool,
 }
 
@@ -571,7 +571,7 @@ impl Switch {
             speed: params.speed,
             autoneg: params.autoneg,
             kr: params.kr,
-            tx_eq: params.tx_eq,
+            tx_eq: params.tx_eq.into(),
             fec: params.fec,
             allow_ddm_traffic: params.allow_ddm_traffic,
         };
@@ -1275,10 +1275,10 @@ impl Switch {
         &self,
         port_id: PortId,
         link_id: LinkId,
-        tx_eq: TxEq,
+        tx_eq: TxEqConfig,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            link.tx_eq = Some(tx_eq);
+            link.tx_eq = tx_eq;
             link.plumbed.tx_eq_pushed = false;
             self.reconciler.trigger(port_id, link_id);
             Ok(())
@@ -1963,7 +1963,7 @@ async fn reconcile_link(
     }
 
     if link.config.enabled && !link.plumbed.tx_eq_pushed {
-        if let Err(e) = switch.push_tx_eq(&link, &mpn) {
+        if let Err(e) = switch.push_tx_eq(&link, mpn.as_deref()) {
             record_plumb_failure(
                 switch,
                 &mut link,

@@ -186,12 +186,29 @@ impl AsicOps for StubHandle {
         ports::set_autoneg_mode(self, port_hdl, an)
     }
 
+    fn connector_tx_eq_defaults(
+        &self,
+        _: Connector,
+    ) -> impl ExactSizeIterator<Item = AsicResult<(u8, common::ports::TxEq)>>
+    {
+        std::iter::once(Ok((0, common::ports::TxEq::default())))
+    }
+
     fn port_tx_eq_set(
         &self,
         _port_hdl: PortHdl,
         _settings: &common::ports::TxEq,
     ) -> AsicResult<()> {
-        Ok(())
+        Err(AsicError::OperationUnsupported)
+    }
+
+    fn port_tx_eq_get(
+        &self,
+        _: PortHdl,
+    ) -> AsicResult<
+        impl ExactSizeIterator<Item = AsicResult<common::ports::TxEqSwHw>>,
+    > {
+        Result::<std::iter::Empty<_>, _>::Err(AsicError::OperationUnsupported)
     }
 
     fn port_prbs_set(
