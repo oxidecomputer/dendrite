@@ -6,6 +6,7 @@
 
 use std::convert::TryFrom;
 use std::hash::Hash;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use common::table;
 use slog::debug;
@@ -233,10 +234,10 @@ pub fn get_entries(
         }
         TableType::ArpIpv4 => arp_ipv4::table_dump(switch, from_hardware),
         TableType::NatIngressIpv4 => {
-            nat::ipv4_table_dump(switch, from_hardware)
+            nat::table_dump::<Ipv4Addr>(switch, from_hardware)
         }
         TableType::NatIngressIpv6 => {
-            nat::ipv6_table_dump(switch, from_hardware)
+            nat::table_dump::<Ipv6Addr>(switch, from_hardware)
         }
         TableType::AttachedSubnetIpv4 => {
             attached_subnet_v4::table_dump(switch, from_hardware)
@@ -329,10 +330,10 @@ pub fn get_counters(
         TableType::ArpIpv4 => arp_ipv4::counter_fetch(switch, force_sync),
         TableType::PortMacAddress => mac::counter_fetch(switch, force_sync),
         TableType::NatIngressIpv4 => {
-            nat::ipv4_counter_fetch(switch, force_sync)
+            nat::counter_fetch::<Ipv4Addr>(switch, force_sync)
         }
         TableType::NatIngressIpv6 => {
-            nat::ipv6_counter_fetch(switch, force_sync)
+            nat::counter_fetch::<Ipv6Addr>(switch, force_sync)
         }
         TableType::PortAddrIpv4 => {
             port_ip::ipv4_counter_fetch(switch, force_sync)

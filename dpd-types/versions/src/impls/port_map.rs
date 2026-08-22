@@ -4,8 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use common::ports::RearPort;
-
+use crate::latest::port::RearPort;
 use crate::latest::port_map::{BackplaneLink, Error, SidecarConnector};
 
 impl From<SidecarConnector> for u8 {

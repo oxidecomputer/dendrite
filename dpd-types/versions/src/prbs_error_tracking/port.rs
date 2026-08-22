@@ -4,19 +4,25 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-//! Conversions between the v1-versioned `PortPrbsMode` and the unversioned
-//! `PortPrbsMode` used from this version onward.
-//!
-//! From `PRBS_ERROR_TRACKING` onward, the PRBS mode published by the API is
-//! `common::ports::PortPrbsMode`: it is no longer carried as a versioned type
-//! in this crate, because it now matches the set of modes the Tofino ASIC can
-//! actually produce. The module below defines the bidirectional conversion
-//! with the prior `v1::port::PortPrbsMode`, which still appears in the v1
-//! endpoint surface.
+//! The `PortPrbsMode` used from this version onward and conversions with the
+//! v1-versioned `PortPrbsMode`.
 
-use common::ports::PortPrbsMode;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::v1;
+
+/// Legal PRBS modes
+#[derive(
+    Clone, Copy, Eq, PartialEq, Debug, Deserialize, Serialize, JsonSchema,
+)]
+pub enum PortPrbsMode {
+    Mode31,
+    Mode15,
+    Mode13,
+    Mode9,
+    Mission, // i.e. PRBS disabled
+}
 
 impl From<PortPrbsMode> for v1::port::PortPrbsMode {
     fn from(value: PortPrbsMode) -> Self {

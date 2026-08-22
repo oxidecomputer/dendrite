@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::counters::CounterData;
+
 /// Each entry in a P4 table is addressed by matching against a set of key
 /// values.  If an entry is found, an action is taken with an action-specific
 /// set of arguments.
@@ -44,7 +46,7 @@ pub struct TableCounterEntry {
     /// Names and values of each of the key fields.
     pub keys: BTreeMap<String, String>,
     /// Counter values
-    pub data: aal::CounterData,
+    pub data: CounterData,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]

@@ -10,14 +10,11 @@ use std::net::Ipv6Addr;
 use anyhow::Result;
 use anyhow::anyhow;
 use slog::debug;
+use slog::error;
 
 use crate::Global;
 use common::illumos;
-
-/// The suffix for the addrobj name for IPv6 link-local addresses on each tfport.
-///
-/// E.g., all IPv6 addresses are named like `tfportrear0_0/ll`.
-const IPV6_LINK_LOCAL_NAME: &str = "ll";
+use common::illumos::IPV6_LINK_LOCAL_NAME;
 
 // Parse a single line of ipadm output to extract the addrobj name and link-local
 // address.  This function returns an error if the ipadm command fails or the
@@ -77,10 +74,13 @@ pub async fn get_all() -> Result<BTreeMap<String, Ipv6Addr>> {
 }
 
 // Create a link-local address for an interface
+//
+// TODO-cleanup: This function is actually infallible. We should either
+// propagate the error or actually reflect its infallibility in the return type.
 pub async fn create(g: &Global, iface: &str) -> anyhow::Result<()> {
     debug!(g.log, "creating link-local address for {iface}");
     if let Err(e) = illumos::linklocal_add(iface, IPV6_LINK_LOCAL_NAME).await {
-        slog::error!(g.log, "failed to create link-local address: {e:?}");
+        error!(g.log, "failed to create link-local address: {e:?}");
     }
     Ok(())
 }

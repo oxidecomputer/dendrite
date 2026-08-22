@@ -92,6 +92,7 @@ async fn test_basic_autoneg_chaos() -> anyhow::Result<()> {
                 speed: PortSpeed::Speed100G,
                 fec: Some(PortFec::None),
                 tx_eq: None,
+                allow_ddm_traffic: false,
             },
         )
         .await
@@ -128,6 +129,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
                 fec: Some(PortFec::None),
                 speed: PortSpeed::Speed100G,
                 tx_eq: None,
+                allow_ddm_traffic: false,
             },
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
@@ -169,6 +171,7 @@ async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
                 fec: Some(PortFec::None),
                 speed: PortSpeed::Speed100G,
                 tx_eq: None,
+                allow_ddm_traffic: false,
             },
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
@@ -208,6 +211,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
                 fec: Some(PortFec::None),
                 speed: PortSpeed::Speed100G,
                 tx_eq: None,
+                allow_ddm_traffic: false,
             },
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
@@ -237,6 +241,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
                 fec: Some(PortFec::None),
                 speed: PortSpeed::Speed100G,
                 tx_eq: None,
+                allow_ddm_traffic: false,
             },
             addrs: vec![
                 "203.0.113.46".parse().unwrap(),
@@ -277,6 +282,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
                 fec: Some(PortFec::None),
                 speed: PortSpeed::Speed100G,
                 tx_eq: None,
+                allow_ddm_traffic: false,
             },
             addrs: vec![
                 "203.0.113.47".parse().unwrap(),
@@ -522,6 +528,7 @@ fn random_port_settings() -> PortSettings {
         speed: PortSpeed::Speed100G,
         tx_eq: None,
         fec: Some(PortFec::None),
+        allow_ddm_traffic: false,
     };
     let link_id = 0;
 

@@ -741,6 +741,7 @@ async fn test_set_mac_on_new_link_succeeds() -> TestResult {
         fec: link.fec,
         speed: link.speed,
         tx_eq: None,
+        allow_ddm_traffic: false,
     };
     let _new_link = switch
         .client

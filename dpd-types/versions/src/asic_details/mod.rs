@@ -7,5 +7,7 @@
 //! Version `ASIC_DETAILS` of the DPD API.
 //!
 //! Added `lotnum` and `fuse` fields to `SwitchIdentifiers`.
+//! Updated `OximeterConfig` and `OximeterMetadata` to use the new identifiers.
 
+pub mod oxstats;
 pub mod switch_identifiers;

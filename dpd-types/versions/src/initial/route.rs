@@ -6,12 +6,12 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use common::ports::PortId;
 use oxnet::{Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::link::LinkId;
+use super::port::PortId;
 
 /// A route for an IPv4 subnet.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]

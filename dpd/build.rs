@@ -122,7 +122,7 @@ fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "illumos")]
     unsafe {
         std::env::set_var("AR", "/usr/bin/gar");
-        std::env::set_var("LIBCLANG_PATH", "/opt/ooce/llvm/lib");
+        std::env::set_var("LIBCLANG_PATH", "/opt/ooce/llvm-15/lib");
     }
 
     #[cfg(feature = "tofino_asic")]

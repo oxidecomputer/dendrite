@@ -8,9 +8,9 @@
 
 use std::sync::Arc;
 
-use display_error_chain::DisplayErrorChain;
 use dpd_types::switch_identifiers::SwitchIdentifiers;
 use slog::{debug, error, info, o};
+use slog_error_chain::InlineErrorChain;
 
 use crate::DpdResult;
 use crate::Switch;
@@ -64,7 +64,7 @@ pub(crate) async fn fetch_switch_identifiers_loop(
             .sp_local_switch_id()
             .await
             .map_err(|e| {
-                BackoffError::transient(DisplayErrorChain::new(&e).to_string())
+                BackoffError::transient(InlineErrorChain::new(&e).to_string())
             })?
             .into_inner();
         if type_ != gateway_types::component::SpType::Switch {
@@ -76,7 +76,7 @@ pub(crate) async fn fetch_switch_identifiers_loop(
             .sp_get(&type_, slot)
             .await
             .map_err(|e| {
-                BackoffError::transient(DisplayErrorChain::new(&e).to_string())
+                BackoffError::transient(InlineErrorChain::new(&e).to_string())
             })?
             .into_inner();
         Ok(SwitchIdentifiers {

@@ -23,6 +23,7 @@ source.paths = [
   {from = "target/proto/opt/oxide/tofino_sde/lib/libtarget_utils.so" , to = "/opt/oxide/tofino_sde/lib/libtarget_utils.so"},
   {from = "target/proto/opt/oxide/tofino_sde/lib/libclish.so" , to = "/opt/oxide/tofino_sde/lib/libclish.so"},
   {from = "target/proto/opt/oxide/dendrite/sidecar/share/platforms/board-maps/oxide/" , to = "/opt/oxide/dendrite/sidecar/share/platforms/board-maps/oxide/"},
-  {from = "target/proto/opt/oxide/dendrite/sidecar/share/cli/xml" , to = "/opt/oxide/dendrite/sidecar/share/cli/xml"}
+  {from = "target/proto/opt/oxide/dendrite/sidecar/share/cli/xml" , to = "/opt/oxide/dendrite/sidecar/share/cli/xml"},
+  {from = "dpd/misc/ndpd.conf" , to = "/etc/inet/ndpd.conf"}
 ]
 output.type = "zone"

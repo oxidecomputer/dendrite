@@ -2,7 +2,7 @@
 #:
 #: name = "image"
 #: variety = "basic"
-#: target = "helios-2.0"
+#: target = "helios-3.0"
 #: rust_toolchain = true
 #: output_rules = [
 #:   "/out/*",
@@ -100,8 +100,8 @@ pfexec mkdir -p /out
 pfexec chown "$UID" /out
 
 banner "P4 Codegen"
-# Add gcc-12 so the p4 compiler can find cpp
-PATH=/opt/gcc-12/bin:$PATH cargo xtask codegen --stages $TOFINO_STAGES
+# Add gcc-14 so the p4 compiler can find cpp
+PATH=/opt/gcc-14/bin:$PATH cargo xtask codegen --stages $TOFINO_STAGES
 
 # Preserve all the diagnostics spit out by the compiler
 mkdir -p /out/p4c-diags

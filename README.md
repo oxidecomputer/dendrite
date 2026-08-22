@@ -343,8 +343,14 @@ proxy_arp:
 * SDE needs to be installed if you want to test with the `tofino_asic` feature.
 * Openapi tests / regeneration can only be executed with the `tofino_asic` feature.
 
-3. run `SDE=/opt/oxide/tofino_sde cargo test --features=<feature>` to execute
-   the tests.
+To use SDE, set the following environment variables:
+
+````
+export SDE=/opt/oxide/tofino_sde
+export LD_LIBRARY_PATH="$SDE/lib:$LD_LIBRARY_PATH"
+````
+
+3. run `cargo test --features=<feature>` to execute the tests.
 
 ### OpenAPI Generation
 

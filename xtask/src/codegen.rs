@@ -175,7 +175,10 @@ pub fn build(
     args.push(app_path);
     println!("op: {args:?}");
 
-    let out = Command::new(&p4c_path).args(&args).output()?;
+    let out = Command::new(&p4c_path)
+        .args(&args)
+        .output()
+        .with_context(|| format!("opening '{p4c_path}'"))?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if !out.status.success() {

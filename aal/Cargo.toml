@@ -8,6 +8,7 @@ multicast = []
 
 [dependencies]
 common.workspace = true
+dpd-types.workspace = true
 oximeter.workspace = true
 oxnet.workspace = true
 serde.workspace = true

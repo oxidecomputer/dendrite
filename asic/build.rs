@@ -124,7 +124,7 @@ fn main() -> Result<()> {
     #[cfg(target_os = "illumos")]
     unsafe {
         env::set_var("AR", "/usr/bin/gar");
-        env::set_var("LIBCLANG_PATH", "/opt/ooce/llvm/lib");
+        env::set_var("LIBCLANG_PATH", "/opt/ooce/llvm-15/lib");
     }
 
     if env::var("CARGO_FEATURE_TOFINO_ASIC").is_ok() {

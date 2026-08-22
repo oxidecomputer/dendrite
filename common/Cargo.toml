@@ -10,6 +10,7 @@ multicast = []
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
+dpd-types.workspace = true
 oxnet.workspace = true
 rand.workspace = true
 serde.workspace = true
@@ -21,5 +22,4 @@ slog-term.workspace = true
 slog-async.workspace = true
 smf.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
-
+tokio = { workspace = true, features = [ "full" ] }

@@ -337,6 +337,12 @@ pub struct LinkConfig {
     /// This link is expected to be connected to the outside world, and
     /// should only accept inbound traffic that matches a NAT mapping.
     pub uplink: bool,
+
+    /// This link should allow DDM traffic for multirack setups.
+    ///
+    /// This setting only applies to qsfp front ports. Rear ports always have
+    /// DDM enabled.
+    pub allow_ddm_traffic: bool,
 }
 
 // This struct represents the state of the link as it actually exists in the
@@ -401,6 +407,7 @@ pub struct LinkParams {
     pub autoneg: bool,
     pub kr: bool,
     pub tx_eq: Option<TxEq>,
+    pub allow_ddm_traffic: bool,
 }
 
 impl Link {
@@ -417,10 +424,18 @@ impl Link {
         // By default, we enable ipv6 on backplane and internal links, but
         // disable it for external-facing qsfp links.  This allows the site
         // admin to determine the kinds of traffic we send to their network.
-        let ipv6_enabled = !matches!(port_id, PortId::Qsfp(_));
+        //
+        // For multirack ddm traffic on the front ports we must also enable
+        // ipv6.
+        let ipv6_enabled =
+            !matches!(port_id, PortId::Qsfp(_)) || params.allow_ddm_traffic;
         // By default we expect external-facing links to be used as uplinks and
         // internal-facing links for backplane traffic.
-        let uplink = matches!(port_id, PortId::Qsfp(_));
+        //
+        // We need to disable uplinks for multirack ddm traffic on the front
+        // ports.
+        let uplink =
+            matches!(port_id, PortId::Qsfp(_)) && !params.allow_ddm_traffic;
 
         let config = LinkConfig {
             delete_me: false,
@@ -432,6 +447,7 @@ impl Link {
             speed: params.speed,
             uplink,
             mac,
+            allow_ddm_traffic: params.allow_ddm_traffic,
         };
         let plumbed = LinkPlumbed {
             link_created: false,
@@ -557,6 +573,7 @@ impl Switch {
             kr: params.kr,
             tx_eq: params.tx_eq,
             fec: params.fec,
+            allow_ddm_traffic: params.allow_ddm_traffic,
         };
 
         let mut links = self.links.lock().unwrap();

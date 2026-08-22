@@ -31,12 +31,12 @@ dpd-types.workspace = true
 dpd-types-versions.workspace = true
 
 anyhow.workspace = true
+bytes.workspace = true
 cfg-if.workspace = true
 chrono.workspace = true
 clap.workspace = true
-console-subscriber = { version = "0.4.1", optional = true }
+console-subscriber = { version = "0.5.0", optional = true }
 csv.workspace = true
-display-error-chain.workspace = true
 futures.workspace = true
 libc.workspace = true
 openssl.workspace = true
@@ -69,8 +69,10 @@ omicron-common.workspace = true
 oxide-tokio-rt.workspace = true
 oximeter.workspace = true
 oximeter-producer.workspace = true
+slog-error-chain.workspace = true
 smf.workspace = true
 transceiver-controller = { workspace = true, features = [ "api-traits" ] }
+scuffle = { workspace = true, features = ["smf-by-instance"] }
 
 [dev-dependencies]
 expectorate.workspace = true

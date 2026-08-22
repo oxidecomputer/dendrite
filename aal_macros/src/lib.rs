@@ -459,14 +459,16 @@ pub fn derive_match_xlate(
 
     #[rustfmt::skip]
     let post = quote! {
-        impl MatchParse for #name {
+        impl aal::TableEntryKey for #name {
             fn key_values(&self) -> std::collections::BTreeMap<String, String> {
 		let mut fields = std::collections::BTreeMap::new();
 		#match_key_values
 
 		fields
 	    }
+        }
 
+        impl MatchParse for #name {
             fn key_to_ir(&self) -> aal::AsicResult<aal::MatchData> {
 		let mut fields = Vec::new();
 		#to_ir_all
@@ -515,7 +517,7 @@ pub fn derive_action_xlate(
 
     #[rustfmt::skip]
     let post = quote! {
-	impl ActionParse for #enum_name {
+	impl aal::TableEntryAction for #enum_name {
 	    fn action_name(&self) -> String {
 		match self {
 		    #action_name
@@ -530,7 +532,9 @@ pub fn derive_action_xlate(
 
 		args
 	    }
+        }
 
+        impl ActionParse for #enum_name {
             fn action_to_ir(&self) -> aal::AsicResult<aal::ActionData> {
  	    	let action;
 		let mut args = Vec::new();

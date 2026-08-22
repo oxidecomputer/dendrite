@@ -9,13 +9,6 @@
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use common::{
-    attached_subnet::AttachedSubnetEntry,
-    nat::{Ipv4Nat, Ipv6Nat},
-    network::{InstanceTarget, MacAddr, NatTarget},
-    ports::{Ipv4Entry, Ipv6Entry, PortId, PortPrbsMode, TxEq, TxEqSwHw},
-};
-use dpd_types::oxstats;
 use dpd_types_versions::{latest, v1, v4, v7};
 use dropshot::{
     EmptyScanParams, HttpError, HttpResponseCreated, HttpResponseDeleted,
@@ -23,9 +16,6 @@ use dropshot::{
     Query, RequestContext, ResultsPage, TypedBody,
 };
 use dropshot_api_manager_types::api_versions;
-use transceiver_controller::{
-    Datapath, Monitors, PowerState, message::LedState,
-};
 
 api_versions!([
     // WHEN CHANGING THE API (part 1 of 2):
@@ -39,6 +29,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (13, ALLOW_DDM_TRAFFIC),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
     (10, ASIC_DETAILS),
@@ -500,7 +491,7 @@ pub trait DpdApi {
     }]
     async fn port_list(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<PortId>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<latest::port::PortId>>, HttpError>;
 
     /// Get the set of available channels for all ports.
     ///
@@ -573,7 +564,7 @@ pub trait DpdApi {
     async fn led_set(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
-        body: TypedBody<LedState>,
+        body: TypedBody<latest::switch_port::LedState>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Return the full backplane map.
@@ -588,7 +579,9 @@ pub trait DpdApi {
     async fn backplane_map(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<
-        HttpResponseOk<BTreeMap<PortId, latest::port_map::BackplaneLink>>,
+        HttpResponseOk<
+            BTreeMap<latest::port::PortId, latest::port_map::BackplaneLink>,
+        >,
         HttpError,
     >;
 
@@ -610,7 +603,9 @@ pub trait DpdApi {
     async fn leds_list(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<
-        HttpResponseOk<BTreeMap<PortId, latest::switch_port::Led>>,
+        HttpResponseOk<
+            BTreeMap<latest::port::PortId, latest::switch_port::Led>,
+        >,
         HttpError,
     >;
 
@@ -635,7 +630,9 @@ pub trait DpdApi {
     async fn transceivers_list(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<
-        HttpResponseOk<BTreeMap<PortId, latest::transceivers::Transceiver>>,
+        HttpResponseOk<
+            BTreeMap<latest::port::PortId, latest::transceivers::Transceiver>,
+        >,
         HttpError,
     >;
 
@@ -677,7 +674,7 @@ pub trait DpdApi {
     async fn transceiver_power_set(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
-        state: TypedBody<PowerState>,
+        state: TypedBody<latest::transceivers::PowerState>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Return the power state of a transceiver.
@@ -688,7 +685,7 @@ pub trait DpdApi {
     async fn transceiver_power_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
-    ) -> Result<HttpResponseOk<PowerState>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::transceivers::PowerState>, HttpError>;
 
     /// Fetch the monitored environmental information for the provided transceiver.
     #[endpoint {
@@ -698,7 +695,7 @@ pub trait DpdApi {
     async fn transceiver_monitors_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
-    ) -> Result<HttpResponseOk<Monitors>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::transceivers::Monitors>, HttpError>;
 
     /// Fetch the state of the datapath for the provided transceiver.
     #[endpoint {
@@ -708,7 +705,7 @@ pub trait DpdApi {
     async fn transceiver_datapath_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
-    ) -> Result<HttpResponseOk<Datapath>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::transceivers::Datapath>, HttpError>;
 
     /// Create a link on a switch port.
     ///
@@ -717,6 +714,7 @@ pub trait DpdApi {
     /// physical port to create an interface of the desired speed, if possible.
     #[endpoint {
         method = POST,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..,
         path = "/ports/{port_id}/links"
     }]
     async fn link_create(
@@ -724,6 +722,25 @@ pub trait DpdApi {
         path: Path<latest::port::PortIdPathParams>,
         params: TypedBody<latest::link::LinkCreate>,
     ) -> Result<HttpResponseCreated<latest::link::LinkId>, HttpError>;
+
+    /// Create a link on a switch port.
+    ///
+    /// Create an interface that can be used for sending Ethernet frames on the
+    /// provided switch port. This will use the first available lanes in the
+    /// physical port to create an interface of the desired speed, if possible.
+    #[endpoint {
+        method = POST,
+        versions = ..VERSION_ALLOW_DDM_TRAFFIC,
+        path = "/ports/{port_id}/links",
+        operation_id = "link_create",
+    }]
+    async fn link_create_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::port::PortIdPathParams>,
+        params: TypedBody<v1::link::LinkCreate>,
+    ) -> Result<HttpResponseCreated<v1::link::LinkId>, HttpError> {
+        Self::link_create(rqctx, path, params.map(Into::into)).await
+    }
 
     /// Get an existing link by ID.
     #[endpoint {
@@ -923,7 +940,7 @@ pub trait DpdApi {
     async fn link_prbs_set(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-        body: TypedBody<PortPrbsMode>,
+        body: TypedBody<latest::port::PortPrbsMode>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Set a link's PRBS speed and mode.
@@ -938,9 +955,10 @@ pub trait DpdApi {
         path: Path<v1::link::LinkPath>,
         body: TypedBody<v1::port::PortPrbsMode>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let mode = PortPrbsMode::try_from(body.into_inner()).map_err(|e| {
-            HttpError::for_bad_request(None, format!("bad PRBS mode: {e}"))
-        })?;
+        let mode = latest::port::PortPrbsMode::try_from(body.into_inner())
+            .map_err(|e| {
+                HttpError::for_bad_request(None, format!("bad PRBS mode: {e}"))
+            })?;
 
         Self::link_prbs_set(rqctx, path, TypedBody::from(mode)).await
     }
@@ -958,7 +976,7 @@ pub trait DpdApi {
     async fn link_prbs_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-    ) -> Result<HttpResponseOk<PortPrbsMode>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::port::PortPrbsMode>, HttpError>;
 
     /// Return the link's PRBS speed and mode.
     ///
@@ -1028,7 +1046,7 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
         query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv4Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Entry>>, HttpError>;
+    ) -> Result<HttpResponseOk<ResultsPage<latest::port::Ipv4Entry>>, HttpError>;
 
     /// Add an IPv4 address to a link.
     #[endpoint {
@@ -1038,7 +1056,7 @@ pub trait DpdApi {
     async fn link_ipv4_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-        entry: TypedBody<Ipv4Entry>,
+        entry: TypedBody<latest::port::Ipv4Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Clear all IPv4 addresses from a link.
@@ -1070,7 +1088,7 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
         query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv6Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Entry>>, HttpError>;
+    ) -> Result<HttpResponseOk<ResultsPage<latest::port::Ipv6Entry>>, HttpError>;
 
     /// Add an IPv6 address to a link.
     #[endpoint {
@@ -1080,7 +1098,7 @@ pub trait DpdApi {
     async fn link_ipv6_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-        entry: TypedBody<Ipv6Entry>,
+        entry: TypedBody<latest::port::Ipv6Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Clear all IPv6 addresses from a link.
@@ -1111,7 +1129,7 @@ pub trait DpdApi {
     async fn link_mac_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-    ) -> Result<HttpResponseOk<MacAddr>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::network::MacAddr>, HttpError>;
 
     /// Set a link's MAC address.
     // TODO-correctness: A link's MAC address should be determined by the FRUID
@@ -1125,7 +1143,7 @@ pub trait DpdApi {
     async fn link_mac_set(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-        body: TypedBody<MacAddr>,
+        body: TypedBody<latest::network::MacAddr>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Return whether the link is configured to drop non-nat traffic
@@ -1216,7 +1234,7 @@ pub trait DpdApi {
     }]
     async fn loopback_ipv4_list(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<Ipv4Entry>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<latest::port::Ipv4Entry>>, HttpError>;
 
     /**
      * Add a loopback IPv4.
@@ -1227,7 +1245,7 @@ pub trait DpdApi {
     }]
     async fn loopback_ipv4_create(
         rqctx: RequestContext<Self::Context>,
-        val: TypedBody<Ipv4Entry>,
+        val: TypedBody<latest::port::Ipv4Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -1251,7 +1269,7 @@ pub trait DpdApi {
     }]
     async fn loopback_ipv6_list(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<Ipv6Entry>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<latest::port::Ipv6Entry>>, HttpError>;
 
     /**
      * Add a loopback IPv6.
@@ -1262,7 +1280,7 @@ pub trait DpdApi {
     }]
     async fn loopback_ipv6_create(
         rqctx: RequestContext<Self::Context>,
-        val: TypedBody<Ipv6Entry>,
+        val: TypedBody<latest::port::Ipv6Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -1300,7 +1318,7 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::nat::NatIpv6Path>,
         query: Query<PaginationParams<EmptyScanParams, latest::nat::NatToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Nat>>, HttpError>;
+    ) -> Result<HttpResponseOk<ResultsPage<latest::nat::Ipv6Nat>>, HttpError>;
 
     /**
      * Get the external->internal NAT mapping for the given address and starting L3
@@ -1313,7 +1331,7 @@ pub trait DpdApi {
     async fn nat_ipv6_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::nat::NatIpv6PortPath>,
-    ) -> Result<HttpResponseOk<NatTarget>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::network::NatTarget>, HttpError>;
 
     /**
      * Add an external->internal NAT mapping for the given address and L3 port
@@ -1335,7 +1353,7 @@ pub trait DpdApi {
     async fn nat_ipv6_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::nat::NatIpv6RangePath>,
-        target: TypedBody<NatTarget>,
+        target: TypedBody<latest::network::NatTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -1384,7 +1402,7 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::nat::NatIpv4Path>,
         query: Query<PaginationParams<EmptyScanParams, latest::nat::NatToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Nat>>, HttpError>;
+    ) -> Result<HttpResponseOk<ResultsPage<latest::nat::Ipv4Nat>>, HttpError>;
 
     /**
      * Get the external->internal NAT mapping for the given address/port
@@ -1396,7 +1414,7 @@ pub trait DpdApi {
     async fn nat_ipv4_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::nat::NatIpv4PortPath>,
-    ) -> Result<HttpResponseOk<NatTarget>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::network::NatTarget>, HttpError>;
 
     /**
      * Add an external->internal NAT mapping for the given address/port range
@@ -1418,7 +1436,7 @@ pub trait DpdApi {
     async fn nat_ipv4_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::nat::NatIpv4RangePath>,
-        target: TypedBody<NatTarget>,
+        target: TypedBody<latest::network::NatTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -1460,7 +1478,12 @@ pub trait DpdApi {
                 latest::route::AttachedSubnetToken,
             >,
         >,
-    ) -> Result<HttpResponseOk<ResultsPage<AttachedSubnetEntry>>, HttpError>;
+    ) -> Result<
+        HttpResponseOk<
+            ResultsPage<latest::attached_subnet::AttachedSubnetEntry>,
+        >,
+        HttpError,
+    >;
 
     /**
      * Get the mapping for the given external subnet.
@@ -1473,7 +1496,7 @@ pub trait DpdApi {
     async fn attached_subnet_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::route::SubnetPath>,
-    ) -> Result<HttpResponseOk<InstanceTarget>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::network::InstanceTarget>, HttpError>;
 
     /**
      * Add a mapping to an internal target for an external subnet address.
@@ -1490,7 +1513,7 @@ pub trait DpdApi {
     async fn attached_subnet_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::route::SubnetPath>,
-        target: TypedBody<InstanceTarget>,
+        target: TypedBody<latest::network::InstanceTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
@@ -1618,7 +1641,10 @@ pub trait DpdApi {
     }]
     async fn oximeter_collect_meta_endpoint(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Option<oxstats::OximeterMetadata>>, HttpError>;
+    ) -> Result<
+        HttpResponseOk<Option<latest::oxstats::OximeterMetadata>>,
+        HttpError,
+    >;
 
     /**
      * Apply port settings atomically.
@@ -1631,6 +1657,7 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = POST,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..,
         path = "/port/{port_id}/settings"
     }]
     async fn port_settings_apply(
@@ -1641,13 +1668,73 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
 
     /**
+     * Apply port settings atomically.
+     *
+     * These settings will be applied holistically, and to the extent possible
+     * atomically to a given port. In the event of a failure a rollback is
+     * attempted. If the rollback fails there will be inconsistent state. This
+     * failure mode returns the error code "rollback failure". For more details see
+     * the docs on the [`PortSettings`] type.
+     */
+    #[endpoint {
+        method = POST,
+        versions = ..VERSION_ALLOW_DDM_TRAFFIC,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_apply",
+    }]
+    async fn port_settings_apply_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::port::PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+        body: TypedBody<v1::port::PortSettings>,
+    ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
+        Self::port_settings_apply(rqctx, path, query, body.map(Into::into))
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /**
      * Clear port settings atomically.
      */
     #[endpoint {
         method = DELETE,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..,
         path = "/port/{port_id}/settings"
     }]
     async fn port_settings_clear(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::port::PortIdPathParams>,
+        query: Query<latest::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /**
+     * Clear port settings atomically.
+     */
+    #[endpoint {
+        method = DELETE,
+        versions = ..VERSION_ALLOW_DDM_TRAFFIC,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_clear",
+    }]
+    async fn port_settings_clear_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::port::PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
+        Self::port_settings_clear(rqctx, path, query)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /**
+     * Get port settings atomically.
+     */
+    #[endpoint {
+        method = GET,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..,
+        path = "/port/{port_id}/settings"
+    }]
+    async fn port_settings_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
         query: Query<latest::port::PortSettingsTag>,
@@ -1658,13 +1745,19 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
-        path = "/port/{port_id}/settings"
+        versions = ..VERSION_ALLOW_DDM_TRAFFIC,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_get",
     }]
-    async fn port_settings_get(
+    async fn port_settings_get_v1(
         rqctx: RequestContext<Self::Context>,
-        path: Path<latest::port::PortIdPathParams>,
-        query: Query<latest::port::PortSettingsTag>,
-    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+        path: Path<v1::port::PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
+        Self::port_settings_get(rqctx, path, query)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
 
     /// Get switch identifiers.
     ///
@@ -2566,7 +2659,7 @@ pub trait DpdApi {
     async fn link_tx_eq_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-    ) -> Result<HttpResponseOk<Vec<TxEqSwHw>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<latest::port::TxEqSwHw>>, HttpError>;
 
     /**
      * Update the per-lane tx eq settings for all lanes on this link
@@ -2578,7 +2671,7 @@ pub trait DpdApi {
     async fn link_tx_eq_set(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-        args: TypedBody<TxEq>,
+        args: TypedBody<latest::port::TxEq>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**

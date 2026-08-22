@@ -59,6 +59,7 @@ mod arp;
 mod attached_subnet;
 mod config;
 mod counters;
+mod dhcpv6;
 mod fault;
 mod freemap;
 mod link;
@@ -192,7 +193,7 @@ pub struct Switch {
     pub links: Mutex<link::LinkMap>,
     pub routes: TokioMutex<route::RouteData>,
     pub arp: Mutex<arp::ArpData>,
-    pub nat: Mutex<nat::NatData>,
+    pub nat: nat::Nat,
     pub attached_subnet: Mutex<attached_subnet::AttachedSubnetData>,
     pub loopback: Mutex<loopback::LoopbackData>,
     pub identifiers: Mutex<Option<SwitchIdentifiers>>,
@@ -308,7 +309,7 @@ impl Switch {
             counters,
             routes: TokioMutex::new(route_data),
             arp: Mutex::new(arp::init()),
-            nat: Mutex::new(nat::init()),
+            nat: nat::Nat::new(),
             attached_subnet: Mutex::new(attached_subnet::init()),
             loopback: Mutex::new(loopback::init()),
             switch_ports,
@@ -412,9 +413,11 @@ impl Switch {
             entries: t
                 .get_entries::<M, A>(&self.asic_hdl, from_hardware)
                 .map_err(|e| {
-                    error!(self.log, "failed to get table contents";
-	            "table" => t.type_.to_string(),
-		    "error" => %e);
+                    error!(
+                        self.log, "failed to get table contents";
+                        "table" => t.type_.to_string(),
+                        "error" => %e
+                    );
                     e
                 })
                 .map(|vec| {
@@ -437,9 +440,11 @@ impl Switch {
 
         t.get_counters::<M>(&self.asic_hdl, force_sync)
             .map_err(|e| {
-                error!(self.log, "failed to get counter data";
-	            "table" => t.type_.to_string(),
-		    "error" => %e);
+                error!(
+                   self.log, "failed to get counter data";
+                   "table" => t.type_.to_string(),
+                   "error" => %e
+                );
                 e
             })
             .map(|vec| {
@@ -702,9 +707,9 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
     // If there has been no base mac address configured via SMF or the command
     // line, then we need to fetch it from the SP (for real sidecars) or just
     // make one up (everywhere else).
-    let skip_cpu_link = match config_base_mac {
-        Some(base_mac) => {
-            let base_mac = BaseMac::Permanent(base_mac);
+    let (skip_cpu_link, base_mac) = match config_base_mac {
+        Some(config_mac) => {
+            let base_mac = BaseMac::Permanent(config_mac);
             debug!(
                 switch.log,
                 "permanent base MAC address already set, it will be kept";
@@ -712,10 +717,19 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
             );
             let mut mgr = switch.mac_mgmt.lock().unwrap();
             assert_eq!(mgr.set_base_mac(base_mac)?, None);
-            false
+            (false, config_mac)
         }
-        None => switch.set_base_mac_address(&autoconfig_links).await?,
+        None => {
+            let base_mac =
+                switch.set_base_mac_address(&autoconfig_links).await?;
+            (true, base_mac)
+        }
     };
+
+    // Start the task managing DHCPv6 addresses on the technician ports.
+    let dhcpv6_log = switch.log.new(slog::o!("unit" => "dhcpv6-task"));
+    let dhcpv6_task =
+        tokio::task::spawn(dhcpv6::ensure_dhcpv6_agent(dhcpv6_log, base_mac));
 
     if let Some(auto_conf) = &autoconfig_links {
         // If we've created the link on the CPU port above, to fetch the MAC
@@ -751,6 +765,7 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
                         kr: true,
                         lane: Some(dpd_types::link::LinkId(0)),
                         tx_eq: None,
+                        allow_ddm_traffic: false,
                     };
                     Some((*port_id, create))
                 } else {
@@ -781,6 +796,7 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
     api_server_manager
         .await
         .expect("while shutting down the api_server_manager");
+    dhcpv6_task.await?;
 
     info!(switch.log, "shutting down switch driver");
     switch.asic_hdl.fini();
@@ -789,7 +805,6 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
 
     Ok(())
 }
-
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -803,7 +818,11 @@ async fn run_dpd(opt: Opt) -> anyhow::Result<()> {
 
     let log =
         common::logging::init("dpd", &config.log_file, config.log_format)?;
-    info!(log, "dpd config: {config:#?}");
+    info!(
+        log, "starting dpd";
+        "config" => ?config,
+        "build_info" => ?api_server::build_info(),
+    );
 
     let p4_name =
         std::env::var("P4_NAME").unwrap_or_else(|_| String::from("sidecar"));
