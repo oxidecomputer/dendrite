@@ -212,6 +212,7 @@ impl PortData {
 /// The available_channels set is used to track the channels that have not
 /// yet been allocated.  Allocating a set of channels means that the Tofino has
 /// been configured to use those channels as a single multi-channel port.
+#[derive(Debug)]
 pub struct PhysPort {
     /// The Tofino-facing connector ID for this switch port.
     pub connector: Connector,
