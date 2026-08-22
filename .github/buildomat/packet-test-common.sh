@@ -3,25 +3,27 @@ export RUST_BACKTRACE=1
 source .github/buildomat/common.sh
 source .github/buildomat/linux.sh
 
-wd=`pwd`
+wd=$(pwd)
 export WS=$wd
 MODEL_STARTUP_TIMEOUT=${MODEL_STARTUP_TIMEOUT:=5}
 STARTUP_TIMEOUT=${STARTUP_TIMEOUT:=120}
+DENDRITE_TEST_HOST=${DENDRITE_TEST_HOST:="[::1]"}
+DENDRITE_TEST_VERBOSITY=${DENDRITE_TEST_VERBOSITY:=3}
 
-if [ x$MULTICAST == x ]; then
-        BUILD_FEATURES=tofino_asic
-	CODEGEN_FEATURES=
-        SWADM_FEATURES=
-    else
-        BUILD_FEATURES=tofino_asic,multicast
-	CODEGEN_FEATURES=--multicast
-        SWADM_FEATURES=--features=multicast
+if [ "$MULTICAST" == "" ]; then
+    BUILD_FEATURES=tofino_asic
+    CODEGEN_FEATURES=()
+    SWADM_FEATURES=()
+else
+    BUILD_FEATURES=tofino_asic,multicast
+    CODEGEN_FEATURES=(--multicast)
+    SWADM_FEATURES=(--features=multicast)
 fi
-    
+
 function cleanup {
     set +o errexit
     set +o pipefail
-    cd $wd
+    cd "$wd"
     sudo -E pkill -9 dpd
     sudo -E pkill -9 tofino-model
     sudo -E ./tools/veth_teardown.sh
@@ -62,56 +64,38 @@ export SDE=/opt/oxide/tofino_sde
 banner "Build"
 if [[ $NOBUILD -ne 1 ]]; then
     cargo build --features=$BUILD_FEATURES --bin dpd --bin swadm
-    cargo xtask codegen --stages $TOFINO_STAGES $CODEGEN_FEATURES
+    cargo xtask codegen --stages "$TOFINO_STAGES" "${CODEGEN_FEATURES[@]}"
 fi
 
 banner "Test"
 sudo -E ./tools/veth_setup.sh
-id=`id -un`
-gr=`id -gn`
+id=$(id -un)
+gr=$(id -gn)
 sudo -E mkdir -p /work
-sudo -E chown $id:$gr /work
+sudo -E chown "$id":"$gr" /work
 sudo -E ./tools/run_tofino_model.sh &> /work/simulator.log &
-sleep $MODEL_STARTUP_TIMEOUT
+sleep "$MODEL_STARTUP_TIMEOUT"
 sudo -E ./tools/run_dpd.sh -m 127.0.0.1 &> /work/dpd.log &
 echo "waiting for dpd to come online"
 set +o errexit
 
 SLEEP_TIME=5
-iters=$(( $STARTUP_TIMEOUT / $SLEEP_TIME ))
-while [ 1 ] ; do
-	./target/debug/swadm --host '[::1]' build-info 2> /dev/null
-	if [ $? == 0 ]; then
-		break
-	fi
-	iters=$(($iters - 1))
-	if [ $iters = 0 ]; then
-		echo "dpd failed to come online in $STARTUP_TIMEOUT seconds"
-		exit 1
-	fi
-	sleep $SLEEP_TIME
+iters=$(( STARTUP_TIMEOUT / SLEEP_TIME ))
+while true ; do
+    if ./target/debug/swadm --host '[::1]' build-info 2> /dev/null; then
+        break
+    fi
+    iters=$((iters - 1))
+    if [ $iters = 0 ]; then
+        echo "dpd failed to come online in $STARTUP_TIMEOUT seconds"
+        exit 1
+    fi
+    sleep $SLEEP_TIME
 done
-set -o errexit
 
 banner "Links"
 
 ./target/debug/swadm --host '[::1]' link ls || echo "failed to list links"
-
-banner "swadm Checks"
-
-pushd swadm
-
-DENDRITE_TEST_HOST='[::1]' \
-    DENDRITE_TEST_VERBOSITY=3 \
-    cargo test \
-    --no-fail-fast \
-    $SWADM_FEATURES \
-    --test \
-    counters \
-    -- \
-    --ignored
-
-popd
 
 banner "Packet Tests"
 
@@ -121,14 +105,32 @@ stty sane
 set -o errexit
 set -o pipefail
 
+export DENDRITE_TEST_HOST DENDRITE_TEST_VERBOSITY
+
 pushd dpd-client
 
-DENDRITE_TEST_HOST='[::1]' \
-    DENDRITE_TEST_VERBOSITY=3 \
-    cargo test \
+cargo test \
     --features $BUILD_FEATURES \
     --no-fail-fast \
     $TESTNAME \
     -- \
     --ignored \
     --skip succeeds_when_table_fragmented
+
+popd
+
+banner "swadm checks"
+
+pushd swadm
+
+cargo test \
+    --no-fail-fast \
+    "${SWADM_FEATURES[@]}" \
+    -- \
+    --ignored
+
+cargo test \
+    --no-fail-fast \
+    "${SWADM_FEATURES[@]}"
+
+popd
