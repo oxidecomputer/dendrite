@@ -6,6 +6,7 @@
 
 //! Integration test for swadm P4 counter functionality.
 
+use serial_test::serial;
 use std::process::Command;
 
 // Path to `swadm` executable.
@@ -17,6 +18,7 @@ fn swadm() -> Command {
 
 #[test]
 #[ignore]
+#[serial]
 fn test_p4_counter_list() {
     let output = swadm()
         .arg("--host")
