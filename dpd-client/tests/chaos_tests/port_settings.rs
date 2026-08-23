@@ -9,18 +9,27 @@ use super::harness::{
     new_dpd_client, run_dpd,
 };
 use super::util::{link_list_ipv4, link_list_ipv6};
+use crate::chaos_tests::harness;
+use crate::chaos_tests::util::HttpResponseCheck;
+use crate::chaos_tests::util::IpRng;
+use crate::chaos_tests::util::retry;
+use crate::chaos_tests::util::retry::ReturnCode;
+
+use anyhow::Context;
+use anyhow::bail;
 use asic::chaos::{AsicConfig, Chaos, TableChaos};
 use asic::table_chaos;
 use common::table::TableType;
 use dpd_client::types::{
-    LinkCreate, LinkId, LinkSettings, PortFec, PortId, PortSettings, PortSpeed,
+    Ipv4Entry, Ipv6Entry, LinkCreate, LinkId, LinkSettings, LinkState, PortFec,
+    PortId, PortSettings, PortSpeed,
 };
 use dpd_client::{Client, ROLLBACK_FAILURE_ERROR_CODE};
 use http::status::StatusCode;
 use pretty_assertions::{Comparison, assert_eq};
 use rand::Rng;
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use tokio::time::Duration;
@@ -32,42 +41,23 @@ const TESTING_RADIX: usize = 33;
 const RETRY_INTERVAL: Duration = Duration::from_millis(200);
 const RETRY_MAX: Duration = Duration::from_secs(5);
 
-#[cfg(test)]
-mod retry {
-    use std::future::Future;
-    use std::time::Duration;
-    use std::time::Instant;
+// It might be a DPD wedge. It might be unbelievable
+// RNG misfortune. Regardless, it's time to move on.
+const LONG_ENOUGH: Duration = Duration::from_secs(90);
 
-    pub enum ReturnCode {
-        Retry(String),
-        Fatal(String),
-    }
+/// A `LinkCreate` config with common defaults.
+const LINK_CREATE: LinkCreate = LinkCreate {
+    lane: None,
+    autoneg: false,
+    kr: false,
+    speed: PortSpeed::Speed100G,
+    fec: Some(PortFec::None),
+    tx_eq: None,
+    allow_ddm_traffic: false,
+};
 
-    pub async fn retry_op<Func, Fut>(
-        poll_interval: Duration,
-        poll_max: Duration,
-        mut op: Func,
-    ) -> anyhow::Result<()>
-    where
-        Func: FnMut() -> Fut,
-        Fut: Future<Output = Result<(), ReturnCode>>,
-    {
-        let poll_start = Instant::now();
-        loop {
-            let retry_msg = match op().await {
-                Ok(()) => return Ok(()),
-                Err(ReturnCode::Fatal(e)) => return Err(anyhow::anyhow!(e)),
-                Err(ReturnCode::Retry(msg)) => msg,
-            };
-
-            let duration = Instant::now().duration_since(poll_start);
-            if duration > poll_max {
-                return Err(anyhow::anyhow!("operation failed: {retry_msg}"));
-            }
-            tokio::time::sleep(poll_interval).await;
-        }
-    }
-}
+const TAG1: &str = "chaos1";
+const TAG2: &str = "chaos2";
 
 // A simple test to ensure that we can observe chaos from these tests. Chaos
 // ASIC errors come back with HTTP code 418 which makes them easily observable
@@ -83,18 +73,7 @@ async fn test_basic_autoneg_chaos() -> anyhow::Result<()> {
     let (_guard, client) = init_harness("autoneg", &config);
 
     let err = client
-        .link_create(
-            &"qsfp0".parse().unwrap(),
-            &LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: false,
-                speed: PortSpeed::Speed100G,
-                fec: Some(PortFec::None),
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
-        )
+        .link_create(&"qsfp0".parse().unwrap(), &LINK_CREATE)
         .await
         .expect_err("Expected error on create");
 
@@ -122,15 +101,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: false,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LINK_CREATE,
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
     );
@@ -164,15 +135,7 @@ async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: true,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LinkCreate { kr: true, ..LINK_CREATE },
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
     );
@@ -204,15 +167,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: true,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LinkCreate { kr: true, ..LINK_CREATE },
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
     );
@@ -234,15 +189,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: true,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LinkCreate { kr: true, ..LINK_CREATE },
             addrs: vec![
                 "203.0.113.46".parse().unwrap(),
                 "203.0.113.48".parse().unwrap(),
@@ -275,15 +222,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: true,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LinkCreate { kr: true, ..LINK_CREATE },
             addrs: vec![
                 "203.0.113.47".parse().unwrap(),
                 "fd00:1701::d".parse().unwrap(),
@@ -315,7 +254,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     // async.  We pause briefly to give it a chance to complete.  The subsequent
     // address list should either return an error (if the deletion finished) or
     // an empty list (if it didn't).
-    retry::retry_op(RETRY_INTERVAL, RETRY_MAX, || async {
+    retry::retry_op(RETRY_INTERVAL, RETRY_MAX, async || {
         match link_list_ipv4(&client, "qsfp0", "0").await {
             Err(e) if e.status() == Some(StatusCode::NOT_FOUND) => Ok(()),
             Err(e) => Err(retry::ReturnCode::Fatal(e.to_string())),
@@ -551,4 +490,1294 @@ fn random_port_settings() -> PortSettings {
             LinkSettings { params, addrs },
         )]),
     }
+}
+
+/// A simplified version of txn_sweep that ensures `port_settings_*`
+/// functions can succeed after partial failures.
+#[tokio::test]
+async fn settings_eventually_reconcile() -> anyhow::Result<()> {
+    let config = AsicConfig::uniform_set(TESTING_RADIX, 0.4);
+    let (_guard, client) =
+        harness::init_harness("settings_eventually_reconcile", &config);
+    let mut rng = IpRng::new(1046);
+
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id = LinkId(0);
+
+    let settings = PortSettings {
+        links: [(
+            link_id.to_string(),
+            LinkSettings {
+                params: LINK_CREATE,
+                addrs: vec![rng.unique_ipv4().into(), rng.unique_ipv6().into()],
+            },
+        )]
+        .into_iter()
+        .collect(),
+    };
+
+    let mut apply = 0;
+    let mut clear = 0;
+    let mut get = 0;
+
+    let print_retries = |a, c, g| {
+        println!(
+            "
+Reconciliation retries:
+    - port_settings_apply: {a}
+    - port_settings_clear: {c}
+    - port_settings_get: {g}
+"
+        );
+    };
+
+    // Increase the odds of hitting failure by running
+    // the sequence a few times.
+    for _ in 0..3 {
+        retry::retry_op(RETRY_INTERVAL, LONG_ENOUGH, async || {
+            let Err(e) = client
+                .port_settings_apply(&port_id, Some(TAG1), &settings)
+                .await
+            else {
+                return Ok(());
+            };
+            apply += 1;
+            Err(ReturnCode::Retry(e.to_string()))
+        })
+        .await
+        .inspect_err(|_| print_retries(apply, clear, get))
+        .context("Timeout in port_settings_apply")?;
+
+        retry::retry_op(RETRY_INTERVAL, LONG_ENOUGH, async || {
+            let Err(e) = client.port_settings_clear(&port_id, Some(TAG1)).await
+            else {
+                return Ok(());
+            };
+            clear += 1;
+            Err(ReturnCode::Retry(e.to_string()))
+        })
+        .await
+        .inspect_err(|_| print_retries(apply, clear, get))
+        .context("Timeout in port_settings_clear")?;
+
+        retry::retry_op(RETRY_INTERVAL, LONG_ENOUGH, async || {
+            let err = match client.port_settings_get(&port_id, Some(TAG1)).await
+            {
+                Ok(s) if s.links.is_empty() => return Ok(()),
+                Ok(s) => Err(ReturnCode::Retry(format!(
+                    "Link settings should be empty. Found {s:?}"
+                ))),
+                Err(e) => Err(ReturnCode::Retry(e.to_string())),
+            };
+            get += 1;
+            err
+        })
+        .await
+        .inspect_err(|_| print_retries(apply, clear, get))
+        .context("Timeout in port_settings_get")?;
+    }
+
+    Ok(())
+}
+
+/// Verifies tagged port_settings_apply actions don't affect
+/// resources from other tags.
+#[tokio::test]
+async fn settings_apply_respects_tags() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("settings_apply_respects_tags", &no_failures);
+
+    let mut rng = IpRng::new(12345);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id =
+        client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+    let tag2 = TestAddrs::new(
+        &mut rng,
+        TAG2.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    tag1.create_addrs().await?;
+    tag2.apply_addrs().await?;
+
+    tag1.verify_addrs_exist(Verify::NonExhaustive).await?;
+    tag2.verify_addrs_exist(Verify::NonExhaustive).await?;
+
+    client
+        .port_settings_apply(
+            &port_id,
+            Some(TAG2),
+            &TestAddrs::empty_settings(link_id),
+        )
+        .await?;
+
+    tag1.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    Ok(())
+}
+
+/// Verifies that tags correctly isolate address CRUD amid table
+/// errors and rollback failures.
+#[tokio::test]
+async fn settings_rollback_respects_tags() -> anyhow::Result<()> {
+    let table_fail = table_chaos![
+        (TableType::PortAddrIpv4, 0.2),
+        (TableType::PortAddrIpv6, 0.2)
+    ];
+
+    let (_guard, client) = harness::init_harness(
+        "settings_rollback_respects_tags",
+        &AsicConfig {
+            radix: TESTING_RADIX,
+            table_entry_add: table_fail.clone(),
+            table_entry_del: table_fail,
+            ..Default::default()
+        },
+    );
+
+    let mut rng = IpRng::new(1308);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id =
+        client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
+
+    let mut tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+    let mut tag2 =
+        TestAddrs::new(&mut rng, TAG2.to_string(), &client, port_id, link_id);
+
+    let mut check1 = AddrCheck::default();
+    let mut check2 = AddrCheck::default();
+
+    let mut success1 = 0;
+    let mut success2 = 0;
+    let mut ct = 0;
+
+    let status = tokio::time::timeout(Duration::from_secs(90), async {
+        // Some attempts may fail, but we should expect to see at least
+        // one success per tag. Otherwise we're probably encountering an
+        // unexpected failure.
+        while ct < 1000 || success1 == 0 || success2 == 0 {
+            ct += 1;
+            success1 +=
+                check1.apply_and_check(&mut tag1, &mut rng).await? as usize;
+            success2 +=
+                check2.apply_and_check(&mut tag2, &mut rng).await? as usize;
+        }
+        Ok(()) as anyhow::Result<()>
+    })
+    .await;
+
+    println!(
+        "
+Attempts: {ct:?}
+Tag 1 successes: {success1:?}
+Tag 2 successes: {success2:?}"
+    );
+
+    status??;
+    Ok(())
+}
+
+/// Helper for validating link state through port_settings_apply
+/// over time amid failures.
+#[derive(Default)]
+enum AddrCheck {
+    /// We haven't yet successfully applied addresses.
+    #[default]
+    Empty,
+    /// These are the most recent successfully-applied addresses.
+    Current { v4: Ipv4Addr, v6: Ipv6Addr },
+    /// The link returned a rollback error and is an unknown state.
+    Inconsistent,
+}
+
+impl AddrCheck {
+    /// Tries applying some addresses on a link.
+    ///
+    /// On success, ensures the addresses are present. Returns true.
+    /// On failure, returns false. For any non-rollback failure, ensures
+    /// the link was reset to a known-good state.
+    async fn apply_and_check(
+        &mut self,
+        addrs: &mut TestAddrs<'_>,
+        rng: &mut IpRng,
+    ) -> anyhow::Result<bool> {
+        if rand::rng().random_bool(0.75) {
+            addrs.v4_entry.addr = rng.unique_ipv4();
+        }
+
+        if rand::rng().random_bool(0.75) {
+            addrs.v6_entry.addr = rng.unique_ipv6();
+        }
+
+        match addrs.apply_addrs().await {
+            Ok(()) => {
+                addrs.verify_addrs_exist(Verify::NonExhaustive).await?;
+                *self = Self::Current {
+                    v4: addrs.v4_entry.addr,
+                    v6: addrs.v6_entry.addr,
+                };
+                return Ok(true);
+            }
+            Err(e) if self::is_rollback_error(&e) => {
+                *self = Self::Inconsistent;
+                return Ok(false);
+            }
+            Err(_) => (),
+        };
+
+        // Handle non-rollback error.
+        match self {
+            Self::Current { v4, v6 } => {
+                addrs.v4_entry.addr = *v4;
+                addrs.v6_entry.addr = *v6;
+                addrs.verify_addrs_exist(Verify::NonExhaustive).await?;
+            }
+            Self::Inconsistent => {
+                // Can't assume anything until the next successful apply.
+            }
+            Self::Empty => {
+                let link_is_empty = addrs
+                    .client
+                    .port_settings_get(
+                        &addrs.port_id,
+                        Some(&addrs.v4_entry.tag),
+                    )
+                    .await?
+                    .into_inner()
+                    .links
+                    .get(&addrs.link_id.to_string())
+                    .is_none_or(|link| link.addrs.is_empty());
+                anyhow::ensure!(
+                    link_is_empty,
+                    "There should be no addrs for a port/link/tag in an empty state"
+                );
+            }
+        };
+
+        Ok(false)
+    }
+}
+
+/// Verifies tagged address_*_create and delete don't affect
+/// resources under different tags.
+#[tokio::test]
+async fn address_cmds_respect_tags() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("address_cmds_respect_tags", &no_failures);
+
+    let mut rng = IpRng::new(54321);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id = LinkId(0);
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+    let tag2 = TestAddrs::new(
+        &mut rng,
+        TAG2.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    tag2.apply_addrs().await?;
+
+    client
+        .link_ipv4_create(
+            &port_id,
+            &link_id,
+            &Ipv4Entry { addr: tag2.v4_entry.addr, tag: TAG1.to_string() },
+        )
+        .await
+        .expect_err(
+            "Registering the same address under different tags should fail",
+        )
+        .expect_status(StatusCode::CONFLICT);
+
+    tag1.create_addrs().await?;
+
+    tag1.verify_addrs_exist(Verify::NonExhaustive).await?;
+    tag2.verify_addrs_exist(Verify::NonExhaustive).await?;
+
+    client.link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr).await?;
+    client.link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr).await?;
+
+    tag2.verify_addrs_exist(Verify::Exhaustive).await?;
+    tag1.verify_addrs_exist(Verify::NonExhaustive)
+        .await
+        .expect_err("tag1 addresses should have been deleted");
+
+    Ok(())
+}
+
+/// Verifies the current known behavior of port_settings_clear, which
+/// is to delete the link and all its config from the port.
+///
+/// This test isn't necessarily endorsing the implementation, but
+/// it does seek to track API's current behavior.
+#[tokio::test]
+async fn settings_clear_ignores_tags() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("settings_clear_ignores_tags", &no_failures);
+
+    let mut rng = IpRng::new(1010101);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id =
+        client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+    let tag2 = TestAddrs::new(
+        &mut rng,
+        TAG2.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    tag1.create_addrs().await?;
+    tag2.apply_addrs().await?;
+
+    tag1.verify_addrs_exist(Verify::NonExhaustive).await?;
+    tag2.verify_addrs_exist(Verify::NonExhaustive).await?;
+
+    // Tag2 means nothing here
+    client.port_settings_clear(&port_id, Some(TAG2)).await?;
+
+    tag1.verify_addrs_exist(Verify::Exhaustive).await.expect_err(
+        "Addresses do not exist because we cleared the port settings.",
+    );
+    tag2.verify_addrs_exist(Verify::NonExhaustive).await.expect_err(
+        "Addresses do not exist because we cleared the port settings.",
+    );
+
+    Ok(())
+}
+
+/// Verifies that link address creation fails when that
+/// address has already been registered (under another tag).
+#[tokio::test]
+async fn create_addr_rejects_overwrites() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("create_addr_overwrite_rejected", &no_failures);
+    let mut rng = IpRng::new(1433);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id =
+        client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    tag1.apply_addrs().await?;
+
+    client
+        .link_ipv4_create(&port_id, &link_id, &tag1.v4_entry)
+        .await
+        .expect_err("Duplicate ipv4 registration fails")
+        .expect_status(StatusCode::CONFLICT);
+
+    client
+        .link_ipv6_create(&port_id, &link_id, &tag1.v6_entry)
+        .await
+        .expect_err("Duplicate ipv6 registration fails")
+        .expect_status(StatusCode::CONFLICT);
+
+    client
+        .link_ipv4_create(
+            &port_id,
+            &link_id,
+            &Ipv4Entry { addr: tag1.v4_entry.addr, tag: TAG2.to_string() },
+        )
+        .await
+        .expect_err("Cross-tag ipv4 registration fails")
+        .expect_status(StatusCode::CONFLICT);
+
+    client
+        .link_ipv6_create(
+            &port_id,
+            &link_id,
+            &Ipv6Entry { addr: tag1.v6_entry.addr, tag: TAG2.to_string() },
+        )
+        .await
+        .expect_err("Cross-tag ipv6 registration fails")
+        .expect_status(StatusCode::CONFLICT);
+
+    // The idempotent API necessarily accepts duplicate registrations.
+    tag1.apply_addrs().await?;
+
+    Ok(())
+}
+
+/// Verifies deletion fails when the address does not exist.
+#[tokio::test]
+async fn deleted_address_must_exist() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("delete_addr_conflicts", &no_failures);
+    let mut rng = IpRng::new(1516);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id = LinkId(0);
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    tag1.apply_addrs().await?;
+
+    client
+        .link_ipv4_delete(&port_id, &link_id, &rng.unique_ipv4())
+        .await
+        .expect_err("Deleting a non-existent IPv4 addr fails")
+        .expect_status(StatusCode::NOT_FOUND);
+
+    client
+        .link_ipv6_delete(&port_id, &link_id, &rng.unique_ipv6())
+        .await
+        .expect_err("Deleting a non-existent IPv6 addr fails")
+        .expect_status(StatusCode::NOT_FOUND);
+
+    // Deletion is not currently tagged, so there's no way/reason to test
+    // tag conflicts.
+
+    client.link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr).await?;
+    client.link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr).await?;
+    tag1.verify_addrs_exist(Verify::NonExhaustive)
+        .await
+        .expect_err("Addresses were deleted");
+
+    Ok(())
+}
+
+/// One tagged `port_settings_apply` can delete a link created
+/// by another tag's `port_settings_apply`. This isn't functionality
+/// we necessarily want, but we should also never exercise it in practice.
+/// Since it's a subtle footgun, this test at least documents its existence
+/// and observes if this ever changes.
+#[tokio::test]
+async fn apply_implicit_delete() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("apply_implicit_delete", &no_failures);
+    let mut rng = IpRng::new(1548);
+    let port_id: PortId = "qsfp0".parse()?;
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        LinkId(1),
+    );
+
+    let tag2 = TestAddrs::new(
+        &mut rng,
+        TAG2.to_string(),
+        &client,
+        port_id.clone(),
+        LinkId(2),
+    );
+
+    tag1.apply_addrs().await?;
+    tag1.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    tag2.apply_addrs().await?;
+
+    tag1.verify_addrs_exist(Verify::NonExhaustive)
+        .await
+        .expect_err("Link 1 was deleted");
+    tag2.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    Ok(())
+}
+
+/// port_settings_apply fails if it would overwrite an address
+/// belonging to another tag. Successful rollback is important
+/// in such cases.
+#[tokio::test]
+async fn apply_fails_on_tag_conflict() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("apply_tag_conflict", &no_failures);
+    let mut rng = IpRng::new(1616);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id = LinkId(0);
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+    let mut tag2 = TestAddrs::new(
+        &mut rng,
+        TAG2.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+    tag2.v4_entry.addr = tag1.v4_entry.addr;
+    tag2.v6_entry.addr = tag1.v6_entry.addr;
+
+    client.link_create(&port_id, &LINK_CREATE).await?;
+    tag2.create_addrs().await?;
+
+    tag1.apply_addrs()
+        .await
+        .expect_err("Addresses belong to TAG2")
+        .expect_status(StatusCode::CONFLICT);
+    tag1.verify_addrs_exist(Verify::NonExhaustive)
+        .await
+        .expect_err("Addrs conflicted and should not exist");
+    tag2.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    client.link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr).await?;
+
+    tag1.apply_addrs()
+        .await
+        .expect_err("IPv6 address belongs to TAG2")
+        .expect_status(StatusCode::CONFLICT);
+    tag1.verify_addrs_exist(Verify::NonExhaustive)
+        .await
+        .expect_err("IPv6 addr conflicted and should not exist");
+    let curr_v6 = client
+        .link_ipv6_list(&port_id, &link_id, None, None)
+        .await?
+        .into_inner()
+        .items;
+    assert_eq!(
+        &curr_v6,
+        std::slice::from_ref(&tag2.v6_entry),
+        "tag2's entry should remain untouched"
+    );
+
+    client.link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr).await?;
+
+    tag1.apply_addrs().await?;
+    tag1.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    Ok(())
+}
+
+/// A pathological sequence of table errors in dpd must
+/// not poison future valid operations.
+///
+/// This test port_settings_applies two addresses. The IPv6
+/// table op fails, and then the IPv4 table op in the rollback
+/// fails. After that rollback failure, the problematic IPv4
+/// entry still belongs to the link, so it can at least be
+/// reused in the next port_settings_apply.
+#[tokio::test]
+async fn partial_failures_are_recoverable() -> anyhow::Result<()> {
+    let conf = AsicConfig {
+        radix: TESTING_RADIX,
+        table_entry_add: table_chaos!((TableType::PortAddrIpv6, 1.0)),
+        table_entry_del: table_chaos!((TableType::PortAddrIpv4, 1.0)),
+        ..Default::default()
+    };
+
+    let (_guard, client) =
+        harness::init_harness("partial_failures_are_recoverable", &conf);
+    let mut rng = IpRng::new(731);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id = LinkId(0);
+
+    let addrs = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    let apply_err = addrs
+        .apply_addrs()
+        .await
+        .expect_err("Apply should fail because IPv6 table ops fail");
+    assert!(
+        self::is_rollback_error(&apply_err),
+        "IPv4 addr couldn't be rolled back from table"
+    );
+
+    client
+        .port_settings_clear(&port_id, Some(TAG1))
+        .await
+        .expect_err("Port couldn't be cleared because IPv4 addr is stuck");
+
+    let mut v4_only = addrs.settings();
+    for link in v4_only.links.values_mut() {
+        link.addrs.retain(|a| a.is_ipv4());
+    }
+
+    client
+        .port_settings_apply(&"qsfp1".parse()?, Some(TAG2), &v4_only)
+        .await
+        .expect_err("Stuck entry cannot be stolen by another tag.");
+
+    for link in v4_only.links.values_mut() {
+        link.addrs.push(rng.unique_ipv4().into());
+    }
+
+    let mut applied = client
+        .port_settings_apply(&port_id, Some(TAG1), &v4_only)
+        .await
+        .context("Apply should succeed because we can at least overwrite the IPv4 table entry")?
+        .into_inner();
+
+    self::sort_addrs(&mut v4_only);
+    self::sort_addrs(&mut applied);
+
+    assert_eq!(
+        v4_only, applied,
+        "Stuck IPv4 addr should still be usable in port_settings_apply"
+    );
+
+    Ok(())
+}
+
+/// A flaky table write must not poison link initialization.
+#[tokio::test]
+#[cfg(feature = "multicast")]
+async fn link_init_recovers() -> anyhow::Result<()> {
+    let conf = AsicConfig {
+        radix: TESTING_RADIX,
+        table_entry_add: table_chaos!((TableType::McastEgressPortMapping, 0.8)),
+        ..Default::default()
+    };
+    let (_guard, client) = harness::init_harness("link_init_recovers", &conf);
+
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id =
+        client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
+
+    retry::retry_op(RETRY_INTERVAL, LONG_ENOUGH, async || {
+        match client.link_get(&port_id, &link_id).await?.into_inner().link_state
+        {
+            LinkState::Up => Ok(()),
+            e @ (LinkState::Faulted(_) | LinkState::Down) => {
+                Err(ReturnCode::Fatal(format!("Unexpected link state: {e:?}")))
+            }
+            s @ (LinkState::Unknown | LinkState::ConfigError(_)) => {
+                // Enabling the link pokes the reconciler, which speeds up the test.
+                client.link_enabled_set(&port_id, &link_id, true).await?;
+                Err(ReturnCode::Retry(format!(
+                    "Waiting for LinkState::Up. Currently {s:?}"
+                )))
+            }
+        }
+    })
+    .await?;
+
+    Ok(())
+}
+
+/// One does not simply double-register a link address on loopback.
+///
+/// This tests the order where link registration wins.
+#[tokio::test]
+async fn link_addrs_are_isolated() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("link_addrs_are_isolated", &no_failures);
+    let port_id: PortId = "qsfp0".parse()?;
+    let mut rng = IpRng::new(2238);
+
+    let link_id =
+        client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
+
+    let tag1 =
+        TestAddrs::new(&mut rng, TAG1.to_string(), &client, port_id, link_id);
+
+    tag1.create_addrs().await?;
+
+    client
+        .loopback_ipv4_create(&tag1.v4_entry)
+        .await
+        .expect_err("This link address IPv4 is already registered");
+
+    client
+        .loopback_ipv6_create(&tag1.v6_entry)
+        .await
+        .expect_err("This link address IPv6 is already registered");
+
+    tag1.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    Ok(())
+}
+
+/// Reverse of [`addrs_are_isolated`]. Now loopback registration wins.
+#[tokio::test]
+async fn loopback_addrs_are_isolated() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("loopback_addrs_are_isolated", &no_failures);
+    let port_id: PortId = "qsfp0".parse()?;
+    let mut rng = IpRng::new(2250);
+
+    let link_id =
+        client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    client.loopback_ipv4_create(&tag1.v4_entry).await?;
+    client.loopback_ipv6_create(&tag1.v6_entry).await?;
+
+    client
+        .link_ipv4_create(&port_id, &link_id, &tag1.v4_entry)
+        .await
+        .expect_err("Address already exists on IPv4 loopback");
+    client
+        .link_ipv6_create(&port_id, &link_id, &tag1.v6_entry)
+        .await
+        .expect_err("Address already exists on IPv6 loopback");
+
+    tag1.apply_addrs().await.expect_err("Addrs collide and cannot be created");
+
+    let v4_list = client.loopback_ipv4_list().await?;
+    assert_eq!(
+        &v4_list.into_inner(),
+        std::slice::from_ref(&tag1.v4_entry),
+        "Loopback should have IPv4 addr"
+    );
+
+    let v6_list = client.loopback_ipv6_list().await?;
+    assert_eq!(
+        &v6_list.into_inner(),
+        std::slice::from_ref(&tag1.v6_entry),
+        "Loopback should have IPv6 addr"
+    );
+
+    Ok(())
+}
+
+/// Dropping a link without deleting the corresponding table entries
+/// is a leak. So DPD shouldn't do that.
+/// If a table entry cannot be deleted, then DPD should not allow
+/// that entry's link to be deleted.
+#[tokio::test]
+async fn deletion_doesnt_leak_table_entries() -> anyhow::Result<()> {
+    let config = AsicConfig {
+        radix: TESTING_RADIX,
+        table_entry_del: table_chaos!((TableType::PortAddrIpv4, 1.0)),
+        ..Default::default()
+    };
+    let (_guard, client) =
+        harness::init_harness("deletion_doesnt_leak_table_entries", &config);
+    let port_id: PortId = "qsfp0".parse()?;
+    let mut rng = IpRng::new(1227);
+    let link_id = LinkId(0);
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    tag1.apply_addrs().await?;
+
+    let msg = "Link should not be dropped because that would orphan the stuck table entry";
+    client.port_settings_clear(&port_id, None).await.expect_err(msg);
+    client
+        .port_settings_apply(
+            &port_id,
+            Some(TAG1),
+            &TestAddrs::empty_settings(link_id),
+        )
+        .await
+        .expect_err("Addr cannot be implicitly deleted via apply");
+    tag1.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    client.link_delete(&port_id, &link_id).await.expect_err(msg);
+    // link_delete makes no atomicity guarantees, so the IPv6 address
+    // might be gone. But the link and stuck address should still exist.
+    assert_eq!(
+        &client.link_ipv4_list(&port_id, &link_id, None, None).await?.items,
+        std::slice::from_ref(&tag1.v4_entry)
+    );
+
+    Ok(())
+}
+
+/// Link deletion can succeed after prior failures.
+#[tokio::test]
+async fn deletion_prevails() -> anyhow::Result<()> {
+    let config = AsicConfig {
+        radix: TESTING_RADIX,
+        table_entry_del: table_chaos![
+            (TableType::PortAddrIpv4, 0.7),
+            (TableType::PortAddrIpv6, 0.7)
+        ],
+        ..Default::default()
+    };
+    let (_guard, client) = harness::init_harness("deletion_prevails", &config);
+    let port_id: PortId = "qsfp0".parse()?;
+    let mut rng = IpRng::new(1227);
+    let link_id = LinkId(0);
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    tag1.apply_addrs().await?;
+
+    let mut retry_ct = 0;
+    retry::retry_op(Duration::ZERO, LONG_ENOUGH, async || {
+        let applied = client
+            .port_settings_apply(
+                &port_id,
+                Some(TAG1),
+                &TestAddrs::empty_settings(link_id),
+            )
+            .await;
+
+        let Err(e) = applied else {
+            return Ok(());
+        };
+
+        retry_ct += 1;
+        Err(ReturnCode::Retry(e.to_string()))
+    })
+    .await
+    .context("Timeout trying to successfully clear addresses")?;
+
+    let cleared_addrs = client
+        .port_settings_get(&port_id, Some(TAG1))
+        .await?
+        .links
+        .get(&link_id.to_string())
+        .expect("Link should exist")
+        .addrs
+        .is_empty();
+    assert!(
+        cleared_addrs,
+        "port_settings_apply should only succeed once the addresses are removed"
+    );
+
+    println!("Retries: {retry_ct}");
+
+    Ok(())
+}
+
+/// An address owned exclusively across the switch, and it must be
+/// released to transfer owners.
+///
+/// Equivalently, a link/loopback address registration will never
+/// succeed if that address is already owned by another
+/// link/loopback source.
+#[tokio::test]
+async fn loopback_cannot_steal_addrs() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("loopback_cannot_steal_addrs", &no_failures);
+
+    let port1: PortId = "qsfp0".parse()?;
+    let port2: PortId = "qsfp1".parse()?;
+    let mut rng = IpRng::new(1404);
+    let link_id = LinkId(0);
+
+    let mut p1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port1.clone(),
+        link_id,
+    );
+
+    let mut p2 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port2.clone(),
+        link_id,
+    );
+
+    let mut loopback_v4 =
+        Ipv4Entry { addr: rng.unique_ipv4(), tag: TAG1.to_string() };
+    let mut loopback_v6 =
+        Ipv6Entry { addr: rng.unique_ipv6(), tag: TAG1.to_string() };
+
+    p1.apply_addrs().await?;
+    p2.apply_addrs().await?;
+    client.loopback_ipv4_create(&loopback_v4).await?;
+    client.loopback_ipv6_create(&loopback_v6).await?;
+
+    std::mem::swap(&mut p1.v4_entry, &mut p2.v4_entry);
+    p2.apply_addrs()
+        .await
+        .expect_err("v4 address is already registered under p1");
+    std::mem::swap(&mut p1.v4_entry, &mut p2.v4_entry);
+
+    std::mem::swap(&mut p1.v6_entry, &mut p2.v6_entry);
+    p2.apply_addrs()
+        .await
+        .expect_err("v6 address is already registered under p1");
+    std::mem::swap(&mut p1.v6_entry, &mut p2.v6_entry);
+
+    std::mem::swap(&mut loopback_v4, &mut p2.v4_entry);
+    p2.apply_addrs()
+        .await
+        .expect_err("v4 address is already registered under loopback");
+    std::mem::swap(&mut loopback_v4, &mut p2.v4_entry);
+
+    std::mem::swap(&mut loopback_v6, &mut p2.v6_entry);
+    p2.apply_addrs()
+        .await
+        .expect_err("v6 address is already registered under loopback");
+    std::mem::swap(&mut loopback_v6, &mut p2.v6_entry);
+
+    client
+        .loopback_ipv4_create(&p1.v4_entry)
+        .await
+        .expect_err("v4 address is already registered under p1");
+    client
+        .loopback_ipv6_create(&p1.v6_entry)
+        .await
+        .expect_err("v6 address is already registered under p1");
+
+    p1.verify_addrs_exist(Verify::Exhaustive).await?;
+    p2.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    assert_eq!(
+        &client.loopback_ipv4_list().await?.into_inner(),
+        std::slice::from_ref(&loopback_v4)
+    );
+
+    assert_eq!(
+        &client.loopback_ipv6_list().await?.into_inner(),
+        std::slice::from_ref(&loopback_v6)
+    );
+
+    Ok(())
+}
+
+/// Verifies that one link with one tag cannot register an
+/// address belonging to another link with another tag.
+#[tokio::test]
+async fn links_cannot_steal_addrs_across_tags() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) = harness::init_harness(
+        "links_cannot_steal_addrs_across_tags",
+        &no_failures,
+    );
+
+    let port1: PortId = "qsfp0".parse()?;
+    let port2: PortId = "qsfp1".parse()?;
+    let mut rng = IpRng::new(1404);
+    let link_id = LinkId(0);
+
+    let p1 =
+        TestAddrs::new(&mut rng, TAG1.to_string(), &client, port1, link_id);
+    let mut p2 =
+        TestAddrs::new(&mut rng, TAG2.to_string(), &client, port2, link_id);
+    p2.v6_entry.addr = p1.v6_entry.addr;
+
+    p1.apply_addrs().await?;
+    p2.apply_addrs()
+        .await
+        .expect_err("v6 addr already belongs to p1")
+        .expect_status(StatusCode::CONFLICT);
+
+    Ok(())
+}
+
+/// Link state reports `ConfigErr` when an error is disrupting
+/// link creation.
+#[tokio::test]
+async fn link_state_sanity_check_err() -> anyhow::Result<()> {
+    let fail_enable = AsicConfig {
+        radix: TESTING_RADIX,
+        port_enable_set: Chaos::new(1.),
+        ..Default::default()
+    };
+    let (_guard, client) =
+        harness::init_harness("link_state_sanity_check_err", &fail_enable);
+
+    self::link_state_sanity_check(&client, |state| match state {
+        LinkState::ConfigError(_) => Ok(()),
+        LinkState::Unknown => Err(retry::ReturnCode::Retry(
+            "Link is in an Unknown state, watching for ConfigError".to_string(),
+        )),
+        other => Err(retry::ReturnCode::Fatal(format!(
+            "Link is in an unexpected state: {other:?}"
+        ))),
+    })
+    .await
+}
+
+/// Link reaches `LinkState::Up` under a good config with no failures.
+#[tokio::test]
+async fn link_state_sanity_check_ok() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("link_state_sanity_check_ok", &no_failures);
+
+    self::link_state_sanity_check(&client, |state| match state {
+        LinkState::Up => Ok(()),
+        LinkState::Unknown => Err(retry::ReturnCode::Retry(
+            "Link is in an Unknown state, watching for Up".to_string(),
+        )),
+        other => Err(retry::ReturnCode::Fatal(format!(
+            "Link is in an unexpected state: {other:?}"
+        ))),
+    })
+    .await
+}
+
+/// Creates a link via `port_settings_apply`, enables it, and
+/// calls `check_link` on the output of `link_get` until Ok or timeout.
+async fn link_state_sanity_check(
+    client: &Client,
+    check_link: impl Fn(&LinkState) -> Result<(), retry::ReturnCode>,
+) -> anyhow::Result<()> {
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id = LinkId(0);
+    let mut rng = IpRng::new(1606);
+
+    let cmd = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        client,
+        port_id.clone(),
+        link_id,
+    );
+
+    cmd.apply_addrs().await?;
+
+    retry::retry_op(RETRY_INTERVAL, RETRY_MAX, async || {
+        // Setting enabled pokes the reconciler and makes link
+        // state more interesting.
+        client.link_enabled_set(&port_id, &link_id, true).await?;
+        let link = client.link_get(&port_id, &link_id).await?.into_inner();
+        check_link(&link.link_state)
+    })
+    .await?;
+
+    Ok(())
+}
+
+/// This struct simplifies repetitive CRUD operations
+/// on tagged links with random address registrations.
+struct TestAddrs<'a> {
+    v4_entry: Ipv4Entry,
+    v6_entry: Ipv6Entry,
+    client: &'a Client,
+    port_id: PortId,
+    link_id: LinkId,
+}
+
+impl<'a> TestAddrs<'a> {
+    /// Creates a new instance with a random IPv4 and IPv6 address
+    /// for this port and link.
+    fn new(
+        rng: &mut IpRng,
+        tag: String,
+        client: &'a Client,
+        port_id: PortId,
+        link_id: LinkId,
+    ) -> Self {
+        Self {
+            v4_entry: Ipv4Entry { addr: rng.unique_ipv4(), tag: tag.clone() },
+            v6_entry: Ipv6Entry { addr: rng.unique_ipv6(), tag },
+            client,
+            port_id,
+            link_id,
+        }
+    }
+
+    /// Adds both tagged addresses to this link using dpd's `link_*_create` endpoints.
+    async fn create_addrs(&self) -> anyhow::Result<()> {
+        self.client
+            .link_ipv4_create(&self.port_id, &self.link_id, &self.v4_entry)
+            .await?;
+        self.client
+            .link_ipv6_create(&self.port_id, &self.link_id, &self.v6_entry)
+            .await?;
+        Ok(())
+    }
+
+    /// Adds both tagged addresses to this link using dpd's `port_settings_apply` endpoint.
+    async fn apply_addrs(
+        &self,
+    ) -> Result<(), dpd_client::Error<dpd_client::types::Error>> {
+        self.client
+            .port_settings_apply(
+                &self.port_id,
+                Some(&self.v4_entry.tag),
+                &self.settings(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    /// Fetches this tag's addresses using `link_*_list` and `port_settings_get`.
+    /// Returns Err if both addresses are not found.
+    /// If `scope == Verify::Exhaustive`, returns Err if other addresses
+    /// are found on the link besides those in `self`.
+    async fn verify_addrs_exist(&self, scope: Verify) -> anyhow::Result<()> {
+        let v4 = self
+            .client
+            .link_ipv4_list(&self.port_id, &self.link_id, None, None)
+            .await?
+            .into_inner();
+        let v6 = self
+            .client
+            .link_ipv6_list(&self.port_id, &self.link_id, None, None)
+            .await?
+            .into_inner();
+
+        if !v4.items.contains(&self.v4_entry) {
+            bail!(
+                "Entry {:?} not found in listed addresses: {:?}",
+                self.v4_entry,
+                v4.items
+            );
+        }
+
+        if !v6.items.contains(&self.v6_entry) {
+            bail!(
+                "Entry {:?} not found in listed addresses: {:?}",
+                self.v6_entry,
+                v6.items
+            );
+        }
+
+        if scope == Verify::Exhaustive {
+            anyhow::ensure!(&v4.items == std::slice::from_ref(&self.v4_entry));
+        }
+
+        if scope == Verify::Exhaustive {
+            anyhow::ensure!(&v6.items == std::slice::from_ref(&self.v6_entry));
+        }
+
+        // Verify the port_settings endpoint returns the same.
+        let mut settings = self
+            .client
+            .port_settings_get(&self.port_id, Some(&self.v4_entry.tag))
+            .await?
+            .into_inner();
+
+        let Some(mut settings) =
+            settings.links.remove(&self.link_id.to_string()).map(|s| s.addrs)
+        else {
+            bail!(
+                "port_settings_get should return the target link id({:?}): found {settings:?}",
+                self.link_id
+            );
+        };
+
+        let mut listed = v4
+            .items
+            .into_iter()
+            .filter_map(|entry| {
+                (entry.tag == self.v4_entry.tag)
+                    .then(|| IpAddr::from(entry.addr))
+            })
+            .chain(v6.items.into_iter().filter_map(|entry| {
+                (entry.tag == self.v6_entry.tag)
+                    .then(|| IpAddr::from(entry.addr))
+            }))
+            .collect::<Vec<_>>();
+
+        listed.sort();
+        settings.sort();
+
+        if listed != settings {
+            bail!(
+                "Tagged address sources disagree: link_*_list({listed:?}) v. port_settings_get({settings:?})",
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Creates a [`PortSettings`] instance for these addresses.
+    fn settings(&self) -> PortSettings {
+        let mut conf = Self::empty_settings(self.link_id);
+        let link = conf
+            .links
+            .get_mut(&self.link_id.to_string())
+            .expect("Settings should contain this link");
+
+        link.params.lane = Some(self.link_id);
+        link.addrs.extend_from_slice(&[
+            self.v4_entry.addr.into(),
+            self.v6_entry.addr.into(),
+        ]);
+
+        conf
+    }
+
+    /// Creates a new [`PortSettings`] instance for this link
+    /// with default config and no addrs.
+    fn empty_settings(link_id: LinkId) -> PortSettings {
+        PortSettings {
+            links: HashMap::from([(
+                link_id.to_string(),
+                LinkSettings { params: LINK_CREATE, addrs: Vec::new() },
+            )]),
+        }
+    }
+}
+
+/// Informs the behavior of address registration verification.
+#[derive(Debug, PartialEq, Eq)]
+enum Verify {
+    /// Expect that the target resources are the only of their
+    /// kind on this link regardless of tag.
+    Exhaustive,
+
+    /// Expect that the target resources exist on the link, but
+    /// resources from other tags may also exist.
+    NonExhaustive,
 }
