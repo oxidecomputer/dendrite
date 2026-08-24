@@ -1,0 +1,5 @@
+error: the argument '--main <MAIN>' cannot be used with '--tx-eq <TX_EQ>'
+
+Usage: swadm link apply --link <LINK> --tag <TAG> --speed <SPEED> --fec <FEC> --lane <LANE> --main <MAIN> --post1 <POST1>
+
+For more information, try '--help'.

@@ -1,0 +1,6 @@
+           lane 0     lane 1     lane 2     lane 3
+pre2     -1    -1    -1    -1 
+pre1      0     0     0     0 
+main     10    10    10    10 
+post1     5     5     5     5 
+post2     2     2     2     2 
