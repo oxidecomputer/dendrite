@@ -5,6 +5,7 @@
 // Copyright 2026 Oxide Computer Company
 
 pub mod arp;
+pub mod attached_subnet;
 pub mod counters;
 pub mod fault;
 pub mod link;
@@ -12,6 +13,7 @@ pub mod loopback;
 pub mod mcast;
 pub mod misc;
 pub mod nat;
+pub mod network;
 pub mod oxstats;
 pub mod port;
 pub mod port_map;

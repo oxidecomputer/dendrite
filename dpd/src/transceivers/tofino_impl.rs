@@ -43,7 +43,6 @@
 
 use crate::Switch;
 use crate::port_map::PortMap;
-use crate::switch_port::LedState;
 use crate::switch_port::SwitchPort;
 use crate::switch_port::SwitchPorts;
 use crate::types::DpdError;
@@ -58,6 +57,7 @@ use common::ports::PortId;
 use common::ports::QsfpPort;
 use dpd_types::link::LinkState;
 use dpd_types::switch_port::LedPolicy;
+use dpd_types::switch_port::LedState;
 use dpd_types::switch_port::ManagementMode;
 use dpd_types::transceivers::FaultReason;
 use dpd_types::transceivers::Transceiver;
@@ -81,13 +81,11 @@ use tokio::sync::MutexGuard;
 use tokio::sync::Notify;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
-use transceiver_controller::Datapath;
 use transceiver_controller::DecodeError;
 use transceiver_controller::Error as ControllerError;
 use transceiver_controller::ExtendedStatusResult;
 use transceiver_controller::InvalidPort;
 use transceiver_controller::ModuleId;
-use transceiver_controller::Monitors;
 use transceiver_controller::PowerState;
 use transceiver_controller::SpRequest;
 use transceiver_controller::filter_module_data;
@@ -492,7 +490,11 @@ cfg_if::cfg_if! {
                 ) -> Result<DatapathResult, ControllerError>;
                 pub async fn mac_addrs(&self) -> Result<MacAddrs, ControllerError>;
                 pub async fn leds(&self, modules: ModuleId) -> Result<LedStateResult, ControllerError>;
-                pub async fn set_leds(&self, modules: ModuleId, state: LedState) -> Result<AckResult, ControllerError>;
+                pub async fn set_leds(
+                    &self,
+                    modules: ModuleId,
+                    state: transceiver_controller::message::LedState,
+                ) -> Result<AckResult, ControllerError>;
             }
             impl Clone for Controller {
                 fn clone(&self) -> Self;
@@ -1300,8 +1302,14 @@ impl Switch {
                             _ => unreachable!(),
                         }
                     };
-                    transceiver.power_mode = power.nth(index).copied();
-                    transceiver.vendor_info = vendor_info.nth(index).cloned();
+                    transceiver.power_mode = power
+                        .nth(index)
+                        .copied()
+                        .map(crate::transceivers::conversions::power_mode_from_controller);
+                    transceiver.vendor_info = vendor_info
+                        .nth(index)
+                        .cloned()
+                        .map(crate::transceivers::conversions::vendor_info_from_controller);
                     if let Some(module_status) = status.nth(index) {
                         transceiver.in_reset =
                             Some(module_status.contains(ExtendedStatus::RESET));
@@ -1406,7 +1414,15 @@ impl Switch {
                 if modules.is_empty() {
                     continue;
                 }
-                let res = match controller.set_leds(modules, state).await {
+                let res = match controller
+                    .set_leds(
+                        modules,
+                        crate::transceivers::conversions::led_state_to_controller(
+                            state,
+                        ),
+                    )
+                    .await
+                {
                     Err(e) => {
                         error!(
                             log,
@@ -2007,7 +2023,7 @@ impl Switch {
     pub async fn set_transceiver_power(
         &self,
         qsfp_port: QsfpPort,
-        state: PowerState,
+        state: dpd_types::transceivers::PowerState,
     ) -> DpdResult<()> {
         let (controller, mut switch_port) =
             self.acquire_transceiver_resources(qsfp_port).await?;
@@ -2017,7 +2033,12 @@ impl Switch {
         // Actually control the power.
         let module = crate::switch_port::module_id_from_qsfp(qsfp_port);
         let result = controller
-            .set_power(module, state)
+            .set_power(
+                module,
+                crate::transceivers::conversions::power_state_to_controller(
+                    state,
+                ),
+            )
             .await
             .map_err(DpdError::from)?;
         if result.is_success() {
@@ -2029,7 +2050,7 @@ impl Switch {
             );
             // If we turned the power off, we should blow away the state of the
             // transceiver.
-            if state == PowerState::Off {
+            if state == dpd_types::transceivers::PowerState::Off {
                 switch_port.as_qsfp_mut().unwrap().transceiver = None;
             }
             Ok(())
@@ -2050,7 +2071,7 @@ impl Switch {
     pub async fn transceiver_power(
         &self,
         qsfp_port: QsfpPort,
-    ) -> DpdResult<PowerState> {
+    ) -> DpdResult<dpd_types::transceivers::PowerState> {
         let (controller, _switch_port) =
             self.acquire_transceiver_resources(qsfp_port).await?;
         let module = crate::switch_port::module_id_from_qsfp(qsfp_port);
@@ -2061,7 +2082,9 @@ impl Switch {
                 "fetched transceiver power";
                 "port_id" => %qsfp_port,
             );
-            Ok(result.data[0].state)
+            Ok(crate::transceivers::conversions::power_state_from_controller(
+                result.data[0].state,
+            ))
         } else {
             let (_, err) = result.error_iter().next().unwrap();
             error!(
@@ -2078,7 +2101,7 @@ impl Switch {
     pub async fn transceiver_monitors(
         &self,
         qsfp_port: QsfpPort,
-    ) -> DpdResult<Monitors> {
+    ) -> DpdResult<dpd_types::transceivers::Monitors> {
         let (controller, switch_port) =
             self.acquire_transceiver_resources(qsfp_port).await?;
         if switch_port.as_qsfp().unwrap().transceiver.is_none() {
@@ -2089,7 +2112,9 @@ impl Switch {
             controller.monitors(module).await.map_err(DpdError::from)?;
         if result.is_success() {
             debug!(self.log, "retrieved transceiver monitors"; "port_id" => %qsfp_port);
-            Ok(result.data.remove(0))
+            Ok(crate::transceivers::conversions::monitors_from_controller(
+                result.data.remove(0),
+            ))
         } else {
             let (_, err) = result.error_iter().next().unwrap();
             error!(
@@ -2106,7 +2131,7 @@ impl Switch {
     pub async fn transceiver_datapath(
         &self,
         qsfp_port: QsfpPort,
-    ) -> DpdResult<Datapath> {
+    ) -> DpdResult<dpd_types::transceivers::Datapath> {
         let (controller, switch_port) =
             self.acquire_transceiver_resources(qsfp_port).await?;
         if switch_port.as_qsfp().unwrap().transceiver.is_none() {
@@ -2117,7 +2142,9 @@ impl Switch {
             controller.datapath(module).await.map_err(DpdError::from)?;
         if result.is_success() {
             debug!(self.log, "retrieved transceiver datapath"; "port_id" => %qsfp_port);
-            Ok(result.data.remove(0))
+            Ok(crate::transceivers::conversions::datapath_from_controller(
+                result.data.remove(0),
+            ))
         } else {
             let (_, err) = result.error_iter().next().unwrap();
             error!(

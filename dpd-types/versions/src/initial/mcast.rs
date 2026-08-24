@@ -10,12 +10,13 @@ use std::fmt;
 use std::net::{IpAddr, Ipv6Addr};
 use std::str::FromStr;
 
-use common::{network::NatTarget, ports::PortId};
 use oxnet::{Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::link::LinkId;
+use super::network::NatTarget;
+use super::port::PortId;
 
 /// Type alias for multicast group IDs.
 pub type MulticastGroupId = u16;

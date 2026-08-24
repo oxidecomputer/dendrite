@@ -7,6 +7,7 @@ name = "aal"
 version = "0.1.0"
 dependencies = [
  "common 0.1.0",
+ "dpd-types",
  "oximeter",
  "oxnet",
  "schemars 0.8.22",
@@ -431,7 +432,7 @@ dependencies = [
 [[package]]
 name = "bhyve_api"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#df5fd0a31f4149f6192316af9d5c0c17aa4c5b55"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#3c07d60a77d528018fded2f0a434cafe724f3423"
 dependencies = [
  "bhyve_api_sys 0.0.0 (git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast)",
  "libc",
@@ -461,7 +462,7 @@ dependencies = [
 [[package]]
 name = "bhyve_api_sys"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#df5fd0a31f4149f6192316af9d5c0c17aa4c5b55"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#3c07d60a77d528018fded2f0a434cafe724f3423"
 dependencies = [
  "libc",
  "strum 0.26.3",
@@ -1055,6 +1056,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "dpd-types",
  "oxnet",
  "rand 0.9.3",
  "schemars 0.8.22",
@@ -1252,7 +1254,7 @@ dependencies = [
 [[package]]
 name = "cpuid_utils"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#df5fd0a31f4149f6192316af9d5c0c17aa4c5b55"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#3c07d60a77d528018fded2f0a434cafe724f3423"
 dependencies = [
  "bhyve_api 0.0.0 (git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast)",
  "bitflags 2.11.1",
@@ -1770,7 +1772,7 @@ dependencies = [
 [[package]]
 name = "dladm"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#df5fd0a31f4149f6192316af9d5c0c17aa4c5b55"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#3c07d60a77d528018fded2f0a434cafe724f3423"
 dependencies = [
  "libc",
  "strum 0.26.3",
@@ -1901,12 +1903,9 @@ dependencies = [
 name = "dpd-api"
 version = "0.1.0"
 dependencies = [
- "common 0.1.0",
- "dpd-types",
  "dpd-types-versions",
  "dropshot 0.17.1",
  "dropshot-api-manager-types",
- "transceiver-controller",
 ]
 
 [[package]]
@@ -1972,26 +1971,21 @@ dependencies = [
 name = "dpd-types"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "dpd-types-versions",
- "omicron-common 0.1.0 (git+https://github.com/oxidecomputer/omicron?branch=main)",
- "schemars 0.8.22",
- "serde",
 ]
 
 [[package]]
 name = "dpd-types-versions"
 version = "0.1.0"
 dependencies = [
- "aal",
- "common 0.1.0",
+ "chrono",
  "dropshot 0.17.1",
  "omicron-common 0.1.0 (git+https://github.com/oxidecomputer/omicron?branch=main)",
  "oxnet",
+ "rand 0.9.3",
  "schemars 0.8.22",
  "serde",
  "thiserror 2.0.18",
- "transceiver-controller",
  "uuid",
 ]
 
@@ -4792,7 +4786,7 @@ dependencies = [
 [[package]]
 name = "nvpair"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#df5fd0a31f4149f6192316af9d5c0c17aa4c5b55"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#3c07d60a77d528018fded2f0a434cafe724f3423"
 dependencies = [
  "libc",
  "nvpair_sys",
@@ -4816,7 +4810,7 @@ source = "git+https://github.com/jmesmon/rust-libzfs?branch=master#ecd5a922247a6
 [[package]]
 name = "nvpair_sys"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#df5fd0a31f4149f6192316af9d5c0c17aa4c5b55"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#3c07d60a77d528018fded2f0a434cafe724f3423"
 dependencies = [
  "libc",
 ]
@@ -5621,7 +5615,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "pbind"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#df5fd0a31f4149f6192316af9d5c0c17aa4c5b55"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#3c07d60a77d528018fded2f0a434cafe724f3423"
 dependencies = [
  "libc",
 ]
@@ -6182,7 +6176,7 @@ dependencies = [
 [[package]]
 name = "propolis"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#df5fd0a31f4149f6192316af9d5c0c17aa4c5b55"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#3c07d60a77d528018fded2f0a434cafe724f3423"
 dependencies = [
  "acpi_tables",
  "anyhow",
@@ -6283,7 +6277,7 @@ dependencies = [
 [[package]]
 name = "propolis_types"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#df5fd0a31f4149f6192316af9d5c0c17aa4c5b55"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#3c07d60a77d528018fded2f0a434cafe724f3423"
 dependencies = [
  "schemars 0.8.22",
  "serde",
@@ -6771,7 +6765,7 @@ checksum = "6b3789b30bd25ba102de4beabd95d21ac45b69b1be7d14522bab988c526d6799"
 [[package]]
 name = "rfb"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#df5fd0a31f4149f6192316af9d5c0c17aa4c5b55"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#3c07d60a77d528018fded2f0a434cafe724f3423"
 dependencies = [
  "ascii",
  "bitflags 2.11.1",
@@ -6797,7 +6791,7 @@ dependencies = [
 [[package]]
 name = "rgb_frame"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#df5fd0a31f4149f6192316af9d5c0c17aa4c5b55"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#3c07d60a77d528018fded2f0a434cafe724f3423"
 dependencies = [
  "strum 0.26.3",
 ]
@@ -7347,9 +7341,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.21.0"
+version = "3.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76a5c54c7310e7b8b9577c286d7e399ddd876c3e12b3ed917a8aabc4b96e9e8c"
+checksum = "ee78f1fbe43ac4a0e47aadb3dbd357b69eb0d3793e948624cd03dd2750ab1c0a"
 dependencies = [
  "base64 0.22.1",
  "bs58",
@@ -7357,6 +7351,7 @@ dependencies = [
  "hex",
  "indexmap 1.9.3",
  "indexmap 2.14.0",
+ "jiff",
  "schemars 0.8.22",
  "schemars 0.9.0",
  "schemars 1.2.0",
@@ -7368,9 +7363,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.21.0"
+version = "3.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84d57bc0c8b9a17920c178daa6bb924850d54a9c97ab45194bb8c17ad66bb660"
+checksum = "8705578779c2b6bd90d84d66eb2e206b708b1a4d7b9f17641b293545bf1c7e46"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -9581,7 +9576,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "viona_api"
 version = "0.0.0"
-source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#df5fd0a31f4149f6192316af9d5c0c17aa4c5b55"
+source = "git+https://github.com/oxidecomputer/propolis?branch=zl%2Fmulticast#3c07d60a77d528018fded2f0a434cafe724f3423"
 dependencies = [
  "libc",
  "nvpair 0.0.0",

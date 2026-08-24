@@ -193,7 +193,7 @@ pub struct Switch {
     pub links: Mutex<link::LinkMap>,
     pub routes: TokioMutex<route::RouteData>,
     pub arp: Mutex<arp::ArpData>,
-    pub nat: Mutex<nat::NatData>,
+    pub nat: nat::Nat,
     pub attached_subnet: Mutex<attached_subnet::AttachedSubnetData>,
     pub loopback: Mutex<loopback::LoopbackData>,
     pub identifiers: Mutex<Option<SwitchIdentifiers>>,
@@ -308,7 +308,7 @@ impl Switch {
             counters,
             routes: TokioMutex::new(route_data),
             arp: Mutex::new(arp::init()),
-            nat: Mutex::new(nat::init()),
+            nat: nat::Nat::new(),
             attached_subnet: Mutex::new(attached_subnet::init()),
             loopback: Mutex::new(loopback::init()),
             switch_ports,
@@ -767,6 +767,7 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
                         kr: true,
                         lane: Some(dpd_types::link::LinkId(0)),
                         tx_eq: None,
+                        allow_ddm_traffic: false,
                     };
                     Some((*port_id, create))
                 } else {

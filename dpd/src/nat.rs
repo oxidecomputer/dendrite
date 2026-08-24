@@ -9,120 +9,103 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Bound;
+use std::sync::{Mutex, MutexGuard};
 
 use crate::Switch;
-use crate::table::nat;
+use crate::table;
+use crate::table::nat::{NatAddress, add_entry, delete_entry};
 use crate::types::{DpdError, DpdResult};
-use common::nat::{Ipv4Nat, Ipv6Nat};
 use common::network::NatTarget;
 
-trait PortRange {
-    fn low(&self) -> u16;
-    fn high(&self) -> u16;
+/// An inclusive range of ports, guaranteed by construction to have
+/// `low <= high`.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct PortRange {
+    low: u16,
+    high: u16,
 }
 
-#[derive(PartialEq)]
-pub(crate) struct Ipv6NatEntry {
-    pub low: u16,
-    pub high: u16,
-    pub tgt: NatTarget,
+#[derive(Debug)]
+pub(crate) struct InvalidPortRange;
+
+impl From<InvalidPortRange> for DpdError {
+    fn from(_: InvalidPortRange) -> Self {
+        DpdError::Invalid("invalid port range".into())
+    }
 }
 
-impl PortRange for Ipv6NatEntry {
-    fn low(&self) -> u16 {
+impl PortRange {
+    fn new(low: u16, high: u16) -> Result<Self, InvalidPortRange> {
+        if low <= high {
+            Ok(PortRange { low, high })
+        } else {
+            Err(InvalidPortRange)
+        }
+    }
+
+    fn overlaps(self, other: PortRange) -> bool {
+        self.low <= other.high && self.high >= other.low
+    }
+
+    pub(crate) fn low(self) -> u16 {
         self.low
     }
-    fn high(&self) -> u16 {
+
+    pub(crate) fn high(self) -> u16 {
         self.high
     }
 }
 
-impl fmt::Display for Ipv6NatEntry {
+impl fmt::Display for PortRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}-{}] -> {}", self.low, self.high, self.tgt)
+        write!(f, "[{}-{}]", self.low, self.high)
     }
 }
 
 #[derive(Clone, PartialEq)]
-pub(crate) struct Ipv4NatEntry {
-    pub low: u16,
-    pub high: u16,
+pub(crate) struct NatEntry {
+    pub l4_ports: PortRange,
     pub tgt: NatTarget,
 }
 
-impl PortRange for Ipv4NatEntry {
-    fn low(&self) -> u16 {
-        self.low
-    }
-    fn high(&self) -> u16 {
-        self.high
-    }
-}
-
-impl fmt::Display for Ipv4NatEntry {
+impl fmt::Display for NatEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}-{}] -> {}", self.low, self.high, self.tgt)
+        write!(f, "{} -> {}", self.l4_ports, self.tgt)
     }
-}
-pub struct NatData {
-    ipv6_mappings: BTreeMap<Ipv6Addr, Vec<Ipv6NatEntry>>,
-    ipv4_mappings: BTreeMap<Ipv4Addr, Vec<Ipv4NatEntry>>,
-    ipv4_generation: i64,
-}
-
-fn ipv6_entry(ipv6: Ipv6Addr, e: &Ipv6NatEntry) -> String {
-    format!("{ipv6}/{e}")
-}
-
-fn ipv4_entry(ipv4: Ipv4Addr, e: &Ipv4NatEntry) -> String {
-    format!("{ipv4}/{e}")
-}
-
-fn overlaps<T: PortRange>(e: &T, low: u16, high: u16) -> bool {
-    let elow = e.low();
-    let ehigh = e.high();
-
-    (elow >= low && elow <= high)
-        || (ehigh >= low && ehigh <= high)
-        || (elow <= low && ehigh >= high)
 }
 
 /// find index of first mapping that overlaps with supplied port range
-fn find_first_mapping<T: PortRange>(
-    entries: &[T],
-    low: u16,
-    high: u16,
+fn find_first_mapping(
+    mut ranges: impl Iterator<Item = PortRange>,
+    range_to_find: PortRange,
 ) -> Option<usize> {
-    entries.iter().position(|e| overlaps(e, low, high))
+    ranges.position(|e| e.overlaps(range_to_find))
 }
 
 /// find indices of all mappings that overlap with supplied port range
-fn find_mappings<T: PortRange>(
-    entries: &[T],
-    low: u16,
-    high: u16,
+fn find_mappings(
+    ranges: impl Iterator<Item = PortRange>,
+    range_to_find: PortRange,
 ) -> Vec<usize> {
-    entries
-        .iter()
+    ranges
         .enumerate()
-        .filter(|(_, e)| overlaps(*e, low, high))
+        .filter(|(_, e)| e.overlaps(range_to_find))
         .map(|(i, _)| i)
         .collect()
 }
 
-fn find_space<T: PortRange>(
-    entries: &[T],
-    low: u16,
-    high: u16,
+fn find_space(
+    ranges: impl ExactSizeIterator<Item = PortRange>,
+    candidate_range: PortRange,
 ) -> Option<usize> {
-    let len = entries.len();
+    let len = ranges.len();
+    let iter = ranges.enumerate();
 
-    for (idx, e) in entries.iter().enumerate() {
-        if overlaps(e, low, high) {
+    for (idx, e) in iter {
+        if e.overlaps(candidate_range) {
             return None;
         }
-        if e.low() >= high && (idx == len - 1 || entries[idx + 1].low() >= high)
-        {
+        if e.low >= candidate_range.high {
             return Some(idx);
         }
     }
@@ -131,153 +114,187 @@ fn find_space<T: PortRange>(
 
 #[test]
 fn test_mapping() {
-    use super::MacAddr;
-    use common::network::Vni;
-
-    let dummy_target = NatTarget {
-        internal_ip: Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0),
-        inner_mac: MacAddr::new(0, 0, 0, 0, 0, 0),
-        vni: Vni::new(0).unwrap(),
-    };
-
-    let entries = vec![
-        Ipv4NatEntry { low: 1, high: 4, tgt: dummy_target },
-        Ipv4NatEntry { low: 7, high: 10, tgt: dummy_target },
-        Ipv4NatEntry { low: 12, high: 18, tgt: dummy_target },
+    let entries = [
+        PortRange::new(1, 4).unwrap(),
+        PortRange::new(7, 10).unwrap(),
+        PortRange::new(12, 18).unwrap(),
     ];
 
-    assert_eq!(find_first_mapping(&entries, 2, 2), Some(0));
-    assert_eq!(find_first_mapping(&entries, 4, 5), Some(0));
-    assert_eq!(find_first_mapping(&entries, 5, 6), None);
-    assert_eq!(find_first_mapping(&entries, 5, 7), Some(1));
-    assert_eq!(find_first_mapping(&entries, 2, 6), Some(0));
-    assert_eq!(find_first_mapping(&entries, 5, 5), None);
-    assert_eq!(find_first_mapping(&entries, 5, 20), Some(1));
-    assert_eq!(find_first_mapping(&entries, 12, 12), Some(2));
-    assert_eq!(find_first_mapping(&entries, 18, 18), Some(2));
-    assert_eq!(find_first_mapping(&entries, 19, 19), None);
-    assert_eq!(find_first_mapping(&entries, 19, 40), None);
-    assert_eq!(find_first_mapping(&entries, 0, 0), None);
-    assert_eq!(find_first_mapping(&entries, 0, 2), Some(0));
-    assert_eq!(find_space(&entries, 0, 0), Some(0));
-    assert_eq!(find_space(&entries, 0, 1), None);
-    assert_eq!(find_space(&entries, 11, 11), Some(2));
-    assert_eq!(find_space(&entries, 19, 32), Some(3));
-    assert_eq!(find_space(&entries, 0, 2), None);
-    assert_eq!(find_space(&entries, 3, 5), None);
-    assert_eq!(find_space(&entries, 3, 8), None);
+    let first_mapping = |low, high| {
+        find_first_mapping(
+            entries.iter().copied(),
+            PortRange::new(low, high).unwrap(),
+        )
+    };
+    let space = |low, high| {
+        find_space(entries.iter().copied(), PortRange::new(low, high).unwrap())
+    };
+
+    assert_eq!(first_mapping(2, 2), Some(0));
+    assert_eq!(first_mapping(4, 5), Some(0));
+    assert_eq!(first_mapping(5, 6), None);
+    assert_eq!(first_mapping(5, 7), Some(1));
+    assert_eq!(first_mapping(2, 6), Some(0));
+    assert_eq!(first_mapping(5, 5), None);
+    assert_eq!(first_mapping(5, 20), Some(1));
+    assert_eq!(first_mapping(12, 12), Some(2));
+    assert_eq!(first_mapping(18, 18), Some(2));
+    assert_eq!(first_mapping(19, 19), None);
+    assert_eq!(first_mapping(19, 40), None);
+    assert_eq!(first_mapping(0, 0), None);
+    assert_eq!(first_mapping(0, 2), Some(0));
+    assert_eq!(space(0, 0), Some(0));
+    assert_eq!(space(0, 1), None);
+    assert_eq!(space(5, 8), None);
+    assert_eq!(space(11, 11), Some(2));
+    assert_eq!(space(19, 32), Some(3));
+    assert_eq!(space(0, 2), None);
+    assert_eq!(space(3, 5), None);
+    assert_eq!(space(3, 8), None);
 }
 
-pub fn get_ipv6_addrs_range(
+type NatMappings<A> = BTreeMap<A, Vec<NatEntry>>;
+
+pub struct NatData {
+    ipv4: NatMappings<Ipv4Addr>,
+    ipv6: NatMappings<Ipv6Addr>,
+    generation: i64,
+}
+
+/// Ties an address family to its NAT table inside `NatData`.
+pub(crate) trait NatFamily: NatAddress {
+    fn mappings(data: &mut NatData) -> &mut NatMappings<Self>;
+}
+
+impl NatFamily for Ipv4Addr {
+    fn mappings(data: &mut NatData) -> &mut NatMappings<Ipv4Addr> {
+        &mut data.ipv4
+    }
+}
+
+impl NatFamily for Ipv6Addr {
+    fn mappings(data: &mut NatData) -> &mut NatMappings<Ipv6Addr> {
+        &mut data.ipv6
+    }
+}
+
+pub struct Nat(Mutex<NatData>);
+
+impl Nat {
+    pub(crate) fn new() -> Self {
+        Nat(Mutex::new(NatData {
+            ipv4: BTreeMap::new(),
+            ipv6: BTreeMap::new(),
+            generation: 0,
+        }))
+    }
+
+    fn lock(&self) -> MutexGuard<'_, NatData> {
+        self.0.lock().unwrap()
+    }
+}
+
+pub(crate) fn generation(switch: &Switch) -> i64 {
+    let data = switch.nat.lock();
+    trace!(switch.log, "fetching nat generation");
+    data.generation
+}
+
+pub(crate) fn set_generation(switch: &Switch, generation: i64) {
+    let mut data = switch.nat.lock();
+    trace!(switch.log, "setting nat generation {generation}");
+    data.generation = generation;
+}
+
+pub(crate) fn get_addrs_range<A: NatFamily>(
     switch: &Switch,
-    last_addr: Option<Ipv6Addr>,
-    mut max: usize,
-) -> Vec<Ipv6Addr> {
-    max = std::cmp::min(max, 64);
-    let nat = switch.nat.lock().unwrap();
+    last_addr: Option<A>,
+    max: usize,
+) -> Vec<A> {
+    let max = max.min(64);
 
     let range = match last_addr {
         Some(a) => (Bound::Excluded(a), Bound::Unbounded),
         None => (Bound::Unbounded, Bound::Unbounded),
     };
 
-    nat.ipv6_mappings.range(range).take(max).map(|(ip, _)| *ip).collect()
+    let mut data = switch.nat.lock();
+    A::mappings(&mut data).range(range).take(max).map(|(ip, _)| *ip).collect()
 }
 
-/// Paginates through `Ipv6Nat` using `last_port` as the starting offset
-pub fn get_ipv6_mappings_range(
+/// Paginates through the mappings for one address, using `last_port` as
+/// the starting offset
+pub(crate) fn get_mappings_range<A: NatFamily>(
     switch: &Switch,
-    external: Ipv6Addr,
+    external: A,
     last_port: Option<u16>,
-    mut max: usize,
-) -> Vec<Ipv6Nat> {
-    max = std::cmp::min(max, 64);
-    let nat = switch.nat.lock().unwrap();
-    let mappings = match nat.ipv6_mappings.get(&external) {
-        Some(m) => m,
-        None => return Vec::new(),
-    };
+    max: usize,
+) -> Vec<A::Reservation> {
+    let max = max.min(64);
 
     let port = match last_port {
         None => 0,
         Some(l) => l + 1,
     };
 
-    let mut entries = Vec::new();
-
-    for m in mappings {
-        if m.low >= port {
-            entries.push(Ipv6Nat {
-                external,
-                low: m.low,
-                high: m.high,
-                target: m.tgt,
-            });
-            if entries.len() >= max {
-                break;
-            }
-        }
-    }
-    entries
+    let mut data = switch.nat.lock();
+    A::mappings(&mut data)
+        .get(&external)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter(|e| e.l4_ports.low >= port)
+                .take(max)
+                .map(|e| external.reservation(e.l4_ports, e.tgt))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
-/// Find the first `NatTarget` where its `Ipv6NatEntry` matches the provided
-/// `Ipv6Addr` and overlaps with the provided port range
-pub fn get_ipv6_mapping(
+/// Find the first `NatTarget` where its `NatEntry` overlaps with the
+/// provided port range
+pub(crate) fn get_mapping<A: NatFamily>(
     switch: &Switch,
-    nat_ip: Ipv6Addr,
+    nat_ip: A,
     low: u16,
     high: u16,
 ) -> DpdResult<NatTarget> {
-    let nat = switch.nat.lock().unwrap();
-    if let Some(v) = nat.ipv6_mappings.get(&nat_ip)
-        && let Some(idx) = find_first_mapping(v, low, high)
+    let range = PortRange::new(low, high)?;
+    let mut data = switch.nat.lock();
+    if let Some(v) = A::mappings(&mut data).get(&nat_ip)
+        && let Some(idx) =
+            find_first_mapping(v.iter().map(|e| e.l4_ports), range)
     {
         return Ok(v[idx].tgt);
     }
     Err(DpdError::Missing("no mapping".into()))
 }
 
-pub fn set_ipv6_mapping(
+pub(crate) fn add_mapping<A: NatFamily>(
     switch: &Switch,
-    nat_ip: Ipv6Addr,
+    nat_ip: A,
     low: u16,
     high: u16,
     tgt: NatTarget,
 ) -> DpdResult<()> {
-    let new_entry = Ipv6NatEntry { low, high, tgt };
-    let full = ipv6_entry(nat_ip, &new_entry);
+    let l4_ports = PortRange::new(low, high)?;
+    let new_entry = NatEntry { l4_ports, tgt };
+    let full = format!("{nat_ip}/{new_entry}");
     trace!(switch.log, "adding nat entry {}", full);
 
-    if high < low {
-        return Err(DpdError::Invalid("invalid port range".into()));
+    let mut data = switch.nat.lock();
+    let entries = A::mappings(&mut data).entry(nat_ip).or_default();
+    if entries.contains(&new_entry) {
+        // entry already exists
+        return Ok(());
     }
-
-    let mut nat = switch.nat.lock().unwrap();
-    let (entries, idx) = match nat.ipv6_mappings.get_mut(&nat_ip) {
-        Some(e) => {
-            if e.contains(&new_entry) {
-                // entry already exists
-                return Ok(());
-            }
-            match find_space(e, low, high) {
-                Some(i) => (e, i),
-                None => {
-                    trace!(
-                        switch.log,
-                        "unable to add nat entry {}: conflicting mapping", full
-                    );
-                    return Err(DpdError::Exists("conflicting mapping".into()));
-                }
-            }
-        }
-        None => {
-            nat.ipv6_mappings.insert(nat_ip, Vec::new());
-            (nat.ipv6_mappings.get_mut(&nat_ip).unwrap(), 0)
-        }
+    let Some(idx) = find_space(entries.iter().map(|e| e.l4_ports), l4_ports)
+    else {
+        error!(switch.log, "unable to add {}: conflicting mapping", full);
+        return Err(DpdError::Exists("conflicting mapping".into()));
     };
 
-    match nat::add_ipv6_entry(switch, nat_ip, low, high, tgt) {
+    match add_entry(switch, nat_ip, l4_ports, tgt) {
         Err(e) => {
             error!(switch.log, "failed to add {}: {:?}", full, e);
             Err(e)
@@ -290,26 +307,42 @@ pub fn set_ipv6_mapping(
     }
 }
 
-/// Find the first `NatTarget` where its `Ipv6NatEntry` matches the provided
-/// `Ipv6Addr` and overlaps with the provided port range, then remove it.
-pub fn clear_ipv6_mapping(
+pub(crate) fn set_mapping(
     switch: &Switch,
-    nat_ip: Ipv6Addr,
+    nat_ip: IpAddr,
+    low: u16,
+    high: u16,
+    tgt: NatTarget,
+) -> DpdResult<()> {
+    match nat_ip {
+        IpAddr::V4(ip) => add_mapping(switch, ip, low, high, tgt),
+        IpAddr::V6(ip) => add_mapping(switch, ip, low, high, tgt),
+    }
+}
+
+/// Find the first `NatEntry` that overlaps with the provided port range,
+/// then remove it.
+pub(crate) fn remove_mapping<A: NatFamily>(
+    switch: &Switch,
+    nat_ip: A,
     low: u16,
     high: u16,
 ) -> DpdResult<()> {
-    let mut nat = switch.nat.lock().unwrap();
-    trace!(switch.log, "clearing nat entry {}/{}-{}", nat_ip, low, high);
+    let range = PortRange::new(low, high)?;
+    trace!(switch.log, "clearing nat entry covering {}/{}", nat_ip, range);
 
-    if let Some(mappings) = nat.ipv6_mappings.get_mut(&nat_ip)
-        && let Some(idx) = find_first_mapping(mappings, low, high)
+    let mut data = switch.nat.lock();
+    let mappings = A::mappings(&mut data);
+    if let Some(entries) = mappings.get_mut(&nat_ip)
+        && let Some(idx) =
+            find_first_mapping(entries.iter().map(|e| e.l4_ports), range)
     {
-        let ent = mappings.remove(idx);
-        if mappings.is_empty() {
-            nat.ipv6_mappings.remove(&nat_ip);
+        let ent = entries.remove(idx);
+        if entries.is_empty() {
+            mappings.remove(&nat_ip);
         }
-        let full = ipv6_entry(nat_ip, &ent);
-        return match nat::delete_ipv6_entry(switch, nat_ip, ent.low, ent.high) {
+        let full = format!("{nat_ip}/{ent}");
+        return match delete_entry(switch, nat_ip, ent.l4_ports) {
             Err(e) => {
                 error!(switch.log, "failed to clear {}: {:?}", full, e);
                 Err(e)
@@ -324,229 +357,49 @@ pub fn clear_ipv6_mapping(
     Ok(())
 }
 
-pub fn get_ipv4_addrs_range(
-    switch: &Switch,
-    last_addr: Option<Ipv4Addr>,
-    mut max: usize,
-) -> Vec<Ipv4Addr> {
-    max = std::cmp::min(max, 64);
-    let nat = switch.nat.lock().unwrap();
-
-    let range = match last_addr {
-        Some(a) => (Bound::Excluded(a), Bound::Unbounded),
-        None => (Bound::Unbounded, Bound::Unbounded),
-    };
-
-    nat.ipv4_mappings.range(range).take(max).map(|(ip, _)| *ip).collect()
-}
-
-/// Paginates through `Ipv4Nat` using `last_port` as the starting offset
-pub fn get_ipv4_mappings_range(
-    switch: &Switch,
-    external: Ipv4Addr,
-    last_port: Option<u16>,
-    mut max: usize,
-) -> Vec<Ipv4Nat> {
-    max = std::cmp::min(max, 64);
-    let nat = switch.nat.lock().unwrap();
-    let mappings = match nat.ipv4_mappings.get(&external) {
-        Some(m) => m,
-        None => return Vec::new(),
-    };
-
-    let port = match last_port {
-        None => 0,
-        Some(l) => l + 1,
-    };
-
-    let mut entries = Vec::new();
-
-    for m in mappings {
-        if m.low >= port {
-            entries.push(Ipv4Nat {
-                external,
-                low: m.low,
-                high: m.high,
-                target: m.tgt,
-            });
-            if entries.len() >= max {
-                break;
-            }
-        }
-    }
-    entries
-}
-
-/// Find the first `NatTarget` where its `Ipv4NatEntry` matches the provided
-/// `Ipv4Addr` and overlaps with the provided port range
-pub fn get_ipv4_mapping(
-    switch: &Switch,
-    nat_ip: Ipv4Addr,
-    low: u16,
-    high: u16,
-) -> DpdResult<NatTarget> {
-    let nat = switch.nat.lock().unwrap();
-    if let Some(v) = nat.ipv4_mappings.get(&nat_ip)
-        && let Some(idx) = find_first_mapping(v, low, high)
-    {
-        return Ok(v[idx].tgt);
-    }
-    Err(DpdError::Missing("no mapping".into()))
-}
-
-pub fn set_mapping(
-    switch: &Switch,
-    nat_ip: IpAddr,
-    low: u16,
-    high: u16,
-    tgt: NatTarget,
-) -> DpdResult<()> {
-    match nat_ip {
-        IpAddr::V4(nat_ip) => set_ipv4_mapping(switch, nat_ip, low, high, tgt),
-        IpAddr::V6(nat_ip) => set_ipv6_mapping(switch, nat_ip, low, high, tgt),
-    }
-}
-
-pub fn set_ipv4_mapping(
-    switch: &Switch,
-    nat_ip: Ipv4Addr,
-    low: u16,
-    high: u16,
-    tgt: NatTarget,
-) -> DpdResult<()> {
-    let new_entry = Ipv4NatEntry { low, high, tgt };
-    let full = ipv4_entry(nat_ip, &new_entry);
-    trace!(switch.log, "adding nat entry {}", full);
-
-    if high < low {
-        return Err(DpdError::Invalid("invalid port range".into()));
-    }
-
-    let mut nat = switch.nat.lock().unwrap();
-    let (entries, idx) = match nat.ipv4_mappings.get_mut(&nat_ip) {
-        Some(e) => {
-            if e.contains(&new_entry) {
-                // entry already exists
-                return Ok(());
-            }
-            match find_space(e, low, high) {
-                Some(i) => (e, i),
-                None => {
-                    error!(
-                        switch.log,
-                        "unable to add {}: conflicting mapping", full
-                    );
-                    return Err(DpdError::Exists("conflicting mapping".into()));
-                }
-            }
-        }
-        None => {
-            nat.ipv4_mappings.insert(nat_ip, Vec::new());
-            (nat.ipv4_mappings.get_mut(&nat_ip).unwrap(), 0)
-        }
-    };
-
-    match nat::add_ipv4_entry(switch, nat_ip, low, high, tgt) {
-        Err(e) => {
-            error!(switch.log, "failed to add nat entry {}: {:?}", full, e);
-            Err(e)
-        }
-        _ => {
-            debug!(switch.log, "added nat entry {}", full);
-            entries.insert(idx, new_entry);
-            Ok(())
-        }
-    }
-}
-
-pub fn clear_mapping(
+pub(crate) fn clear_mapping(
     switch: &Switch,
     nat_ip: IpAddr,
     low: u16,
     high: u16,
 ) -> DpdResult<()> {
     match nat_ip {
-        IpAddr::V4(nat_ip) => clear_ipv4_mapping(switch, nat_ip, low, high),
-        IpAddr::V6(nat_ip) => clear_ipv6_mapping(switch, nat_ip, low, high),
+        IpAddr::V4(ip) => remove_mapping(switch, ip, low, high),
+        IpAddr::V6(ip) => remove_mapping(switch, ip, low, high),
     }
 }
 
-/// Find the first `NatTarget` where its `Ipv4NatEntry` matches the provided
-/// `Ipv4Addr` and overlaps with the provided port range, then remove it.
-pub fn clear_ipv4_mapping(
-    switch: &Switch,
-    nat_ip: Ipv4Addr,
-    low: u16,
-    high: u16,
-) -> DpdResult<()> {
-    let mut nat = switch.nat.lock().unwrap();
-    trace!(
-        switch.log,
-        "clearing nat entry covering {}/{}-{}", nat_ip, low, high
-    );
-
-    if let Some(mappings) = nat.ipv4_mappings.get_mut(&nat_ip)
-        && let Some(idx) = find_first_mapping(mappings, low, high)
-    {
-        let ent = mappings.remove(idx);
-        if mappings.is_empty() {
-            nat.ipv4_mappings.remove(&nat_ip);
-        }
-        let full = ipv4_entry(nat_ip, &ent);
-        return match nat::delete_ipv4_entry(switch, nat_ip, ent.low, ent.high) {
-            Err(e) => {
-                error!(switch.log, "failed to clear {}: {:?}", full, e);
-                Err(e)
-            }
-            _ => {
-                debug!(switch.log, "cleared nat entry {}", full);
-                Ok(())
-            }
-        };
-    }
+pub(crate) fn reset<A: NatFamily>(switch: &Switch) -> DpdResult<()> {
+    let mut data = switch.nat.lock();
+    table::nat::reset::<A>(switch)?;
+    A::mappings(&mut data).clear();
 
     Ok(())
 }
 
-pub fn clear_overlapping_mappings(
+/// Deletes any `NatEntry` that overlaps with the provided port range
+pub(crate) fn remove_overlapping_mappings<A: NatFamily>(
     switch: &Switch,
-    nat_ip: IpAddr,
-    low: u16,
-    high: u16,
+    nat_ip: A,
+    l4_ports: PortRange,
 ) -> DpdResult<()> {
-    match nat_ip {
-        IpAddr::V4(nat_ip) => {
-            clear_overlapping_mappings_v4(switch, nat_ip, low, high)
-        }
-        IpAddr::V6(nat_ip) => {
-            clear_overlapping_mappings_v6(switch, nat_ip, low, high)
-        }
-    }
-}
-
-/// Deletes any `Ipv4NatEntry` where each entry matches the provided
-/// `Ipv4Addr` and overlaps with the provided port range
-pub fn clear_overlapping_mappings_v4(
-    switch: &Switch,
-    nat_ip: Ipv4Addr,
-    low: u16,
-    high: u16,
-) -> DpdResult<()> {
-    let mut nat = switch.nat.lock().unwrap();
     trace!(
         switch.log,
-        "clearing all nat entries overlapping with {}/{}-{}", nat_ip, low, high
+        "clearing all nat entries overlapping with {}/{}", nat_ip, l4_ports
     );
 
-    if let Some(mappings) = nat.ipv4_mappings.get_mut(&nat_ip) {
-        let mut mappings_to_delete = find_mappings(mappings, low, high);
+    let mut data = switch.nat.lock();
+    let mappings = A::mappings(&mut data);
+    if let Some(entries) = mappings.get_mut(&nat_ip) {
+        let mut mappings_to_delete =
+            find_mappings(entries.iter().map(|e| e.l4_ports), l4_ports);
         // delete starting with the last index first, or you'll end up shifting the
         // collection underneath you
         mappings_to_delete.reverse();
         for idx in mappings_to_delete {
-            let ent = mappings.remove(idx);
-            let full = ipv4_entry(nat_ip, &ent);
-            match nat::delete_ipv4_entry(switch, nat_ip, ent.low, ent.high) {
+            let ent = entries.remove(idx);
+            let full = format!("{nat_ip}/{ent}");
+            match delete_entry(switch, nat_ip, ent.l4_ports) {
                 Err(e) => {
                     error!(switch.log, "failed to clear {}: {:?}", full, e);
                     return Err(e);
@@ -556,96 +409,23 @@ pub fn clear_overlapping_mappings_v4(
                 }
             };
         }
-        if mappings.is_empty() {
-            nat.ipv4_mappings.remove(&nat_ip);
+        if entries.is_empty() {
+            mappings.remove(&nat_ip);
         }
     }
 
     Ok(())
 }
 
-pub fn clear_overlapping_mappings_v6(
+pub(crate) fn clear_overlapping_mappings(
     switch: &Switch,
-    nat_ip: Ipv6Addr,
+    nat_ip: IpAddr,
     low: u16,
     high: u16,
 ) -> DpdResult<()> {
-    let mut nat = switch.nat.lock().unwrap();
-    trace!(
-        switch.log,
-        "clearing all nat entries overlapping with {}/{}-{}", nat_ip, low, high
-    );
-
-    if let Some(mappings) = nat.ipv6_mappings.get_mut(&nat_ip) {
-        let mut mappings_to_delete = find_mappings(mappings, low, high);
-        // delete starting with the last index first, or you'll end up shifting the
-        // collection underneath you
-        mappings_to_delete.reverse();
-        for idx in mappings_to_delete {
-            let ent = mappings.remove(idx);
-            let full = ipv6_entry(nat_ip, &ent);
-            match nat::delete_ipv6_entry(switch, nat_ip, ent.low, ent.high) {
-                Err(e) => {
-                    error!(switch.log, "failed to clear {}: {:?}", full, e);
-                    return Err(e);
-                }
-                _ => {
-                    debug!(switch.log, "cleared nat entry {}", full);
-                }
-            };
-        }
-        if mappings.is_empty() {
-            nat.ipv6_mappings.remove(&nat_ip);
-        }
-    }
-
-    Ok(())
-}
-
-pub fn reset_ipv6(switch: &Switch) -> DpdResult<()> {
-    let mut nat = switch.nat.lock().unwrap();
-
-    debug!(switch.log, "resetting ipv6 nat tables");
-    nat.ipv6_mappings.clear();
-    if let Err(e) = nat::reset_ipv6(switch) {
-        error!(switch.log, "failed to reset ipv6 nat table: {:?}", e);
-        Err(e)
-    } else {
-        Ok(())
-    }
-}
-
-pub fn reset_ipv4(switch: &Switch) -> DpdResult<()> {
-    let mut nat = switch.nat.lock().unwrap();
-
-    debug!(switch.log, "resetting ipv4 nat tables");
-    nat.ipv4_mappings.clear();
-    if let Err(e) = nat::reset_ipv4(switch) {
-        error!(switch.log, "failed to reset ipv4 nat table: {:?}", e);
-        Err(e)
-    } else {
-        Ok(())
-    }
-}
-
-pub fn set_nat_generation(switch: &Switch, generation: i64) {
-    let mut nat = switch.nat.lock().unwrap();
-
-    debug!(switch.log, "setting nat generation");
-    nat.ipv4_generation = generation;
-}
-
-pub fn get_nat_generation(switch: &Switch) -> i64 {
-    let nat = switch.nat.lock().unwrap();
-
-    debug!(switch.log, "fetching nat generation");
-    nat.ipv4_generation
-}
-
-pub fn init() -> NatData {
-    NatData {
-        ipv6_mappings: BTreeMap::new(),
-        ipv4_mappings: BTreeMap::new(),
-        ipv4_generation: 0,
+    let l4_ports = PortRange::new(low, high)?;
+    match nat_ip {
+        IpAddr::V4(ip) => remove_overlapping_mappings(switch, ip, l4_ports),
+        IpAddr::V6(ip) => remove_overlapping_mappings(switch, ip, l4_ports),
     }
 }

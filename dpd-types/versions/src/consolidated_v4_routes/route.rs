@@ -8,9 +8,9 @@ use std::net::IpAddr;
 
 use crate::v1;
 use crate::v1::link::LinkId;
+use crate::v1::port::PortId;
 use crate::v4;
 use crate::v4::route::RouteTarget;
-use common::ports::PortId;
 use oxnet::Ipv4Net;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
