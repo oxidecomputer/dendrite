@@ -1710,14 +1710,6 @@ async fn test_ipv6_multicast_invalid_destination_mac() -> TestResult {
     let ctr_baseline =
         switch.get_counter("multicast_invalid_mac", None).await.unwrap();
 
-    let port_label_ingress = switch.port_label(ingress).unwrap();
-
-    // Check the Multicast_Drop counter baseline for the ingress port
-    let drop_mcast_baseline = switch
-        .get_counter(&port_label_ingress, Some("multicast_drop"))
-        .await
-        .unwrap();
-
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
     check_counter_incremented(
@@ -1726,17 +1718,6 @@ async fn test_ipv6_multicast_invalid_destination_mac() -> TestResult {
         ctr_baseline,
         1,
         None,
-    )
-    .await
-    .unwrap();
-
-    // Verify that the Multicast_Drop counter also incremented
-    check_counter_incremented(
-        switch,
-        &port_label_ingress,
-        drop_mcast_baseline,
-        1,
-        Some("multicast_drop"),
     )
     .await
     .unwrap();

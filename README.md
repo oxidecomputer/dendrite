@@ -32,6 +32,11 @@ To build the p4 program:
 $ cargo xtask codegen [ -n <p4 program name> ] [--sde <sde directory> ]
 ```
 
+*Note*: The final stage count for the binary is reported in
+`target/proto/opt/oxide/dendrite/sidecar/pipe/logs/table_summary.log`.
+If the requested stage allotment cannot be met, the assembler errors
+out and no binary is produced.
+
 The Tofino model is not yet available for `illumos`/`helios`.  To run the
 compiled p4 program on the Tofino model on a Linux system:
 

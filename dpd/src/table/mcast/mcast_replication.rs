@@ -5,6 +5,9 @@
 // Copyright 2026 Oxide Computer Company
 
 //! Table operations for multicast replication information.
+//!
+//! Only IPv6 replication groups are managed here. IPv4 multicast does not
+//! require replication group tracking.
 
 use dpd_types::table;
 use std::net::Ipv6Addr;

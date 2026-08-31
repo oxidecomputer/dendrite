@@ -17,7 +17,7 @@ use oxnet::Ipv6Net;
 use slog::error;
 use slog::info;
 
-// Used for indentifying entries in the index->route_data table
+// Used for identifying entries in the index->route_data table
 #[derive(MatchParse, Hash, Debug)]
 struct IndexKey {
     #[match_xlate(type = "value")]
@@ -25,7 +25,7 @@ struct IndexKey {
 }
 
 // Route entries stored in the index->route_data table
-#[derive(ActionParse, Debug)]
+#[derive(ActionParse, Debug, Clone, Copy)]
 enum RouteAction {
     #[action_xlate(name = "forward")]
     Forward { port: u16, nexthop: Ipv6Addr },
@@ -40,21 +40,27 @@ struct RouteKey {
     dst_addr: Ipv6Net,
 }
 
-// Indexes stored in the route->index table
+// Indexes stored in the route->index table. `skip_ttl` is set when any
+// target for this prefix routes to the user-space service port, where the
+// packet is delivered to the switch rather than forwarded onward. In that
+// case the TTL=1 exception is suppressed so userspace still receives the
+// packet.
 #[derive(ActionParse, Debug)]
 enum IndexAction {
     #[action_xlate(name = "index")]
-    Index { idx: u16, slots: u8 },
+    Index { idx: u16, slots: u8, skip_ttl: u8 },
 }
 
-/// Add an entry to the route->index table
+/// Add an entry to the route->index table.
 pub fn add_route_index(
     s: &Switch,
     cidr: &Ipv6Net,
     idx: u16,
     slots: u8,
+    skip_ttl: bool,
 ) -> DpdResult<()> {
-    let action_data = IndexAction::Index { idx, slots };
+    let action_data =
+        IndexAction::Index { idx, slots, skip_ttl: skip_ttl as u8 };
 
     let match_key = RouteKey { dst_addr: *cidr };
 
@@ -63,7 +69,8 @@ pub fn add_route_index(
             info!(s.log, "added ipv6 route index";
                 "route" => %cidr,
                 "index" => %idx,
-                "slots" => %slots);
+                "slots" => %slots,
+                "skip_ttl" => %skip_ttl);
             Ok(())
         }
         Err(e) => {
@@ -71,13 +78,14 @@ pub fn add_route_index(
                 "route" => %cidr,
                 "index" => %idx,
                 "slots" => %slots,
+                "skip_ttl" => %skip_ttl,
                 "error" => %e);
             Err(e)
         }
     }
 }
 
-/// Remove an entry from the route->index table
+/// Remove an entry from the route->index table.
 pub fn delete_route_index(s: &Switch, cidr: &Ipv6Net) -> DpdResult<()> {
     let match_key = RouteKey { dst_addr: *cidr };
 
@@ -91,7 +99,9 @@ pub fn delete_route_index(s: &Switch, cidr: &Ipv6Net) -> DpdResult<()> {
         })
 }
 
-// Add a target into the route_data table at the given index
+// Add a target into the route_data table at the given index. TTL=1
+// handling is governed at the prefix level by the `skip_ttl` bit on the
+// index action, not per-target.
 pub fn add_route_target(
     s: &Switch,
     idx: u16,
@@ -128,18 +138,21 @@ pub fn add_route_target(
     }
 }
 
-// Remove the route data at the given index
+/// Remove the route data at the given index.
 pub fn delete_route_target(s: &Switch, idx: u16) -> DpdResult<()> {
     let match_key = IndexKey { idx };
-
-    s.table_entry_del(TableType::RouteFwdIpv6, &match_key)
-        .map(|_| info!(s.log, "deleted ipv6 route entry"; "index" => %idx))
-        .map_err(|e| {
+    match s.table_entry_del(TableType::RouteFwdIpv6, &match_key) {
+        Ok(_) => {
+            info!(s.log, "deleted ipv6 route entry"; "index" => %idx);
+            Ok(())
+        }
+        Err(e) => {
             error!(s.log, "failed to delete ipv6 route entry";
                 "index" => %idx,
                 "error" => %e);
-            e
-        })
+            Err(e)
+        }
+    }
 }
 
 pub fn forward_dump(

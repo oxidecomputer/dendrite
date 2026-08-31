@@ -83,6 +83,8 @@ pub struct FreeMap {
     log: slog::Logger,
     // Has the FreeMap been initialized yet?
     initted: bool,
+    // Lowest allocatable slot in the managed range
+    low: u16,
     // Size of the range being managed
     size: u16,
     // Caches of freed ranges, collected by size.  The contents of a bin are not
@@ -104,6 +106,7 @@ impl FreeMap {
         FreeMap {
             log,
             initted: false,
+            low: 0,
             size: 0,
             recycle_bins: BTreeMap::new(),
             freelist: Vec::new(),
@@ -112,9 +115,16 @@ impl FreeMap {
 
     // Initialize the FreeMap if it hasn't already been initialized
     pub fn maybe_init(&mut self, size: u16) {
+        self.maybe_init_with_low(0, size);
+    }
+
+    // Initialize the FreeMap if it hasn't already been initialized, allowing
+    // callers to reserve a prefix of the index space.
+    pub fn maybe_init_with_low(&mut self, low: u16, size: u16) {
         if !self.initted {
-            debug!(self.log, "initted freemap.  size: {size}");
+            debug!(self.log, "initted freemap. low: {low}, size: {size}");
             self.initted = true;
+            self.low = low;
             self.size = size;
             self.reset();
         }
@@ -126,7 +136,7 @@ impl FreeMap {
     pub fn reset(&mut self) {
         debug!(self.log, "reset freemap");
         self.recycle_bins = BTreeMap::new();
-        self.freelist = vec![Span::new(0, self.size)];
+        self.freelist = vec![Span::new(self.low, self.low + self.size)];
     }
 
     // Allocate a range of the given size.  On success, this call returns the

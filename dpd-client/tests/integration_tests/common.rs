@@ -38,6 +38,8 @@ const SHOW_HEX: u8 = 0x02;
 
 /// Admin-local IPv6 multicast prefix (ff04::/16, scope 4).
 pub const ADMIN_LOCAL_MULTICAST_PREFIX: u16 = 0xFF04;
+pub const DEFAULT_TEST_TAG: &str = "test";
+pub const NON_MATCHING_TEST_TAG: &str = "failed";
 
 // Timeout set on `Pcap` objects.
 //
@@ -254,7 +256,8 @@ impl Switch {
         let drain = slog_term::FullFormat::new(decorator).build().fuse();
         let drain = slog_async::Async::new(drain).build().fuse();
         let log = slog::Logger::root(drain, slog::o!());
-        let client_state = ClientState { tag: String::from("test"), log };
+        let client_state =
+            ClientState { tag: String::from(DEFAULT_TEST_TAG), log };
         let client = Client::new(
             &format!("http://{ctrl_host}:{ctrl_port}"),
             client_state,
@@ -1443,7 +1446,9 @@ pub fn gen_arp_reply(src: Endpoint, tgt: Endpoint) -> Packet {
 
 pub mod prelude {
     pub use super::ADMIN_LOCAL_MULTICAST_PREFIX;
+    pub use super::DEFAULT_TEST_TAG;
     pub use super::NO_PORT;
+    pub use super::NON_MATCHING_TEST_TAG;
     pub use super::PhysPort;
     pub use super::SERVICE_PORT;
     pub use super::Switch;

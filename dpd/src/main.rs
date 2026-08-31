@@ -286,7 +286,8 @@ impl Switch {
             &log,
             config.asic_config.xcvr_iface.as_deref(),
         );
-        let route_data = route::init(&log);
+        let route_data = route::init(&log, &asic_hdl)
+            .context("failed to initialize route state")?;
         let mac_mgmt = Mutex::new(macaddrs::MacManagement::new(&log));
 
         #[cfg(feature = "tofino_asic")]
@@ -619,9 +620,6 @@ async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
     #[cfg(feature = "tokio-console")]
     console_subscriber::init();
     table::init(&mut switch).context("failed to initialize tables")?;
-    route::init_freemaps(&switch)
-        .await
-        .context("failed to initialize route freemaps")?;
 
     // Load the links to be auto-created.
     //

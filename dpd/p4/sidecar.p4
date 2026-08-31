@@ -48,6 +48,22 @@ const bit<9> USER_SPACE_SERVICE_PORT = 192;
 #define IPV6_FIELDS         \
     hdr.inner_ipv6
 
+// Common setup for sending ICMP error responses to user space.
+//
+// Sets up the sidecar header and routes to USER_SPACE_SERVICE_PORT.
+// Callers should set meta.drop_reason and call counters as needed.
+#define ICMP_ERROR_SETUP(type, code)                                    \
+    hdr.sidecar.sc_code = SC_ICMP_NEEDED;                               \
+    hdr.sidecar.sc_pad = 0;                                             \
+    hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;          \
+    hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;        \
+    hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;                \
+    hdr.sidecar.sc_payload = (bit<128>)(type) << 8 | (bit<128>)(code);  \
+    hdr.sidecar.setValid();                                             \
+    hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;                        \
+    meta.service_routed = true;                                         \
+    ig_tm_md.ucast_egress_port = USER_SPACE_SERVICE_PORT
+
 // This control handles the calculation of Layer 4 payload length
 // by subtracting the IPv4 header length from the total packet length.
 //
@@ -105,10 +121,6 @@ control Filter(
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv4_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv6_ctr;
-#ifdef MULTICAST
-	Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS) drop_mcast_ctr;
-	bit<16> mcast_scope;
-#endif /* MULTICAST */
 
 	action dropv4() {
 		meta.drop_reason = DROP_IPV4_SWITCH_ADDR_MISS;
@@ -122,11 +134,6 @@ control Filter(
 		ipv6_ctr.count();
 	}
 
-	action drop_bad_mac() {
-		meta.drop_reason = DROP_MULTICAST_INVALID_MAC;
-		meta.dropped = true;
-	}
-
 	action claimv4() {
 		meta.is_switch_address = true;
 		ipv4_ctr.count();
@@ -136,7 +143,6 @@ control Filter(
 		meta.is_switch_address = true;
 		ipv6_ctr.count();
 	}
-
 
 	// Table of the IPv4 addresses assigned to ports on the switch.
 	table switch_ipv4_addr {
@@ -203,16 +209,15 @@ control Filter(
 				if (mac_byte4 != (bit<8>)ipv4_lower7 ||
 					mac_byte5 != ipv4_byte3 ||
 					mac_byte6 != ipv4_byte4) {
-					drop_bad_mac();
-					drop_mcast_ctr.count(ig_intr_md.ingress_port);
+					meta.drop_reason = DROP_MULTICAST_INVALID_MAC;
+					meta.dropped = true;
 					return;
 				}
-			} else {
+			} else
+#endif /* MULTICAST */
+			{
 				switch_ipv4_addr.apply();
 			}
-#else /* MULTICAST */
-			switch_ipv4_addr.apply();
-#endif /* MULTICAST */
 		} else if (hdr.ipv6.isValid()) {
 #ifdef MULTICAST
 			if (meta.is_mcast) {
@@ -228,8 +233,8 @@ control Filter(
 				// registers on the device.
 				if (hdr.ethernet.dst_mac[47:40] != 8w0x33 ||
 					hdr.ethernet.dst_mac[39:32] != 8w0x33) {
-						drop_bad_mac();
-						drop_mcast_ctr.count(ig_intr_md.ingress_port);
+						meta.drop_reason = DROP_MULTICAST_INVALID_MAC;
+						meta.dropped = true;
 						return;
 				}
 
@@ -242,14 +247,14 @@ control Filter(
 					hdr.ethernet.dst_mac[23:16] != hdr.ipv6.dst_addr[23:16] ||
 					hdr.ethernet.dst_mac[15:8] != hdr.ipv6.dst_addr[15:8] ||
 					hdr.ethernet.dst_mac[7:0] != hdr.ipv6.dst_addr[7:0]) {
-						drop_bad_mac();
-						drop_mcast_ctr.count(ig_intr_md.ingress_port);
+						meta.drop_reason = DROP_MULTICAST_INVALID_MAC;
+						meta.dropped = true;
 						return;
 				}
 			}
 #endif /* MULTICAST */
 
-			if (!meta.is_mcast || meta.is_link_local_mcastv6 && !meta.encap_needed) {
+			if (!meta.is_mcast || (meta.is_link_local_mcastv6 && !meta.encap_needed)) {
 				switch_ipv6_addr.apply();
 			}
 		}
@@ -316,8 +321,11 @@ control Services(
 	// sidecar tag, which indicates which port the request arrived on.
 	action forward_to_userspace() {
 		hdr.sidecar.sc_code = SC_FWD_TO_USERSPACE;
+		hdr.sidecar.sc_pad = 0;
 		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
+		hdr.sidecar.sc_egress = 0;
 		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
+		hdr.sidecar.sc_payload = 0;
 		hdr.sidecar.setValid();
 		hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;
 		meta.service_routed = true;
@@ -350,6 +358,7 @@ control Services(
 	// packets always go to the port indicated by the sidecar header.
 	action mcast_inbound_link_local() {
 		hdr.sidecar.sc_code = SC_FWD_TO_USERSPACE;
+		hdr.sidecar.sc_pad = 0;
 		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
 		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
 		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
@@ -415,11 +424,21 @@ control Services(
 	}
 
 	apply {
+		// TODO: Could probably be simplified by hoisting the
+		// switch_ipv{4,6}_addr lookup earlier and dropping non-NAT
+		// switch-addressed packets in NatIngress. Not currently done because
+		// the current fall-through to service.apply() is how the control plane
+		// traffic to the switch addresses reaches userspace.
 		if (meta.is_switch_address && hdr.geneve.isValid() && hdr.geneve.vni != 0) {
 			meta.nat_egress_hit = true;
 		}
 		else {
 			service.apply();
+			// Detect link-local multicast for packets forwarded from userspace.
+			if (meta.service_routed && hdr.ipv6.isValid() &&
+			    hdr.ipv6.dst_addr[127:112] == IPV6_LINK_LOCAL_16) {
+				meta.is_link_local_mcastv6 = true;
+			}
 		}
 	}
 }
@@ -620,7 +639,7 @@ control NatIngress (
 			hdr.vlan.vlan_id : exact;
 		}
 		actions = { mcast_forward_ipv4_to; }
-		const size = IPV4_MULTICAST_TABLE_SIZE;
+		const size = INGRESS_IPV4_MCAST_SIZE;
 		counters = mcast_ipv4_ingress_ctr;
 	}
 
@@ -643,7 +662,7 @@ control NatIngress (
 			hdr.vlan.vlan_id : exact;
 		}
 		actions = { mcast_forward_ipv6_to; }
-		const size = IPV6_MULTICAST_TABLE_SIZE;
+		const size = INGRESS_IPV6_MCAST_SIZE;
 		counters = mcast_ipv6_ingress_ctr;
 	}
 #endif /* MULTICAST */
@@ -716,33 +735,28 @@ control NatIngress (
 	apply {
 		icmp_dst_port.apply();
 
-		// Note: This whole conditional could be simpler as a set of */
+		// Note: This whole conditional could be simpler as a set of
 		// `const entries`, but apply (on tables) cannot be called from actions
-#ifdef MULTICAST
 		if (hdr.ipv4.isValid()) {
+#ifdef MULTICAST
 			if (meta.is_mcast) {
 				ingress_ipv4_mcast.apply();
-			} else if (!meta.encap_needed) {
-				ingress_ipv4.apply();
-			}
-		} else if (hdr.ipv6.isValid()) {
-			// If this is a multicast packet and not a link-local multicast,
-			// we need to check the multicast table
-			if (meta.is_mcast && !meta.is_link_local_mcastv6) {
-				ingress_ipv6_mcast.apply();
-			} else {
-				ingress_ipv6.apply();
-			}
-		}
-#else /* MULTICAST */
-		if (hdr.ipv4.isValid())  {
+			} else
+#endif /* MULTICAST */
 			if (!meta.encap_needed) {
 				ingress_ipv4.apply();
 			}
 		} else if (hdr.ipv6.isValid()) {
-			ingress_ipv6.apply();
-		}
+#ifdef MULTICAST
+			// If multicast and not link-local, check the multicast table
+			if (meta.is_mcast && !meta.is_link_local_mcastv6) {
+				ingress_ipv6_mcast.apply();
+			} else
 #endif /* MULTICAST */
+			{
+				ingress_ipv6.apply();
+			}
+		}
 
 		if (ingress_hit.apply().hit) {
 			if (hdr.ipv4.isValid()) {
@@ -916,7 +930,10 @@ control NatEgress (
 
 control RouterLookupIndex6(
 	inout sidecar_headers_t hdr,
-	inout route6_result_t res
+	inout sidecar_ingress_meta_t meta,
+	in ingress_intrinsic_metadata_t ig_intr_md,
+	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md,
+	inout route_result_t res
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) index_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) forward_ctr;
@@ -929,22 +946,27 @@ control RouterLookupIndex6(
 		hdr.vlan.vlan_id = vlan_id;
 		hdr.vlan.ether_type = hdr.ethernet.ether_type;
 		hdr.ethernet.ether_type = ETHERTYPE_VLAN;
-		res.port = port;
-		res.nexthop = nexthop;
+		ig_tm_md.ucast_egress_port = port;
+		hdr.ipv6.hop_limit = hdr.ipv6.hop_limit - 1;
+		meta.nexthop = nexthop;
+		meta.nexthop_is_v6 = true;
+		meta.resolve_nexthop = true;
 		forward_ctr.count();
 	}
 
 	action forward(PortId_t port, ipv6_addr_t nexthop) {
-		res.port = port;
-		res.nexthop = nexthop;
+		ig_tm_md.ucast_egress_port = port;
+		hdr.ipv6.hop_limit = hdr.ipv6.hop_limit - 1;
+		meta.nexthop = nexthop;
+		meta.nexthop_is_v6 = true;
+		meta.resolve_nexthop = true;
 		forward_ctr.count();
 	}
 
 	/*
-	 * The table size is reduced by one here just to allow the integration
-	 * test to pass.  We want the lookup and forward tables to have the same
-	 * capacity from dpd's perspective, and the "default" entry consumes a
-	 * slot in the lookup table.
+	 * Index 0 is reserved as the unreachable/miss sentinel set by
+	 * `unreachable()`. The freemap allocates indices 1..IPV6_LPM_SIZE - 1,
+	 * leaving slot 0 vacant so misses cleanly fall through.
 	 */
 	table route {
 		key             = { res.idx: exact; }
@@ -958,8 +980,8 @@ control RouterLookupIndex6(
 		res.idx = 0;
 		res.slots = 0;
 		res.slot = 0;
-		res.port = 0;
-		res.nexthop = 0;
+		ICMP_ERROR_SETUP(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);
+		meta.drop_reason = DROP_IPV6_UNROUTEABLE;
 		index_ctr.count();
 	}
 
@@ -969,28 +991,24 @@ control RouterLookupIndex6(
 	 */
 	#include <route_selector.p4>
 
-	action index(bit<16> idx, bit<8> slots) {
+	action index(bit<16> idx, bit<8> slots, bit<1> skip_ttl) {
 		res.is_hit = true;
-
 		res.idx = idx;
 		res.slots = slots;
 		res.slot = 0;
-
-		// The rest of this data is extracted from the target table at
-		// entry `res.idx`.
-		res.port = 0;
-		res.nexthop = 0;
+		meta.skip_ttl_check = (skip_ttl == 1);
 		index_ctr.count();
 	}
 
+	/*
+	 * Sized to IPV6_LPM_SIZE without padding. A +1 cushion crosses a
+	 * hardware boundary in the v6 LPM and costs an ingress stage.
+	 */
 	table lookup {
 		key             = { hdr.ipv6.dst_addr: lpm; }
 		actions         = { index; unreachable; }
 		default_action  = unreachable;
-		// The table size is incremented by one here just to allow the
-		// integration tests to pass, as this is used by the multicast
-		// implementation as well
-		const size      = IPV6_LPM_SIZE + 1;
+		const size      = IPV6_LPM_SIZE;
 		counters        = index_ctr;
 	}
 
@@ -1007,14 +1025,33 @@ control RouterLookupIndex6(
 			 */
 			select_route.apply();
 			res.idx = res.idx + res.slot;
-			route.apply();
+
+			if (meta.route_ttl_is_1 && !meta.skip_ttl_check) {
+				// TTL=1 short-circuit, inlined to avoid a dedicated
+				// table stage. Aggregate count surfaces through the
+				// DROP_IPV6_TTL_EXCEEDED drop-reason counter.
+				//
+				// Packets routed to the service port (skip_ttl_check=true)
+				// bypass this setup. They are not counted as TTL_EXCEEDED
+				// even if userspace later rejects them. If a "TTL=1 bypassed
+				// to userspace" signal becomes useful for diagnostics, add a
+				// dedicated counter rather than relaxing the bypass.
+				ICMP_ERROR_SETUP(
+					ICMP6_TIME_EXCEEDED, ICMP_EXC_TTL);
+				meta.drop_reason = DROP_IPV6_TTL_EXCEEDED;
+			} else {
+				route.apply();
+			}
 		}
 	}
 }
 
 control RouterLookupIndex4(
 	inout sidecar_headers_t hdr,
-	inout route4_result_t res
+	inout sidecar_ingress_meta_t meta,
+	in ingress_intrinsic_metadata_t ig_intr_md,
+	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md,
+	inout route_result_t res
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) index_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) forward_ctr;
@@ -1027,9 +1064,11 @@ control RouterLookupIndex4(
 		hdr.vlan.vlan_id = vlan_id;
 		hdr.vlan.ether_type = hdr.ethernet.ether_type;
 		hdr.ethernet.ether_type = ETHERTYPE_VLAN;
-		res.port = port;
-		res.nexthop = nexthop;
-		res.is_v6 = false;
+		ig_tm_md.ucast_egress_port = port;
+		hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+		meta.nexthop = (ipv6_addr_t)nexthop;
+		meta.nexthop_is_v6 = false;
+		meta.resolve_nexthop = true;
 		forward_ctr.count();
 	}
 
@@ -1041,37 +1080,51 @@ control RouterLookupIndex4(
 		hdr.vlan.vlan_id = vlan_id;
 		hdr.vlan.ether_type = hdr.ethernet.ether_type;
 		hdr.ethernet.ether_type = ETHERTYPE_VLAN;
-		res.port = port;
-		res.nexthop6 = nexthop;
-		res.is_v6 = true;
+		ig_tm_md.ucast_egress_port = port;
+		hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+		meta.nexthop = nexthop;
+		meta.nexthop_is_v6 = true;
+		meta.resolve_nexthop = true;
 		forward_ctr.count();
 	}
 
 	action forward(PortId_t port, ipv4_addr_t nexthop) {
-		res.port = port;
-		res.nexthop = nexthop;
-		res.is_v6 = false;
+		ig_tm_md.ucast_egress_port = port;
+		hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+		meta.nexthop = (ipv6_addr_t)nexthop;
+		meta.nexthop_is_v6 = false;
+		meta.resolve_nexthop = true;
 		forward_ctr.count();
 	}
 
 	action forward_v6(PortId_t port, ipv6_addr_t nexthop) {
-		res.port = port;
-		res.nexthop6 = nexthop;
-		res.is_v6 = true;
+		ig_tm_md.ucast_egress_port = port;
+		hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+		meta.nexthop = nexthop;
+		meta.nexthop_is_v6 = true;
+		meta.resolve_nexthop = true;
+		forward_ctr.count();
+	}
+
+	action ttl_exceeded() {
+		ICMP_ERROR_SETUP(ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
+		meta.drop_reason = DROP_IPV4_TTL_EXCEEDED;
 		forward_ctr.count();
 	}
 
 	/*
-	 * The table size is reduced by one here just to allow the integration
-	 * test to pass.  We want the lookup and forward tables to have the same
-	 * capacity from dpd's perspective, and the "default" entry consumes a
-	 * slot in the lookup table.
+	 * IPv4 still uses the older compound-key encoding: each logical route
+	 * consumes two physical entries keyed by `(idx, route_ttl_is_1)`, one
+	 * for normal forwarding and one for the ttl_exceeded path. IPv6 was
+	 * collapsed to one entry per logical route by moving TTL=1 handling
+	 * inline in the apply block. IPv4 keeps the two-entry form because it
+	 * still needs per-target TTL behavior for mixed ECMP sets.
 	 */
 	table route {
-		key             = { res.idx: exact; }
-		actions         = { forward; forward_v6; forward_vlan; forward_vlan_v6; }
-		const size      = IPV4_LPM_SIZE - 1;
-		counters        = forward_ctr;
+		key          = { res.idx: exact; meta.route_ttl_is_1: exact; }
+		actions      = { forward; forward_v6; forward_vlan; forward_vlan_v6; ttl_exceeded; }
+		const size   = IPV4_LPM_SIZE * FWD_ENTRIES_PER_ROUTE_V4 - 1;
+		counters     = forward_ctr;
 	}
 
 	action unreachable() {
@@ -1079,8 +1132,8 @@ control RouterLookupIndex4(
 		res.idx = 0;
 		res.slots = 0;
 		res.slot = 0;
-		res.port = 0;
-		res.nexthop = 0;
+		ICMP_ERROR_SETUP(ICMP_DEST_UNREACH, ICMP_DST_UNREACH_NET);
+		meta.drop_reason = DROP_IPV4_UNROUTEABLE;
 		index_ctr.count();
 	}
 
@@ -1092,15 +1145,9 @@ control RouterLookupIndex4(
 
 	action index(bit<16> idx, bit<8> slots) {
 		res.is_hit = true;
-
 		res.idx = idx;
 		res.slots = slots;
 		res.slot = 0;
-
-		// The rest of this data is extracted from the target table at
-		// entry `res.idx`.
-		res.port = 0;
-		res.nexthop = 0;
 		index_ctr.count();
 	}
 
@@ -1153,10 +1200,11 @@ control Arp (
 
 	action request() {
 		hdr.sidecar.sc_code = SC_ARP_NEEDED;
+		hdr.sidecar.sc_pad = 0;
 		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
 		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
 		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
-		hdr.sidecar.sc_payload = (bit<128>)meta.nexthop_ipv4;
+		hdr.sidecar.sc_payload = (bit<128>)meta.nexthop;
 		hdr.sidecar.setValid();
 		hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;
 		meta.service_routed = true;
@@ -1168,7 +1216,11 @@ control Arp (
 	}
 
 	table tbl {
-		key             = { meta.nexthop_ipv4: exact; }
+		// @name required for complex key expressions (casts); provides
+		// the control-plane name used by Rust match_xlate.
+		key = {
+			(ipv4_addr_t)meta.nexthop : exact @name("nexthop");
+		}
 		actions         = { drop; request; rewrite; }
 		default_action  = request;
 		const size      = IPV4_ARP_SIZE;
@@ -1201,10 +1253,11 @@ control Ndp (
 
 	action request() {
 		hdr.sidecar.sc_code = SC_NEIGHBOR_NEEDED;
+		hdr.sidecar.sc_pad = 0;
 		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
 		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
 		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
-		hdr.sidecar.sc_payload = (bit<128>)meta.nexthop_ipv6;
+		hdr.sidecar.sc_payload = (bit<128>)meta.nexthop;
 		hdr.sidecar.setValid();
 		hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;
 		meta.service_routed = true;
@@ -1216,7 +1269,7 @@ control Ndp (
 	}
 
 	table tbl {
-		key             = { meta.nexthop_ipv6: exact; }
+		key             = { meta.nexthop: exact; }
 		actions         = { drop; rewrite; request; }
 		default_action  = request;
 		const size      = IPV6_NEIGHBOR_SIZE;
@@ -1230,33 +1283,22 @@ control Router4 (
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
 	in ingress_intrinsic_metadata_t ig_intr_md,
-	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
+	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md,
+	inout route_result_t fwd
 ) {
 	RouterLookupIndex4() lookup_idx;
 	Hash<bit<8>>(HashAlgorithm_t.CRC8) index_hash;
 
-	action icmp_error(bit<8> type, bit<8> code) {
-		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
-		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
-		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
-		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
-		hdr.sidecar.sc_payload = (bit<128>)type << 8 | (bit<128>)code;
-		hdr.sidecar.setValid();
-		hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;
-		meta.service_routed = true;
-		ig_tm_md.ucast_egress_port = USER_SPACE_SERVICE_PORT;
-	}
-
 	apply {
-		route4_result_t fwd;
-		fwd.is_v6 = false;
-		fwd.nexthop6 = 0;
-		fwd.nexthop = 0;
-		fwd.port = 0;
+		// fwd is passed in from L3Router to share PHV allocation with Router6
 		fwd.is_hit = false;
 		fwd.idx = 0;
 		fwd.slots = 0;
 		fwd.slot = 0;
+		meta.resolve_nexthop = false;
+		meta.nexthop = 0;
+		meta.nexthop_is_v6 = false;
+		meta.route_ttl_is_1 = hdr.ipv4.ttl == 1;
 		// Our route selection table is 11 bits wide, and we need 5 bits
 		// of that for our "slot count" index.  Thus, we only need 6
 		// bits of the 8-bit hash calculated here to complete the 11-bit
@@ -1268,26 +1310,7 @@ control Router4 (
 			meta.l4_src_port
 		}) & 0x3f;
 
-		lookup_idx.apply(hdr, fwd);
-
-		if (!fwd.is_hit) {
-			icmp_error(ICMP_DEST_UNREACH, ICMP_DST_UNREACH_NET);
-			// Dont set meta.dropped because we want an error packet
-			// to go out.
-			meta.drop_reason = DROP_IPV4_UNROUTEABLE;
-		} else if (hdr.ipv4.ttl == 1 && !IS_SERVICE(fwd.port)) {
-			icmp_error(ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
-			// Dont set meta.dropped because we want an error packet
-			// to go out.
-			meta.drop_reason = DROP_IPV4_TTL_EXCEEDED;
-		} else {
-			hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
-			ig_tm_md.ucast_egress_port = fwd.port;
-
-			meta.nexthop_ipv4 = fwd.nexthop;
-			meta.nexthop_ipv6 = fwd.nexthop6;
-			meta.resolve_nexthop = true;
-		}
+		lookup_idx.apply(hdr, meta, ig_intr_md, ig_tm_md, fwd);
 	}
 }
 
@@ -1299,18 +1322,6 @@ control MulticastRouter4(
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ctr;
-
-	action icmp_error(bit<8> type, bit<8> code) {
-		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
-		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
-		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
-		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
-		hdr.sidecar.sc_payload = (bit<128>)type << 8 | (bit<128>)code;
-		hdr.sidecar.setValid();
-		hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;
-		meta.service_routed = true;
-		ig_tm_md.ucast_egress_port = USER_SPACE_SERVICE_PORT;
-	}
 
 	action unreachable() {
 		ctr.count();
@@ -1337,7 +1348,7 @@ control MulticastRouter4(
 		}
 		actions = { forward; forward_vlan; unreachable; }
 		default_action = unreachable;
-		const size = IPV4_MULTICAST_TABLE_SIZE;
+		const size = MCAST_ROUTER_IPV4_SIZE;
 		counters = ctr;
 	}
 
@@ -1353,12 +1364,12 @@ control MulticastRouter4(
 		}
 
 		if (!tbl.apply().hit) {
-			icmp_error(ICMP_DEST_UNREACH, ICMP_DST_UNREACH_NET);
+			ICMP_ERROR_SETUP(ICMP_DEST_UNREACH, ICMP_DST_UNREACH_NET);
 			meta.drop_reason = DROP_IPV4_UNROUTEABLE;
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
 		} else if (hdr.ipv4.ttl == 1 && !meta.service_routed) {
-			icmp_error(ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
+			ICMP_ERROR_SETUP(ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
 			meta.drop_reason = DROP_IPV4_TTL_INVALID;
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
@@ -1377,31 +1388,22 @@ control Router6 (
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
 	in ingress_intrinsic_metadata_t ig_intr_md,
-	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
+	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md,
+	inout route_result_t fwd
 ) {
 	RouterLookupIndex6() lookup_idx;
 	Hash<bit<8>>(HashAlgorithm_t.CRC8) index_hash;
 
-	action icmp_error(bit<8> type, bit<8> code) {
-		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
-		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
-		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
-		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
-		hdr.sidecar.sc_payload = (bit<128>)type << 8 | (bit<128>)code;
-		hdr.sidecar.setValid();
-		hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;
-		meta.service_routed = true;
-		ig_tm_md.ucast_egress_port = USER_SPACE_SERVICE_PORT;
-	}
-
 	apply {
-		route6_result_t fwd;
-		fwd.nexthop = 0;
-		fwd.port = 0;
+		// fwd is passed in from L3Router to share PHV allocation with Router4
 		fwd.is_hit = false;
 		fwd.idx = 0;
 		fwd.slots = 0;
 		fwd.slot = 0;
+		meta.resolve_nexthop = false;
+		meta.nexthop = 0;
+		meta.nexthop_is_v6 = false;
+		meta.route_ttl_is_1 = hdr.ipv6.hop_limit == 1;
 		// Our route selection table is 11 bits wide, and we need 5 bits
 		// of that for our "slot count" index.  Thus, we only need 6
 		// bits of the 8-bit hash calculated here to complete the 11-bit
@@ -1413,24 +1415,7 @@ control Router6 (
 			meta.l4_src_port
 		}) & 0x3f;
 
-		lookup_idx.apply(hdr, fwd);
-
-		if (!fwd.is_hit) {
-			icmp_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);
-			meta.drop_reason = DROP_IPV6_UNROUTEABLE;
-			// Dont set meta.dropped because we want an error packet
-			// to go out.
-		} else if (hdr.ipv6.hop_limit == 1 && !IS_SERVICE(fwd.port)) {
-			icmp_error(ICMP6_TIME_EXCEEDED, ICMP_EXC_TTL);
-			meta.drop_reason = DROP_IPV6_TTL_EXCEEDED;
-			// Dont set meta.dropped because we want an error packet
-			// to go out.
-		} else {
-			ig_tm_md.ucast_egress_port = fwd.port;
-			hdr.ipv6.hop_limit = hdr.ipv6.hop_limit - 1;
-			meta.resolve_nexthop = true;
-			meta.nexthop_ipv6 = fwd.nexthop;
-		}
+		lookup_idx.apply(hdr, meta, ig_intr_md, ig_tm_md, fwd);
 	}
 }
 
@@ -1442,18 +1427,6 @@ control MulticastRouter6 (
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ctr;
-
-	action icmp_error(bit<8> type, bit<8> code) {
-		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
-		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
-		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
-		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
-		hdr.sidecar.sc_payload = (bit<128>)type << 8 | (bit<128>)code;
-		hdr.sidecar.setValid();
-		hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;
-		meta.service_routed = true;
-		ig_tm_md.ucast_egress_port = USER_SPACE_SERVICE_PORT;
-	}
 
 	action unreachable() {
 		ctr.count();
@@ -1479,7 +1452,7 @@ control MulticastRouter6 (
 		}
 		actions = { forward; forward_vlan; unreachable; }
 		default_action = unreachable;
-		const size = IPV6_MULTICAST_TABLE_SIZE;
+		const size = MCAST_ROUTER_IPV6_SIZE;
 		counters = ctr;
 	}
 
@@ -1495,12 +1468,12 @@ control MulticastRouter6 (
 		}
 
 		if (!tbl.apply().hit) {
-			icmp_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);
+			ICMP_ERROR_SETUP(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);
 			meta.drop_reason = DROP_IPV6_UNROUTEABLE;
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
 		} else if (hdr.ipv6.hop_limit == 1) {
-			icmp_error(ICMP6_TIME_EXCEEDED, ICMP_EXC_TTL);
+			ICMP_ERROR_SETUP(ICMP6_TIME_EXCEEDED, ICMP_EXC_TTL);
 			meta.drop_reason = DROP_IPV6_TTL_EXCEEDED;
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
@@ -1519,59 +1492,65 @@ control L3Router(
 	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
+	Router4() router4;
+	Router6() router6;
+
 	apply {
-#ifdef MULTICAST
+		// Shared: allocate a single route_result_t for Router4 and Router6.
+		// This forces the compiler to use the same PHV allocation for both,
+		// preventing live-range divergence under high PHV pressure.
+		route_result_t fwd;
+		fwd.is_hit = false;
+		fwd.ecmp_hash = 0;
+		fwd.idx = 0;
+		fwd.slots = 0;
+		fwd.slot = 0;
+
 		if (hdr.ipv4.isValid()) {
+#ifdef MULTICAST
 			if (meta.is_mcast && !meta.is_link_local_mcastv6) {
 				MulticastRouter4.apply(hdr, meta, ig_intr_md, ig_tm_md);
-			} else {
-				Router4.apply(hdr, meta, ig_intr_md, ig_tm_md);
+			} else
+#endif /* MULTICAST */
+			{
+				router4.apply(hdr, meta, ig_intr_md, ig_tm_md, fwd);
 			}
 		} else if (hdr.ipv6.isValid()) {
+#ifdef MULTICAST
 			if (meta.is_mcast && !meta.is_link_local_mcastv6) {
 				MulticastRouter6.apply(hdr, meta, ig_intr_md, ig_tm_md);
-			} else {
-				Router6.apply(hdr, meta, ig_intr_md, ig_tm_md);
+			} else
+#endif /* MULTICAST */
+			{
+				router6.apply(hdr, meta, ig_intr_md, ig_tm_md, fwd);
 			}
 		}
-#else /* MULTICAST */
-		if (hdr.ipv4.isValid()) {
-			Router4.apply(hdr, meta, ig_intr_md, ig_tm_md);
-		} else if (hdr.ipv6.isValid()) {
-			Router6.apply(hdr, meta, ig_intr_md, ig_tm_md);
-		}
-#endif /* MULTICAST */
 		if (meta.resolve_nexthop) {
-			if (meta.nexthop_ipv4 != 0) {
-				Arp.apply(hdr, meta, ig_intr_md, ig_tm_md);
-			} else {
+			if (meta.nexthop_is_v6) {
 				Ndp.apply(hdr, meta, ig_intr_md, ig_tm_md);
+			} else {
+				Arp.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			}
 		}
 	}
 }
 
-/*
- * XXX: this control could be moved to the Egress pipeline if we need more space
- * in the Ingress pipeline.  Currently unicast packets are able to bypass that
- * pipeline, which is why we've tacked it on here.  We could probably also merge
- * it with the MacRewrite control, as they are both per-port settings, but that
- * would present some weird semantics to the control plane daemon.
- */
-control EgressFilter(
-	inout sidecar_ingress_meta_t meta,
-	in ingress_intrinsic_metadata_for_tm_t ig_tm_md
+// Filter NAT egress traffic by port. Ports not explicitly marked as uplinks
+// drop guest traffic to prevent NAT'd packets from egressing on non-uplink
+// ports. Placed in the egress pipeline to avoid adding a stage to ingress.
+control NatEgressFilter(
+	inout sidecar_egress_meta_t meta,
+	in egress_intrinsic_metadata_t eg_intr_md
 ) {
 	action guest_traffic_not_allowed() {
 		meta.drop_reason = DROP_NAT_EGRESS_BLOCKED;
-		meta.dropped = true;
 	}
 
 	action guest_traffic_allowed() {
 	}
 
 	table egress_filter {
-		key = { ig_tm_md.ucast_egress_port : exact; }
+		key = { eg_intr_md.egress_port : exact; }
 		actions = { guest_traffic_allowed; guest_traffic_not_allowed; }
 
 		const size = 256;
@@ -1583,9 +1562,14 @@ control EgressFilter(
 	}
 }
 
+
+/* Rewrite the source MAC address based on the egress port. For multicast
+ * packets, also derive the destination MAC from the destination IP address.
+ */
 control MacRewrite(
 	inout sidecar_headers_t hdr,
-	in PortId_t port
+	in PortId_t port,
+	in bool derive_dst_mac
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ctr;
 
@@ -1603,76 +1587,32 @@ control MacRewrite(
 	}
 
 	apply {
-		mac_rewrite.apply();
-	}
-}
-
-#ifdef MULTICAST
-/* This control is used to rewrite the source and destination MAC addresses
- * for multicast packets. The destination MAC address is derived from the
- * destination IP address, and the source MAC address is set based on the
- * egress port the packet is being sent out on.
- */
-control MulticastMacRewrite(
-	inout sidecar_headers_t hdr,
-	in PortId_t port
-) {
-	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ctr;
-
-	action rewrite(mac_addr_t mac) {
-		hdr.ethernet.src_mac = mac;
-		ctr.count();
-	}
-
-	table mac_rewrite {
-		key     = { port: exact ; }
-		actions = { rewrite; }
-
-		const size = 256;
-		counters = ctr;
-	}
-
-	apply {
-		if (mac_rewrite.apply().hit) {
+		bool hit = mac_rewrite.apply().hit;
+		// Derive multicast dst_mac only when src_mac rewrite succeeds.
+		if (hit && derive_dst_mac) {
 			// Derive the destination MAC based on IP type.
 			// IPV4: https://www.rfc-editor.org/rfc/rfc1112.html#section-6.4
 			// IPV6: https://www.rfc-editor.org/rfc/rfc2464.html
-			if (hdr.ipv4.isValid() || (!hdr.geneve.isValid() && hdr.inner_ipv4.isValid())) {
+			if (hdr.ipv4.isValid()) {
 				// IPv4 multicast MAC address (01:00:5e + 23 bits of IP)
-				bit<48> mcast_mac = 0;
-				// Set the first three bytes to 01:00:5e (0x01005e)
-				mcast_mac = (bit<48>)0x01005e << 24;
-
-				bit<24> ip_suffix;
-				// Take the last 23 bits of IPv4 address and append them
-				// We mask the first byte to clear the top bit
-				if (hdr.ipv4.isValid()) {
-					ip_suffix = (bit<24>)(hdr.ipv4.dst_addr & 0x007fffff);
-				} else {
-					ip_suffix = (bit<24>)(hdr.inner_ipv4.dst_addr & 0x007fffff);
-				}
-
-				hdr.ethernet.dst_mac = mcast_mac | ((bit<48>)ip_suffix);
-			} else if (hdr.ipv6.isValid() || (!hdr.geneve.isValid() && hdr.inner_ipv6.isValid())) {
+				hdr.ethernet.dst_mac =
+				    IPV4_MCAST_MAC_PREFIX ++ 1w0 ++ hdr.ipv4.dst_addr[22:0];
+			} else if (!hdr.geneve.isValid() && hdr.inner_ipv4.isValid()) {
+				hdr.ethernet.dst_mac =
+				    IPV4_MCAST_MAC_PREFIX ++ 1w0 ++ hdr.inner_ipv4.dst_addr[22:0];
+			} else if (hdr.ipv6.isValid()) {
 				// IPv6 multicast MAC address (33:33 + last 32 bits of IPv6)
-				bit<48> mcast_mac = 0;
-				// Set the first two bytes to 33:33
-				mcast_mac = (bit<48>)0x3333 << 32;
-
-				bit<48> ip_suffix;
-				// Take the last 32 bits of IPv6 address and append them
-				if (hdr.ipv6.isValid()) {
-					ip_suffix = (bit<48>)(hdr.ipv6.dst_addr[31:0]);
-				} else {
-					ip_suffix = (bit<48>)(hdr.inner_ipv6.dst_addr[31:0]);
-				}
-
-				hdr.ethernet.dst_mac = mcast_mac | ip_suffix;
+				hdr.ethernet.dst_mac =
+				    IPV6_MCAST_MAC_PREFIX ++ hdr.ipv6.dst_addr[31:0];
+			} else if (!hdr.geneve.isValid() && hdr.inner_ipv6.isValid()) {
+				hdr.ethernet.dst_mac =
+				    IPV6_MCAST_MAC_PREFIX ++ hdr.inner_ipv6.dst_addr[31:0];
 			}
 		}
 	}
 }
 
+#ifdef MULTICAST
 /* This control is used to configure multicast packets for replication.
  * It includes actions for dropping packets with no group, allowing
  * source-specific multicast, and configuring multicast group IDs and hashes.
@@ -1724,7 +1664,7 @@ control MulticastIngress (
 		mcast_ipv4_ssm_ctr.count();
 	}
 
-	// Drop action for IPv6 ulticast packets with no source-specific multicast
+	// Drop action for IPv6 multicast packets with no source-specific multicast
 	// group.
 	action drop_mcastv6_filtered_source() {
 		meta.drop_reason = DROP_MULTICAST_SOURCE_FILTERED;
@@ -1788,7 +1728,7 @@ control MulticastIngress (
 			drop_mcastv4_filtered_source;
 		}
 		default_action = drop_mcastv4_filtered_source;
-		const size = IPV4_MULTICAST_TABLE_SIZE;
+		const size = MCAST_SOURCE_FILTER_IPV4_SIZE;
 		counters = mcast_ipv4_ssm_ctr;
 	}
 
@@ -1799,7 +1739,7 @@ control MulticastIngress (
 			drop_mcastv6_admin_scoped_no_group;
 		}
 		default_action = drop_mcastv6_admin_scoped_no_group;
-		const size = IPV6_MULTICAST_TABLE_SIZE;
+		const size = MCAST_REPLICATION_IPV6_SIZE;
 		counters = mcast_ipv6_ctr;
 	}
 
@@ -1813,7 +1753,7 @@ control MulticastIngress (
 			drop_mcastv6_filtered_source;
 		}
 		default_action = drop_mcastv6_filtered_source;
-		const size = IPV6_MULTICAST_TABLE_SIZE;
+		const size = MCAST_SOURCE_FILTER_IPV6_SIZE;
 		counters = mcast_ipv6_ssm_ctr;
 	}
 
@@ -1851,16 +1791,18 @@ control MulticastIngress (
 			NoAction;
 		}
 
+		// Priority order: first match wins. The geneve tag entries are
+		// most specific (both headers valid + exact tag), followed by
+		// group-ID fallbacks for non-geneve multicast.
 		const entries = {
 			(  _, _, true, true, MULTICAST_TAG_EXTERNAL ) : invalidate_underlay_grp_and_set_decap;
 			(  _, _, true, true, MULTICAST_TAG_UNDERLAY ) : invalidate_external_grp;
 			(  _, _, true, true, MULTICAST_TAG_UNDERLAY_EXTERNAL ) : NoAction;
 			( 0, _, _, _, _ ) : invalidate_external_grp;
 			( _, 0, _, _, _ ) : invalidate_underlay_grp;
-			( 0, 0, _, _, _ ) : invalidate_grps;
 		}
 
-		const size = 6;
+		const size = 5;
 	}
 
 	// Note: SSM tables currently take one extra stage in the pipeline (17->18).
@@ -1987,7 +1929,7 @@ control MulticastEgress (
 		}
 
 		// Group RIDs == Group IPs
-		const size = IPV6_MULTICAST_TABLE_SIZE;
+		const size = MCAST_DECAP_PORTS_SIZE;
 	}
 
 	action set_port_number(bit<8> port_number) {
@@ -2126,14 +2068,11 @@ control Ingress(
 	NatIngress() nat_ingress;
 	NatEgress() nat_egress;
 	L3Router() l3_router;
-	EgressFilter() egress_filter;
 #ifdef MULTICAST
 	MulticastIngress() mcast_ingress;
 #endif /* MULTICAST */
-	MacRewrite() mac_rewrite;
 
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) ingress_ctr;
-	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) egress_ctr;
 	Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS) drop_port_ctr;
 	Counter<bit<32>, bit<8>>(DROP_REASON_MAX, CounterType_t.PACKETS) drop_reason_ctr;
 	Counter<bit<32>, bit<10>>(1024, CounterType_t.PACKETS) packet_ctr;
@@ -2167,7 +2106,7 @@ control Ingress(
 			if (!meta.is_mcast || meta.is_link_local_mcastv6) {
 				services.apply(hdr, meta, ig_intr_md, ig_tm_md);
 #ifdef MULTICAST
-			} else if (meta.is_mcast && !meta.is_link_local_mcastv6) {
+			} else {
 				mcast_ingress.apply(hdr, meta, ig_intr_md, ig_tm_md);
 #endif /* MULTICAST */
 			}
@@ -2180,25 +2119,24 @@ control Ingress(
 			if (!meta.dropped) {
 				l3_router.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			}
-			if (!meta.dropped && meta.nat_egress_hit &&
-			    !meta.is_mcast && !meta.service_routed) {
-				egress_filter.apply(meta, ig_tm_md);
-			}
 		}
 
 		if (meta.dropped) {
-			// Handle dropped packets
+			// Handle dropped packets. Unicast packets proceed to egress for
+			// MAC rewrite and are counted by unicast_ctr in Egress for
+			// consistency.
 			ig_dprsr_md.drop_ctl = 1;
 			drop_port_ctr.count(ig_intr_md.ingress_port);
 			drop_reason_ctr.count(meta.drop_reason);
-		} else if (!meta.is_mcast) {
-			egress_ctr.count(ig_tm_md.ucast_egress_port);
-			if (ig_tm_md.ucast_egress_port != USER_SPACE_SERVICE_PORT) {
-				mac_rewrite.apply(hdr, ig_tm_md.ucast_egress_port);
-			}
-			meta.bridge_hdr.setInvalid();
-			ig_tm_md.bypass_egress = 1w1;
 		}
+
+		// Pass state to egress via bridge header.
+		if (meta.is_mcast && !meta.is_link_local_mcastv6) {
+			meta.bridge_hdr.is_mcast_routed = true;
+		} else {
+			meta.bridge_hdr.is_mcast_routed = false;
+		}
+		meta.bridge_hdr.nat_egress_hit = meta.nat_egress_hit;
 
 		if (meta.encap_needed) {
 			// This works around a few things which cropped up in
@@ -2327,70 +2265,129 @@ control Egress(
 	inout egress_intrinsic_metadata_for_deparser_t eg_dprsr_md,
 	inout egress_intrinsic_metadata_for_output_port_t eg_oport_md
 ) {
+	// Separate MacRewrite instances for unicast and multicast paths.
+	// The P4 compiler requires each table to have a single deterministic
+	// next-table chain. Using one instance from multiple control flow
+	// paths causes "incompatible next-table chains" errors. Separate
+	// instances also provide distinct DirectCounters for traffic accounting.
+	NatEgressFilter() egress_filter;
+	MacRewrite() unicast_mac_rewrite;
 #ifdef MULTICAST
-	MulticastMacRewrite() mac_rewrite;
+	MacRewrite() mcast_mac_rewrite;
 	MulticastEgress() mcast_egress;
+#endif /* MULTICAST */
 
+	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) forwarded_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) unicast_ctr;
-	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) mcast_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) link_local_mcast_ctr;
-	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) external_mcast_ctr;
-	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) underlay_mcast_ctr;
 	Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS) drop_port_ctr;
 	Counter<bit<32>, bit<8>>(DROP_REASON_MAX, CounterType_t.PACKETS) drop_reason_ctr;
+#ifdef MULTICAST
+	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) mcast_ctr;
+	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) external_mcast_ctr;
+	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) underlay_mcast_ctr;
+#endif /* MULTICAST */
 
 	apply {
-		// Check multicast egress packets by checking that RID is not 0.
-		bool is_egress_rid_mcast = eg_intr_md.egress_rid > 0;
-		// We track IPv6 multicast packets separately for counters.
+		// Link-local IPv6 multicast: ff02::/16 scope prefix.
 		bool is_link_local_ipv6_mcast = false;
 		if (hdr.ipv6.isValid()) {
-			bit<16> ipv6_prefix = (bit<16>)hdr.ipv6.dst_addr[127:112];
-			is_link_local_ipv6_mcast = (ipv6_prefix == 16w0xff02);
+			if (hdr.ipv6.dst_addr[127:112] == IPV6_LINK_LOCAL_16) {
+				is_link_local_ipv6_mcast = true;
+			}
 		}
-		bool is_mcast = is_egress_rid_mcast || is_link_local_ipv6_mcast;
 
-		if (is_egress_rid_mcast == true) {
-			if (meta.bridge_hdr.ingress_port == eg_intr_md.egress_port) {
-				// If the ingress port is the same as the egress port, drop
-				// the packet
+#ifdef MULTICAST
+		// Multicast state from bridge header.
+		PortId_t ingress_port = meta.bridge_hdr.ingress_port;
+		bit<2> mcast_tag;
+		if (hdr.geneve_opts.oxg_mcast.isValid()) {
+			mcast_tag = hdr.geneve_opts.oxg_mcast.mcast_tag;
+		} else {
+			mcast_tag = MULTICAST_TAG_INVALID;
+		}
+		bool is_mcast_routed = meta.bridge_hdr.is_mcast_routed;
+
+		if (eg_intr_md.egress_rid != 0) {
+			// Replicated multicast packet (egress_rid > 0 from PRE).
+			if (ingress_port == eg_intr_md.egress_port) {
+				// Drop if ingress port equals egress port (path filter).
 				meta.drop_reason = DROP_MULTICAST_PATH_FILTERED;
 			} else {
 				mcast_egress.apply(hdr, meta, eg_intr_md, eg_dprsr_md);
-				mac_rewrite.apply(hdr, eg_intr_md.egress_port);
+				mcast_mac_rewrite.apply(hdr, eg_intr_md.egress_port, true);
 			}
-		} else if (eg_intr_md.egress_rid == 0 &&
-		    eg_intr_md.egress_rid_first == 1) {
-			// Drop CPU copies (RID=0) to prevent unwanted packets on port 0
+		} else if (is_mcast_routed) {
+			// CPU copy: routed to multicast but egress_rid == 0.
+			eg_dprsr_md.drop_ctl = 1;
 			meta.drop_reason = DROP_MULTICAST_CPU_COPY;
+		} else {
+			// Unicast: check egress filter, then rewrite src_mac.
+			if (meta.bridge_hdr.nat_egress_hit) {
+				egress_filter.apply(meta, eg_intr_md);
+			}
+			if (meta.drop_reason == 0 &&
+			    eg_intr_md.egress_port != USER_SPACE_SERVICE_PORT &&
+			    !is_link_local_ipv6_mcast) {
+				unicast_mac_rewrite.apply(hdr, eg_intr_md.egress_port, false);
+			}
 		}
+#else /* MULTICAST */
+		// Non-multicast: check egress filter for NAT traffic,
+		// then rewrite src_mac.
+		if (meta.bridge_hdr.nat_egress_hit) {
+			egress_filter.apply(meta, eg_intr_md);
+		}
+		if (meta.drop_reason == 0 &&
+		    eg_intr_md.egress_port != USER_SPACE_SERVICE_PORT &&
+		    !is_link_local_ipv6_mcast) {
+			unicast_mac_rewrite.apply(hdr, eg_intr_md.egress_port, false);
+		}
+#endif /* MULTICAST */
 
+		// Shared: drop and forwarded counting
 		if (meta.drop_reason != 0) {
-			// Handle dropped packets
 			drop_port_ctr.count(eg_intr_md.egress_port);
 			drop_reason_ctr.count(meta.drop_reason);
 			eg_dprsr_md.drop_ctl = 1;
-		} else if (is_mcast == true) {
-			mcast_ctr.count(eg_intr_md.egress_port);
+		} else {
+			forwarded_ctr.count(eg_intr_md.egress_port);
 
+#ifdef MULTICAST
+			// Multicast-specific counting. Use the mcast_tag
+			// local (captured before egress decap may strip
+			// geneve headers) rather than rechecking header
+			// validity.
+			if (is_mcast_routed) {
+				mcast_ctr.count(eg_intr_md.egress_port);
+				if (mcast_tag == MULTICAST_TAG_UNDERLAY) {
+					underlay_mcast_ctr.count(
+					    eg_intr_md.egress_port);
+				} else if (mcast_tag == MULTICAST_TAG_EXTERNAL) {
+					external_mcast_ctr.count(
+					    eg_intr_md.egress_port);
+				} else if (mcast_tag == MULTICAST_TAG_UNDERLAY_EXTERNAL) {
+					underlay_mcast_ctr.count(
+					    eg_intr_md.egress_port);
+					external_mcast_ctr.count(
+					    eg_intr_md.egress_port);
+				}
+			} else if (is_link_local_ipv6_mcast) {
+				mcast_ctr.count(eg_intr_md.egress_port);
+				link_local_mcast_ctr.count(eg_intr_md.egress_port);
+			} else {
+				unicast_ctr.count(eg_intr_md.egress_port);
+			}
+#else /* MULTICAST */
+			// Non-multicast counter increments
 			if (is_link_local_ipv6_mcast) {
 				link_local_mcast_ctr.count(eg_intr_md.egress_port);
-			} else if (hdr.geneve.isValid()) {
-				external_mcast_ctr.count(eg_intr_md.egress_port);
-			} else if (hdr.geneve.isValid() &&
-			           hdr.geneve_opts.oxg_mcast.isValid() &&
-			           hdr.geneve_opts.oxg_mcast.mcast_tag == MULTICAST_TAG_UNDERLAY) {
-				underlay_mcast_ctr.count(eg_intr_md.egress_port);
+			} else {
+				unicast_ctr.count(eg_intr_md.egress_port);
 			}
-		} else {
-			// non-multicast packets should bypass the egress
-			// pipeline, so we would expect this to be 0.
-			unicast_ctr.count(eg_intr_md.egress_port);
+#endif /* MULTICAST */
 		}
 	}
-#else /* MULTICAST */
-	apply { }
-#endif /* MULTICAST */
 }
 
 control EgressDeparser(
@@ -2421,9 +2418,9 @@ control EgressDeparser(
 		}
 		pkt.emit(hdr);
 	}
-#else
+#else /* MULTICAST */
 	apply { pkt.emit(hdr); }
-#endif
+#endif /* MULTICAST */
 }
 
 Pipeline(

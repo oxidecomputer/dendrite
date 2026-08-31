@@ -17,7 +17,13 @@ if [ x$MULTICAST == x ]; then
 	CODEGEN_FEATURES=--multicast
         SWADM_FEATURES=--features=multicast
 fi
-    
+
+if [ x$MULTICAST == x ]; then
+        TOFINO_STAGES=16
+    else
+        TOFINO_STAGES=19
+fi
+
 function cleanup {
     set +o errexit
     set +o pipefail

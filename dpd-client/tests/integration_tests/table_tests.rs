@@ -41,19 +41,11 @@ use crate::integration_tests::common::prelude::*;
 // code. If the table size appears to change dramatically, that's worth
 // investigating. If it only changes by an entry or two, it's fine to just
 // adjust the constant below to match the observed result.
-//
-// TODO: Multicast drops IPv4 LPM capacity to 7164 (from 8187) due to
-// ingress TCAM pressure. Investigate moving MulticastRouter4/6 into the
-// egress pipeline to reclaim capacity.
-#[cfg(feature = "multicast")]
-const IPV4_LPM_SIZE: usize = 7164; // ipv4 forwarding table
-#[cfg(not(feature = "multicast"))]
 const IPV4_LPM_SIZE: usize = 8191; // ipv4 forwarding table
-
-#[cfg(feature = "multicast")]
-const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
-#[cfg(not(feature = "multicast"))]
-const IPV6_LPM_SIZE: usize = 8191; // ipv6 forwarding table
+// Native v6 LPM (cuckoo hash) caps a few entries below the P4-declared
+// IPV6_LPM_SIZE = 8192. The lookup table is sized without padding to keep
+// the ingress stage budget. Effective hardware capacity is 8188.
+const IPV6_LPM_SIZE: usize = 8188; // ipv6 forwarding table
 
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports
@@ -64,7 +56,7 @@ const IPV6_NEIGHBOR_SIZE: usize = 512; // ipv6 neighbor cache
 /// The size of the multicast table related to replication on
 /// admin-local (internal) multicast groups.
 #[cfg(feature = "multicast")]
-const MULTICAST_TABLE_SIZE: usize = 1024;
+const MCAST_REPLICATION_IPV6_SIZE: usize = 2048;
 #[cfg(feature = "multicast")]
 const MCAST_TAG: &str = "mcast_table_test"; // multicast group tag
 
@@ -546,6 +538,6 @@ async fn test_multicast_replication_table_full() -> TestResult {
         MulticastReplicationTableTest,
         types::MulticastGroupUnderlayResponse,
         (),
-    >(MULTICAST_TABLE_SIZE)
+    >(MCAST_REPLICATION_IPV6_SIZE)
     .await
 }

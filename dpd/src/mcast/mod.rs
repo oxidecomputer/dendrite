@@ -457,9 +457,8 @@ pub(crate) fn add_group_internal(
     let underlay_group_id = scoped_underlay_id.id();
     let mut added_members = Vec::new();
 
-    // Only configure replication if there are members
     let replication_info = if !group_info.members.is_empty() {
-        let replication_info = configure_replication(external_group_id);
+        let replication_info = build_replication_info(external_group_id);
 
         add_ports_to_groups(
             s,
@@ -826,7 +825,6 @@ pub(crate) fn modify_group_internal(
     );
     let sources = None;
 
-    // Configure replication based on member count transitions
     let replication_info = match (
         new_group_info.members.is_empty(),
         &group_entry.replication_info,
@@ -856,17 +854,10 @@ pub(crate) fn modify_group_internal(
             None
         }
         (false, None) => {
-            // Transition from empty to members - configure replication
-            Some(configure_replication(group_entry.external_group_id()))
+            Some(build_replication_info(group_entry.external_group_id()))
         }
-        (false, Some(_)) => {
-            // Already has members and replication - keep existing
-            group_entry.replication_info.clone()
-        }
-        (true, None) => {
-            // Already empty and no replication - keep none
-            None
-        }
+        (false, Some(_)) => group_entry.replication_info.clone(),
+        (true, None) => None,
     };
 
     // Early return for no-replication case -> just update metadata
@@ -1578,7 +1569,7 @@ fn process_membership_changes(
 
 /// Default level exclusion IDs to 0 for internal groups
 /// since they can only be configured internally without API calls.
-fn configure_replication(
+fn build_replication_info(
     external_group_id: MulticastGroupId,
 ) -> MulticastReplicationInfo {
     MulticastReplicationInfo {
