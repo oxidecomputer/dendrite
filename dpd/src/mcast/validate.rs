@@ -33,6 +33,8 @@ pub(crate) fn validate_multicast_address(
     addr: IpAddr,
     sources: Option<&[IpSrc]>,
 ) -> DpdResult<()> {
+    validate_source_address_family(addr, sources)?;
+
     // First validate that source addresses are unicast
     validate_source_addresses(sources)?;
 
@@ -41,6 +43,28 @@ pub(crate) fn validate_multicast_address(
         IpAddr::V4(ipv4) => validate_ipv4_multicast(ipv4, sources),
         IpAddr::V6(ipv6) => validate_ipv6_multicast(ipv6, sources),
     }
+}
+
+/// Validates that exact sources use the multicast group's address family.
+fn validate_source_address_family(
+    group: IpAddr,
+    sources: Option<&[IpSrc]>,
+) -> DpdResult<()> {
+    let Some(sources) = sources else {
+        return Ok(());
+    };
+
+    for source in sources {
+        let IpSrc::Exact(source) = source else {
+            continue;
+        };
+        if source.is_ipv4() != group.is_ipv4() {
+            return Err(DpdError::Invalid(format!(
+                "Source IP {source} does not match multicast group address family ({group})",
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Validates the NAT target inner MAC and internal IP address.
@@ -168,8 +192,8 @@ fn validate_ipv6_multicast(
     // [RFC 4291 §2.7]: https://www.rfc-editor.org/rfc/rfc4291#section-2.7
     // [RFC 7346 §2]: https://www.rfc-editor.org/rfc/rfc7346#section-2
     // [RFC 7346 §3]: https://www.rfc-editor.org/rfc/rfc7346#section-3
-    let seg0 = addr.segments()[0];
-    let scope_name = match seg0 & 0x000f {
+    let scope = addr.segments()[0] & 0x000f;
+    let scope_name = match scope {
         0x0 | 0xf => Some("reserved"),
         0x1 => Some("interface-local"),
         0x2 => Some("link-local"),
@@ -179,8 +203,10 @@ fn validate_ipv6_multicast(
     };
     if let Some(scope_name) = scope_name {
         return Err(DpdError::Invalid(format!(
-            "{addr} has {scope_name} multicast scope ({seg0:x}::/16) and \
-             cannot be used for group creation",
+            "{addr} has {scope_name} multicast scope ({scope:#x}), which \
+             cannot be used for multicast groups. Allowed scopes are 0x4 \
+             (admin-local), 0x5 (site-local), 0x8 (organization-local), and \
+             0xe (global)",
         )));
     }
 
@@ -273,14 +299,28 @@ fn validate_exact_source_address(ip: IpAddr) -> DpdResult<()> {
 
 /// Validates IPv4 source addresses for problematic types.
 fn validate_ipv4_source_address(ipv4: Ipv4Addr) -> DpdResult<()> {
+    // The IANA special-purpose registry (RFC 6890) marks class E
+    // (240.0.0.0/4, reserved by RFC 1112 §4) as "Source: False", so it may
+    // never appear as a source. The 0.0.0.0/8 block ("this host on this
+    // network") is marked "Source: True", since RFC 1122 §3.2.1.3 allows it
+    // before a host learns its address, but it is rejected on separate
+    // grounds: an (S,G) source must be a specific unicast address that
+    // reverse-path forwarding can resolve to an incoming interface, which
+    // 0.0.0.0/8 never is. Shared address space (100.64.0.0/10, RFC 6598) is
+    // "Source: True" and not globally reachable, so it stays allowed: it can
+    // source traffic inside an operator network.
+    let first_octet = ipv4.octets()[0];
     if ipv4.is_loopback()
         || ipv4.is_broadcast()
         || ipv4.is_unspecified()
         || ipv4.is_link_local()
+        || first_octet == 0
+        || first_octet >= 240
     {
         return Err(DpdError::Invalid(format!(
             "Source IP {ipv4} is not a valid source address \
-             (loopback, broadcast, unspecified, and link-local addresses are not allowed)",
+             (loopback, broadcast, unspecified, link-local, 0.0.0.0/8, and \
+             240.0.0.0/4 addresses are not allowed)",
         )));
     }
     Ok(())
@@ -290,13 +330,42 @@ fn validate_ipv4_source_address(ipv4: Ipv4Addr) -> DpdResult<()> {
 fn validate_ipv6_source_address(ipv6: Ipv6Addr) -> DpdResult<()> {
     if ipv6.is_loopback()
         || ipv6.is_unspecified()
-        || ((ipv6.segments()[0] & 0xffc0) == 0xfe80)
+        || ipv6.is_unicast_link_local()
     {
         return Err(DpdError::Invalid(format!(
             "Source IP {ipv6} is not a valid source address \
              (loopback, unspecified, and link-local addresses are not allowed)",
         )));
     }
+
+    // Reject addresses that embed an IPv4 address in an IPv6 source. The
+    // IPv4-mapped and IPv4-compatible forms convert to an Ipv4Addr, so they
+    // would carry IPv4 semantics past the IPv4 source checks above. The
+    // NAT64 well-known prefix does not convert; instead, it is refused
+    // because no standard path yields a multicast source inside it.
+    //
+    // Note: RFC 6052 §3.1 network-specific prefixes are drawn from the
+    // operator's own address space, so recognizing one would require knowing
+    // the configured prefix.
+    let embedded = match ipv6.segments() {
+        [0, 0, 0, 0, 0, 0xffff, ..] => {
+            Some("IPv4-mapped (::ffff:0:0/96, RFC 4291 §2.5.5.2)")
+        }
+        [0, 0, 0, 0, 0, 0, ..] => {
+            Some("IPv4-compatible (::/96, RFC 4291 §2.5.5.1)")
+        }
+        [0x0064, 0xff9b, 0, 0, 0, 0, ..] => {
+            Some("NAT64 well-known (64:ff9b::/96, RFC 6052 §2.1)")
+        }
+        _ => None,
+    };
+    if let Some(form) = embedded {
+        return Err(DpdError::Invalid(format!(
+            "Source IP {ipv6} embeds an IPv4 address, {form}, and is not a \
+             valid IPv6 source address",
+        )));
+    }
+
     Ok(())
 }
 
@@ -719,6 +788,30 @@ mod tests {
             )
             .is_ok()
         );
+
+        // Source and group address families must match.
+        let invalid_v6_source_for_v4_group = vec![IpSrc::Exact(IpAddr::V6(
+            Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
+        ))];
+        assert!(
+            validate_multicast_address(
+                IpAddr::V4(Ipv4Addr::new(232, 1, 2, 3)),
+                Some(&invalid_v6_source_for_v4_group),
+            )
+            .is_err()
+        );
+
+        let invalid_v4_source_for_v6_group =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))];
+        assert!(
+            validate_multicast_address(
+                IpAddr::V6(Ipv6Addr::new(
+                    0xff3e, 0, 0, 0, 0, 0, 0x8000, 0x1234,
+                )),
+                Some(&invalid_v4_source_for_v6_group),
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -816,6 +909,54 @@ mod tests {
         assert!(
             validate_source_addresses(Some(&invalid_loopback_ipv6)).is_err()
         );
+
+        // ::ffff:192.0.2.1, RFC 4291 §2.5.5.2
+        let invalid_v4_mapped = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0xffff, 0xc000, 0x0201,
+        )))];
+        assert!(validate_source_addresses(Some(&invalid_v4_mapped)).is_err());
+
+        // ::192.0.2.1, RFC 4291 §2.5.5.1
+        let invalid_v4_compat = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0, 0xc000, 0x0201,
+        )))];
+        assert!(validate_source_addresses(Some(&invalid_v4_compat)).is_err());
+
+        // 64:ff9b::192.0.2.1, RFC 6052 §2.1
+        let invalid_nat64 = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
+            0x0064, 0xff9b, 0, 0, 0, 0, 0xc000, 0x0201,
+        )))];
+        assert!(validate_source_addresses(Some(&invalid_nat64)).is_err());
+
+        // A NAT64 network-specific prefix that starts with 64:ff9b but is
+        // not the well-known /96 remains a valid source.
+        let valid_near_nat64 = vec![IpSrc::Exact(IpAddr::V6(Ipv6Addr::new(
+            0x0064, 0xff9b, 0, 1, 0, 0, 0xc000, 0x0201,
+        )))];
+        assert!(validate_source_addresses(Some(&valid_near_nat64)).is_ok());
+
+        // 0.0.0.0/8, this host on this network, RFC 1122 §3.2.1.3
+        let invalid_this_network =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(0, 1, 2, 3)))];
+        assert!(
+            validate_source_addresses(Some(&invalid_this_network)).is_err()
+        );
+
+        // 240.0.0.0/4, class E, RFC 1112 §4
+        for octets in [[240, 0, 0, 1], [255, 255, 255, 254]] {
+            let invalid_class_e =
+                vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::from(octets)))];
+            assert!(
+                validate_source_addresses(Some(&invalid_class_e)).is_err(),
+                "{octets:?} should be rejected as a class E source"
+            );
+        }
+
+        // The class E boundary is exact: the highest unicast address below
+        // it remains valid as a source.
+        let valid_below_class_e =
+            vec![IpSrc::Exact(IpAddr::V4(Ipv4Addr::new(223, 255, 255, 255)))];
+        assert!(validate_source_addresses(Some(&valid_below_class_e)).is_ok());
 
         // No sources should be valid
         assert!(validate_source_addresses(None).is_ok());
