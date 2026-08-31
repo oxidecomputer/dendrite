@@ -443,25 +443,33 @@ impl<'a> GroupCreateRollbackContext<'a> {
                 );
             }
             IpAddr::V6(ipv6) => {
-                // Clean up external bitmap entry only if both external and underlay groups exist
-                // (bitmap entries are only created for internal groups with both group types)
-                self.log_rollback_error(
-                    "delete IPv6 egress bitmap entry",
-                    &format!("for external group {}", self.external_id),
-                    table::mcast::mcast_egress::del_bitmap_entry(
-                        self.switch,
-                        self.external_id,
-                    ),
-                );
+                // The bitmap and replication entries belong to internal groups
+                // only. External groups share the internal group's IDs, so
+                // deleting them now during an external-group rollback would
+                // destroy the live internal group's entries.
+                //
+                // Instead, we guard on `nat_target.is_none()` (internal group)
+                // to match the symmetric guards used by `remove_groups` and the
+                // source filter and NAT deletes below.
+                if self.nat_target.is_none() {
+                    self.log_rollback_error(
+                        "delete IPv6 egress bitmap entry",
+                        &format!("for external group {}", self.external_id),
+                        table::mcast::mcast_egress::del_bitmap_entry(
+                            self.switch,
+                            self.external_id,
+                        ),
+                    );
 
-                self.log_rollback_error(
-                    "delete IPv6 replication entry",
-                    &format!("for group {ipv6}"),
-                    table::mcast::mcast_replication::del_ipv6_entry(
-                        self.switch,
-                        ipv6,
-                    ),
-                );
+                    self.log_rollback_error(
+                        "delete IPv6 replication entry",
+                        &format!("for group {ipv6}"),
+                        table::mcast::mcast_replication::del_ipv6_entry(
+                            self.switch,
+                            ipv6,
+                        ),
+                    );
+                }
 
                 // Source filters only exist for external groups (which have
                 // NAT targets). Internal groups don't have source filtering.

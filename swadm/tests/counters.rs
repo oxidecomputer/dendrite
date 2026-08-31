@@ -48,10 +48,10 @@ fn test_p4_counter_list() {
     ];
 
     #[cfg(not(feature = "multicast"))]
-    let multicast_counters = Vec::new();
+    let multicast_counters: [&str; 0] = [];
 
     #[cfg(feature = "multicast")]
-    let multicast_counters = vec![
+    let multicast_counters = [
         "Egress_Drop_Port",
         "Egress_Drop_Reason",
         "Unicast",
