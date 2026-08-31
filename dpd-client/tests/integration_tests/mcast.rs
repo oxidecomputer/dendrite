@@ -552,7 +552,7 @@ async fn test_group_creation_with_validation() -> TestResult {
             nat_target: Some(nat_target.clone()),
         },
         external_forwarding: types::ExternalForwarding {
-            vlan_id: Some(4096), // Invalid: VLAN ID must be 1-4095
+            vlan_id: Some(4096), // Invalid: VLAN ID must be 1-4094
         },
         sources: None,
     };
@@ -574,7 +574,7 @@ async fn test_group_creation_with_validation() -> TestResult {
         _ => panic!("Expected ErrorResponse for invalid group ID"),
     }
 
-    // Test with reserved VLAN ID 0 (also invalid)
+    // Test with the null VLAN ID 0 (also invalid)
     let external_vlan0 = types::MulticastGroupCreateExternalEntry {
         group_ip: IpAddr::V4(MULTICAST_TEST_IPV4),
         tag: Some(TEST_TAG.to_string()),
@@ -582,7 +582,7 @@ async fn test_group_creation_with_validation() -> TestResult {
             nat_target: Some(nat_target.clone()),
         },
         external_forwarding: types::ExternalForwarding {
-            vlan_id: Some(0), // Invalid: VLAN 0 is reserved
+            vlan_id: Some(0), // Invalid: VLAN 0 is the null VID
         },
         sources: None,
     };
@@ -591,7 +591,7 @@ async fn test_group_creation_with_validation() -> TestResult {
         .client
         .multicast_group_create_external(&external_vlan0)
         .await
-        .expect_err("Should fail with reserved VLAN ID 0");
+        .expect_err("Should fail with null VLAN ID 0");
 
     match res {
         Error::ErrorResponse(inner) => {
@@ -601,37 +601,37 @@ async fn test_group_creation_with_validation() -> TestResult {
                 "Expected 400 Bad Request status code for VLAN 0"
             );
         }
-        _ => panic!("Expected ErrorResponse for reserved VLAN ID 0"),
+        _ => panic!("Expected ErrorResponse for null VLAN ID 0"),
     }
 
-    // Test with reserved VLAN ID 1 (also invalid)
-    let external_vlan1 = types::MulticastGroupCreateExternalEntry {
+    // Test with reserved VLAN ID 4095 (also invalid)
+    let external_vlan4095 = types::MulticastGroupCreateExternalEntry {
         group_ip: IpAddr::V4(MULTICAST_TEST_IPV4),
         tag: Some(TEST_TAG.to_string()),
         internal_forwarding: types::InternalForwarding {
             nat_target: Some(nat_target.clone()),
         },
         external_forwarding: types::ExternalForwarding {
-            vlan_id: Some(1), // Invalid: VLAN 1 is reserved
+            vlan_id: Some(4095), // Invalid: VLAN 4095 is reserved
         },
         sources: None,
     };
 
     let res = switch
         .client
-        .multicast_group_create_external(&external_vlan1)
+        .multicast_group_create_external(&external_vlan4095)
         .await
-        .expect_err("Should fail with reserved VLAN ID 1");
+        .expect_err("Should fail with reserved VLAN ID 4095");
 
     match res {
         Error::ErrorResponse(inner) => {
             assert_eq!(
                 inner.status(),
                 400,
-                "Expected 400 Bad Request status code for VLAN 1"
+                "Expected 400 Bad Request status code for VLAN 4095"
             );
         }
-        _ => panic!("Expected ErrorResponse for reserved VLAN ID 1"),
+        _ => panic!("Expected ErrorResponse for reserved VLAN ID 4095"),
     }
 
     // Test with valid parameters

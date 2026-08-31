@@ -64,17 +64,13 @@ impl FromStr for UplinkAddress {
         let address = address
             .parse()
             .map_err(|_| anyhow!("not a valid ip address: {address}"))?;
-        let vlan_id = match vlan_id {
-            None => Ok(None),
-            Some(v) => match v.parse() {
-                Err(_) => Err(anyhow!("invalid vlan id: {v}")),
-                Ok(vlan_id) if vlan_id > 1 && vlan_id < 4096 => {
-                    Ok(Some(vlan_id))
-                }
-                Ok(vlan_id) => Err(anyhow!("vlan id out of range: {vlan_id}")),
-            },
-        }?;
-        Ok(UplinkAddress { address, vlan_id })
+        let vlan_id = vlan_id
+            .map(|v| {
+                v.parse::<u16>()
+                    .map_err(|_| anyhow!("invalid vlan id: {v}"))
+            })
+            .transpose()?;
+        UplinkAddress::new(address, vlan_id)
     }
 }
 

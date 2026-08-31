@@ -489,7 +489,7 @@ pub struct LinkCreate {
     lane: Option<types::LinkId>,
 
     /// The speed for the new link.
-    #[clap(short = 's')]
+    #[clap(short = 's', long)]
     speed: PortSpeed,
 
     /// The error-correction scheme for the link.
