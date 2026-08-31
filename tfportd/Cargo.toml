@@ -42,3 +42,6 @@ oxnet.workspace = true
 
 [build-dependencies]
 cc = "1.2"
+
+[dev-dependencies]
+dpd-types.workspace = true

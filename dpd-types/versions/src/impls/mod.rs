@@ -11,6 +11,7 @@ mod link;
 pub(crate) mod mcast;
 mod nat;
 pub(crate) mod network;
+pub(crate) mod oxstats;
 pub(crate) mod port;
 mod port_map;
 mod route;
