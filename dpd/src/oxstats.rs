@@ -18,7 +18,6 @@ use dpd_types::switch_identifiers::SwitchIdentifiers;
 
 use slog::{debug, error, info, o, warn};
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use omicron_common::api::internal::nexus::{ProducerEndpoint, ProducerKind};
 use omicron_common::backoff::{
