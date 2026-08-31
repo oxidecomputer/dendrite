@@ -18,7 +18,6 @@ use dpd_types::switch_identifiers::SwitchIdentifiers;
 
 use slog::{debug, error, info, o, warn};
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use omicron_common::api::internal::nexus::{ProducerEndpoint, ProducerKind};
 use omicron_common::backoff::{
@@ -655,14 +654,7 @@ pub async fn oximeter_register(
         return Ok(());
     };
     debug!(log, "extracted oximeter configuration data"; "config" => ?config);
-
-    // Generate a unique producer ID by combining the original 3 identifying
-    // UUIDs.
-    let producer_id = Uuid::from_u128(
-        config.sled_identifiers.rack_id.as_u128()
-            ^ config.sled_identifiers.sled_id.as_u128()
-            ^ config.switch_identifiers.sidecar_id.as_u128(),
-    );
+    let producer_id = config.producer_id();
     debug!(log, "created producer ID"; "producer_id" => %producer_id);
     let metadata =
         OximeterMetadata { config: config.clone(), registered_at: None };

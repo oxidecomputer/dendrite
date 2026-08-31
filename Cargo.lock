@@ -7511,6 +7511,7 @@ dependencies = [
  "common 0.1.0",
  "csv",
  "dpd-client 0.1.0",
+ "dpd-types",
  "futures",
  "http",
  "iddqd 0.4.5",

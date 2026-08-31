@@ -58,6 +58,20 @@ pub(crate) struct OximeterConfig {
     switch_identifiers: types::SwitchIdentifiers,
 }
 
+impl OximeterConfig {
+    /// Generate our producer UUID based on the switch identifiers.
+    pub(crate) const fn producer_id(&self) -> Uuid {
+        // NOTE: `dpd` uses only the XOR of these three fields to construct
+        // _its_ producer ID. We can't do the same thing, otherwise we'll
+        // conflict and Oximeter will flap between polling `dpd` and us. Flip
+        // the last bit as a stupid way to ensure uniqueness.
+        let x = self.sled_identifiers.rack_id.as_u128()
+            ^ self.sled_identifiers.sled_id.as_u128()
+            ^ self.switch_identifiers.sidecar_id.as_u128();
+        Uuid::from_u128(x ^ 0b1)
+    }
+}
+
 /// Link tracker for tracking and untracking link names set by the program.
 pub struct LinkTracker {
     tracked_links: RwLock<HashSet<(String, ModelType)>>,
@@ -143,13 +157,7 @@ pub async fn metrics_task(
 
     debug!(log, "extracted oximeter configuration data"; "config" => ?config);
 
-    // Generate a unique producer ID by combining the original 3 identifying
-    // UUIDs.
-    let producer_id = Uuid::from_u128(
-        config.sled_identifiers.rack_id.as_u128()
-            ^ config.sled_identifiers.sled_id.as_u128()
-            ^ config.switch_identifiers.sidecar_id.as_u128(),
-    );
+    let producer_id = config.producer_id();
     debug!(log, "created producer ID"; "producer_id" => %producer_id);
 
     let Ok(sampler) = KstatSampler::new(&log) else {
@@ -601,5 +609,72 @@ async fn remove_datalink(
                 "link_name" => name,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OximeterConfig;
+    use dpd_client::types::SwitchIdentifiers;
+    use dpd_types::oxstats::OximeterConfig as DpdOximeterConfig;
+    use dpd_types::oxstats::SledIdentifiers as DpdSledIdentifiers;
+    use dpd_types::switch_identifiers::SwitchIdentifiers as DpdSwitchIdentifiers;
+    use omicron_common::api::internal::shared::SledIdentifiers;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn producer_ids_are_actually_unique() {
+        let our_config = OximeterConfig {
+            listen_address: Ipv6Addr::LOCALHOST,
+            sled_identifiers: SledIdentifiers {
+                rack_id: uuid::uuid!("97ed6172-1dbb-46f9-929d-9a250763dadf"),
+                sled_id: uuid::uuid!("88535329-ec1e-4e95-8683-b5c0c1660237"),
+                model: "919-000000".into(),
+                revision: 0,
+                serial: "BRM000000".into(),
+            },
+            switch_identifiers: SwitchIdentifiers {
+                asic_backend: "tofino".into(),
+                fab: None,
+                fuse: None,
+                lot: None,
+                lotnum: None,
+                model: "919-000000".into(),
+                revision: 0,
+                serial: "BRM000000".into(),
+                sidecar_id: uuid::uuid!("772a5a6f-4e47-4a90-aadc-cba094ee70bc"),
+                slot: 0,
+                wafer: None,
+                wafer_loc: None,
+            },
+        };
+        let dpd_config = DpdOximeterConfig {
+            listen_address: Ipv6Addr::LOCALHOST,
+            sled_identifiers: DpdSledIdentifiers {
+                rack_id: our_config.sled_identifiers.rack_id,
+                sled_id: our_config.sled_identifiers.sled_id,
+                model: our_config.sled_identifiers.model.clone(),
+                revision: our_config.sled_identifiers.revision,
+                serial: our_config.sled_identifiers.serial.clone(),
+            },
+            switch_identifiers: DpdSwitchIdentifiers {
+                sidecar_id: our_config.switch_identifiers.sidecar_id,
+                asic_backend: our_config
+                    .switch_identifiers
+                    .asic_backend
+                    .clone(),
+                fab: None,
+                lot: None,
+                lotnum: None,
+                wafer: None,
+                wafer_loc: None,
+                model: our_config.switch_identifiers.model.clone(),
+                revision: our_config.switch_identifiers.revision,
+                serial: our_config.switch_identifiers.serial.clone(),
+                slot: our_config.switch_identifiers.slot,
+                fuse: None,
+            },
+        };
+        assert_ne!(our_config.producer_id(), dpd_config.producer_id());
     }
 }
