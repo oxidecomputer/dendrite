@@ -41,14 +41,31 @@ pub fn generate_ipv6_link_local(mac: MacAddr) -> Ipv6Addr {
 #[derive(Error, Debug, Clone)]
 pub enum VlanError {
     /// Not a valid VLAN ID
-    #[error("Invalid VLAN tag: {}", .0)]
+    #[error("Invalid VLAN ID {}, must be in the range 1..=4094", .0)]
     InvalidVlan(u16),
 }
 
+/// Validate a VLAN ID against the configurable range `1..=4094`.
+///
+/// Per [IEEE 802.1Q] §9.6, VID 0 is the null VID used for priority tagging
+/// and carries no VLAN membership, and VID 4095 is reserved for
+/// implementation use and must not be configured. VID 1 is the default
+/// port VID.
+///
+/// # Errors
+///
+/// Returns [`VlanError::InvalidVlan`] if the ID falls outside `1..=4094`.
+///
+/// [IEEE 802.1Q]: https://ieeexplore.ieee.org/document/10004498
+// TODO: replace with a validated `VlanId` newtype in oxnet, shared with
+// omicron's `common/src/vlan.rs` bounds check.
 pub fn validate_vlan(id: impl Into<u16>) -> Result<(), VlanError> {
     let id: u16 = id.into();
-    #[allow(clippy::manual_range_contains)]
-    if id < 2 || id > 4095 { Err(VlanError::InvalidVlan(id)) } else { Ok(()) }
+    if !(1..=4094).contains(&id) {
+        Err(VlanError::InvalidVlan(id))
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

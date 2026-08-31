@@ -110,11 +110,10 @@ struct Opt {
 }
 
 fn parse_vlan_id(vlan_id: &str) -> Result<Option<u16>, anyhow::Error> {
-    match vlan_id.parse() {
-        Err(_) => Err(anyhow!("invalid vlan id: {vlan_id}")),
-        Ok(vlan_id) if vlan_id > 1 && vlan_id < 4096 => Ok(Some(vlan_id)),
-        Ok(vlan_id) => Err(anyhow!("vlan id out of range: {vlan_id}")),
-    }
+    let id: u16 =
+        vlan_id.parse().map_err(|_| anyhow!("invalid vlan id: {vlan_id}"))?;
+    common::network::validate_vlan(id)?;
+    Ok(Some(id))
 }
 
 // Given an interface, return a tuple with the underlying link name and any
