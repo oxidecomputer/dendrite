@@ -1038,14 +1038,41 @@ pub trait DpdApi {
         entry: TypedBody<String>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
+    // TODO::cory: resume here
+    //
+    // - Probably want link_ipv4_list (by tag) and link_ipv4_list_all
+    //   for everything on the link.
+
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/ipv4",
+        versions = ..VERSION_RESOURCE_TAGS,
+        operation_id = "link_ipv4_list",
+    }]
+    async fn link_ipv4_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkPath>,
+        query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv4Token>>,
+    ) -> Result<HttpResponseOk<ResultsPage<v1::port::Ipv4Entry>>, HttpError>
+    {
+        let results =
+            Self::link_ipv4_list(rqctx, path.map(|path| path.into()), query)
+                .await?;
+        Ok(results.map(|page| ResultsPage {
+            next_page: page.next_page,
+            items: page.items.into_iter().map(|entry| entry.into()).collect(),
+        }))
+    }
+
     /// List the IPv4 addresses associated with a link.
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/ipv4",
+        versions = VERSION_RESOURCE_TAGS..,
     }]
     async fn link_ipv4_list(
         rqctx: RequestContext<Self::Context>,
-        path: Path<latest::link::LinkPath>,
+        path: Path<latest::link::TaggedLinkPath>,
         query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv4Token>>,
     ) -> Result<HttpResponseOk<ResultsPage<latest::port::Ipv4Entry>>, HttpError>;
 

@@ -57,6 +57,8 @@ pub mod link {
     pub use crate::v12::link::MsDuration;
 
     pub use crate::v13::link::LinkCreate;
+
+    pub use crate::v14::TaggedLinkPath;
 }
 
 pub mod loopback {
@@ -129,8 +131,6 @@ pub mod oxstats {
 pub mod port {
     pub use crate::v1::port::FreeChannels;
     pub use crate::v1::port::InternalPort;
-    pub use crate::v1::port::Ipv4Entry;
-    pub use crate::v1::port::Ipv6Entry;
     pub use crate::v1::port::PORT_COUNT_INTERNAL;
     pub use crate::v1::port::PORT_COUNT_QSFP;
     pub use crate::v1::port::PORT_COUNT_REAR;
@@ -153,6 +153,9 @@ pub mod port {
     pub use crate::v13::port::PortSettings;
 
     pub use crate::v12::port::PortPrbsMode;
+
+    pub use crate::v14::Ipv4Entry;
+    pub use crate::v14::Ipv6Entry;
 }
 
 pub mod port_map {

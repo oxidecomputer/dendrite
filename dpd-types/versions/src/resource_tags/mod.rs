@@ -1,8 +1,15 @@
-use std::{fmt::Display, net::Ipv6Addr, str::FromStr, sync::LazyLock};
+use std::{
+    fmt::Display,
+    net::{Ipv4Addr, Ipv6Addr},
+    str::FromStr,
+    sync::LazyLock,
+};
 
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use crate::v1::{link::LinkId, port::PortId};
 
 /// The maximum length in bytes of a tag. Since tags are ascii, this
 /// is also the maximum length in characters.
@@ -162,5 +169,35 @@ pub struct Ipv4Entry {
     /// Client-side tag for this object.
     pub tag: Tag,
     /// The IP address.
-    pub addr: Ipv6Addr,
+    pub addr: Ipv4Addr,
+}
+
+impl From<crate::v1::port::Ipv4Entry> for Ipv4Entry {
+    fn from(prev: crate::v1::port::Ipv4Entry) -> Self {
+        Self { addr: prev.addr, tag: Tag::coerce(&prev.tag) }
+    }
+}
+
+impl From<Ipv4Entry> for crate::v1::port::Ipv4Entry {
+    fn from(value: Ipv4Entry) -> Self {
+        Self { addr: value.addr, tag: value.tag.to_string() }
+    }
+}
+
+/// Identifies a logical link on a physical port.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct TaggedLinkPath {
+    /// The switch port on which to operate.
+    pub port_id: PortId,
+    /// The link in the switch port on which to operate.
+    pub link_id: LinkId,
+    /// Defines the tag scope of this request/response. If None,
+    /// this applies to all tags.
+    pub tag: Option<Tag>,
+}
+
+impl From<crate::v1::link::LinkPath> for TaggedLinkPath {
+    fn from(path: crate::v1::link::LinkPath) -> Self {
+        Self { port_id: path.port_id, link_id: path.link_id, tag: None }
+    }
 }

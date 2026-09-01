@@ -1129,14 +1129,12 @@ impl DpdApi for DpdApiImpl {
             WhichPage::First(..) => None,
             WhichPage::Next(Ipv4Token { ip }) => Some(*ip),
         };
-        let entries =
-            switch.list_ipv4_addresses(port_id, link_id, addr, limit)?;
-        ResultsPage::new(
-            entries,
-            &EmptyScanParams {},
-            |entry: &Ipv4Entry, _| Ipv4Token { ip: entry.addr },
-        )
-        .map(HttpResponseOk)
+        let entries = switch
+            .list_ipv4_addresses(port_id, link_id, addr, limit)?
+            .copied()
+            .collect::<Vec<_>>();
+        ResultsPage::new(entries, &EmptyScanParams {}, |ip, _| Ipv4Token { ip })
+            .map(HttpResponseOk)
     }
 
     async fn link_ipv4_create(
