@@ -43,6 +43,8 @@ pub mod v11;
 pub mod v12;
 #[path = "allow_ddm_traffic/mod.rs"]
 pub mod v13;
+#[path = "resource_tags/mod.rs"]
+pub mod v14;
 #[path = "attached_subnets/mod.rs"]
 pub mod v3;
 #[path = "v4_over_v6_routes/mod.rs"]
