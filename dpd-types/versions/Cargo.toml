@@ -10,6 +10,7 @@ heapless.workspace = true
 omicron-common.workspace = true
 oxnet.workspace = true
 rand.workspace = true
+regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 thiserror.workspace = true

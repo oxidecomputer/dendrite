@@ -1798,6 +1798,7 @@ dependencies = [
  "omicron-common",
  "oxnet",
  "rand 0.9.3",
+ "regex",
  "schemars 0.8.22",
  "serde",
  "thiserror 2.0.18",
