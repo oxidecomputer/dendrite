@@ -29,6 +29,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (14, RESOURCE_TAGS),
     (13, ALLOW_DDM_TRAFFIC),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
@@ -1541,6 +1542,23 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
+    #[endpoint {
+        method = DELETE,
+        path = "/all-settings/{tag}",
+        versions = ..VERSION_RESOURCE_TAGS,
+        operation_id = "reset_all_tagged",
+    }]
+    async fn reset_all_tagged_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::misc::TagPath>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::reset_all_tagged(
+            rqctx,
+            path.map(|prev| latest::misc::Tag::coerce(&prev.tag)),
+        )
+        .await
+    }
+
     /// Clear all settings associated with a specific tag.
     ///
     /// This removes:
@@ -1549,14 +1567,18 @@ pub trait DpdApi {
     /// - All routes
     /// - All links on all switch ports
     // Note: This endpoint does not clear multicast groups.
-    // TODO-security: This endpoint should probably not exist.
+    //
+    // TODO-security: Should this endpoint be removed?
+    // TODO::cory: answer this before merge. Currently used by tfportd.
+    // https://github.com/search?q=org%3Aoxidecomputer+reset_all_tagged&type=code
     #[endpoint {
         method = DELETE,
         path = "/all-settings/{tag}",
+        versions = VERSION_RESOURCE_TAGS..
     }]
     async fn reset_all_tagged(
         rqctx: RequestContext<Self::Context>,
-        path: Path<latest::misc::TagPath>,
+        path: Path<latest::misc::Tag>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Clear all settings.

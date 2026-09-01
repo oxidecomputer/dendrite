@@ -43,6 +43,7 @@ use dpd_types::link::LinkUpCounter;
 use dpd_types::link::LinkView;
 use dpd_types::link::TfportData;
 use dpd_types::serdes::Ber;
+use dpd_types_versions::v14::Tag;
 use slog::debug;
 use slog::error;
 use slog::info;
@@ -50,6 +51,8 @@ use slog::o;
 use slog::warn;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::btree_map::Entry;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
@@ -236,16 +239,15 @@ pub struct Link {
     pub link_state: LinkState,
     /// The kind of media in the link.
     pub media: PortMedia,
-    /// A list of IPv4 addresses assigned to this link.
-    pub ipv4: BTreeSet<Ipv4Entry>,
-    /// A list of IPv6 addresses assigned to this link.
-    pub ipv6: BTreeSet<Ipv6Entry>,
     /// Tracks the history of linkup/linkdown transitions, allowing us to
     /// detect flapping links.
     pub linkup_tracker: LinkUpTracker,
     /// Tracks the link's progress through the autonegotiation/link-training
     /// finite state machine, so we can detect and diagnose linkup failures.
     pub autoneg_tracker: AutonegTracker,
+
+    /// Resources whose CRUD is namespaced across different owner tags.
+    pub tagged: TaggedConfigs,
 
     /// The configuration of the link as requested by the user / sled-agent
     pub config: LinkConfig,
@@ -300,6 +302,110 @@ impl From<Link> for TfportData {
     fn from(m: Link) -> Self {
         Self::from(&m)
     }
+}
+
+/// In some cases, dpd is managed by multiple mutually-unaware
+/// controllers. These controllers provide a namespace [`Tag`]
+/// that restricts sensitive operations to only those resources
+/// with the same tag.
+///
+/// Only the resources within this collection respect tag isolation.
+#[derive(Debug, Default)]
+pub struct TaggedConfigs {
+    configs: HashMap<Tag, TaggedConfig>,
+    combined: TaggedConfig,
+}
+
+impl TaggedConfigs {
+    // pub fn insert_owned_v4(
+    //     &mut self,
+    //     tag: &Tag,
+    //     addr: Ipv4Addr,
+    // ) -> DpdResult<()> {
+    //     if self.configs.get(tag).is_some_and(|entry| entry.ipv4.contains(&addr))
+    //     {
+    //         return Ok(());
+    //     }
+
+    //     if self.combined.ipv4.contains(&addr) {
+    //         return Err(DpdError::Exists(format!(
+    //             "Cannot insert owned IP {addr:?} for {tag} because it's already in use by another tag."
+    //         )));
+    //     }
+
+    //     self.configs.entry(tag.clone()).or_default().ipv4.insert(addr);
+    //     self.recombine();
+
+    //     Ok(())
+    // }
+
+    pub fn insert_ipv4(&mut self, tag: Tag, addr: Ipv4Addr) {
+        self.configs.entry(tag).or_default().ipv4.insert(addr);
+        self.recombine();
+    }
+
+    pub fn delete_tag(&mut self, tag: &Tag) -> Option<TaggedConfig> {
+        let conf = self.configs.remove(tag);
+        self.recombine();
+        conf
+    }
+
+    pub fn drain_v4(&mut self) -> impl Iterator<Item = Ipv4Addr> {
+        for set in self.configs.values_mut() {
+            set.ipv4.clear();
+        }
+        self.combined.ipv4.drain()
+    }
+
+    pub fn drain_v6(&mut self) -> impl Iterator<Item = Ipv6Addr> {
+        for set in self.configs.values_mut() {
+            set.ipv6.clear();
+        }
+        self.combined.ipv6.drain()
+    }
+
+    pub fn delete_v4(&mut self, tag: &Tag, addr: &Ipv4Addr) {
+        if let Some(conf) = self.configs.get_mut(tag) {
+            conf.ipv4.remove(addr);
+        }
+        self.recombine();
+    }
+
+    pub fn delete_v6(&mut self, tag: &Tag, addr: &Ipv6Addr) {
+        if let Some(conf) = self.configs.get_mut(tag) {
+            conf.ipv6.remove(addr);
+        }
+        self.recombine();
+    }
+
+    pub fn ipv4(&self) -> &HashSet<Ipv4Addr> {
+        &self.combined.ipv4
+    }
+
+    pub fn ipv6(&self) -> &HashSet<Ipv6Addr> {
+        &self.combined.ipv6
+    }
+
+    fn recombine(&mut self) {
+        self.combined.ipv4.clear();
+        self.combined.ipv4.extend(
+            self.configs.values().flat_map(|conf| conf.ipv4.iter().copied()),
+        );
+
+        self.combined.ipv6.clear();
+        self.combined.ipv6.extend(
+            self.configs.values().flat_map(|conf| conf.ipv6.iter().copied()),
+        );
+    }
+}
+
+#[derive(Debug, Default)]
+struct TaggedConfig {
+    /// Registered IPv4 addresses for this link.
+    ipv4: HashSet<Ipv4Addr>,
+
+    /// Registered IPv6 addresses for this link.
+    ipv6: HashSet<Ipv6Addr>,
 }
 
 // This struct represents the configuration of the link requested by the
@@ -475,8 +581,7 @@ impl Link {
             fsm_state: asic::PortFsmState::default(),
             link_state: LinkState::Unknown,
             media: PortMedia::None,
-            ipv4: BTreeSet::new(),
-            ipv6: BTreeSet::new(),
+            tagged: TaggedConfigs::default(),
             linkup_tracker: LinkUpTracker::default(),
             autoneg_tracker: AutonegTracker::default(),
 
@@ -486,11 +591,10 @@ impl Link {
     }
 
     /// Return the link-local address for this link, if one has been added.
+    ///
+    /// If multiple have been added, this returns the first that is found.
     pub fn link_local(&self) -> Option<Ipv6Addr> {
-        self.ipv6
-            .iter()
-            .find(|entry| (entry.addr.segments()[0] & 0xffc0) == 0xfe80)
-            .map(|entry| entry.addr)
+        self.tagged.ipv6().iter().copied().find(Ipv6Addr::is_unicast_link_local)
     }
 
     /// Return the FEC scheme in use for this link.  If the link has not yet
@@ -710,18 +814,18 @@ impl Switch {
         let mut link = link_lock.lock().unwrap();
 
         // Delete all addresses in the switch tables for this link.
-        if !link.ipv4.is_empty() {
-            let to_delete = std::mem::take(&mut link.ipv4)
-                .into_iter()
-                .map(|entry| entry.addr);
-            port_ip::ipv4_delete_many(self, link.asic_port_id, to_delete)?;
-        }
-        if !link.ipv6.is_empty() {
-            let to_delete = std::mem::take(&mut link.ipv6)
-                .into_iter()
-                .map(|entry| entry.addr);
-            port_ip::ipv6_delete_many(self, link.asic_port_id, to_delete)?;
-        }
+
+        port_ip::ipv4_delete_many(
+            self,
+            link.asic_port_id,
+            link.tagged.drain_v4(),
+        )?;
+
+        port_ip::ipv6_delete_many(
+            self,
+            link.asic_port_id,
+            link.tagged.drain_v6(),
+        )?;
 
         // Notify the reconciliation task that this link's ASIC resources need
         // to be released.
@@ -736,78 +840,50 @@ impl Switch {
         let links = self.links.lock().unwrap();
         for link_lock in links.0.values() {
             let mut link = link_lock.lock().unwrap();
-            // Clear all IP addresses.
-            //
-            // Swap out an empty map with the existing one, so that we can
-            // retain an iterable for calling `ipv{4,6}_delete_many`.
-            if !link.ipv4.is_empty() {
-                let to_delete = std::mem::take(&mut link.ipv4)
-                    .into_iter()
-                    .map(|entry| entry.addr);
-                port_ip::ipv4_delete_many(self, link.asic_port_id, to_delete)?;
-            }
-            if !link.ipv6.is_empty() {
-                let to_delete = std::mem::take(&mut link.ipv6)
-                    .into_iter()
-                    .map(|entry| entry.addr);
-                port_ip::ipv6_delete_many(self, link.asic_port_id, to_delete)?;
-            }
+
+            port_ip::ipv4_delete_many(
+                self,
+                link.asic_port_id,
+                link.tagged.drain_v4(),
+            )?;
+
+            port_ip::ipv6_delete_many(
+                self,
+                link.asic_port_id,
+                link.tagged.drain_v6(),
+            )?;
         }
         Ok(())
     }
 
     /// Clear any IP addresses associated with all links, optionally restricted
     /// to a specified string `tag`.
-    pub fn clear_link_addresses(&self, tag: Option<&str>) -> DpdResult<()> {
-        if let Some(tag) = tag {
-            let links = self.links.lock().unwrap();
-            for link_lock in links.0.values() {
-                let mut link = link_lock.lock().unwrap();
-                self.clear_link_addresses_locked(&mut link, tag);
-            }
-            Ok(())
-        } else {
-            self.clear_link_state()
+    pub fn clear_tagged_addrs(&self, tag: &Tag) -> DpdResult<()> {
+        for link_lock in self.links.lock().unwrap().0.values() {
+            let mut link = link_lock.lock().unwrap();
+
+            let Some(mut conf) = link.tagged.delete_tag(tag) else {
+                continue;
+            };
+
+            let _ = port_ip::ipv4_delete_many(
+                self,
+                link.asic_port_id,
+                conf.ipv4
+                    .drain()
+                    .filter(|addr| !link.tagged.ipv4().contains(addr)),
+            );
+
+            let _ = port_ip::ipv6_delete_many(
+                self,
+                link.asic_port_id,
+                conf.ipv6
+                    .drain()
+                    .filter(|addr| !link.tagged.ipv6().contains(addr)),
+            );
         }
-    }
 
-    fn clear_link_addresses_locked(&self, link: &mut Link, tag: &str) {
-        // Remove all entries from the set with the provided tag.
-        //
-        // TODO-cleanup: It'd be nice to use `drain_filter` here,
-        // but that is unstable.
-        let mut to_remove = Vec::new();
-        link.ipv4.retain(|entry| {
-            if entry.tag == tag {
-                to_remove.push(entry.addr);
-                false
-            } else {
-                true
-            }
-        });
-
-        // Delete the entries from the ASIC tables.
-        let _ = port_ip::ipv4_delete_many(
-            self,
-            link.asic_port_id,
-            to_remove.into_iter(),
-        );
-
-        // TODO-cleanup: See note above about `drain_filter`.
-        let mut to_remove = Vec::new();
-        link.ipv6.retain(|entry| {
-            if entry.tag == tag {
-                to_remove.push(entry.addr);
-                false
-            } else {
-                true
-            }
-        });
-        let _ = port_ip::ipv6_delete_many(
-            self,
-            link.asic_port_id,
-            to_remove.into_iter(),
-        );
+        Ok(())
     }
 
     // Update the state of a link with a closure.

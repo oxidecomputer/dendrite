@@ -1,7 +1,8 @@
-use std::{fmt::Display, str::FromStr, sync::LazyLock};
+use std::{fmt::Display, net::Ipv6Addr, str::FromStr, sync::LazyLock};
 
 use regex::Regex;
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 /// The maximum length in bytes of a tag. Since tags are ascii, this
 /// is also the maximum length in characters.
@@ -27,7 +28,7 @@ pub enum Error {
     Pattern { given: String, pattern: String },
 
     #[error(
-        "Parse failed, string is too large: {0} bytes > {TAG_CAPACITY} maximum"
+        "Tag length must be in the range {range:?}. Found {0}.", range = 1..=TAG_CAPACITY
     )]
     Size(usize),
 }
@@ -56,12 +57,45 @@ pub enum Error {
 // so that's an optimization for another day. And it can live behind
 // this API anyway.
 #[repr(transparent)]
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq, Clone)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq, Clone, Hash,
+)]
 pub struct Tag(heapless::String<TAG_CAPACITY>);
 const _: () =
     assert!(std::mem::size_of::<Tag>() == 72, "this could be 64 if we tried");
 
 // TODO::cory: tests are warranted
+
+impl Tag {
+    pub fn as_str(&self) -> &str {
+        self.as_ref()
+    }
+
+    pub fn coerce(tag: &str) -> Self {
+        const FILLER: &str = "_";
+
+        let mut good = heapless::String::<TAG_CAPACITY>::new();
+        for ch in tag.chars() {
+            let mut buf = [0u8; 4];
+            let mut ch = &*ch.encode_utf8(&mut buf);
+
+            if !TAG_PATTERN.is_match(ch) {
+                ch = FILLER;
+            }
+
+            if good.push_str(ch).is_err() {
+                break;
+            }
+        }
+
+        if good.is_empty() {
+            good.push_str(FILLER)
+                .expect("Empty buf must have space for a char");
+        }
+
+        good.as_str().parse().expect("coerced tag should always be valid")
+    }
+}
 
 impl FromStr for Tag {
     type Err = self::Error;
@@ -111,4 +145,22 @@ impl Display for Tag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.as_ref().fmt(f)
     }
+}
+
+/// An IPv6 address assigned to a link.
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
+pub struct Ipv6Entry {
+    /// Client-side tag for this object.
+    pub tag: Tag,
+    /// The IP address.
+    pub addr: Ipv6Addr,
+}
+
+/// An IPv4 address assigned to a link.
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
+pub struct Ipv4Entry {
+    /// Client-side tag for this object.
+    pub tag: Tag,
+    /// The IP address.
+    pub addr: Ipv6Addr,
 }
