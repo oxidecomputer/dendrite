@@ -28,7 +28,7 @@ fn set_partial_taps() -> anyhow::Result<()> {
 
     cmd::retry(|| {
         cmd::swadm(format!("link serdes get txeq {link}"))?
-            .remove(&*re::PARENS)
+            .strip(&*re::PARENS)
             .try_expectorate("tx_eq_partial.txt")
     })
 }
@@ -49,7 +49,7 @@ fn set_all_taps() -> anyhow::Result<()> {
 
     cmd::retry(|| {
         cmd::swadm(format!("link serdes get txeq {link}"))?
-            .remove(&*re::PARENS)
+            .strip(&*re::PARENS)
             .try_expectorate("tx_eq_exact.txt")
     })
 }

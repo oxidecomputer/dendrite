@@ -36,7 +36,7 @@ fn apply_tx_eq_all() -> anyhow::Result<()> {
 
     cmd::retry(|| {
         cmd::swadm(format!("link serdes get txeq {LINK}"))?
-            .remove(&*re::PARENS)
+            .strip(&*re::PARENS)
             .try_expectorate("link_apply_tx_eq_all.txt")
     })
 }
@@ -63,7 +63,7 @@ fn apply_tx_eq_custom() -> anyhow::Result<()> {
 
     cmd::retry(|| {
         cmd::swadm(format!("link serdes get txeq {LINK}"))?
-            .remove(&*re::PARENS)
+            .strip(&*re::PARENS)
             .try_expectorate("link_apply_tx_eq_custom.txt")
     })
 }

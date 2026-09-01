@@ -177,23 +177,9 @@ impl Pattern {
     }
 }
 
-impl From<Regex> for Pattern {
-    fn from(value: Regex) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&str> for Pattern {
-    /// The string is interpreted as a regex literal.
-    /// Use `From<Regex>` if this is not a literal.
-    fn from(literal: &str) -> Self {
-        Pattern::literal(literal)
-    }
-}
-
-impl From<String> for Pattern {
-    fn from(literal: String) -> Self {
-        Pattern::literal(&literal)
+impl AsRef<Regex> for Pattern {
+    fn as_ref(&self) -> &Regex {
+        &self.0
     }
 }
 
@@ -203,29 +189,30 @@ impl AsRef<str> for Pattern {
     }
 }
 
-impl From<i8> for Pattern {
-    fn from(value: i8) -> Self {
-        value.to_string().into()
+impl From<Regex> for Pattern {
+    fn from(value: Regex) -> Self {
+        Self(value)
     }
 }
 
-impl From<i32> for Pattern {
-    fn from(value: i32) -> Self {
-        value.to_string().into()
-    }
+/// Conversion for a type that should be interpreted as
+/// a regex literal.
+macro_rules! from_literal {
+    ($t:ty) => {
+        impl From<$t> for $crate::cmd::Pattern {
+            fn from(literal: $t) -> Self {
+                Self::literal(&literal.to_string())
+            }
+        }
+    };
 }
 
-impl From<usize> for Pattern {
-    fn from(value: usize) -> Self {
-        value.to_string().into()
-    }
-}
-
-impl AsRef<Regex> for Pattern {
-    fn as_ref(&self) -> &Regex {
-        &self.0
-    }
-}
+// Extend as needed
+from_literal!(&str);
+from_literal!(String);
+from_literal!(i8);
+from_literal!(i32);
+from_literal!(usize);
 
 /// This contains the output of a [`swadm`] command
 /// and can be used for parsing CLI results.
@@ -237,7 +224,7 @@ pub enum Output {
 
 impl Output {
     /// Removes all instances of the pattern from the output text.
-    pub fn remove(&mut self, reg: impl AsRef<Regex>) -> &mut Self {
+    pub fn strip(&mut self, reg: impl AsRef<Regex>) -> &mut Self {
         *self.as_mut() =
             reg.as_ref().replace_all(self.as_ref(), "").to_string();
         self
