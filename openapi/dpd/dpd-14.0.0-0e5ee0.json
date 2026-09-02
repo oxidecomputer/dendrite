@@ -7,7 +7,7 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "13.0.0"
+    "version": "14.0.0"
   },
   "paths": {
     "/all-settings": {
@@ -1249,7 +1249,7 @@
     "/multicast/external-groups": {
       "post": {
         "summary": "Create an external-only multicast group configuration.",
-        "description": "External-only groups are used for IPv4 and non-admin-local IPv6 multicast traffic that doesn't require replication infrastructure. These groups use simple forwarding tables and require a NAT target.",
+        "description": "External-only groups are used for IPv4 and IPv6 multicast traffic that does not require replication infrastructure. Any admitted IPv6 scope may be used, admin-local included, except within the reserved underlay subnet ff04::/64, which belongs to the internal multicast API.\n\nThese groups carry no direct members and require a NAT target.",
         "operationId": "multicast_group_create_external",
         "requestBody": {
           "content": {
@@ -1284,7 +1284,7 @@
     "/multicast/external-groups/{group_ip}": {
       "put": {
         "summary": "Update an external-only multicast group configuration for a given group IP address.",
-        "description": "External-only groups are used for IPv4 and non-admin-local IPv6 multicast traffic that doesn't require replication infrastructure.\n\nThe `tag` query parameter must match the group's existing tag.",
+        "description": "External-only groups are used for IPv4 and IPv6 multicast traffic that does not require replication infrastructure. Any admitted IPv6 scope may be used, admin-local included, except within the reserved underlay subnet ff04::/64, which belongs to the internal multicast API.\n\nThe `tag` query parameter must match the group's existing tag.",
         "operationId": "multicast_group_update_external",
         "parameters": [
           {

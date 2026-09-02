@@ -37,16 +37,18 @@
 //! The multicast implementation uses a bifurcated design that separates
 //! external (customer) and (internal) underlay traffic:
 //!
-//! 1. External-only groups (IPv4 and non-admin-local IPv6):
+//! 1. External-only groups (IPv4 and IPv6 outside the reserved underlay
+//!    subnet ff04::/64):
 //!    - Created from API control plane IPs for customer traffic
 //!    - Handle customer traffic to/from outside the rack
 //!    - Use the external multicast API (/multicast/external-groups)
 //!    - Must have NAT targets pointing to internal groups for proper forwarding
 //!
-//! 2. Internal groups (admin-local IPv6 multicast):
-//!    - Admin-local = scope 4 (ff04::/16) as defined in
-//!      [RFC 7346] and [RFC 4291]
-//!    - Geneve encapsulated multicast traffic (NAT targets of external-only groups)
+//! 2. Internal groups (underlay IPv6 multicast):
+//!    - Reserved underlay subnet ff04::/64, within admin-local scope-4
+//!      (ff04::/16) as defined in [RFC 7346] and [RFC 4291]
+//!    - Geneve encapsulated multicast traffic (NAT targets of
+//!      external-only groups)
 //!    - Use the internal multicast API (/multicast/underlay-groups)
 //!    - Can replicate to:
 //!      a) External group members (customer traffic)
@@ -559,7 +561,8 @@ pub(crate) fn del_group(
     let mut mcast = s.mcast.lock().unwrap();
 
     // Check if this is an internal group referenced by an external group.
-    // Internal groups are identified by admin-scoped IPv6 addresses (ff04::/16).
+    // Internal groups are identified by addresses in the reserved underlay
+    // subnet (i.e., ff04::/64).
     if let IpAddr::V6(ipv6) = group_ip
         && let Ok(admin_scoped) = UnderlayMulticastIpv6::new(ipv6)
         && let Some(external_ip) = mcast.nat_target_refs.get(&admin_scoped)
