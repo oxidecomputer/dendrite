@@ -112,7 +112,7 @@ impl TableOps<Handle> for Table {
         trace!(hdl.log, "match_data:\n{:#?}", match_data);
         trace!(hdl.log, "action_data:\n{:#?}", action_data);
 
-        let keyset_data = keyset_data(match_data.fields, self.type_);
+        let keyset_data = keyset_data(match_data.fields, self.type_)?;
 
         let (action, parameter_data) = match (
             self.type_,
@@ -121,6 +121,23 @@ impl TableOps<Handle> for Table {
             // TODO: implement mappings for natv6 actions
             (TableType::PortAddrIpv4, "claimv4") => ("local", Vec::new()),
             (TableType::PortAddrIpv6, "claimv6") => ("local", Vec::new()),
+            (TableType::PortAddrIpv6, "claimv6_rid") => {
+                let rid = action_data
+                    .args
+                    .iter()
+                    .find(|a| a.name == "router_id")
+                    .and_then(|a| match &a.value {
+                        ValueTypes::U64(v) => Some(*v as u8),
+                        ValueTypes::Ptr(_) => None,
+                    })
+                    .ok_or_else(|| {
+                        AsicError::InvalidArg(
+                            "claimv6_rid requires a router_id argument"
+                                .to_string(),
+                        )
+                    })?;
+                ("local_rid", vec![rid])
+            }
             (TableType::RouteIdxIpv4, "index") => {
                 let mut params = Vec::new();
                 for arg in action_data.args.iter() {
@@ -573,7 +590,7 @@ impl TableOps<Handle> for Table {
         trace!(hdl.log, "table: {name}");
         trace!(hdl.log, "match_data:\n{:#?}", match_data);
 
-        let keyset_data = keyset_data(match_data.fields, self.type_);
+        let keyset_data = keyset_data(match_data.fields, self.type_)?;
 
         trace!(hdl.log, "sending request to softnpu");
         trace!(hdl.log, "table: {name}");
@@ -608,9 +625,29 @@ impl TableOps<Handle> for Table {
 
 /// Extract keys from `match_data` and ensure that they are
 /// in a data structure with the correct length
-fn keyset_data(match_data: Vec<MatchEntryField>, table: TableType) -> Vec<u8> {
+fn keyset_data(
+    match_data: Vec<MatchEntryField>,
+    table: TableType,
+) -> AsicResult<Vec<u8>> {
     let mut keyset_data: Vec<u8> = Vec::new();
     for m in match_data {
+        // sidecar-lite keys its route index tables on an exact bit<8>
+        // router_id ahead of the lpm destination; serialize it as one byte.
+        if m.name == "router_id" {
+            let rid = match &m.value {
+                MatchEntryValue::Value(ValueTypes::U64(v)) => *v,
+                MatchEntryValue::Value(ValueTypes::Ptr(v)) => {
+                    v.iter().fold(0u64, |acc, b| (acc << 8) | u64::from(*b))
+                }
+                x => {
+                    return Err(AsicError::InvalidArg(format!(
+                        "router_id must be an exact match: {x:?}"
+                    )));
+                }
+            };
+            keyset_data.push(rid as u8);
+            continue;
+        }
         match m.value {
             // Exact match
             MatchEntryValue::Value(x) => {
@@ -701,7 +738,7 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: TableType) -> Vec<u8> {
             }
         }
     }
-    keyset_data
+    Ok(keyset_data)
 }
 
 fn serialize_value_type(x: &ValueTypes, data: &mut Vec<u8>) {

@@ -137,6 +137,14 @@ control Filter(
 		ipv6_ctr.count();
 	}
 
+	// Claim the address for a specific (non-default) router: subsequent
+	// route lookups match only that router's table entries.
+	action claimv6_rid(bit<8> router_id) {
+		meta.is_switch_address = true;
+		meta.router_id = router_id;
+		ipv6_ctr.count();
+	}
+
 
 	// Table of the IPv4 addresses assigned to ports on the switch.
 	table switch_ipv4_addr {
@@ -156,7 +164,7 @@ control Filter(
 			hdr.ipv6.dst_addr : exact;
 			ig_intr_md.ingress_port : ternary;
 		}
-		actions = { claimv6; dropv6; }
+		actions = { claimv6; claimv6_rid; dropv6; }
 
 		const size = SWITCH_IPV6_ADDRS_SIZE;
 		counters = ipv6_ctr;
@@ -916,6 +924,7 @@ control NatEgress (
 
 control RouterLookupIndex6(
 	inout sidecar_headers_t hdr,
+	in sidecar_ingress_meta_t meta,
 	inout route6_result_t res
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) index_ctr;
@@ -984,7 +993,10 @@ control RouterLookupIndex6(
 	}
 
 	table lookup {
-		key             = { hdr.ipv6.dst_addr: lpm; }
+		key             = {
+			meta.router_id: exact;
+			hdr.ipv6.dst_addr: lpm;
+		}
 		actions         = { index; unreachable; }
 		default_action  = unreachable;
 		// The table size is incremented by one here just to allow the
@@ -1014,6 +1026,7 @@ control RouterLookupIndex6(
 
 control RouterLookupIndex4(
 	inout sidecar_headers_t hdr,
+	in sidecar_ingress_meta_t meta,
 	inout route4_result_t res
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) index_ctr;
@@ -1105,7 +1118,10 @@ control RouterLookupIndex4(
 	}
 
 	table lookup {
-		key             = { hdr.ipv4.dst_addr: lpm; }
+		key             = {
+			meta.router_id: exact;
+			hdr.ipv4.dst_addr: lpm;
+		}
 		actions         = { index; unreachable; }
 		default_action  = unreachable;
 		const size      = IPV4_LPM_SIZE;
@@ -1268,7 +1284,7 @@ control Router4 (
 			meta.l4_src_port
 		}) & 0x3f;
 
-		lookup_idx.apply(hdr, fwd);
+		lookup_idx.apply(hdr, meta, fwd);
 
 		if (!fwd.is_hit) {
 			icmp_error(ICMP_DEST_UNREACH, ICMP_DST_UNREACH_NET);
@@ -1413,7 +1429,7 @@ control Router6 (
 			meta.l4_src_port
 		}) & 0x3f;
 
-		lookup_idx.apply(hdr, fwd);
+		lookup_idx.apply(hdr, meta, fwd);
 
 		if (!fwd.is_hit) {
 			icmp_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);
