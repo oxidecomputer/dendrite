@@ -92,16 +92,16 @@ source .github/buildomat/illumos.sh
 # buildomat can retrieve for archiving.
 # usage: archive <source stem> <dest stem> <suffix>
 function archive {
-    mv out/$1$3 /out/$2$3
-    digest -a sha256 /out/$2$3 > /out/$2.sha256.txt
+    mv "out/$1$3" "/out/$2$3"
+    digest -a sha256 "/out/$2$3" > "/out/$2.sha256.txt"
 }
 
 pfexec mkdir -p /out
-pfexec chown "$UID" /out
+pfexec chown "${UID}" /out
 
 banner "P4 Codegen"
 # Add gcc-14 so the p4 compiler can find cpp
-PATH=/opt/gcc-14/bin:$PATH cargo xtask codegen --stages $TOFINO_STAGES
+PATH=/opt/gcc-14/bin:"${PATH}" cargo xtask codegen --stages "${TOFINO_STAGES}"
 
 # Preserve all the diagnostics spit out by the compiler
 mkdir -p /out/p4c-diags
@@ -126,39 +126,39 @@ digest -a sha256 /out/swadm > /out/swadm.sha256.txt
 #   of `dpd`.
 function build() {
     local FEATURE="$1"
-    NAME="$(echo $FEATURE | sed "s/tofino_//")"
-    if [ "$2" = "--with-console" ]; then
+    NAME="${FEATURE//tofino_/}"
+    if [[ "$2" = "--with-console" ]]; then
         echo "building with tokio-console feature"
-        DPD_FEATURES="$FEATURE tokio-console"
-        LOCAL_ARCHIVE_SUFFIX="$NAME-console"
+        DPD_FEATURES="${FEATURE} tokio-console"
+        LOCAL_ARCHIVE_SUFFIX="${NAME}-console"
         GLOBAL_ARCHIVE_SUFFIX="global-console"
     else
-        DPD_FEATURES="$FEATURE"
-        LOCAL_ARCHIVE_SUFFIX="$NAME"
+        DPD_FEATURES="${FEATURE}"
+        LOCAL_ARCHIVE_SUFFIX="${NAME}"
         GLOBAL_ARCHIVE_SUFFIX="global"
     fi
-    banner build "$NAME"
-    ptime -m cargo build --release --verbose --features "$DPD_FEATURES" --bin dpd
+    banner build "${NAME}"
+    ptime -m cargo build --release --verbose --features "${DPD_FEATURES}" --bin dpd
 
-    banner package "$NAME"
-    ptime -m cargo xtask dist --format omicron --release --features "$FEATURE"
+    banner package "${NAME}"
+    ptime -m cargo xtask dist --format omicron --release --features "${FEATURE}"
 
-    if [ "$NAME" = "asic" ]; then
+    if [[ "${NAME}" = "asic" ]]; then
 	    echo "building helios tarball"
 	    ptime -m cargo xtask dist --format global --release
-        mv dendrite-global.tar.gz "out/dendrite-$GLOBAL_ARCHIVE_SUFFIX.tar.gz"
-	    archive "dendrite-$GLOBAL_ARCHIVE_SUFFIX" "dendrite-$GLOBAL_ARCHIVE_SUFFIX" .tar.gz
+        mv dendrite-global.tar.gz "out/dendrite-${GLOBAL_ARCHIVE_SUFFIX}.tar.gz"
+	    archive "dendrite-${GLOBAL_ARCHIVE_SUFFIX}" "dendrite-${GLOBAL_ARCHIVE_SUFFIX}" .tar.gz
     fi
 
-    banner archive "$NAME"
-    archive dendrite "dendrite-$LOCAL_ARCHIVE_SUFFIX" .tar.gz
+    banner archive "${NAME}"
+    archive dendrite "dendrite-${LOCAL_ARCHIVE_SUFFIX}" .tar.gz
 }
 
 for FEATURE in tofino_stub tofino_asic softnpu
 do
-    build "$FEATURE"
-    if [ "$FEATURE" = "tofino_asic" ]; then
-        build "$FEATURE" --with-console
+    build "${FEATURE}"
+    if [[ "${FEATURE}" = "tofino_asic" ]]; then
+        build "${FEATURE}" --with-console
     fi
 done
 

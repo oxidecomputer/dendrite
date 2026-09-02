@@ -1,16 +1,24 @@
+#!/bin/bash
+
 export RUST_BACKTRACE=1
 
 source .github/buildomat/common.sh
 source .github/buildomat/linux.sh
 
 wd=$(pwd)
-export WS=$wd
-MODEL_STARTUP_TIMEOUT=${MODEL_STARTUP_TIMEOUT:=5}
-STARTUP_TIMEOUT=${STARTUP_TIMEOUT:=120}
+export WS="${wd}"
+
 DENDRITE_TEST_HOST=${DENDRITE_TEST_HOST:="[::1]"}
 DENDRITE_TEST_VERBOSITY=${DENDRITE_TEST_VERBOSITY:=3}
+JUST_TEST=${JUST_TEST:=0}
+MODEL_STARTUP_TIMEOUT=${MODEL_STARTUP_TIMEOUT:=5}
+MULTICAST=${MULTICAST:=""}
+NOBUILD=${NOBUILD:=0}
+STARTUP_TIMEOUT=${STARTUP_TIMEOUT:=120}
+testname=(${TESTNAME:+${TESTNAME}})
 
-if [ "$MULTICAST" == "" ]; then
+
+if [[ "${MULTICAST}" == "" ]]; then
     BUILD_FEATURES=tofino_asic
     CODEGEN_FEATURES=()
     SWADM_FEATURES=()
@@ -23,7 +31,7 @@ fi
 function cleanup {
     set +o errexit
     set +o pipefail
-    cd "$wd"
+    cd "${wd}"
     sudo -E pkill -9 dpd
     sudo -E pkill -9 tofino-model
     sudo -E ./tools/veth_teardown.sh
@@ -33,7 +41,7 @@ function cleanup {
 }
 trap cleanup EXIT
 
-if [[ $JUST_TEST -ne 1 ]]; then
+if [[ ${JUST_TEST} -ne 1 ]]; then
     # See what hugepages was before starting
     sysctl vm.nr_hugepages
     # Make sure huge pages is enabled. This is required for running the SDE on
@@ -62,9 +70,9 @@ fi
 export SDE=/opt/oxide/tofino_sde
 
 banner "Build"
-if [[ $NOBUILD -ne 1 ]]; then
-    cargo build --features=$BUILD_FEATURES --bin dpd --bin swadm
-    cargo xtask codegen --stages "$TOFINO_STAGES" "${CODEGEN_FEATURES[@]}"
+if [[ ${NOBUILD} -ne 1 ]]; then
+    cargo build --features="${BUILD_FEATURES}" --bin dpd --bin swadm
+    cargo xtask codegen --stages "${TOFINO_STAGES}" "${CODEGEN_FEATURES[@]}"
 fi
 
 banner "Test"
@@ -72,10 +80,15 @@ sudo -E ./tools/veth_setup.sh
 id=$(id -un)
 gr=$(id -gn)
 sudo -E mkdir -p /work
-sudo -E chown "$id":"$gr" /work
+sudo -E chown "${id}":"${gr}" /work
+
+# We don't want logs owned by root, which is what shellcheck advises.
+# shellcheck disable=SC2024
 sudo -E ./tools/run_tofino_model.sh &> /work/simulator.log &
-sleep "$MODEL_STARTUP_TIMEOUT"
+sleep "${MODEL_STARTUP_TIMEOUT}"
+# shellcheck disable=SC2024
 sudo -E ./tools/run_dpd.sh -m 127.0.0.1 &> /work/dpd.log &
+
 echo "waiting for dpd to come online"
 set +o errexit
 
@@ -86,11 +99,11 @@ while true ; do
         break
     fi
     iters=$((iters - 1))
-    if [ $iters = 0 ]; then
-        echo "dpd failed to come online in $STARTUP_TIMEOUT seconds"
+    if [[ ${iters} = 0 ]]; then
+        echo "dpd failed to come online in ${STARTUP_TIMEOUT} seconds"
         exit 1
     fi
-    sleep $SLEEP_TIME
+    sleep "${SLEEP_TIME}"
 done
 
 banner "Links"
@@ -110,9 +123,9 @@ export DENDRITE_TEST_HOST DENDRITE_TEST_VERBOSITY
 pushd dpd-client
 
 cargo test \
-    --features $BUILD_FEATURES \
+    --features "${BUILD_FEATURES}" \
     --no-fail-fast \
-    $TESTNAME \
+    "${testname[@]}" \
     -- \
     --ignored \
     --skip succeeds_when_table_fragmented
