@@ -40,13 +40,11 @@ pub enum Error {
     Size(usize),
 }
 
-/// An ID used to namespace and network resources. Tags allow
+/// An ID for namespacing network resources. Tags allow
 /// different parties to CRUD resources without affecting each other.
 ///
 /// Tags are an internal mechanism for categorization. They don't
 /// enforce authentication, and most will probably be hardcoded strings.
-///
-/// This usage is somewhat analagous to FRR's [RTPROT](https://github.com/FRRouting/frr/blob/master/include/linux/rtnetlink.h#L286-L310) type.
 //
 // Implementation notes:
 //
@@ -154,50 +152,17 @@ impl Display for Tag {
     }
 }
 
-/// An IPv6 address assigned to a link.
-#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
-pub struct Ipv6Entry {
-    /// Client-side tag for this object.
+/// A command or request scoped to a specific owner tag.
+pub struct Tagged<T> {
     pub tag: Tag,
-    /// The IP address.
-    pub addr: Ipv6Addr,
+    pub field: T,
 }
 
-/// An IPv4 address assigned to a link.
-#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
-pub struct Ipv4Entry {
-    /// Client-side tag for this object.
-    pub tag: Tag,
-    /// The IP address.
-    pub addr: Ipv4Addr,
-}
+/// Defines the scope of a command or query on tagged assets.
+pub enum TagScope<T> {
+    /// Applies to all resources regardless of tag.
+    Any(T),
 
-impl From<crate::v1::port::Ipv4Entry> for Ipv4Entry {
-    fn from(prev: crate::v1::port::Ipv4Entry) -> Self {
-        Self { addr: prev.addr, tag: Tag::coerce(&prev.tag) }
-    }
-}
-
-impl From<Ipv4Entry> for crate::v1::port::Ipv4Entry {
-    fn from(value: Ipv4Entry) -> Self {
-        Self { addr: value.addr, tag: value.tag.to_string() }
-    }
-}
-
-/// Identifies a logical link on a physical port.
-#[derive(Deserialize, Serialize, JsonSchema)]
-pub struct TaggedLinkPath {
-    /// The switch port on which to operate.
-    pub port_id: PortId,
-    /// The link in the switch port on which to operate.
-    pub link_id: LinkId,
-    /// Defines the tag scope of this request/response. If None,
-    /// this applies to all tags.
-    pub tag: Option<Tag>,
-}
-
-impl From<crate::v1::link::LinkPath> for TaggedLinkPath {
-    fn from(path: crate::v1::link::LinkPath) -> Self {
-        Self { port_id: path.port_id, link_id: path.link_id, tag: None }
-    }
+    /// Applies only to this specific tag.
+    Single(Tagged<T>),
 }
