@@ -4,8 +4,8 @@ This is the management CLI for Oxide's rack switch.
 
 ## Testing
 
-swadm is widely used across scripts and documentation. Changes
-should generally be backward compatible.
+swadm is used across scripts and documentation. Breaking changes
+should be documented and intentional.
 
 This is definitionally a string-typed interface, so regressions are
 easily missed. The integration tests module has infra for testing
