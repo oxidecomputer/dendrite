@@ -37,7 +37,8 @@
 //! The multicast implementation uses a bifurcated design that separates
 //! external (customer) and (internal) underlay traffic:
 //!
-//! 1. External-only groups (IPv4 and non-admin-local IPv6):
+//! 1. External-only groups (IPv4 and IPv6 outside the reserved underlay
+//!    subnet ff04::/64):
 //!    - Created from API control plane IPs for customer traffic
 //!    - Handle customer traffic to/from outside the rack
 //!    - Use the external multicast API (/multicast/external-groups)
