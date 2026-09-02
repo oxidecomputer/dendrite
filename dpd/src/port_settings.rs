@@ -10,8 +10,6 @@ use crate::Switch;
 use crate::link::Link;
 use crate::link::LinkParams;
 use aal::AsicOps;
-use common::ports::Ipv4Entry;
-use common::ports::Ipv6Entry;
 use common::ports::PortFec;
 use common::ports::PortId;
 use common::ports::PortSpeed;
@@ -23,6 +21,7 @@ use slog::Logger;
 use slog::debug;
 use slog::error;
 use slog::trace;
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -99,8 +98,9 @@ struct LinkSpec {
     pub autoneg: bool,
     pub kr: bool,
     pub delete_me: bool,
-    pub ipv4: BTreeSet<Ipv4Addr>,
-    pub ipv6: BTreeSet<Ipv6Addr>,
+    // (address, owner tag)
+    pub ipv4: BTreeMap<Ipv4Addr, String>,
+    pub ipv6: BTreeMap<Ipv6Addr, String>,
     pub tx_eq: Option<TxEq>,
     pub allow_ddm_traffic: bool,
 }
@@ -114,40 +114,79 @@ impl From<&Link> for LinkSpec {
             kr: p.config.kr,
             tx_eq: p.tx_eq,
             delete_me: p.config.delete_me,
-            ipv4: p.ipv4.iter().map(|x| x.addr).collect(),
-            ipv6: p.ipv6.iter().map(|x| x.addr).collect(),
+            ipv4: p.ipv4.clone(),
+            ipv6: p.ipv6.clone(),
             allow_ddm_traffic: p.config.allow_ddm_traffic,
         }
     }
 }
 
-impl From<&LinkSettings> for LinkSpec {
-    fn from(l: &LinkSettings) -> Self {
-        Self {
+impl LinkSpec {
+    /// Constructs a [`LinkSpec`] based on the given [`LinkSettings`].
+    ///
+    /// If `current` is Some, the resulting LinkSpec includes addresses
+    /// from [`LinkSettings`] and those of all *other* tags in `current`.
+    ///
+    /// Returns error if an address in [`LinkSettings`] is already
+    /// owned in `current` by another tag.
+    pub fn try_from_settings(
+        l: &LinkSettings,
+        tag: &str,
+        current: Option<&LinkSpec>,
+    ) -> DpdResult<Self> {
+        let mut ipv4 = BTreeMap::new();
+        let mut ipv6 = BTreeMap::new();
+
+        if let Some(current) = current {
+            ipv4.extend(
+                current
+                    .ipv4
+                    .iter()
+                    .filter(|(_, entry_tag)| entry_tag.as_str() != tag)
+                    .map(|(addr, entry_tag)| (*addr, entry_tag.to_string())),
+            );
+
+            ipv6.extend(
+                current
+                    .ipv6
+                    .iter()
+                    .filter(|(_, entry_tag)| entry_tag.as_str() != tag)
+                    .map(|(addr, entry_tag)| (*addr, entry_tag.to_string())),
+            );
+        }
+
+        for addr in &l.addrs {
+            match addr {
+                IpAddr::V4(v4) => {
+                    if let Some(owner) = ipv4.insert(*v4, tag.to_string()) {
+                        return Err(DpdError::AddrTagConflict {
+                            addr: *addr,
+                            tag: owner,
+                        });
+                    }
+                }
+                IpAddr::V6(v6) => {
+                    if let Some(owner) = ipv6.insert(*v6, tag.to_string()) {
+                        return Err(DpdError::AddrTagConflict {
+                            addr: *addr,
+                            tag: owner,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(Self {
             speed: l.params.speed,
             fec: l.params.fec,
             autoneg: l.params.autoneg,
             kr: l.params.kr,
             tx_eq: l.params.tx_eq,
             delete_me: false,
-            ipv4: l
-                .addrs
-                .iter()
-                .filter_map(
-                    |x| if let IpAddr::V4(a) = x { Some(a) } else { None },
-                )
-                .copied()
-                .collect(),
-            ipv6: l
-                .addrs
-                .iter()
-                .filter_map(
-                    |x| if let IpAddr::V6(a) = x { Some(a) } else { None },
-                )
-                .copied()
-                .collect(),
+            ipv4,
+            ipv6,
             allow_ddm_traffic: l.params.allow_ddm_traffic,
-        }
+        })
     }
 }
 
@@ -187,6 +226,11 @@ impl PortSettingsDiff {
         // Collect all the links that exist on the port.
         let switch_links = ctx.link_map.port_links(ctx.port_id);
 
+        // dendrite/342: Tags only protect address modifications.
+        // This endpoint allows one client to subtly delete a link
+        // created by another client regardless of tag. But this
+        // concern is not exercised under current usage.
+
         // Determine what we need to add/delete/modify
         let links_to_add = settings_links.difference(&switch_links);
         let links_to_del = switch_links.difference(&settings_links);
@@ -194,9 +238,11 @@ impl PortSettingsDiff {
 
         self.links.add = links_to_add
             .map(|id| {
-                (*id, ChangeNode::Unchanged((&settings.links[&id.0]).into()))
+                let conf = &settings.links[&id.0];
+                let spec = LinkSpec::try_from_settings(conf, ctx.tag, None)?;
+                Ok((*id, ChangeNode::Unchanged(spec)))
             })
-            .collect();
+            .collect::<DpdResult<_>>()?;
 
         self.links.delete = links_to_del
             .map(|id| {
@@ -210,24 +256,28 @@ impl PortSettingsDiff {
             .collect();
 
         self.links.modify = links_to_mod
-            .map(|id| {
-                let settings_link = (&settings.links[&id.0]).into();
-                let switch_link = ctx.link_spec(*id).expect(
+            .filter_map(|id| {
+                let before = ctx.link_spec(*id).expect(
                     "link existence is guaranteed by the locked link map",
                 );
-                (id, settings_link, switch_link)
+
+                let maybe_after = LinkSpec::try_from_settings(
+                    &settings.links[&id.0],
+                    ctx.tag,
+                    Some(&before),
+                );
+                let after = match maybe_after {
+                    Ok(spec) => spec,
+                    Err(e) => return Some(Err(e)),
+                };
+
+                if before == after {
+                    return None;
+                }
+
+                Some(Ok((*id, ChangeNode::Unchanged(Modify { before, after }))))
             })
-            .filter(|(_, settings, switch)| settings != switch)
-            .map(|(id, settings, switch)| {
-                (
-                    *id,
-                    ChangeNode::Unchanged(Modify {
-                        before: switch,
-                        after: settings,
-                    }),
-                )
-            })
-            .collect();
+            .collect::<DpdResult<_>>()?;
 
         Ok(())
     }
@@ -351,13 +401,13 @@ impl PortSettingsDiff {
         });
 
         // Create the IPv4 addresses
-        for addr in spec.ipv4.iter().copied() {
-            Self::addr_add_v4(ctx, &mut link, rb, addr)?;
+        for (addr, tag) in &spec.ipv4 {
+            Self::addr_add_v4(ctx, &mut link, rb, *addr, tag.clone())?;
         }
 
         // Create the IPv6 addresses
-        for addr in spec.ipv6.iter().copied() {
-            Self::addr_add_v6(ctx, &mut link, rb, addr)?;
+        for (addr, tag) in &spec.ipv6 {
+            Self::addr_add_v6(ctx, &mut link, rb, *addr, tag.clone())?;
         }
 
         Ok(())
@@ -382,13 +432,13 @@ impl PortSettingsDiff {
         });
 
         // Delete the IPv4 addresses
-        for addr in spec.ipv4.iter().copied() {
-            Self::addr_del_v4(ctx, &mut link, rb, addr)?;
+        for (addr, tag) in &spec.ipv4 {
+            Self::addr_del_v4(ctx, &mut link, rb, *addr, tag.clone())?;
         }
 
         // Delete the IPv6 addresses
-        for addr in spec.ipv6.iter().copied() {
-            Self::addr_del_v6(ctx, &mut link, rb, addr)?;
+        for (addr, tag) in &spec.ipv6 {
+            Self::addr_del_v6(ctx, &mut link, rb, *addr, tag.clone())?;
         }
 
         Ok(())
@@ -472,32 +522,34 @@ impl PortSettingsDiff {
             Ok(())
         });
 
-        // ipv4 addrs
-        let v4_add: BTreeSet<Ipv4Addr> =
-            ipv4_after.difference(ipv4_before).copied().collect();
+        let v4_add = ipv4_after
+            .iter()
+            .filter(|(addr, _)| !ipv4_before.contains_key(addr));
+        let v4_del = ipv4_before
+            .iter()
+            .filter(|(addr, _)| !ipv4_after.contains_key(addr));
 
-        let v4_del: BTreeSet<Ipv4Addr> =
-            ipv4_before.difference(ipv4_after).copied().collect();
-
-        for addr in v4_add {
-            Self::addr_add_v4(ctx, &mut link, rb, addr)?;
-        }
-        for addr in v4_del {
-            Self::addr_del_v4(ctx, &mut link, rb, addr)?;
+        for (addr, tag) in v4_add {
+            Self::addr_add_v4(ctx, &mut link, rb, *addr, tag.clone())?;
         }
 
-        // ipv6 addrs
-        let v6_add: BTreeSet<Ipv6Addr> =
-            ipv6_after.difference(ipv6_before).copied().collect();
-
-        let v6_del: BTreeSet<Ipv6Addr> =
-            ipv6_before.difference(ipv6_after).copied().collect();
-
-        for addr in v6_add {
-            Self::addr_add_v6(ctx, &mut link, rb, addr)?;
+        for (addr, tag) in v4_del {
+            Self::addr_del_v4(ctx, &mut link, rb, *addr, tag.clone())?;
         }
-        for addr in v6_del {
-            Self::addr_del_v6(ctx, &mut link, rb, addr)?;
+
+        let v6_add = ipv6_after
+            .iter()
+            .filter(|(addr, _)| !ipv6_before.contains_key(addr));
+        let v6_del = ipv6_before
+            .iter()
+            .filter(|(addr, _)| !ipv6_after.contains_key(addr));
+
+        for (addr, tag) in v6_add {
+            Self::addr_add_v6(ctx, &mut link, rb, *addr, tag.clone())?;
+        }
+
+        for (addr, tag) in v6_del {
+            Self::addr_del_v6(ctx, &mut link, rb, *addr, tag.clone())?;
         }
 
         Ok(())
@@ -508,20 +560,19 @@ impl PortSettingsDiff {
         link: &mut Link,
         rb: &mut Rollback,
         addr: Ipv4Addr,
+        tag: String,
     ) -> DpdResult<()> {
-        trace!(ctx.log, "ipv4 add {addr}");
+        trace!(ctx.log, "ipv4 add ({addr}: {tag})");
         // Create address on ASIC first.
-        let entry =
-            Ipv4Entry { tag: ctx.tag.clone().unwrap_or("".into()), addr };
         let switch = ctx.switch;
-        switch.create_ipv4_address_locked(link, entry)?;
+        switch.create_ipv4_address_locked(link, addr, tag.clone())?;
 
         let link_id = link.link_id;
         rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
             let switch = ctx.switch;
             let link_lock = ctx.link(link_id)?;
             let mut link = link_lock.lock().unwrap();
-            switch.delete_ipv4_address_locked(&mut link, addr)
+            switch.delete_ipv4_address_locked(&mut link, addr, Some(&tag))
         });
         Ok(())
     }
@@ -531,19 +582,18 @@ impl PortSettingsDiff {
         link: &mut Link,
         rb: &mut Rollback,
         addr: Ipv4Addr,
+        tag: String,
     ) -> DpdResult<()> {
-        trace!(ctx.log, "ipv4 del {addr}");
-        let entry =
-            Ipv4Entry { tag: ctx.tag.clone().unwrap_or("".into()), addr };
+        trace!(ctx.log, "ipv4 del ({addr}: {tag})");
         let switch = ctx.switch;
         let link_id = link.link_id;
-        switch.delete_ipv4_address_locked(link, addr)?;
+        switch.delete_ipv4_address_locked(link, addr, Some(&tag))?;
 
         rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
             let switch = ctx.switch;
             let link_lock = ctx.link(link_id)?;
             let mut link = link_lock.lock().unwrap();
-            switch.create_ipv4_address_locked(&mut link, entry)
+            switch.create_ipv4_address_locked(&mut link, addr, tag)
         });
         Ok(())
     }
@@ -553,20 +603,19 @@ impl PortSettingsDiff {
         link: &mut Link,
         rb: &mut Rollback,
         addr: Ipv6Addr,
+        tag: String,
     ) -> DpdResult<()> {
-        trace!(ctx.log, "ipv6 add {addr}");
+        trace!(ctx.log, "ipv6 add ({addr}: {tag})");
         // Create address on ASIC first.
-        let entry =
-            Ipv6Entry { tag: ctx.tag.clone().unwrap_or("".into()), addr };
         let switch = ctx.switch;
         let link_id = link.link_id;
-        switch.create_ipv6_address_locked(link, entry)?;
+        switch.create_ipv6_address_locked(link, addr, tag.clone())?;
 
         rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
             let switch = ctx.switch;
             let link_lock = ctx.link(link_id)?;
             let mut link = link_lock.lock().unwrap();
-            switch.delete_ipv6_address_locked(&mut link, addr)
+            switch.delete_ipv6_address_locked(&mut link, addr, Some(&tag))
         });
         Ok(())
     }
@@ -576,19 +625,18 @@ impl PortSettingsDiff {
         link: &mut Link,
         rb: &mut Rollback,
         addr: Ipv6Addr,
+        tag: String,
     ) -> DpdResult<()> {
-        trace!(ctx.log, "ipv6 del {addr}");
+        trace!(ctx.log, "ipv6 del ({addr}: {tag})");
         let switch = ctx.switch;
         let link_id = link.link_id;
-        switch.delete_ipv6_address_locked(link, addr)?;
+        switch.delete_ipv6_address_locked(link, addr, Some(&tag))?;
 
         rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
-            let entry =
-                Ipv6Entry { tag: ctx.tag.clone().unwrap_or("".into()), addr };
             let switch = ctx.switch;
             let link_lock = ctx.link(link_id)?;
             let mut link = link_lock.lock().unwrap();
-            switch.create_ipv6_address_locked(&mut link, entry)
+            switch.create_ipv6_address_locked(&mut link, addr, tag)
         });
         Ok(())
     }
@@ -628,18 +676,18 @@ struct Context<'a> {
     port_id: PortId,
     switch: &'a Switch,
     link_map: MutexGuard<'a, crate::link::LinkMap>,
-    tag: Option<String>,
+    tag: &'a str,
     log: Logger,
     rollback: bool,
 }
 
 macro_rules! context {
-    ($port_id:expr, $switch:expr) => {
+    ($port_id:expr, $switch:expr, $tag:expr) => {
         Context {
             port_id: $port_id,
             switch: $switch,
             link_map: $switch.links.lock().unwrap(),
-            tag: None,
+            tag: $tag,
             log: $switch.log.clone(),
             rollback: false,
         }
@@ -664,10 +712,9 @@ impl Switch {
         &self,
         port_id: PortId,
         settings: PortSettings,
-        tag: Option<String>,
+        tag: &str,
     ) -> DpdResult<PortSettings> {
-        let mut ctx = context!(port_id, self);
-        ctx.tag = tag;
+        let mut ctx = context!(port_id, self, tag);
 
         let mut diff = PortSettingsDiff::calculate(&mut ctx, &settings)?;
         trace!(self.log, "port settings diff: {:#?}", diff);
@@ -680,10 +727,9 @@ impl Switch {
     pub async fn clear_port_settings(
         &self,
         port_id: PortId,
-        tag: Option<String>,
+        tag: &str,
     ) -> DpdResult<PortSettings> {
-        let mut ctx = context!(port_id, self);
-        ctx.tag = tag;
+        let mut ctx = context!(port_id, self, tag);
 
         let settings = PortSettings::default();
         let mut diff = PortSettingsDiff::calculate(&mut ctx, &settings)?;
@@ -697,10 +743,9 @@ impl Switch {
     pub async fn get_port_settings(
         &self,
         port_id: PortId,
-        tag: Option<String>,
+        tag: &str,
     ) -> DpdResult<PortSettings> {
-        let mut ctx = context!(port_id, self);
-        ctx.tag = tag;
+        let mut ctx = context!(port_id, self, tag);
         Self::get_port_settings_locked(&mut ctx, false)
     }
 
@@ -737,7 +782,7 @@ impl Switch {
                     if ignore_deleting && link.config.delete_me {
                         None
                     } else {
-                        Some(((*link_id).into(), LinkSettings::from(&*link)))
+                        Some(((*link_id).into(), link.settings(ctx.tag)))
                     }
                 } else {
                     None
