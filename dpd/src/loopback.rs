@@ -7,6 +7,7 @@
 use crate::{DpdError, DpdResult, Switch, table};
 use aal::AsicError;
 use common::ports::{Ipv4Entry, Ipv6Entry};
+use dpd_types::route::RouterId;
 use slog::debug;
 use slog::warn;
 use std::collections::BTreeSet;
@@ -72,15 +73,20 @@ pub fn delete_loopback_ipv4(switch: &Switch, addr: &Ipv4Addr) -> DpdResult<()> {
     Ok(())
 }
 
-/// Add a loopback IPv6 address to the switch.
-pub fn add_loopback_ipv6(switch: &Switch, addr: &Ipv6Entry) -> DpdResult<()> {
+/// Add a loopback IPv6 address to the switch, claiming it for the given
+/// router.
+pub fn add_loopback_ipv6(
+    switch: &Switch,
+    addr: &Ipv6Entry,
+    rid: RouterId,
+) -> DpdResult<()> {
     let mut loopback_data = switch.loopback.lock().unwrap();
     if loopback_data.v6_addrs.contains(addr) {
         debug!(switch.log, "loopback entry {} already set", addr.addr);
         return Ok(());
     }
 
-    match table::port_ip::loopback_ipv6_add(switch, addr.addr) {
+    match table::port_ip::loopback_ipv6_add(switch, addr.addr, rid) {
         Ok(()) => _ = loopback_data.v6_addrs.insert(addr.clone()),
         Err(DpdError::Switch(AsicError::Exists)) => {
             if !loopback_data.v6_addrs.contains(addr) {

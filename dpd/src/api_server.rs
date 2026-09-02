@@ -29,7 +29,9 @@ use dpd_types::link::{
     LinkCreate, LinkFilter, LinkFsmCounters, LinkHistory, LinkId, LinkIpv4Path,
     LinkIpv6Path, LinkPath, LinkUpCounter, LinkView, MsDuration, TfportData,
 };
-use dpd_types::loopback::{LoopbackIpv4Path, LoopbackIpv6Path};
+use dpd_types::loopback::{
+    LoopbackIpv4Path, LoopbackIpv6Path, RouterLoopbackIpv6Path,
+};
 #[cfg(feature = "multicast")]
 use dpd_types::mcast::UnderlayMulticastIpv6;
 use dpd_types::mcast::{
@@ -54,7 +56,8 @@ use dpd_types::route::{
     AttachedSubnetToken, Ipv4RouteToken, Ipv4RouteUpdate, Ipv4Routes,
     Ipv6Route, Ipv6RouteToken, Ipv6RouteUpdate, Ipv6Routes, Route, RoutePathV4,
     RoutePathV6, RouteTarget, RouteTargetIpv4Path, RouteTargetIpv6Path,
-    SubnetPath,
+    RouterId, RouterPath, RouterRoutePathV4, RouterRoutePathV6,
+    RouterRouteTargetIpv4Path, RouterRouteTargetIpv6Path, SubnetPath,
 };
 use dpd_types::serdes::{
     AnLtStatus, Ber, DfeAdaptationState, EncSpeed, LaneMap, RxSigInfo,
@@ -342,7 +345,7 @@ impl DpdApi for DpdApiImpl {
             WhichPage::Next(Ipv6RouteToken { cidr }) => Some(*cidr),
         };
 
-        route::get_range_ipv6(switch, previous, max)
+        route::get_range_ipv6(switch, RouterId::default(), previous, max)
             .await
             .map_err(HttpError::from)
             .and_then(|entries| {
@@ -361,7 +364,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseOk<Vec<Ipv6Route>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let cidr = path.into_inner().cidr;
-        route::get_route_ipv6(switch, cidr)
+        route::get_route_ipv6(switch, RouterId::default(), cidr)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -373,10 +376,15 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let route = update.into_inner();
-        route::add_route_ipv6(switch, route.cidr, route.target)
-            .await
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(HttpError::from)
+        route::add_route_ipv6(
+            switch,
+            RouterId::default(),
+            route.cidr,
+            route.target,
+        )
+        .await
+        .map(|_| HttpResponseUpdatedNoContent())
+        .map_err(HttpError::from)
     }
 
     async fn route_ipv6_set(
@@ -385,10 +393,16 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let route = update.into_inner();
-        route::set_route_ipv6(switch, route.cidr, route.target, route.replace)
-            .await
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(HttpError::from)
+        route::set_route_ipv6(
+            switch,
+            RouterId::default(),
+            route.cidr,
+            route.target,
+            route.replace,
+        )
+        .await
+        .map(|_| HttpResponseUpdatedNoContent())
+        .map_err(HttpError::from)
     }
 
     async fn route_ipv6_delete(
@@ -397,7 +411,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
         let cidr = path.into_inner().cidr;
-        route::delete_route_ipv6(switch, cidr)
+        route::delete_route_ipv6(switch, RouterId::default(), cidr)
             .await
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
@@ -414,7 +428,12 @@ impl DpdApi for DpdApiImpl {
         let link_id = path.link_id;
         let tgt_ip = path.tgt_ip;
         route::delete_route_target_ipv6(
-            switch, subnet, port_id, link_id, tgt_ip,
+            switch,
+            RouterId::default(),
+            subnet,
+            port_id,
+            link_id,
+            tgt_ip,
         )
         .await
         .map(|_| HttpResponseDeleted())
@@ -434,7 +453,7 @@ impl DpdApi for DpdApiImpl {
             WhichPage::Next(Ipv4RouteToken { cidr }) => Some(*cidr),
         };
 
-        route::get_range_ipv4(switch, previous, max)
+        route::get_range_ipv4(switch, RouterId::default(), previous, max)
             .await
             .map_err(HttpError::from)
             .and_then(|entries| {
@@ -453,7 +472,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseOk<Vec<Route>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let cidr = path.into_inner().cidr;
-        route::get_route_ipv4(switch, cidr)
+        route::get_route_ipv4(switch, RouterId::default(), cidr)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -467,11 +486,22 @@ impl DpdApi for DpdApiImpl {
         let route = update.into_inner();
         match route.target {
             RouteTarget::V4(target) => {
-                route::add_route_ipv4(switch, route.cidr, target).await
+                route::add_route_ipv4(
+                    switch,
+                    RouterId::default(),
+                    route.cidr,
+                    target,
+                )
+                .await
             }
             RouteTarget::V6(target) => {
-                route::add_route_ipv4_over_ipv6(switch, route.cidr, target)
-                    .await
+                route::add_route_ipv4_over_ipv6(
+                    switch,
+                    RouterId::default(),
+                    route.cidr,
+                    target,
+                )
+                .await
             }
         }
         .map(|_| HttpResponseUpdatedNoContent())
@@ -486,12 +516,19 @@ impl DpdApi for DpdApiImpl {
         let route = update.into_inner();
         match route.target {
             RouteTarget::V4(target) => {
-                route::set_route_ipv4(switch, route.cidr, target, route.replace)
-                    .await
+                route::set_route_ipv4(
+                    switch,
+                    RouterId::default(),
+                    route.cidr,
+                    target,
+                    route.replace,
+                )
+                .await
             }
             RouteTarget::V6(target) => {
                 route::set_route_ipv4_over_ipv6(
                     switch,
+                    RouterId::default(),
                     route.cidr,
                     target,
                     route.replace,
@@ -509,7 +546,7 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
         let cidr = path.into_inner().cidr;
-        route::delete_route_ipv4(switch, cidr)
+        route::delete_route_ipv4(switch, RouterId::default(), cidr)
             .await
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
@@ -523,6 +560,238 @@ impl DpdApi for DpdApiImpl {
         let path = path.into_inner();
         route::delete_route_target_ipv4(
             switch,
+            RouterId::default(),
+            path.cidr,
+            path.port_id,
+            path.link_id,
+            path.tgt_ip,
+        )
+        .await
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+    }
+
+    async fn router_route_ipv6_list(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
+        query: Query<PaginationParams<EmptyScanParams, Ipv6RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Routes>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let rid = path.into_inner().router_id;
+        let pag_params = query.into_inner();
+        let max = rqctx.page_limit(&pag_params)?.get();
+
+        let previous = match &pag_params.page {
+            WhichPage::First(..) => None,
+            WhichPage::Next(Ipv6RouteToken { cidr }) => Some(*cidr),
+        };
+
+        route::get_range_ipv6(switch, rid, previous, max)
+            .await
+            .map_err(HttpError::from)
+            .and_then(|entries| {
+                ResultsPage::new(
+                    entries,
+                    &EmptyScanParams {},
+                    |e: &Ipv6Routes, _| Ipv6RouteToken { cidr: e.cidr },
+                )
+            })
+            .map(HttpResponseOk)
+    }
+
+    async fn router_route_ipv6_get(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterRoutePathV6>,
+    ) -> Result<HttpResponseOk<Vec<Ipv6Route>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        route::get_route_ipv6(switch, path.router_id, path.cidr)
+            .await
+            .map(HttpResponseOk)
+            .map_err(HttpError::from)
+    }
+
+    async fn router_route_ipv6_add(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
+        update: TypedBody<Ipv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let rid = path.into_inner().router_id;
+        let route = update.into_inner();
+        route::add_route_ipv6(switch, rid, route.cidr, route.target)
+            .await
+            .map(|_| HttpResponseUpdatedNoContent())
+            .map_err(HttpError::from)
+    }
+
+    async fn router_route_ipv6_set(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
+        update: TypedBody<Ipv6RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let rid = path.into_inner().router_id;
+        let route = update.into_inner();
+        route::set_route_ipv6(
+            switch,
+            rid,
+            route.cidr,
+            route.target,
+            route.replace,
+        )
+        .await
+        .map(|_| HttpResponseUpdatedNoContent())
+        .map_err(HttpError::from)
+    }
+
+    async fn router_route_ipv6_delete(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterRoutePathV6>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        route::delete_route_ipv6(switch, path.router_id, path.cidr)
+            .await
+            .map(|_| HttpResponseDeleted())
+            .map_err(HttpError::from)
+    }
+
+    async fn router_route_ipv6_delete_target(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterRouteTargetIpv6Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        route::delete_route_target_ipv6(
+            switch,
+            path.router_id,
+            path.cidr,
+            path.port_id,
+            path.link_id,
+            path.tgt_ip,
+        )
+        .await
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
+    }
+
+    async fn router_route_ipv4_list(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
+        query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Routes>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let rid = path.into_inner().router_id;
+        let pag_params = query.into_inner();
+        let max = rqctx.page_limit(&pag_params)?.get();
+
+        let previous = match &pag_params.page {
+            WhichPage::First(..) => None,
+            WhichPage::Next(Ipv4RouteToken { cidr }) => Some(*cidr),
+        };
+
+        route::get_range_ipv4(switch, rid, previous, max)
+            .await
+            .map_err(HttpError::from)
+            .and_then(|entries| {
+                ResultsPage::new(
+                    entries,
+                    &EmptyScanParams {},
+                    |e: &Ipv4Routes, _| Ipv4RouteToken { cidr: e.cidr },
+                )
+            })
+            .map(HttpResponseOk)
+    }
+
+    async fn router_route_ipv4_get(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterRoutePathV4>,
+    ) -> Result<HttpResponseOk<Vec<Route>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        route::get_route_ipv4(switch, path.router_id, path.cidr)
+            .await
+            .map(HttpResponseOk)
+            .map_err(HttpError::from)
+    }
+
+    async fn router_route_ipv4_add(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
+        update: TypedBody<Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let rid = path.into_inner().router_id;
+        let route = update.into_inner();
+        match route.target {
+            RouteTarget::V4(target) => {
+                route::add_route_ipv4(switch, rid, route.cidr, target).await
+            }
+            RouteTarget::V6(target) => {
+                route::add_route_ipv4_over_ipv6(switch, rid, route.cidr, target)
+                    .await
+            }
+        }
+        .map(|_| HttpResponseUpdatedNoContent())
+        .map_err(HttpError::from)
+    }
+
+    async fn router_route_ipv4_set(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
+        update: TypedBody<Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let rid = path.into_inner().router_id;
+        let route = update.into_inner();
+        match route.target {
+            RouteTarget::V4(target) => {
+                route::set_route_ipv4(
+                    switch,
+                    rid,
+                    route.cidr,
+                    target,
+                    route.replace,
+                )
+                .await
+            }
+            RouteTarget::V6(target) => {
+                route::set_route_ipv4_over_ipv6(
+                    switch,
+                    rid,
+                    route.cidr,
+                    target,
+                    route.replace,
+                )
+                .await
+            }
+        }
+        .map(|_| HttpResponseUpdatedNoContent())
+        .map_err(HttpError::from)
+    }
+
+    async fn router_route_ipv4_delete(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterRoutePathV4>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        route::delete_route_ipv4(switch, path.router_id, path.cidr)
+            .await
+            .map(|_| HttpResponseDeleted())
+            .map_err(HttpError::from)
+    }
+
+    async fn router_route_ipv4_delete_target(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterRouteTargetIpv4Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        route::delete_route_target_ipv4(
+            switch,
+            path.router_id,
             path.cidr,
             path.port_id,
             path.link_id,
@@ -1389,7 +1658,7 @@ impl DpdApi for DpdApiImpl {
         let switch: &Switch = rqctx.context();
         let addr = val.into_inner();
 
-        loopback::add_loopback_ipv6(switch, &addr)?;
+        loopback::add_loopback_ipv6(switch, &addr, RouterId::default())?;
 
         Ok(HttpResponseUpdatedNoContent {})
     }
@@ -1397,6 +1666,31 @@ impl DpdApi for DpdApiImpl {
     async fn loopback_ipv6_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LoopbackIpv6Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let addr = path.into_inner();
+        loopback::delete_loopback_ipv6(switch, &addr.ipv6)
+            .map(|_| HttpResponseDeleted())
+            .map_err(HttpError::from)
+    }
+
+    async fn router_loopback_ipv6_create(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
+        val: TypedBody<Ipv6Entry>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let rid = path.into_inner().router_id;
+        let addr = val.into_inner();
+
+        loopback::add_loopback_ipv6(switch, &addr, rid)?;
+
+        Ok(HttpResponseUpdatedNoContent {})
+    }
+
+    async fn router_loopback_ipv6_delete(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterLoopbackIpv6Path>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
         let addr = path.into_inner();

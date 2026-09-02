@@ -47,8 +47,10 @@ use crate::integration_tests::common::prelude::*;
 // egress pipeline to reclaim capacity.
 #[cfg(feature = "multicast")]
 const IPV4_LPM_SIZE: usize = 7164; // ipv4 forwarding table
+// One below the v6 table: the (router_id, prefix) key packs an entry short,
+// a cost the v6 lookup table absorbs with its `+ 1` sizing in sidecar.p4.
 #[cfg(not(feature = "multicast"))]
-const IPV4_LPM_SIZE: usize = 8191; // ipv4 forwarding table
+const IPV4_LPM_SIZE: usize = 8190; // ipv4 forwarding table
 
 #[cfg(feature = "multicast")]
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
