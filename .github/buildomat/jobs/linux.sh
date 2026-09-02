@@ -58,4 +58,4 @@ digest /work/swadm > /work/swadm.sha256.txt
 
 banner "Artifacts"
 sudo mkdir -p /out
-sudo chown "$UID" /out
+sudo chown "${UID}" /out
