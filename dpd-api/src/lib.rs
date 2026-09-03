@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use dpd_types_versions::{latest, v1, v4, v7};
+use dpd_types_versions::{latest, v1, v4, v7, v8};
 use dropshot::{
     EmptyScanParams, HttpError, HttpResponseCreated, HttpResponseDeleted,
     HttpResponseOk, HttpResponseUpdatedNoContent, PaginationParams, Path,
@@ -29,6 +29,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (14, MCAST_EXTERNAL_SCOPE_DOCS),
     (13, ALLOW_DDM_TRAFFIC),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
@@ -1971,14 +1972,16 @@ pub trait DpdApi {
     /**
      * Create an external-only multicast group configuration.
      *
-     * External-only groups are used for IPv4 and non-admin-local IPv6 multicast
-     * traffic that doesn't require replication infrastructure. These groups use
-     * simple forwarding tables and require a NAT target.
+     * External-only groups are used for IPv4 and IPv6 multicast traffic that
+     * doesn't require replication infrastructure. Any admitted IPv6 scope may be
+     * used, admin-local included, except the reserved underlay subnet ff04::/64,
+     * which belongs to the internal multicast API. These groups carry no
+     * direct members and require a NAT target.
      */
     #[endpoint {
         method = POST,
         path = "/multicast/external-groups",
-        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+        versions = VERSION_MCAST_EXTERNAL_SCOPE_DOCS..,
     }]
     async fn multicast_group_create_external(
         rqctx: RequestContext<Self::Context>,
@@ -1987,6 +1990,29 @@ pub trait DpdApi {
         HttpResponseCreated<latest::mcast::MulticastGroupExternalResponse>,
         HttpError,
     >;
+
+    /**
+     * Create an external-only multicast group configuration.
+     *
+     * External-only groups are used for IPv4 and non-admin-local IPv6 multicast
+     * traffic that doesn't require replication infrastructure. These groups use
+     * simple forwarding tables and require a NAT target.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/multicast/external-groups",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_MCAST_EXTERNAL_SCOPE_DOCS,
+        operation_id = "multicast_group_create_external",
+    }]
+    async fn multicast_group_create_external_v8(
+        rqctx: RequestContext<Self::Context>,
+        group: TypedBody<v7::mcast::MulticastGroupCreateExternalEntry>,
+    ) -> Result<
+        HttpResponseCreated<v8::mcast::MulticastGroupExternalResponse>,
+        HttpError,
+    > {
+        Self::multicast_group_create_external(rqctx, group).await
+    }
 
     /// Create an external-only multicast group configuration.
     #[endpoint {
@@ -2002,7 +2028,7 @@ pub trait DpdApi {
         HttpResponseCreated<v7::mcast::MulticastGroupExternalResponse>,
         HttpError,
     > {
-        Self::multicast_group_create_external(rqctx, group)
+        Self::multicast_group_create_external_v8(rqctx, group)
             .await
             .map(|resp| resp.map(Into::into))
     }
@@ -2278,15 +2304,17 @@ pub trait DpdApi {
     /**
      * Update an external-only multicast group configuration for a given group IP address.
      *
-     * External-only groups are used for IPv4 and non-admin-local IPv6 multicast
-     * traffic that doesn't require replication infrastructure.
+     * External-only groups are used for IPv4 and IPv6 multicast traffic that
+     * doesn't require replication infrastructure. Any admitted IPv6 scope may
+     * be used, admin-local included, except the reserved underlay subnet
+     * ff04::/64, which belongs to the internal multicast API.
      *
      * The `tag` query parameter must match the group's existing tag.
      */
     #[endpoint {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",
-        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+        versions = VERSION_MCAST_EXTERNAL_SCOPE_DOCS..,
     }]
     async fn multicast_group_update_external(
         rqctx: RequestContext<Self::Context>,
@@ -2297,6 +2325,32 @@ pub trait DpdApi {
         HttpResponseOk<latest::mcast::MulticastGroupExternalResponse>,
         HttpError,
     >;
+
+    /**
+     * Update an external-only multicast group configuration for a given group IP address.
+     *
+     * External-only groups are used for IPv4 and non-admin-local IPv6 multicast
+     * traffic that doesn't require replication infrastructure.
+     *
+     * The `tag` query parameter must match the group's existing tag.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/multicast/external-groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_MCAST_EXTERNAL_SCOPE_DOCS,
+        operation_id = "multicast_group_update_external",
+    }]
+    async fn multicast_group_update_external_v8(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::mcast::MulticastGroupIpParam>,
+        query: Query<v8::mcast::MulticastGroupTagQuery>,
+        group: TypedBody<v8::mcast::MulticastGroupUpdateExternalEntry>,
+    ) -> Result<
+        HttpResponseOk<v8::mcast::MulticastGroupExternalResponse>,
+        HttpError,
+    > {
+        Self::multicast_group_update_external(rqctx, path, query, group).await
+    }
 
     /**
      * Update an external-only multicast group configuration.
