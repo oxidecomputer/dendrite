@@ -436,7 +436,7 @@ pub enum Link {
         /// Whether the link is configured to autonegotiate with its peer during
         /// link training.
         ///
-        /// This is generally only true for backplane links, and defaults to
+        /// This is generally only true for backplane links and defaults to false.
         #[clap(long)]
         autoneg: bool,
         /// Whether the link is configured in KR mode, an electrical specification

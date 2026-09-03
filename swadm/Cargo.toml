@@ -24,3 +24,9 @@ reqwest.workspace = true
 slog.workspace = true
 tabwriter.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+expectorate.workspace = true
+predicates.workspace = true
+serial_test.workspace = true
+thiserror.workspace = true
