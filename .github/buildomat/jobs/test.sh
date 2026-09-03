@@ -22,7 +22,7 @@ banner "copyrights"
 banner "clippy"
 for feat in tofino_stub tofino_asic softnpu chaos
 do
-	cargo clippy --features $feat -- --deny warnings
+	cargo clippy --features "${feat}" -- --deny warnings
 done
 
 banner "fmt"
@@ -31,5 +31,5 @@ cargo fmt -- --check
 banner "test"
 for feat in tofino_stub tofino_asic softnpu chaos
 do
-    RUST_BACKTRACE=full cargo test --features $feat --no-fail-fast
+    RUST_BACKTRACE=full cargo test --features "${feat}" --no-fail-fast
 done
