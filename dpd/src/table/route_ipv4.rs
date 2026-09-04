@@ -214,20 +214,3 @@ pub fn index_counter_fetch(
 ) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<RouteKey>(force_sync, TableType::RouteIdxIpv4)
 }
-
-pub fn reset(s: &Switch) -> DpdResult<()> {
-    s.table_clear(TableType::RouteIdxIpv4)
-        .map(|_| info!(s.log, "reset ipv4 route-index table"))
-        .map_err(|e| {
-            error!(s.log, "failed to clear ipv4 route-index table";
-		"error" => %e);
-            e
-        })?;
-    s.table_clear(TableType::RouteFwdIpv4)
-        .map(|_| info!(s.log, "reset ipv4 route-data table"))
-        .map_err(|e| {
-            error!(s.log, "failed to clear ipv4 route-data table";
-		"error" => %e);
-            e
-        })
-}

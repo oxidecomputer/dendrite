@@ -8,7 +8,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -26,8 +25,9 @@ use dpd_types::counters::{
 };
 use dpd_types::fault::{Fault, FaultCondition};
 use dpd_types::link::{
-    LinkCreate, LinkFilter, LinkFsmCounters, LinkHistory, LinkId, LinkIpv4Path,
-    LinkIpv6Path, LinkPath, LinkUpCounter, LinkView, MsDuration, TfportData,
+    LinkCreate, LinkFilter, LinkFsmCounters, LinkHistory, LinkId, LinkIpAddr,
+    LinkIpv4Path, LinkIpv6Path, LinkPath, LinkUpCounter, LinkView, MsDuration,
+    TfportData,
 };
 use dpd_types::loopback::{LoopbackIpv4Path, LoopbackIpv6Path};
 #[cfg(feature = "multicast")]
@@ -47,7 +47,7 @@ use dpd_types::nat::{
 };
 use dpd_types::oxstats::OximeterMetadata;
 use dpd_types::port::{
-    FreeChannels, LinkSettings, PortIdPathParams, PortSettings, PortSettingsTag,
+    FreeChannels, LinkSettings, PortIdPathParams, PortSettings,
 };
 use dpd_types::port_map::BackplaneLink;
 use dpd_types::route::{
@@ -1112,7 +1112,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         query: Query<PaginationParams<EmptyScanParams, Ipv4Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Entry>>, HttpError> {
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Addr>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
         let port_id = path.port_id;
@@ -1128,28 +1128,26 @@ impl DpdApi for DpdApiImpl {
             WhichPage::First(..) => None,
             WhichPage::Next(Ipv4Token { ip }) => Some(*ip),
         };
-        let entries =
+        let addrs =
             switch.list_ipv4_addresses(port_id, link_id, addr, limit)?;
-        ResultsPage::new(
-            entries,
-            &EmptyScanParams {},
-            |entry: &Ipv4Entry, _| Ipv4Token { ip: entry.addr },
-        )
+        ResultsPage::new(addrs, &EmptyScanParams {}, |addr, _| Ipv4Token {
+            ip: *addr,
+        })
         .map(HttpResponseOk)
     }
 
     async fn link_ipv4_create(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
-        entry: TypedBody<Ipv4Entry>,
+        addr: TypedBody<Ipv4Addr>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
         let port_id = path.port_id;
         let link_id = path.link_id;
-        let entry = entry.into_inner();
+        let addr = addr.into_inner();
         switch
-            .create_ipv4_address(port_id, link_id, entry)
+            .create_ipv4_address(port_id, link_id, addr)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
@@ -1187,7 +1185,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
         query: Query<PaginationParams<EmptyScanParams, Ipv6Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Entry>>, HttpError> {
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Addr>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
         let port_id = path.port_id;
@@ -1205,18 +1203,16 @@ impl DpdApi for DpdApiImpl {
         };
         let entries =
             switch.list_ipv6_addresses(port_id, link_id, addr, limit)?;
-        ResultsPage::new(
-            entries,
-            &EmptyScanParams {},
-            |entry: &Ipv6Entry, _| Ipv6Token { ip: entry.addr },
-        )
+        ResultsPage::new(entries, &EmptyScanParams {}, |addr, _| Ipv6Token {
+            ip: *addr,
+        })
         .map(HttpResponseOk)
     }
 
     async fn link_ipv6_create(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkPath>,
-        entry: TypedBody<Ipv6Entry>,
+        entry: TypedBody<Ipv6Addr>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
@@ -1256,6 +1252,18 @@ impl DpdApi for DpdApiImpl {
             .delete_ipv6_address(port_id, link_id, address)
             .map(|_| HttpResponseDeleted())
             .map_err(|e| e.into())
+    }
+
+    async fn link_local_reset(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<dpd_types_versions::latest::link::LinkPath>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+        switch
+            .reset_link_local_address(path.port_id, path.link_id)
+            .map(|_| HttpResponseUpdatedNoContent())
+            .map_err(HttpError::from)
     }
 
     async fn link_mac_get(
@@ -1709,61 +1717,60 @@ impl DpdApi for DpdApiImpl {
         arp::reset_ipv6_tag(switch, &tag);
         route::reset_ipv4_tag(switch, &tag).await;
         route::reset_ipv6_tag(switch, &tag).await;
-        switch
-            .clear_link_addresses(Some(&tag))
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(|e| e.into())
+
+        // TODO::cory: need to delete link_local somehow, which is what tfportd expects.
+        Ok(HttpResponseUpdatedNoContent())
     }
 
-    async fn reset_all(
-        rqctx: RequestContext<Arc<Switch>>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let switch: &Switch = rqctx.context();
+    // async fn reset_all(
+    //     rqctx: RequestContext<Arc<Switch>>,
+    // ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+    //     let switch: &Switch = rqctx.context();
 
-        let mut err = None;
+    //     let mut err = None;
 
-        if let Err(e) = arp::reset_ipv4(switch) {
-            error!(switch.log, "failed to reset ipv4 arp table: {:?}", e);
-            err = Some(e);
-        }
-        if let Err(e) = arp::reset_ipv6(switch) {
-            error!(switch.log, "failed to reset ipv6 arp table: {:?}", e);
-            err = Some(e);
-        }
-        if let Err(e) = route::reset(switch).await {
-            error!(switch.log, "failed to reset route data: {:?}", e);
-            err = Some(e);
-        }
-        if let Err(e) = switch.clear_link_state() {
-            error!(switch.log, "failed to clear all link state: {:?}", e);
-            err = Some(e);
-        }
-        if let Err(e) = nat::reset::<Ipv4Addr>(switch) {
-            error!(switch.log, "failed to reset ipv4 nat table: {:?}", e);
-            err = Some(e);
-        }
-        if let Err(e) = nat::reset::<Ipv6Addr>(switch) {
-            error!(switch.log, "failed to reset ipv6 nat table: {:?}", e);
-            err = Some(e);
-        }
-        #[cfg(feature = "multicast")]
-        if let Err(e) = mcast::reset(switch) {
-            error!(switch.log, "failed to reset multicast state: {:?}", e);
-            err = Some(e);
-        }
-        if let Err(e) = attached_subnet::reset(switch) {
-            error!(
-                switch.log,
-                "failed to reset external subnet state: {:?}", e
-            );
-            err = Some(e);
-        }
+    //     if let Err(e) = arp::reset_ipv4(switch) {
+    //         error!(switch.log, "failed to reset ipv4 arp table: {:?}", e);
+    //         err = Some(e);
+    //     }
+    //     if let Err(e) = arp::reset_ipv6(switch) {
+    //         error!(switch.log, "failed to reset ipv6 arp table: {:?}", e);
+    //         err = Some(e);
+    //     }
+    //     if let Err(e) = route::reset(switch).await {
+    //         error!(switch.log, "failed to reset route data: {:?}", e);
+    //         err = Some(e);
+    //     }
+    //     if let Err(e) = switch.clear_link_state() {
+    //         error!(switch.log, "failed to clear all link state: {:?}", e);
+    //         err = Some(e);
+    //     }
+    //     if let Err(e) = nat::reset::<Ipv4Addr>(switch) {
+    //         error!(switch.log, "failed to reset ipv4 nat table: {:?}", e);
+    //         err = Some(e);
+    //     }
+    //     if let Err(e) = nat::reset::<Ipv6Addr>(switch) {
+    //         error!(switch.log, "failed to reset ipv6 nat table: {:?}", e);
+    //         err = Some(e);
+    //     }
+    //     #[cfg(feature = "multicast")]
+    //     if let Err(e) = mcast::reset(switch) {
+    //         error!(switch.log, "failed to reset multicast state: {:?}", e);
+    //         err = Some(e);
+    //     }
+    //     if let Err(e) = attached_subnet::reset(switch) {
+    //         error!(
+    //             switch.log,
+    //             "failed to reset external subnet state: {:?}", e
+    //         );
+    //         err = Some(e);
+    //     }
 
-        match err {
-            Some(e) => Err(e.into()),
-            None => Ok(HttpResponseUpdatedNoContent()),
-        }
-    }
+    //     match err {
+    //         Some(e) => Err(e.into()),
+    //         None => Ok(HttpResponseUpdatedNoContent()),
+    //     }
+    // }
 
     async fn link_up_counters_list(
         rqctx: RequestContext<Arc<Switch>>,
@@ -1834,17 +1841,15 @@ impl DpdApi for DpdApiImpl {
     async fn port_settings_apply(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
         body: TypedBody<PortSettings>,
     ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
         let switch = rqctx.context();
         let path = path.into_inner();
-        let query = query.into_inner();
         let port_id = path.port_id;
         let settings = body.into_inner();
 
         switch
-            .apply_port_settings(port_id, settings, query.tag)
+            .apply_port_settings(port_id, settings)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -1853,15 +1858,13 @@ impl DpdApi for DpdApiImpl {
     async fn port_settings_clear(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
     ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
         let switch = rqctx.context();
         let path = path.into_inner();
-        let query = query.into_inner();
         let port_id = path.port_id;
 
         switch
-            .clear_port_settings(port_id, query.tag)
+            .clear_port_settings(port_id)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -1870,15 +1873,13 @@ impl DpdApi for DpdApiImpl {
     async fn port_settings_get(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
     ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
         let switch = rqctx.context();
         let path = path.into_inner();
-        let query = query.into_inner();
         let port_id = path.port_id;
 
         switch
-            .get_port_settings(port_id, query.tag)
+            .get_port_settings(port_id)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -2948,13 +2949,6 @@ pub(crate) fn build_info() -> BuildInfo {
 
 impl From<&crate::link::Link> for LinkSettings {
     fn from(l: &crate::link::Link) -> Self {
-        let mut addrs: HashSet<IpAddr> = HashSet::new();
-        for a in &l.ipv4 {
-            addrs.insert(a.addr.into());
-        }
-        for a in &l.ipv6 {
-            addrs.insert(a.addr.into());
-        }
         LinkSettings {
             params: LinkCreate {
                 lane: Some(l.link_id),
@@ -2965,7 +2959,13 @@ impl From<&crate::link::Link> for LinkSettings {
                 tx_eq: l.tx_eq,
                 allow_ddm_traffic: l.config.allow_ddm_traffic,
             },
-            addrs,
+            addrs: l
+                .ipv4
+                .iter()
+                .copied()
+                .map(LinkIpAddr::V4)
+                .chain(l.ipv6.iter().copied().map(LinkIpAddr::V6))
+                .collect(),
         }
     }
 }

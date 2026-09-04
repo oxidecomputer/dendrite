@@ -172,20 +172,3 @@ pub fn index_counter_fetch(
 ) -> DpdResult<Vec<table::TableCounterEntry>> {
     s.counter_fetch::<RouteKey>(force_sync, TableType::RouteIdxIpv6)
 }
-
-pub fn reset(s: &Switch) -> DpdResult<()> {
-    s.table_clear(TableType::RouteIdxIpv6)
-        .map(|_| info!(s.log, "reset ipv6 route-index table"))
-        .map_err(|e| {
-            error!(s.log, "failed to clear ipv6 route-index table";
-                "error" => %e);
-            e
-        })?;
-    s.table_clear(TableType::RouteFwdIpv6)
-        .map(|_| info!(s.log, "reset ipv6 route-data table"))
-        .map_err(|e| {
-            error!(s.log, "failed to clear ipv6 route-data table";
-                "error" => %e);
-            e
-        })
-}

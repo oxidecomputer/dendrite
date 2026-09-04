@@ -7,31 +7,13 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "13.0.0"
+    "version": "14.0.0"
   },
   "paths": {
-    "/all-settings": {
-      "delete": {
-        "summary": "Clear all settings.",
-        "description": "This removes all data entirely.",
-        "operationId": "reset_all",
-        "responses": {
-          "204": {
-            "description": "resource updated"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/all-settings/{tag}": {
       "delete": {
         "summary": "Clear all settings associated with a specific tag.",
-        "description": "This removes:\n\n- All ARP or NDP table entries. - All routes - All links on all switch ports",
+        "description": "This removes:\n\n- All ARP or NDP table entries. - All routes\n\nThis endpoint does not clear multicast groups.",
         "operationId": "reset_all_tagged",
         "parameters": [
           {
@@ -2371,7 +2353,8 @@
     },
     "/port/{port_id}/settings": {
       "get": {
-        "summary": "Get port settings atomically.",
+        "summary": "This version was replaced because dpd removed tagging support",
+        "description": "from link addresses and thus has no need for the `query` arg.",
         "operationId": "port_settings_get",
         "parameters": [
           {
@@ -2413,8 +2396,8 @@
         }
       },
       "post": {
-        "summary": "Apply port settings atomically.",
-        "description": "These settings will be applied holistically, and to the extent possible atomically to a given port. In the event of a failure a rollback is attempted. If the rollback fails there will be inconsistent state. This failure mode returns the error code \"rollback failure\". For more details see the docs on the [`PortSettings`] type.",
+        "summary": "This version was deprecated because tagging was removed from",
+        "description": "the `port_settings_*` API.\n\nLink local addresses are excluded from the domain of this method, which can only modify routable addresses on the link. That constraint removes the need for tagging.",
         "operationId": "port_settings_apply",
         "parameters": [
           {
@@ -2466,7 +2449,8 @@
         }
       },
       "delete": {
-        "summary": "Clear port settings atomically.",
+        "summary": "This version was replaced because the provided tag had no effect",
+        "description": "on clearing settings, and there's no obvious notion of what such an effect should be.",
         "operationId": "port_settings_clear",
         "parameters": [
           {
@@ -3232,7 +3216,8 @@
     },
     "/ports/{port_id}/links/{link_id}/ipv4": {
       "get": {
-        "summary": "List the IPv4 addresses associated with a link.",
+        "summary": "This version was replaced because ipv4 address entries no longer",
+        "description": "have corresponding owner tags.\n\nThe tags returned by this are now meaningless.",
         "operationId": "link_ipv4_list",
         "parameters": [
           {
@@ -3297,7 +3282,8 @@
         }
       },
       "post": {
-        "summary": "Add an IPv4 address to a link.",
+        "summary": "This version was replaced because IPv4 address registrations",
+        "description": "on a link no longer support ownership tags.",
         "operationId": "link_ipv4_create",
         "parameters": [
           {
@@ -3427,6 +3413,7 @@
     "/ports/{port_id}/links/{link_id}/ipv6": {
       "get": {
         "summary": "List the IPv6 addresses associated with a link.",
+        "description": "Deprecated when tagging was removed from link addresses. The returned tag is now meaningless.",
         "operationId": "link_ipv6_list",
         "parameters": [
           {
@@ -3492,6 +3479,7 @@
       },
       "post": {
         "summary": "Add an IPv6 address to a link.",
+        "description": "This was deprecated because address registrations are no longer tagged.",
         "operationId": "link_ipv6_create",
         "parameters": [
           {

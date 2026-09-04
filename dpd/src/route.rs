@@ -1257,19 +1257,6 @@ pub async fn reset_ipv6_tag(switch: &Switch, tag: &str) {
     reset_tag(switch, tag, false).await
 }
 
-pub async fn reset(switch: &Switch) -> DpdResult<()> {
-    let mut route_data = switch.routes.lock().await;
-    route_data.v4 = BTreeMap::new();
-    route_data.v4_freemap.reset();
-    table::route_ipv4::reset(switch)?;
-
-    route_data.v6 = BTreeMap::new();
-    route_data.v6_freemap.reset();
-    table::route_ipv6::reset(switch)?;
-
-    Ok(())
-}
-
 pub fn init(log: &slog::Logger) -> RouteData {
     RouteData {
         v4: BTreeMap::new(),

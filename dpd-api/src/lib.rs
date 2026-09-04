@@ -9,13 +9,18 @@
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use dpd_types_versions::{latest, v1, v4, v7};
+use dpd_types_versions::{latest, v1, v4, v7, v13};
 use dropshot::{
-    EmptyScanParams, HttpError, HttpResponseCreated, HttpResponseDeleted,
-    HttpResponseOk, HttpResponseUpdatedNoContent, PaginationParams, Path,
-    Query, RequestContext, ResultsPage, TypedBody,
+    EmptyScanParams, ErrorStatusCode, HttpError, HttpResponseCreated,
+    HttpResponseDeleted, HttpResponseOk, HttpResponseUpdatedNoContent,
+    PaginationParams, Path, Query, RequestContext, ResultsPage, TypedBody,
 };
 use dropshot_api_manager_types::api_versions;
+
+// TODO::cory:
+// - Link local get
+// - Link local clear
+// - Link local set
 
 api_versions!([
     // WHEN CHANGING THE API (part 1 of 2):
@@ -29,6 +34,8 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (15, UNTAG_LINK_ADDRS),
+    (14, DEPRECATE_RESET_ALL),
     (13, ALLOW_DDM_TRAFFIC),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
@@ -1041,23 +1048,72 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/ipv4",
+        versions = VERSION_UNTAG_LINK_ADDRS..,
     }]
     async fn link_ipv4_list(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
         query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv4Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<latest::port::Ipv4Entry>>, HttpError>;
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Addr>>, HttpError>;
+
+    /// This version was replaced because ipv4 address entries no longer
+    /// have corresponding owner tags.
+    ///
+    /// The tags returned by this are now meaningless.
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/ipv4",
+        versions = ..VERSION_UNTAG_LINK_ADDRS,
+        operation_id = "link_ipv4_list"
+    }]
+    async fn link_ipv4_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkPath>,
+        query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv4Token>>,
+    ) -> Result<HttpResponseOk<ResultsPage<latest::port::Ipv4Entry>>, HttpError>
+    {
+        Ok(Self::link_ipv4_list(rqctx, path, query).await?.map(|page| {
+            ResultsPage {
+                next_page: page.next_page,
+                items: page
+                    .items
+                    .into_iter()
+                    .map(|addr| latest::port::Ipv4Entry {
+                        addr,
+                        tag: "".to_string(),
+                    })
+                    .collect(),
+            }
+        }))
+    }
 
     /// Add an IPv4 address to a link.
     #[endpoint {
         method = POST,
         path = "/ports/{port_id}/links/{link_id}/ipv4",
+        versions = VERSION_UNTAG_LINK_ADDRS..,
     }]
     async fn link_ipv4_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-        entry: TypedBody<latest::port::Ipv4Entry>,
+        entry: TypedBody<Ipv4Addr>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /// This version was replaced because IPv4 address registrations
+    /// on a link no longer support ownership tags.
+    #[endpoint {
+        method = POST,
+        path = "/ports/{port_id}/links/{link_id}/ipv4",
+        versions = ..VERSION_UNTAG_LINK_ADDRS,
+        operation_id = "link_ipv4_create"
+    }]
+    async fn link_ipv4_create_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkPath>,
+        entry: TypedBody<latest::port::Ipv4Entry>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::link_ipv4_create(rqctx, path, entry.map(|entry| entry.addr)).await
+    }
 
     /// Clear all IPv4 addresses from a link.
     #[endpoint {
@@ -1079,27 +1135,85 @@ pub trait DpdApi {
         path: Path<latest::link::LinkIpv4Path>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
-    /// List the IPv6 addresses associated with a link.
+    /// List all the IPv6 addresses associated with a link.
+    ///
+    /// This includes the link local address if one is assigned.
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/ipv6",
+        versions = VERSION_UNTAG_LINK_ADDRS..
     }]
     async fn link_ipv6_list(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
         query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv6Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<latest::port::Ipv6Entry>>, HttpError>;
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Addr>>, HttpError>;
+
+    /// List the IPv6 addresses associated with a link.
+    ///
+    /// Deprecated when tagging was removed from link addresses.
+    /// The returned tag is now meaningless.
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/ipv6",
+        versions = ..VERSION_UNTAG_LINK_ADDRS,
+        operation_id = "link_ipv6_list"
+    }]
+    async fn link_ipv6_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkPath>,
+        query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv6Token>>,
+    ) -> Result<HttpResponseOk<ResultsPage<latest::port::Ipv6Entry>>, HttpError>
+    {
+        Ok(Self::link_ipv6_list(rqctx, path, query).await?.map(|page| {
+            ResultsPage {
+                next_page: page.next_page,
+                items: page
+                    .items
+                    .into_iter()
+                    .map(|addr| latest::port::Ipv6Entry {
+                        addr,
+                        tag: "".to_string(),
+                    })
+                    .collect(),
+            }
+        }))
+    }
 
     /// Add an IPv6 address to a link.
+    ///
+    /// If the address is unicast link local, then this becomes the (new)
+    /// link local address for this link.
+    ///
+    /// If the address is not unicast link local and it fails to parse
+    /// into a [`LinkIpv6Addr`], then this returns an error.
     #[endpoint {
         method = POST,
         path = "/ports/{port_id}/links/{link_id}/ipv6",
+        versions = VERSION_UNTAG_LINK_ADDRS..,
     }]
     async fn link_ipv6_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-        entry: TypedBody<latest::port::Ipv6Entry>,
+        entry: TypedBody<Ipv6Addr>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /// Add an IPv6 address to a link.
+    ///
+    /// This was deprecated because address registrations are no longer tagged.
+    #[endpoint {
+        method = POST,
+        path = "/ports/{port_id}/links/{link_id}/ipv6",
+        versions = ..VERSION_UNTAG_LINK_ADDRS,
+        operation_id = "link_ipv6_create"
+    }]
+    async fn link_ipv6_create_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkPath>,
+        entry: TypedBody<latest::port::Ipv6Entry>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::link_ipv6_create(rqctx, path, entry.map(|entry| entry.addr)).await
+    }
 
     /// Clear all IPv6 addresses from a link.
     #[endpoint {
@@ -1120,6 +1234,17 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkIpv6Path>,
     ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /// Deletes the IPv6 link local address of this link if one present.
+    #[endpoint {
+        method = DELETE,
+        path = "/ports/{port_id}/links/{link_id}/local",
+        versions = VERSION_UNTAG_LINK_ADDRS..,
+    }]
+    async fn link_local_reset(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Get a link's MAC address.
     #[endpoint {
@@ -1547,9 +1672,13 @@ pub trait DpdApi {
     ///
     /// - All ARP or NDP table entries.
     /// - All routes
-    /// - All links on all switch ports
-    // Note: This endpoint does not clear multicast groups.
-    // TODO-security: This endpoint should probably not exist.
+    ///
+    /// This endpoint does not clear multicast groups.
+    //
+    // Worth occasionally re-evaluating whether this is a safe
+    // and good API to maintain. The only usage as of writing
+    // is tfportd cleaning out resources that were previously
+    // registered under the "tfportd" tag.
     #[endpoint {
         method = DELETE,
         path = "/all-settings/{tag}",
@@ -1562,15 +1691,28 @@ pub trait DpdApi {
     /// Clear all settings.
     ///
     /// This removes all data entirely.
-    // Note: Unlike `reset_all_tagged`, this endpoint does clear multicast groups.
-    // TODO-security: This endpoint should probably not exist.
+    ///
+    /// This method was retired because it had no users and is
+    /// scary functionality to expose.
     #[endpoint {
         method = DELETE,
-        path = "/all-settings"
+        path = "/all-settings",
+        versions = ..VERSION_DEPRECATE_RESET_ALL
     }]
     async fn reset_all(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let _ = rqctx;
+        Err(HttpError {
+            status_code: ErrorStatusCode::NOT_IMPLEMENTED,
+            error_code: None,
+            external_message:
+                "Deprecated: this method is high-impact and unnecessary."
+                    .to_string(),
+            internal_message: "Rejecting reset_all request".to_string(),
+            headers: None,
+        })
+    }
 
     /// Get the LinkUp counters for all links.
     #[endpoint {
@@ -1646,26 +1788,50 @@ pub trait DpdApi {
         HttpError,
     >;
 
-    /**
-     * Apply port settings atomically.
-     *
-     * These settings will be applied holistically, and to the extent possible
-     * atomically to a given port. In the event of a failure a rollback is
-     * attempted. If the rollback fails there will be inconsistent state. This
-     * failure mode returns the error code "rollback failure". For more details see
-     * the docs on the [`PortSettings`] type.
-     */
+    /// Apply port settings atomically.
+    ///
+    /// These settings will be applied holistically, and to the extent possible
+    /// atomically to a given port. In the event of a failure a rollback is
+    /// attempted. If the rollback fails there will be inconsistent state. This
+    /// failure mode returns the error code "rollback failure". For more details see
+    /// the docs on the [`PortSettings`] type.
+    ///
+    /// dpd will reject any address config containing a unicast IPv6
+    /// link local address.
     #[endpoint {
         method = POST,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
+        versions = VERSION_UNTAG_LINK_ADDRS..,
         path = "/port/{port_id}/settings"
     }]
     async fn port_settings_apply(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
-        query: Query<latest::port::PortSettingsTag>,
         body: TypedBody<latest::port::PortSettings>,
     ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /// This version was deprecated because tagging was removed from
+    /// the `port_settings_*` API.
+    ///
+    /// Link local addresses are excluded from the domain of this method,
+    /// which can only modify routable addresses on the link. That
+    /// constraint removes the need for tagging.
+    #[endpoint {
+        method = POST,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_UNTAG_LINK_ADDRS,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_apply"
+    }]
+    async fn port_settings_apply_v2(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::port::PortIdPathParams>,
+        query: Query<latest::port::PortSettingsTag>,
+        body: TypedBody<v13::port::PortSettings>,
+    ) -> Result<HttpResponseOk<v13::port::PortSettings>, HttpError> {
+        let _ = query;
+        Ok(Self::port_settings_apply(rqctx, path, body.map(Into::into))
+            .await?
+            .map(Into::into))
+    }
 
     /**
      * Apply port settings atomically.
@@ -1688,24 +1854,39 @@ pub trait DpdApi {
         query: Query<v1::port::PortSettingsTag>,
         body: TypedBody<v1::port::PortSettings>,
     ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
-        Self::port_settings_apply(rqctx, path, query, body.map(Into::into))
+        Self::port_settings_apply_v2(rqctx, path, query, body.map(Into::into))
             .await
             .map(|resp| resp.map(Into::into))
     }
 
-    /**
-     * Clear port settings atomically.
-     */
+    /// Deletes the links on a port and all assicated config.
     #[endpoint {
         method = DELETE,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
+        versions = VERSION_UNTAG_LINK_ADDRS..,
         path = "/port/{port_id}/settings"
     }]
     async fn port_settings_clear(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
-        query: Query<latest::port::PortSettingsTag>,
     ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /// This version was replaced because the provided tag had no effect
+    /// on clearing settings, and there's no obvious notion of what
+    /// such an effect should be.
+    #[endpoint {
+        method = DELETE,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_UNTAG_LINK_ADDRS,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_clear"
+    }]
+    async fn port_settings_clear_v2(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::port::PortIdPathParams>,
+        query: Query<latest::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<v13::port::PortSettings>, HttpError> {
+        let _ = query;
+        Ok(Self::port_settings_clear(rqctx, path).await?.map(Into::into))
+    }
 
     /**
      * Clear port settings atomically.
@@ -1721,24 +1902,38 @@ pub trait DpdApi {
         path: Path<v1::port::PortIdPathParams>,
         query: Query<v1::port::PortSettingsTag>,
     ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
-        Self::port_settings_clear(rqctx, path, query)
+        Self::port_settings_clear_v2(rqctx, path, query)
             .await
             .map(|resp| resp.map(Into::into))
     }
 
-    /**
-     * Get port settings atomically.
-     */
+    /// Atomically retrieves settings for this port.
     #[endpoint {
         method = GET,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
-        path = "/port/{port_id}/settings"
+        versions = VERSION_UNTAG_LINK_ADDRS..,
+        path = "/port/{port_id}/settings",
     }]
     async fn port_settings_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
-        query: Query<latest::port::PortSettingsTag>,
     ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /// This version was replaced because dpd removed tagging support
+    /// from link addresses and thus has no need for the `query` arg.
+    #[endpoint {
+        method = GET,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_UNTAG_LINK_ADDRS,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_get"
+    }]
+    async fn port_settings_get_v2(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::port::PortIdPathParams>,
+        query: Query<latest::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<v13::port::PortSettings>, HttpError> {
+        let _ = query;
+        Ok(Self::port_settings_get(rqctx, path).await?.map(Into::into))
+    }
 
     /**
      * Get port settings atomically.
@@ -1754,7 +1949,7 @@ pub trait DpdApi {
         path: Path<v1::port::PortIdPathParams>,
         query: Query<v1::port::PortSettingsTag>,
     ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
-        Self::port_settings_get(rqctx, path, query)
+        Self::port_settings_get_v2(rqctx, path, query)
             .await
             .map(|resp| resp.map(Into::into))
     }

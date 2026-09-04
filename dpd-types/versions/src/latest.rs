@@ -57,6 +57,9 @@ pub mod link {
     pub use crate::v12::link::MsDuration;
 
     pub use crate::v13::link::LinkCreate;
+
+    pub use crate::v15::LinkIpAddr;
+    pub use crate::v15::LinkIpv6Addr;
 }
 
 pub mod loopback {
@@ -149,10 +152,11 @@ pub mod port {
     pub use crate::v1::port::RearPort;
     pub use crate::v1::port::TxEq;
     pub use crate::v1::port::TxEqSwHw;
-    pub use crate::v13::port::LinkSettings;
-    pub use crate::v13::port::PortSettings;
 
     pub use crate::v12::port::PortPrbsMode;
+
+    pub use crate::v15::port::LinkSettings;
+    pub use crate::v15::port::PortSettings;
 }
 
 pub mod port_map {
