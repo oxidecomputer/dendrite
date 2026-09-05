@@ -95,7 +95,9 @@ pub mod mcast {
 
 pub mod misc {
     pub use crate::v1::misc::BuildInfo;
-    pub use crate::v1::misc::TagPath;
+    pub use crate::v14::Tag;
+    pub use crate::v14::TagScope;
+    pub use crate::v14::Tagged;
 }
 
 pub mod nat {
@@ -129,8 +131,6 @@ pub mod oxstats {
 pub mod port {
     pub use crate::v1::port::FreeChannels;
     pub use crate::v1::port::InternalPort;
-    pub use crate::v1::port::Ipv4Entry;
-    pub use crate::v1::port::Ipv6Entry;
     pub use crate::v1::port::PORT_COUNT_INTERNAL;
     pub use crate::v1::port::PORT_COUNT_QSFP;
     pub use crate::v1::port::PORT_COUNT_REAR;

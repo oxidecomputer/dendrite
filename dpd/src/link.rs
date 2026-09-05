@@ -43,6 +43,7 @@ use dpd_types::link::LinkUpCounter;
 use dpd_types::link::LinkView;
 use dpd_types::link::TfportData;
 use dpd_types::serdes::Ber;
+use dpd_types_versions::v14::Tag;
 use slog::debug;
 use slog::error;
 use slog::info;
@@ -50,9 +51,13 @@ use slog::o;
 use slog::warn;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
+use std::collections::btree_map;
 use std::collections::btree_map::Entry;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
+use std::ops::Bound;
+use std::sync;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -236,16 +241,15 @@ pub struct Link {
     pub link_state: LinkState,
     /// The kind of media in the link.
     pub media: PortMedia,
-    /// A list of IPv4 addresses assigned to this link.
-    pub ipv4: BTreeSet<Ipv4Entry>,
-    /// A list of IPv6 addresses assigned to this link.
-    pub ipv6: BTreeSet<Ipv6Entry>,
     /// Tracks the history of linkup/linkdown transitions, allowing us to
     /// detect flapping links.
     pub linkup_tracker: LinkUpTracker,
     /// Tracks the link's progress through the autonegotiation/link-training
     /// finite state machine, so we can detect and diagnose linkup failures.
     pub autoneg_tracker: AutonegTracker,
+
+    /// Resources whose CRUD is namespaced across different owner tags.
+    pub tagged: TaggedConfigs,
 
     /// The configuration of the link as requested by the user / sled-agent
     pub config: LinkConfig,
@@ -300,6 +304,315 @@ impl From<Link> for TfportData {
     fn from(m: Link) -> Self {
         Self::from(&m)
     }
+}
+
+/// TODO::cory docs
+///
+/// INVARIANT: If a key is in the strong map, then it's in the weak map.
+///
+/// Implied: If a key is in the weak map, then its ref count is nonzero.
+///
+/// This may be temporarily violated during the execution of
+/// methods, but it must be true by the end of every pub fn.
+#[derive(Debug)]
+pub struct WeakMap<T> {
+    map: BTreeMap<T, sync::Weak<()>>,
+}
+
+impl<T> Default for WeakMap<T> {
+    fn default() -> Self {
+        Self { map: BTreeMap::new() }
+    }
+}
+
+impl<K> WeakMap<K>
+where
+    K: Ord + Clone,
+{
+    const INVARIANT: &str = "INVARIANT: if an entry was in the strong map, then it was in the weak map.";
+
+    /// Adds this key to the strong and weak maps.
+    ///
+    /// Returns true if the strong map previously did not have
+    /// this key.
+    ///
+    /// Equivalently, returns false if this key was already
+    /// in the strong map.
+    fn insert(&mut self, key: K, strong: &mut BTreeMap<K, Arc<()>>) -> bool {
+        let ct = match self.map.entry(key.clone()) {
+            btree_map::Entry::Vacant(slot) => {
+                let ct = Arc::new(());
+                slot.insert(Arc::downgrade(&ct));
+                ct
+            }
+            btree_map::Entry::Occupied(full) => full
+                .get()
+                .upgrade()
+                .expect("INVARIANT: ref ct after edit must always be nonzero"),
+        };
+
+        strong.insert(key, ct).is_none()
+    }
+
+    /// Removes the key if it previously existed in the strong collection.
+    ///
+    /// Returns
+    /// - None if the key did not exist in the strong collection.
+    /// - Some(ct) where ct is the new reference count. If ct == 0, then
+    ///   this entry was dropped from the weak map.
+    fn delete(
+        &mut self,
+        key: &K,
+        strong: &mut BTreeMap<K, Arc<()>>,
+    ) -> Option<usize> {
+        let Some(ct) = strong.remove(&key) else {
+            return None;
+        };
+        drop(ct);
+
+        Some(self.check_delete(key).expect(Self::INVARIANT))
+    }
+
+    fn check_delete(&mut self, key: &K) -> Option<usize> {
+        let entry = self.map.get(key)?;
+
+        let refs = entry.strong_count();
+        if refs == 0 {
+            self.map.remove(key);
+        }
+
+        Some(refs)
+    }
+
+    fn drain_strong(
+        &mut self,
+        strong: &mut BTreeMap<K, Arc<()>>,
+    ) -> impl Iterator<Item = K> {
+        std::mem::take(strong).into_iter().filter_map(|(key, ct)| {
+            drop(ct);
+            if self.check_delete(&key).expect(Self::INVARIANT) == 0 {
+                return Some(key);
+            }
+            None
+        })
+    }
+
+    // TODO::cory: scary
+    fn drain_all(&mut self) -> impl Iterator<Item = K> {
+        std::mem::take(&mut self.map).into_keys()
+    }
+}
+
+/// In some cases, dpd is managed by multiple mutually-unaware
+/// controllers. These controllers provide a namespace [`Tag`]
+/// that restricts sensitive operations to only those resources
+/// with the same tag.
+///
+/// Only the resources within this collection respect tag isolation.
+///
+/// TODO::cory docs
+#[derive(Debug, Default)]
+pub struct TaggedConfigs {
+    configs: HashMap<Tag, TaggedConfig>,
+    ipv4_all: WeakMap<Ipv4Addr>,
+    ipv6_all: WeakMap<Ipv6Addr>,
+}
+
+impl TaggedConfigs {
+    pub fn ipv4(&self) -> impl Iterator<Item = &Ipv4Addr> {
+        self.ipv4_all.map.keys()
+    }
+
+    pub fn ipv6(&self) -> impl Iterator<Item = &Ipv6Addr> {
+        self.ipv6_all.map.keys()
+    }
+
+    pub fn ipv4_range(
+        &self,
+        start: Bound<Ipv4Addr>,
+        end: Bound<Ipv4Addr>,
+    ) -> impl Iterator<Item = &Ipv4Addr> {
+        self.ipv4_all.map.range((start, end)).map(|(key, _value)| key)
+    }
+
+    pub fn contains_tagged_ipv4(&mut self, tag: &Tag, addr: &Ipv4Addr) -> bool {
+        self.configs.get(tag).is_some_and(|conf| conf.ipv4.contains_key(addr))
+    }
+
+    pub fn insert_ipv4(&mut self, tag: Tag, addr: Ipv4Addr) -> bool {
+        let strong = self.configs.entry(tag).or_default();
+        self.ipv4_all.insert(addr, &mut strong.ipv4)
+    }
+
+    pub fn drain_ipv4_tag(
+        &mut self,
+        tag: &Tag,
+    ) -> Option<impl Iterator<Item = Ipv4Addr>> {
+        let strong = self.configs.get_mut(tag)?;
+        Some(self.ipv4_all.drain_strong(&mut strong.ipv4))
+    }
+
+    pub fn drain_ipv6_tag(
+        &mut self,
+        tag: &Tag,
+    ) -> Option<impl Iterator<Item = Ipv6Addr>> {
+        let strong = self.configs.get_mut(tag)?;
+        Some(self.ipv6_all.drain_strong(&mut strong.ipv6))
+    }
+
+    pub fn drain_ipv4(&mut self) -> impl Iterator<Item = Ipv4Addr> {
+        for conf in self.configs.values_mut() {
+            std::mem::take(&mut conf.ipv4);
+        }
+
+        self.ipv4_all.drain_all()
+    }
+
+    pub fn drain_ipv6(&mut self) -> impl Iterator<Item = Ipv6Addr> {
+        for conf in self.configs.values_mut() {
+            std::mem::take(&mut conf.ipv6);
+        }
+
+        self.ipv6_all.drain_all()
+    }
+
+    // pub fn insert_owned_v4(
+    //     &mut self,
+    //     tag: &Tag,
+    //     addr: Ipv4Addr,
+    // ) -> DpdResult<()> {
+    //     if self.configs.get(tag).is_some_and(|entry| entry.ipv4.contains(&addr))
+    //     {
+    //         return Ok(());
+    //     }
+
+    //     if self.combined.ipv4.contains(&addr) {
+    //         return Err(DpdError::Exists(format!(
+    //             "Cannot insert owned IP {addr:?} for {tag} because it's already in use by another tag."
+    //         )));
+    //     }
+
+    //     self.configs.entry(tag.clone()).or_default().ipv4.insert(addr);
+    //     self.recombine();
+
+    //     Ok(())
+    // }
+
+    // pub fn insert_ipv4(&mut self, tag: Tag, addr: Ipv4Addr) {
+    //     self.configs.entry(tag).or_default().ipv4.insert(addr, ct);
+    // }
+
+    // fn check_delete_v4(&mut self, addr: &Ipv4Addr) {}
+
+    // pub fn delete_tag(&mut self, tag: &Tag) -> Option<TaggedConfig> {
+    //     let conf = self.configs.remove(tag);
+    //     self.recombine();
+    //     conf
+    // }
+
+    // pub fn drain_v4(&mut self) -> impl Iterator<Item = Ipv4Addr> {
+    //     for set in self.configs.values_mut() {
+    //         set.ipv4.clear();
+    //     }
+    //     self.combined.ipv4.drain()
+    // }
+
+    // pub fn drain_v6(&mut self) -> impl Iterator<Item = Ipv6Addr> {
+    //     for set in self.configs.values_mut() {
+    //         set.ipv6.clear();
+    //     }
+    //     self.combined.ipv6.drain()
+    // }
+
+    // pub fn delete_v4(&mut self, tag: &Tag, addr: &Ipv4Addr) {
+    //     if let Some(conf) = self.configs.get_mut(tag) {
+    //         conf.ipv4.remove(addr);
+    //     }
+    //     self.recombine();
+    // }
+
+    // pub fn delete_v6(&mut self, tag: &Tag, addr: &Ipv6Addr) {
+    //     if let Some(conf) = self.configs.get_mut(tag) {
+    //         conf.ipv6.remove(addr);
+    //     }
+    //     self.recombine();
+    // }
+
+    // pub fn tag_ipv4(&self, tag: &Tag) -> Option<&HashSet<Ipv4Addr>> {
+    //     self.configs.get(tag).map(|conf| &conf.ipv4)
+    // }
+
+    // pub fn ipv4(&self) -> &HashSet<Ipv4Addr> {
+    //     &self.combined.ipv4
+    // }
+
+    // pub fn ipv6(&self) -> &HashSet<Ipv6Addr> {
+    //     &self.combined.ipv6
+    // }
+
+    // fn recombine(&mut self) {
+    //     self.combined.ipv4.clear();
+    //     self.combined.ipv4.extend(
+    //         self.configs.values().flat_map(|conf| conf.ipv4.iter().copied()),
+    //     );
+
+    //     self.combined.ipv6.clear();
+    //     self.combined.ipv6.extend(
+    //         self.configs.values().flat_map(|conf| conf.ipv6.iter().copied()),
+    //     );
+    // }
+}
+
+enum WeakDrain<'a, K>
+where
+    K: Ord + Clone,
+{
+    Full { strong: &'a mut BTreeMap<K, Arc<()>>, weak: &'a mut WeakMap<K> },
+    Empty,
+}
+
+impl<'a, K> Iterator for WeakDrain<'a, K>
+where
+    K: Ord + Clone,
+{
+    type Item = K;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (strong, weak) = match self {
+            Self::Full { strong, weak } => (strong, weak),
+            Self::Empty => return None,
+        };
+
+        let key = strong.first_key_value().map(|(addr, _)| addr)?.clone();
+        weak.delete(&key, strong).expect("Key is guaranteed to exist");
+
+        Some(key)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Full { strong, .. } => (strong.len(), Some(strong.len())),
+            Self::Empty => (0, Some(0)),
+        }
+    }
+}
+
+impl<'a, K> Drop for WeakDrain<'a, K>
+where
+    K: Ord + Clone,
+{
+    fn drop(&mut self) {
+        while self.next().is_some() {}
+    }
+}
+
+#[derive(Debug, Default)]
+struct TaggedConfig {
+    /// Registered IPv4 addresses for this link.
+    ipv4: BTreeMap<Ipv4Addr, Arc<()>>,
+
+    /// Registered IPv6 addresses for this link.
+    ipv6: BTreeMap<Ipv6Addr, Arc<()>>,
 }
 
 // This struct represents the configuration of the link requested by the
@@ -475,8 +788,7 @@ impl Link {
             fsm_state: asic::PortFsmState::default(),
             link_state: LinkState::Unknown,
             media: PortMedia::None,
-            ipv4: BTreeSet::new(),
-            ipv6: BTreeSet::new(),
+            tagged: TaggedConfigs::default(),
             linkup_tracker: LinkUpTracker::default(),
             autoneg_tracker: AutonegTracker::default(),
 
@@ -486,11 +798,10 @@ impl Link {
     }
 
     /// Return the link-local address for this link, if one has been added.
+    ///
+    /// If multiple have been added, this returns the first that is found.
     pub fn link_local(&self) -> Option<Ipv6Addr> {
-        self.ipv6
-            .iter()
-            .find(|entry| (entry.addr.segments()[0] & 0xffc0) == 0xfe80)
-            .map(|entry| entry.addr)
+        self.tagged.ipv6().copied().find(Ipv6Addr::is_unicast_link_local)
     }
 
     /// Return the FEC scheme in use for this link.  If the link has not yet
@@ -710,18 +1021,18 @@ impl Switch {
         let mut link = link_lock.lock().unwrap();
 
         // Delete all addresses in the switch tables for this link.
-        if !link.ipv4.is_empty() {
-            let to_delete = std::mem::take(&mut link.ipv4)
-                .into_iter()
-                .map(|entry| entry.addr);
-            port_ip::ipv4_delete_many(self, link.asic_port_id, to_delete)?;
-        }
-        if !link.ipv6.is_empty() {
-            let to_delete = std::mem::take(&mut link.ipv6)
-                .into_iter()
-                .map(|entry| entry.addr);
-            port_ip::ipv6_delete_many(self, link.asic_port_id, to_delete)?;
-        }
+
+        port_ip::ipv4_delete_many(
+            self,
+            link.asic_port_id,
+            link.tagged.drain_ipv4(),
+        )?;
+
+        port_ip::ipv6_delete_many(
+            self,
+            link.asic_port_id,
+            link.tagged.drain_ipv6(),
+        )?;
 
         // Notify the reconciliation task that this link's ASIC resources need
         // to be released.
@@ -736,78 +1047,39 @@ impl Switch {
         let links = self.links.lock().unwrap();
         for link_lock in links.0.values() {
             let mut link = link_lock.lock().unwrap();
-            // Clear all IP addresses.
-            //
-            // Swap out an empty map with the existing one, so that we can
-            // retain an iterable for calling `ipv{4,6}_delete_many`.
-            if !link.ipv4.is_empty() {
-                let to_delete = std::mem::take(&mut link.ipv4)
-                    .into_iter()
-                    .map(|entry| entry.addr);
-                port_ip::ipv4_delete_many(self, link.asic_port_id, to_delete)?;
-            }
-            if !link.ipv6.is_empty() {
-                let to_delete = std::mem::take(&mut link.ipv6)
-                    .into_iter()
-                    .map(|entry| entry.addr);
-                port_ip::ipv6_delete_many(self, link.asic_port_id, to_delete)?;
-            }
+
+            port_ip::ipv4_delete_many(
+                self,
+                link.asic_port_id,
+                link.tagged.drain_ipv4(),
+            )?;
+
+            port_ip::ipv6_delete_many(
+                self,
+                link.asic_port_id,
+                link.tagged.drain_ipv6(),
+            )?;
         }
         Ok(())
     }
 
-    /// Clear any IP addresses associated with all links, optionally restricted
-    /// to a specified string `tag`.
-    pub fn clear_link_addresses(&self, tag: Option<&str>) -> DpdResult<()> {
-        if let Some(tag) = tag {
-            let links = self.links.lock().unwrap();
-            for link_lock in links.0.values() {
-                let mut link = link_lock.lock().unwrap();
-                self.clear_link_addresses_locked(&mut link, tag);
+    /// Clears all IP addresses associated only with the given
+    /// tag from all links.
+    pub fn clear_tagged_addrs(&self, tag: &Tag) -> DpdResult<()> {
+        for link_lock in self.links.lock().unwrap().0.values() {
+            let mut link = link_lock.lock().unwrap();
+            let port_id = link.asic_port_id;
+
+            if let Some(tagged) = link.tagged.drain_ipv4_tag(tag) {
+                let _ = port_ip::ipv4_delete_many(self, port_id, tagged);
             }
-            Ok(())
-        } else {
-            self.clear_link_state()
+
+            if let Some(tagged) = link.tagged.drain_ipv6_tag(tag) {
+                let _ = port_ip::ipv6_delete_many(self, port_id, tagged);
+            }
         }
-    }
 
-    fn clear_link_addresses_locked(&self, link: &mut Link, tag: &str) {
-        // Remove all entries from the set with the provided tag.
-        //
-        // TODO-cleanup: It'd be nice to use `drain_filter` here,
-        // but that is unstable.
-        let mut to_remove = Vec::new();
-        link.ipv4.retain(|entry| {
-            if entry.tag == tag {
-                to_remove.push(entry.addr);
-                false
-            } else {
-                true
-            }
-        });
-
-        // Delete the entries from the ASIC tables.
-        let _ = port_ip::ipv4_delete_many(
-            self,
-            link.asic_port_id,
-            to_remove.into_iter(),
-        );
-
-        // TODO-cleanup: See note above about `drain_filter`.
-        let mut to_remove = Vec::new();
-        link.ipv6.retain(|entry| {
-            if entry.tag == tag {
-                to_remove.push(entry.addr);
-                false
-            } else {
-                true
-            }
-        });
-        let _ = port_ip::ipv6_delete_many(
-            self,
-            link.asic_port_id,
-            to_remove.into_iter(),
-        );
+        Ok(())
     }
 
     // Update the state of a link with a closure.
@@ -1049,16 +1321,16 @@ impl Switch {
         link: &mut Link,
         entry: Ipv4Entry,
     ) -> DpdResult<()> {
-        if link.ipv4.contains(&entry) {
-            Err(DpdError::Exists(format!(
-                "IP address {} already exists",
-                entry.addr
-            )))
-        } else {
-            port_ip::ipv4_add(self, link.asic_port_id, entry.addr)?;
-            link.ipv4.insert(entry);
-            Ok(())
+        if !link.tagged.contains_tagged_ipv4(&entry.tag, entry.addr) {
+            return Err(DpdError::Exists(format!(
+                "Tagged address already exists: {entry:?}"
+            )));
         }
+
+        port_ip::ipv4_add(self, link.asic_port_id, entry.addr)?;
+        link.tagged.insert_ipv4(entry.tag, entry.addr);
+
+        Ok(())
     }
 
     /// Add an IPv4 address to the specified link.
@@ -1080,21 +1352,11 @@ impl Switch {
         link_id: LinkId,
         last_address: Option<Ipv4Addr>,
         limit: usize,
-    ) -> DpdResult<Vec<Ipv4Entry>> {
+    ) -> DpdResult<impl Iterator<Item = &Ipv4Addr>> {
         self.link_fetch(port_id, link_id, |link| {
-            if let Some(addr) = last_address {
-                // Equality only considers the address, so create an entry
-                // with an empty tag.
-                use std::ops::Bound;
-                let entry = Ipv4Entry { tag: String::new(), addr };
-                link.ipv4
-                    .range((Bound::Excluded(entry), Bound::Unbounded))
-                    .take(limit)
-                    .cloned()
-                    .collect()
-            } else {
-                link.ipv4.iter().take(limit).cloned().collect()
-            }
+            let left_bound =
+                last_address.map_or_else(|| Bound::Unbounded, Bound::Excluded);
+            Ok(link.tagged.ipv4_range(left_bound, Bound::Unbounded).take(limit))
         })
     }
 

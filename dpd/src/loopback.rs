@@ -49,6 +49,7 @@ pub fn add_loopback_ipv4(switch: &Switch, addr: &Ipv4Entry) -> DpdResult<()> {
 
 /// Delete a loopback IPv4 address from the switch.
 pub fn delete_loopback_ipv4(switch: &Switch, addr: &Ipv4Addr) -> DpdResult<()> {
+    // TODO::cory: loopback too?
     let mut loopback_data = switch.loopback.lock().unwrap();
     let entry = Ipv4Entry { addr: *addr, tag: "".into() };
     if !loopback_data.v4_addrs.contains(&entry) {

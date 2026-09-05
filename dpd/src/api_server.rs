@@ -40,7 +40,8 @@ use dpd_types::mcast::{
     MulticastGroupUpdateUnderlayEntry, MulticastTagPath,
     MulticastUnderlayGroupIpParam,
 };
-use dpd_types::misc::{BuildInfo, TagPath};
+use dpd_types::misc::BuildInfo;
+use dpd_types::misc::Tag;
 use dpd_types::nat::{
     NatIpv4Path, NatIpv4PortPath, NatIpv4RangePath, NatIpv6Path,
     NatIpv6PortPath, NatIpv6RangePath, NatToken,
@@ -1128,14 +1129,12 @@ impl DpdApi for DpdApiImpl {
             WhichPage::First(..) => None,
             WhichPage::Next(Ipv4Token { ip }) => Some(*ip),
         };
-        let entries =
-            switch.list_ipv4_addresses(port_id, link_id, addr, limit)?;
-        ResultsPage::new(
-            entries,
-            &EmptyScanParams {},
-            |entry: &Ipv4Entry, _| Ipv4Token { ip: entry.addr },
-        )
-        .map(HttpResponseOk)
+        let entries = switch
+            .list_ipv4_addresses(port_id, link_id, addr, limit)?
+            .copied()
+            .collect::<Vec<_>>();
+        ResultsPage::new(entries, &EmptyScanParams {}, |ip, _| Ipv4Token { ip })
+            .map(HttpResponseOk)
     }
 
     async fn link_ipv4_create(
@@ -1698,19 +1697,19 @@ impl DpdApi for DpdApiImpl {
 
     async fn reset_all_tagged(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<TagPath>,
+        path: Path<Tag>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
-        let tag = path.into_inner().tag;
+        let tag = path.into_inner();
 
-        debug!(switch.log, "resetting settings tagged with {}", tag);
+        debug!(switch.log, "resetting settings tagged with {tag}");
 
-        arp::reset_ipv4_tag(switch, &tag);
-        arp::reset_ipv6_tag(switch, &tag);
-        route::reset_ipv4_tag(switch, &tag).await;
-        route::reset_ipv6_tag(switch, &tag).await;
+        arp::reset_ipv4_tag(switch, tag.as_str());
+        arp::reset_ipv6_tag(switch, tag.as_str());
+        route::reset_ipv4_tag(switch, tag.as_str()).await;
+        route::reset_ipv6_tag(switch, tag.as_str()).await;
         switch
-            .clear_link_addresses(Some(&tag))
+            .clear_tagged_addrs(&tag)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }

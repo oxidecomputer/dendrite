@@ -4,6 +4,9 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use crate::chaos_tests::harness;
+use crate::chaos_tests::util::IpRng;
+
 use super::harness::{
     expect_chaos, expect_not_found, expect_random_chaos, init_harness,
     new_dpd_client, run_dpd,
@@ -13,7 +16,8 @@ use asic::chaos::{AsicConfig, Chaos, TableChaos};
 use asic::table_chaos;
 use common::table::TableType;
 use dpd_client::types::{
-    LinkCreate, LinkId, LinkSettings, PortFec, PortId, PortSettings, PortSpeed,
+    Ipv4Entry, Ipv6Entry, LinkCreate, LinkId, LinkSettings, PortFec, PortId,
+    PortSettings, PortSpeed,
 };
 use dpd_client::{Client, ROLLBACK_FAILURE_ERROR_CODE};
 use http::status::StatusCode;
@@ -31,6 +35,17 @@ const TESTING_RADIX: usize = 33;
 // we give up?
 const RETRY_INTERVAL: Duration = Duration::from_millis(200);
 const RETRY_MAX: Duration = Duration::from_secs(5);
+
+/// A `LinkCreate` config with common defaults.
+const LINK_CREATE: LinkCreate = LinkCreate {
+    lane: None,
+    autoneg: false,
+    kr: false,
+    speed: PortSpeed::Speed100G,
+    fec: Some(PortFec::None),
+    tx_eq: None,
+    allow_ddm_traffic: false,
+};
 
 #[cfg(test)]
 mod retry {
@@ -83,18 +98,7 @@ async fn test_basic_autoneg_chaos() -> anyhow::Result<()> {
     let (_guard, client) = init_harness("autoneg", &config);
 
     let err = client
-        .link_create(
-            &"qsfp0".parse().unwrap(),
-            &LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: false,
-                speed: PortSpeed::Speed100G,
-                fec: Some(PortFec::None),
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
-        )
+        .link_create(&"qsfp0".parse().unwrap(), &LINK_CREATE)
         .await
         .expect_err("Expected error on create");
 
@@ -122,15 +126,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: false,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LINK_CREATE,
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
     );
@@ -164,15 +160,7 @@ async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: true,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LinkCreate { kr: true, ..LINK_CREATE },
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
     );
@@ -204,15 +192,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: true,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LinkCreate { kr: true, ..LINK_CREATE },
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
     );
@@ -234,15 +214,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: true,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LinkCreate { kr: true, ..LINK_CREATE },
             addrs: vec![
                 "203.0.113.46".parse().unwrap(),
                 "203.0.113.48".parse().unwrap(),
@@ -275,15 +247,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: true,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LinkCreate { kr: true, ..LINK_CREATE },
             addrs: vec![
                 "203.0.113.47".parse().unwrap(),
                 "fd00:1701::d".parse().unwrap(),
@@ -551,4 +515,181 @@ fn random_port_settings() -> PortSettings {
             LinkSettings { params, addrs },
         )]),
     }
+}
+
+const TAG1: &str = "chaos1";
+const TAG2: &str = "chaos2";
+
+/// Validates address registration namespaces for the following sequence:
+///
+/// - Create link
+/// - Add some addresses to the link manually under tag1
+/// - Port settings apply some different addresses under tag2
+/// - All addresses should be on the link
+/// - Port settings apply away the tag2 addresses
+/// - The tag1 addresses should still be on the link
+#[ignore]
+#[tokio::test]
+async fn addr_ns_persistent_create() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("addr_ns_persistent_create", &no_failures);
+
+    let mut rng = IpRng::new(12345);
+
+    let tag1_v4 = Ipv4Entry { addr: rng.unique_ipv4(), tag: TAG1.to_string() };
+    let tag1_v6 = Ipv6Entry { addr: rng.unique_ipv6(), tag: TAG1.to_string() };
+    let tag2_v4 = Ipv4Entry { addr: rng.unique_ipv4(), tag: TAG2.to_string() };
+    let tag2_v6 = Ipv6Entry { addr: rng.unique_ipv6(), tag: TAG2.to_string() };
+
+    let port_id: PortId = "qsfp0".parse()?;
+
+    let link_id =
+        client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
+
+    client.link_ipv4_create(&port_id, &link_id, &tag1_v4).await?;
+    client.link_ipv6_create(&port_id, &link_id, &tag1_v6).await?;
+
+    client
+        .port_settings_apply(
+            &port_id,
+            Some(TAG2),
+            &PortSettings {
+                links: HashMap::from([(
+                    link_id.to_string(),
+                    LinkSettings {
+                        params: LINK_CREATE,
+                        addrs: vec![tag2_v4.addr.into(), tag2_v6.addr.into()],
+                    },
+                )]),
+            },
+        )
+        .await?;
+
+    let v4_addrs = client
+        .link_ipv4_list(&port_id, &link_id, None, None)
+        .await?
+        .into_inner();
+
+    let v6_addrs = client
+        .link_ipv6_list(&port_id, &link_id, None, None)
+        .await?
+        .into_inner();
+
+    assert_eq!(v4_addrs.items.len(), 2);
+    assert!(v4_addrs.items.contains(&tag1_v4));
+    assert!(v4_addrs.items.contains(&tag2_v4));
+
+    assert_eq!(v6_addrs.items.len(), 2);
+    assert!(v6_addrs.items.contains(&tag1_v6));
+    assert!(v6_addrs.items.contains(&tag2_v6));
+
+    client
+        .port_settings_apply(
+            &port_id,
+            Some(TAG2),
+            &PortSettings {
+                links: HashMap::from([(
+                    link_id.to_string(),
+                    LinkSettings { params: LINK_CREATE, addrs: Vec::new() },
+                )]),
+            },
+        )
+        .await?;
+
+    let v4_addrs = client
+        .link_ipv4_list(&port_id, &link_id, None, None)
+        .await?
+        .into_inner();
+
+    let v6_addrs = client
+        .link_ipv6_list(&port_id, &link_id, None, None)
+        .await?
+        .into_inner();
+
+    assert_eq!(&v4_addrs.items, &[tag1_v4]);
+    assert_eq!(&v6_addrs.items, &[tag1_v6]);
+
+    Ok(())
+}
+
+/// Validates address registration namespaces for the following sequence:
+///
+/// - Declare link via port settings apply with ome addresses under tag2
+/// - Manually add THE SAME addresses manually under tag1
+/// - Link get should yield the addresses
+/// - Manually delete the addresses under tag1
+///     - TODO::cory: deletion isn't tagged yet, so this will obviously fail.
+/// - The settings apply addresses under tag2 should still exist
+#[test]
+async fn addr_ns_spot_delete() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("addr_ns_spot_delete", &no_failures);
+
+    let mut rng = IpRng::new(54321);
+
+    let tag1_v4 = Ipv4Entry { addr: rng.unique_ipv4(), tag: TAG1.to_string() };
+    let tag1_v6 = Ipv6Entry { addr: rng.unique_ipv6(), tag: TAG1.to_string() };
+    let tag2_v4 = Ipv4Entry { addr: tag1_v4.addr, tag: TAG2.to_string() };
+    let tag2_v6 = Ipv6Entry { addr: tag1_v6.addr, tag: TAG2.to_string() };
+
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id = LinkId(0);
+
+    client
+        .port_settings_apply(
+            &port_id,
+            Some(TAG2),
+            &PortSettings {
+                links: HashMap::from([(
+                    link_id.to_string(),
+                    LinkSettings {
+                        params: LINK_CREATE,
+                        addrs: vec![tag2_v4.addr.into(), tag2_v6.addr.into()],
+                    },
+                )]),
+            },
+        )
+        .await?;
+
+    client.link_ipv4_create(&port_id, &link_id, &tag1_v4).await?;
+    client.link_ipv6_create(&port_id, &link_id, &tag1_v6).await?;
+
+    let v4_addrs = client
+        .link_ipv4_list(&port_id, &link_id, None, None)
+        .await?
+        .into_inner();
+
+    let v6_addrs = client
+        .link_ipv6_list(&port_id, &link_id, None, None)
+        .await?
+        .into_inner();
+
+    // Two addresses * two tags
+    assert_eq!(v4_addrs.items.len(), 2);
+    assert!(v4_addrs.items.contains(&tag1_v4));
+    assert!(v4_addrs.items.contains(&tag2_v4));
+
+    assert_eq!(v6_addrs.items.len(), 2);
+    assert!(v6_addrs.items.contains(&tag1_v6));
+    assert!(v6_addrs.items.contains(&tag2_v6));
+
+    client.link_ipv4_delete(&port_id, &link_id, &tag1_v4.addr)?;
+    client.link_ipv6_delete(&port_id, &link_id, &tag1_v6.addr)?;
+
+    let v4_addrs = client
+        .link_ipv4_list(&port_id, &link_id, None, None)
+        .await?
+        .into_inner();
+
+    let v6_addrs = client
+        .link_ipv6_list(&port_id, &link_id, None, None)
+        .await?
+        .into_inner();
+
+    assert_eq!(&v4_addrs.items, &[tag2_v4]);
+    assert_eq!(&v6_addrs.items, &[tag2_v6]);
+
+    Ok(())
 }

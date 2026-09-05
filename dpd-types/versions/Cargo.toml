@@ -6,9 +6,11 @@ edition = "2024"
 [dependencies]
 chrono.workspace = true
 dropshot.workspace = true
+heapless.workspace = true
 omicron-common.workspace = true
 oxnet.workspace = true
 rand.workspace = true
+regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 thiserror.workspace = true

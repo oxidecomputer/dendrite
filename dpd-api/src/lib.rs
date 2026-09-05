@@ -29,6 +29,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (14, RESOURCE_TAGS),
     (13, ALLOW_DDM_TRAFFIC),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
@@ -1041,12 +1042,48 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/ipv4",
+        versions = ..VERSION_RESOURCE_TAGS,
+        operation_id = "link_ipv4_list",
     }]
-    async fn link_ipv4_list(
+    async fn link_ipv4_list_v1(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
         query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv4Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<latest::port::Ipv4Entry>>, HttpError>;
+    ) -> Result<HttpResponseOk<ResultsPage<v1::port::Ipv4Entry>>, HttpError>
+    {
+        let results = Self::link_ipv4_list(
+            rqctx,
+            path.map(latest::misc::TagScope::Any),
+            query,
+        )
+        .await?;
+
+        let results = results.map(|page| ResultsPage {
+            items: page
+                .items
+                .into_iter()
+                .map(|addr| v1::port::Ipv4Entry {
+                    tag: String::default(),
+                    addr,
+                })
+                .collect(),
+            next_page: page.next_page,
+        });
+
+        Ok(results)
+    }
+
+    /// List the IPv4 addresses associated with a link.
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/ipv4",
+        versions = VERSION_RESOURCE_TAGS..,
+    }]
+    async fn link_ipv4_list(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::misc::TagScope<latest::link::LinkPath>>,
+        query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv4Token>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Addr>>, HttpError>;
 
     /// Add an IPv4 address to a link.
     #[endpoint {
@@ -1657,15 +1694,39 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = POST,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
-        path = "/port/{port_id}/settings"
+        versions = ..VERSION_ALLOW_DDM_TRAFFIC,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_apply",
     }]
-    async fn port_settings_apply(
+    async fn port_settings_apply_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::port::PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+        body: TypedBody<v1::port::PortSettings>,
+    ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
+        Self::port_settings_apply_v2(rqctx, path, query, body.map(Into::into))
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    #[endpoint {
+        method = POST,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_RESOURCE_TAGS,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_apply",
+    }]
+    async fn port_settings_apply_v2(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
         query: Query<latest::port::PortSettingsTag>,
         body: TypedBody<latest::port::PortSettings>,
-    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError> {
+        let path = path.map(|field| latest::misc::Tagged {
+            tag: query.into_inner().tag.unwrap_or_default(),
+            field,
+        });
+        Self::port_settings_apply(rqctz, path, body).await
+    }
 
     /**
      * Apply port settings atomically.
@@ -1678,20 +1739,14 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = POST,
-        versions = ..VERSION_ALLOW_DDM_TRAFFIC,
-        path = "/port/{port_id}/settings",
-        operation_id = "port_settings_apply",
+        versions = VERSION_RESOURCE_TAGS..,
+        path = "/port/{port_id}/{tag}/settings"
     }]
-    async fn port_settings_apply_v1(
+    async fn port_settings_apply(
         rqctx: RequestContext<Self::Context>,
-        path: Path<v1::port::PortIdPathParams>,
-        query: Query<v1::port::PortSettingsTag>,
-        body: TypedBody<v1::port::PortSettings>,
-    ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
-        Self::port_settings_apply(rqctx, path, query, body.map(Into::into))
-            .await
-            .map(|resp| resp.map(Into::into))
-    }
+        path: Path<latest::misc::Tagged<latest::port::PortIdPathParams>>,
+        body: TypedBody<latest::port::PortSettings>,
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
 
     /**
      * Clear port settings atomically.

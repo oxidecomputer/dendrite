@@ -114,8 +114,16 @@ impl From<&Link> for LinkSpec {
             kr: p.config.kr,
             tx_eq: p.tx_eq,
             delete_me: p.config.delete_me,
-            ipv4: p.ipv4.iter().map(|x| x.addr).collect(),
-            ipv6: p.ipv6.iter().map(|x| x.addr).collect(),
+            ipv4: p
+                .tagged
+                .values()
+                .flat_map(|conf| conf.ipv4.iter().copied())
+                .collect(),
+            ipv6: p
+                .tagged
+                .values()
+                .flat_map(|conf| conf.ipv6.iter().copied())
+                .collect(),
             allow_ddm_traffic: p.config.allow_ddm_traffic,
         }
     }
