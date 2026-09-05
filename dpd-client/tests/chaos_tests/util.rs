@@ -110,6 +110,55 @@ impl HttpResponseCheck for dpd_client::Error<dpd_client::types::Error> {
 }
 
 #[cfg(test)]
+pub mod retry {
+    use std::time::Duration;
+    use std::time::Instant;
+    use thiserror::Error;
+
+    #[derive(Error, Debug)]
+    pub enum ReturnCode {
+        #[error("Operation failed but should be retried later: {0}")]
+        Retry(String),
+
+        #[error("Fatal error: {0}")]
+        Fatal(String),
+    }
+
+    impl From<dpd_client::Error<dpd_client::types::Error>> for ReturnCode {
+        fn from(value: dpd_client::Error<dpd_client::types::Error>) -> Self {
+            Self::Fatal(value.to_string())
+        }
+    }
+
+    impl From<dpd_client::types::error::ConversionError> for ReturnCode {
+        fn from(value: dpd_client::types::error::ConversionError) -> Self {
+            Self::Fatal(value.to_string())
+        }
+    }
+
+    pub async fn retry_op(
+        poll_interval: Duration,
+        poll_max: Duration,
+        mut op: impl AsyncFnMut() -> Result<(), ReturnCode>,
+    ) -> anyhow::Result<()> {
+        let poll_start = Instant::now();
+        loop {
+            let retry_msg = match op().await {
+                Ok(()) => return Ok(()),
+                Err(ReturnCode::Fatal(e)) => return Err(anyhow::anyhow!(e)),
+                Err(ReturnCode::Retry(msg)) => msg,
+            };
+
+            let duration = Instant::now().duration_since(poll_start);
+            if duration > poll_max {
+                return Err(anyhow::anyhow!("operation failed: {retry_msg}"));
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
+    }
+}
+
+#[cfg(test)]
 mod util_tests {
     use crate::chaos_tests::util::IpRng;
 
