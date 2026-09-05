@@ -41,5 +41,6 @@ rand.workspace = true
 slog.workspace = true
 slog-async.workspace = true
 slog-term.workspace = true
+thiserror.workspace = true
 toml.workspace = true
 pretty_assertions.workspace = true
