@@ -100,6 +100,7 @@ use common::ports::TxEqSwHw;
 
 use crate::attached_subnet;
 use crate::counters;
+use crate::link;
 #[cfg(feature = "multicast")]
 use crate::mcast;
 use crate::nat;
@@ -924,8 +925,19 @@ impl DpdApi for DpdApiImpl {
         let path = path.into_inner();
         let port_id = path.port_id;
         let link_id = path.link_id;
+
+        #[cfg(not(feature = "chaos"))]
+        let src = link::Source::Config;
+
+        // Let chaos tests inspect SDE state to detect divergences
+        // with link soft state. I question why this isn't the default
+        // behavior, but flagging this saves that conversation for
+        // another day.
+        #[cfg(feature = "chaos")]
+        let src = link::Source::Switch;
+
         switch
-            .link_enabled(port_id, link_id)
+            .link_enabled(port_id, link_id, src)
             .map(HttpResponseOk)
             .map_err(|e| e.into())
     }

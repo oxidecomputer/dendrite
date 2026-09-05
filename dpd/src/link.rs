@@ -1357,8 +1357,12 @@ impl Switch {
         &self,
         port_id: PortId,
         link_id: LinkId,
+        src: Source,
     ) -> DpdResult<bool> {
-        self.link_fetch(port_id, link_id, |link| link.config.enabled)
+        self.link_fetch(port_id, link_id, |link| match src {
+            Source::Config => link.config.enabled,
+            Source::Switch => link.plumbed.enabled,
+        })
     }
 
     /// Set whether a link is enabled.
@@ -1457,7 +1461,7 @@ impl Switch {
         prbs: PortPrbsMode,
     ) -> DpdResult<()> {
         if prbs != PortPrbsMode::Mission
-            && self.link_enabled(port_id, link_id)?
+            && self.link_enabled(port_id, link_id, Source::Config)?
         {
             Err(DpdError::Invalid(
                 "PRBS cannot be set on an enabled port".into(),
@@ -2032,6 +2036,17 @@ async fn reconcile_link(
         // callback take some logging and/or cleanup actions a single time, even
         // if it receives multiple notifications that a link has been enabled.
     }
+}
+
+/// Differentiates the source of truth when querying
+/// link information.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Source {
+    /// What value the switch is configured for.
+    Config,
+
+    /// What value the switch currently has.
+    Switch,
 }
 
 pub enum LinkTrigger {

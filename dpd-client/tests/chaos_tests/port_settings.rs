@@ -13,6 +13,7 @@ use crate::chaos_tests::harness;
 use crate::chaos_tests::util::HttpResponseCheck;
 use crate::chaos_tests::util::IpRng;
 
+use anyhow::Context;
 use anyhow::bail;
 use asic::chaos::{AsicConfig, Chaos, TableChaos};
 use asic::table_chaos;
@@ -38,6 +39,10 @@ const TESTING_RADIX: usize = 33;
 const RETRY_INTERVAL: Duration = Duration::from_millis(200);
 const RETRY_MAX: Duration = Duration::from_secs(5);
 
+// It might be a DPD wedge. It might be unbelievable
+// RNG misfortune. Regardless, it's time to move on.
+const LONG_ENOUGH: Duration = Duration::from_secs(90);
+
 /// A `LinkCreate` config with common defaults.
 const LINK_CREATE: LinkCreate = LinkCreate {
     lane: None,
@@ -48,6 +53,9 @@ const LINK_CREATE: LinkCreate = LinkCreate {
     tx_eq: None,
     allow_ddm_traffic: false,
 };
+
+const TAG1: &str = "chaos1";
+const TAG2: &str = "chaos2";
 
 #[cfg(test)]
 mod retry {
@@ -519,8 +527,90 @@ fn random_port_settings() -> PortSettings {
     }
 }
 
-const TAG1: &str = "chaos1";
-const TAG2: &str = "chaos2";
+/// A simplified version of txn_sweep that ensures `port_settings_*`
+/// functions can succeed after partial failures.
+#[tokio::test]
+async fn settings_eventually_reconcile() -> anyhow::Result<()> {
+    let mut apply = 0;
+    let mut clear = 0;
+    let mut get = 0;
+
+    let status = tokio::time::timeout(LONG_ENOUGH, async {
+        self::settings_eventually_reconcile_unbounded(
+            &mut apply, &mut clear, &mut get,
+        )
+        .await
+    })
+    .await
+    .context("Timed out waiting for successful reconciliation");
+
+    println!(
+        "
+Reconciliation retries:
+    - port_settings_apply: {apply}
+    - port_settings_clear: {clear}
+    - port_settings_get: {get}
+"
+    );
+
+    status??;
+    Ok(())
+}
+
+async fn settings_eventually_reconcile_unbounded(
+    apply_ct: &mut usize,
+    clear_ct: &mut usize,
+    get_ct: &mut usize,
+) -> anyhow::Result<()> {
+    let config = AsicConfig::uniform_set(TESTING_RADIX, 0.4);
+    let (_guard, client) =
+        harness::init_harness("settings_eventually_reconcile", &config);
+    let mut rng = IpRng::new(1046);
+
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id = LinkId(0);
+
+    let settings = PortSettings {
+        links: [(
+            link_id.to_string(),
+            LinkSettings {
+                params: LINK_CREATE,
+                addrs: vec![rng.unique_ipv4().into(), rng.unique_ipv6().into()],
+            },
+        )]
+        .into_iter()
+        .collect(),
+    };
+
+    // Increase the odds of hitting an rng failure by running
+    // the sequence a few times.
+    for _ in 0..3 {
+        while client
+            .port_settings_apply(&port_id, Some(TAG1), &settings)
+            .await
+            .is_err()
+        {
+            *apply_ct += 1;
+            self::slow_down().await;
+        }
+
+        while client.port_settings_clear(&port_id, Some(TAG1)).await.is_err() {
+            *clear_ct += 1;
+            self::slow_down().await;
+        }
+
+        while !client
+            .port_settings_get(&port_id, Some(TAG1))
+            .await
+            .is_ok_and(|s| s.links.is_empty())
+        {
+            *get_ct += 1;
+            self::slow_down().await;
+        }
+    }
+
+    Ok(())
+}
 
 /// Verifies tagged port_settings_apply actions don't affect
 /// resources from other tags.
@@ -560,12 +650,7 @@ async fn settings_apply_respects_tags() -> anyhow::Result<()> {
         .port_settings_apply(
             &port_id,
             Some(TAG2),
-            &PortSettings {
-                links: HashMap::from([(
-                    link_id.to_string(),
-                    LinkSettings { params: LINK_CREATE, addrs: Vec::new() },
-                )]),
-            },
+            &TestAddrs::empty_settings(link_id),
         )
         .await?;
 
@@ -883,6 +968,399 @@ async fn apply_fails_on_tag_conflict() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A pathological sequence of table errors in dpd must
+/// not poison future valid operations.
+///
+/// This test port_settings_applies two addresses. The IPv6
+/// table op fails, and then the IPv4 table op in the rollback
+/// fails. After that rollback failure, the problematic IPv4
+/// entry still belongs to the link, so it can at least be
+/// overwritten in the next port_settings_apply.
+#[tokio::test]
+async fn partial_failures_are_recoverable() -> anyhow::Result<()> {
+    let conf = AsicConfig {
+        radix: TESTING_RADIX,
+        table_entry_add: table_chaos!((TableType::PortAddrIpv6, 1.0)),
+        table_entry_del: table_chaos!((TableType::PortAddrIpv4, 1.0)),
+        ..Default::default()
+    };
+
+    let (_guard, client) =
+        harness::init_harness("partial_failures_are_recoverable", &conf);
+    let mut rng = IpRng::new(731);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id = LinkId(0);
+
+    let addrs = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    let apply_err = addrs
+        .apply_addrs()
+        .await
+        .expect_err("Apply should fail because IPv6 table ops fail");
+    assert!(
+        self::is_rollback_error(&apply_err),
+        "IPv4 addr couldn't be rolled back from table"
+    );
+
+    // Not sure this is the best behavior between apply and clear amid rollback
+    // failures, but this test at least ensures we can reclaim the entry later.
+    client
+        .port_settings_clear(&port_id, Some(TAG1))
+        .await
+        .expect_err("Port couldn't be cleared because IPv4 addr is stuck");
+
+    let mut v4_only = addrs.settings();
+    for link in v4_only.links.values_mut() {
+        link.addrs.retain(|a| a.is_ipv4());
+    }
+
+    client
+        .port_settings_apply(&"qsfp1".parse()?, Some(TAG2), &v4_only)
+        .await
+        .expect_err("Stuck entry cannot be stolen by another tag.");
+
+    let settings = client
+        .port_settings_apply(&port_id, Some(TAG1), &v4_only)
+        .await
+        .context("Apply should succeed because we can at least overwrite the IPv4 table entry")?;
+
+    let registered_v4 = settings
+        .links
+        .values()
+        .any(|link| link.addrs.contains(&addrs.v4_entry.addr.into()));
+    assert!(registered_v4, "Address was reclaimed");
+
+    Ok(())
+}
+
+/// A flaky table write must not poison link initialization.
+#[tokio::test]
+#[cfg(feature = "multicast")]
+async fn link_init_recovers() -> anyhow::Result<()> {
+    tokio::time::timeout(LONG_ENOUGH, async {
+        self::link_init_recovers_unbounded().await
+    })
+    .await
+    .context("Test timed out. DPD is probably wedged due to a bug.")?
+}
+
+#[cfg(feature = "multicast")]
+async fn link_init_recovers_unbounded() -> anyhow::Result<()> {
+    let conf = AsicConfig {
+        radix: TESTING_RADIX,
+        table_entry_add: table_chaos!((TableType::McastEgressPortMapping, 0.8)),
+        ..Default::default()
+    };
+
+    let (_guard, client) = harness::init_harness("link_init_recovers", &conf);
+    let port_id: PortId = "qsfp0".parse()?;
+
+    let link_id =
+        client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
+
+    while !client.link_enabled_get(&port_id, &link_id).await?.into_inner() {
+        // This pokes the reconciler and thus speeds up the test.
+        client.link_enabled_set(&port_id, &link_id, true).await?;
+        self::slow_down().await;
+    }
+
+    Ok(())
+}
+
+/// One does not simply double-register a link address on loopback.
+///
+/// This tests the order where link registration wins.
+#[tokio::test]
+async fn link_addrs_are_isolated() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("link_addrs_are_isolated", &no_failures);
+    let port_id: PortId = "qsfp0".parse()?;
+    let mut rng = IpRng::new(2238);
+
+    let link_id =
+        client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
+
+    let tag1 =
+        TestAddrs::new(&mut rng, TAG1.to_string(), &client, port_id, link_id);
+
+    tag1.create_addrs().await?;
+
+    client
+        .loopback_ipv4_create(&tag1.v4_entry)
+        .await
+        .expect_err("This link address IPv4 is already registered");
+
+    client
+        .loopback_ipv6_create(&tag1.v6_entry)
+        .await
+        .expect_err("This link address IPv6 is already registered");
+
+    tag1.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    Ok(())
+}
+
+/// Reverse of [`addrs_are_isolated`]. Now loopback registration wins.
+#[tokio::test]
+async fn loopback_addrs_are_isolated() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("loopback_addrs_are_isolated", &no_failures);
+    let port_id: PortId = "qsfp0".parse()?;
+    let mut rng = IpRng::new(2250);
+
+    let link_id =
+        client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    client.loopback_ipv4_create(&tag1.v4_entry).await?;
+    client.loopback_ipv6_create(&tag1.v6_entry).await?;
+
+    client
+        .link_ipv4_create(&port_id, &link_id, &tag1.v4_entry)
+        .await
+        .expect_err("Address already exists on IPv4 loopback");
+    client
+        .link_ipv6_create(&port_id, &link_id, &tag1.v6_entry)
+        .await
+        .expect_err("Address already exists on IPv6 loopback");
+
+    tag1.apply_addrs().await.expect_err("Addrs collide and cannot be created");
+
+    let v4_list = client.loopback_ipv4_list().await?;
+    assert_eq!(
+        &v4_list.into_inner(),
+        std::slice::from_ref(&tag1.v4_entry),
+        "Loopback should have IPv4 addr"
+    );
+
+    let v6_list = client.loopback_ipv6_list().await?;
+    assert_eq!(
+        &v6_list.into_inner(),
+        std::slice::from_ref(&tag1.v6_entry),
+        "Loopback should have IPv6 addr"
+    );
+
+    Ok(())
+}
+
+/// Dropping a link without deleting the corresponding table entries
+/// is a leak. So DPD shouldn't do that.
+/// If a table entry cannot be deleted, then DPD should not allow
+/// that entry's link to be deleted.
+#[tokio::test]
+async fn deletion_doesnt_leak_table_entries() -> anyhow::Result<()> {
+    let config = AsicConfig {
+        radix: TESTING_RADIX,
+        table_entry_del: table_chaos!((TableType::PortAddrIpv4, 1.0)),
+        ..Default::default()
+    };
+    let (_guard, client) =
+        harness::init_harness("deletion_doesnt_leak_table_entries", &config);
+    let port_id: PortId = "qsfp0".parse()?;
+    let mut rng = IpRng::new(1227);
+    let link_id = LinkId(0);
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    tag1.apply_addrs().await?;
+
+    let msg = "Link should not be dropped because that would orphan the stuck table entry";
+    client.port_settings_clear(&port_id, None).await.expect_err(msg);
+    client
+        .port_settings_apply(
+            &port_id,
+            Some(TAG1),
+            &TestAddrs::empty_settings(link_id),
+        )
+        .await
+        .expect_err("Addr cannot be implicitly deleted via apply");
+    tag1.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    client.link_delete(&port_id, &link_id).await.expect_err(msg);
+    // link_delete makes no atomicity guarantees, so the IPv6 address
+    // might be gone. But the link and stuck address should still exist.
+    assert_eq!(
+        &client.link_ipv4_list(&port_id, &link_id, None, None).await?.items,
+        std::slice::from_ref(&tag1.v4_entry)
+    );
+
+    Ok(())
+}
+
+/// Link deletion can succeed after prior failures.
+#[tokio::test]
+async fn deletion_prevails() -> anyhow::Result<()> {
+    let config = AsicConfig {
+        radix: TESTING_RADIX,
+        table_entry_del: table_chaos![
+            (TableType::PortAddrIpv4, 0.7),
+            (TableType::PortAddrIpv6, 0.7)
+        ],
+        ..Default::default()
+    };
+    let (_guard, client) = harness::init_harness("deletion_prevails", &config);
+    let port_id: PortId = "qsfp0".parse()?;
+    let mut rng = IpRng::new(1227);
+    let link_id = LinkId(0);
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    tag1.apply_addrs().await?;
+
+    let mut ct = 0;
+    tokio::time::timeout(LONG_ENOUGH, async {
+        while client
+            .port_settings_apply(
+                &port_id,
+                Some(TAG1),
+                &TestAddrs::empty_settings(link_id),
+            )
+            .await
+            .is_err()
+        {
+            ct += 1;
+        }
+    })
+    .await
+    .context("Timeout trying to successfully clear addresses")?;
+
+    let cleared_addrs = client
+        .port_settings_get(&port_id, Some(TAG1))
+        .await?
+        .links
+        .get(&link_id.to_string())
+        .expect("Link should exist")
+        .addrs
+        .is_empty();
+    assert!(
+        cleared_addrs,
+        "port_settings_apply should only succeed once the addresses are removed"
+    );
+
+    println!("Retries: {ct}");
+
+    Ok(())
+}
+
+/// An address owned exclusively across the switch, and it must be
+/// released to transfer owners.
+///
+/// Equivalently, a link/loopback address registration will never
+/// succeed if that address is already owned by another
+/// link/loopback source.
+#[tokio::test]
+async fn links_cannot_steal_addrs() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("links_cannot_steal_addrs", &no_failures);
+
+    let port1: PortId = "qsfp0".parse()?;
+    let port2: PortId = "qsfp1".parse()?;
+    let mut rng = IpRng::new(1404);
+    let link_id = LinkId(0);
+
+    let mut p1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port1.clone(),
+        link_id,
+    );
+
+    let mut p2 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port2.clone(),
+        link_id,
+    );
+
+    let mut loopback_v4 =
+        Ipv4Entry { addr: rng.unique_ipv4(), tag: TAG1.to_string() };
+    let mut loopback_v6 =
+        Ipv6Entry { addr: rng.unique_ipv6(), tag: TAG1.to_string() };
+
+    p1.apply_addrs().await?;
+    p2.apply_addrs().await?;
+    client.loopback_ipv4_create(&loopback_v4).await?;
+    client.loopback_ipv6_create(&loopback_v6).await?;
+
+    std::mem::swap(&mut p1.v4_entry, &mut p2.v4_entry);
+    p2.apply_addrs()
+        .await
+        .expect_err("v4 address is already registered under p1");
+    std::mem::swap(&mut p1.v4_entry, &mut p2.v4_entry);
+
+    std::mem::swap(&mut p1.v6_entry, &mut p2.v6_entry);
+    p2.apply_addrs()
+        .await
+        .expect_err("v6 address is already registered under p1");
+    std::mem::swap(&mut p1.v6_entry, &mut p2.v6_entry);
+
+    std::mem::swap(&mut loopback_v4, &mut p2.v4_entry);
+    p2.apply_addrs()
+        .await
+        .expect_err("v4 address is already registered under loopback");
+    std::mem::swap(&mut loopback_v4, &mut p2.v4_entry);
+
+    std::mem::swap(&mut loopback_v6, &mut p2.v6_entry);
+    p2.apply_addrs()
+        .await
+        .expect_err("v6 address is already registered under loopback");
+    std::mem::swap(&mut loopback_v6, &mut p2.v6_entry);
+
+    client
+        .loopback_ipv4_create(&p1.v4_entry)
+        .await
+        .expect_err("v4 address is already registered under p1");
+    client
+        .loopback_ipv6_create(&p1.v6_entry)
+        .await
+        .expect_err("v6 address is already registered under p1");
+
+    p1.verify_addrs_exist(Verify::Exhaustive).await?;
+    p2.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    assert_eq!(
+        &client.loopback_ipv4_list().await?.into_inner(),
+        std::slice::from_ref(&loopback_v4)
+    );
+
+    assert_eq!(
+        &client.loopback_ipv6_list().await?.into_inner(),
+        std::slice::from_ref(&loopback_v6)
+    );
+
+    Ok(())
+}
+
 /// Verifies link state config and asic queries correctly
 /// differ amid failures.
 #[tokio::test]
@@ -946,6 +1424,16 @@ async fn link_asic_and_config_differ() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Tests should not rely on sleep for correctness/synchronization.
+///
+/// However, tests that sleep in-between fallible operations are
+/// a lot more fun to follow and debug.
+///
+/// This is an arbitrary sleep to make logs more digestable.
+async fn slow_down() {
+    tokio::time::sleep(Duration::from_millis(250)).await;
+}
+
 /// This struct simplifies repetitive CRUD operations
 /// on tagged links with random address registrations.
 struct TestAddrs<'a> {
@@ -994,18 +1482,7 @@ impl<'a> TestAddrs<'a> {
             .port_settings_apply(
                 &self.port_id,
                 Some(&self.v4_entry.tag),
-                &PortSettings {
-                    links: HashMap::from([(
-                        self.link_id.to_string(),
-                        LinkSettings {
-                            params: LINK_CREATE,
-                            addrs: vec![
-                                self.v4_entry.addr.into(),
-                                self.v6_entry.addr.into(),
-                            ],
-                        },
-                    )]),
-                },
+                &self.settings(),
             )
             .await?;
 
@@ -1091,6 +1568,32 @@ impl<'a> TestAddrs<'a> {
         }
 
         Ok(())
+    }
+
+    /// Creates a [`PortSettings`] instance for these addresses.
+    fn settings(&self) -> PortSettings {
+        let mut conf = Self::empty_settings(self.link_id);
+        conf.links
+            .get_mut(&self.link_id.to_string())
+            .expect("Settings should contain this link")
+            .addrs
+            .extend_from_slice(&[
+                self.v4_entry.addr.into(),
+                self.v6_entry.addr.into(),
+            ]);
+
+        conf
+    }
+
+    /// Creates a new [`PortSettings`] instance for this link
+    /// with default config and no addrs.
+    fn empty_settings(link_id: LinkId) -> PortSettings {
+        PortSettings {
+            links: HashMap::from([(
+                link_id.to_string(),
+                LinkSettings { params: LINK_CREATE, addrs: Vec::new() },
+            )]),
+        }
     }
 }
 
