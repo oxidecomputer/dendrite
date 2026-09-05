@@ -8,7 +8,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -1842,9 +1841,10 @@ impl DpdApi for DpdApiImpl {
         let query = query.into_inner();
         let port_id = path.port_id;
         let settings = body.into_inner();
+        let tag = query.tag.as_deref().unwrap_or("");
 
         switch
-            .apply_port_settings(port_id, settings, query.tag)
+            .apply_port_settings(port_id, settings, tag)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -1859,9 +1859,10 @@ impl DpdApi for DpdApiImpl {
         let path = path.into_inner();
         let query = query.into_inner();
         let port_id = path.port_id;
+        let tag = query.tag.as_deref().unwrap_or("");
 
         switch
-            .clear_port_settings(port_id, query.tag)
+            .clear_port_settings(port_id, tag)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -1876,9 +1877,10 @@ impl DpdApi for DpdApiImpl {
         let path = path.into_inner();
         let query = query.into_inner();
         let port_id = path.port_id;
+        let tag = query.tag.as_deref().unwrap_or("");
 
         switch
-            .get_port_settings(port_id, query.tag)
+            .get_port_settings(port_id, tag)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -2946,26 +2948,32 @@ pub(crate) fn build_info() -> BuildInfo {
     }
 }
 
-impl From<&crate::link::Link> for LinkSettings {
-    fn from(l: &crate::link::Link) -> Self {
-        let mut addrs: HashSet<IpAddr> = HashSet::new();
-        for a in &l.ipv4 {
-            addrs.insert(a.addr.into());
-        }
-        for a in &l.ipv6 {
-            addrs.insert(a.addr.into());
-        }
+impl crate::link::Link {
+    /// Serializes the current link configuration into
+    /// a [`LinkSettings`] instance.
+    pub fn settings(&self, tag: &str) -> LinkSettings {
         LinkSettings {
             params: LinkCreate {
-                lane: Some(l.link_id),
-                speed: l.config.speed,
-                fec: l.config.fec,
-                autoneg: l.config.autoneg,
-                kr: l.config.kr,
-                tx_eq: l.tx_eq,
-                allow_ddm_traffic: l.config.allow_ddm_traffic,
+                lane: Some(self.link_id),
+                speed: self.config.speed,
+                fec: self.config.fec,
+                autoneg: self.config.autoneg,
+                kr: self.config.kr,
+                tx_eq: self.tx_eq,
+                allow_ddm_traffic: self.config.allow_ddm_traffic,
             },
-            addrs,
+            addrs: self
+                .ipv4
+                .iter()
+                .filter(|entry| entry.tag == tag)
+                .map(|entry| IpAddr::from(entry.addr))
+                .chain(
+                    self.ipv6
+                        .iter()
+                        .filter(|entry| entry.tag == tag)
+                        .map(|entry| entry.addr.into()),
+                )
+                .collect(),
         }
     }
 }

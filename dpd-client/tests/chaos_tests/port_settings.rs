@@ -9,18 +9,23 @@ use super::harness::{
     new_dpd_client, run_dpd,
 };
 use super::util::{link_list_ipv4, link_list_ipv6};
+use crate::chaos_tests::harness;
+use crate::chaos_tests::util::IpRng;
+
+use anyhow::bail;
 use asic::chaos::{AsicConfig, Chaos, TableChaos};
 use asic::table_chaos;
 use common::table::TableType;
 use dpd_client::types::{
-    LinkCreate, LinkId, LinkSettings, PortFec, PortId, PortSettings, PortSpeed,
+    Ipv4Entry, Ipv6Entry, LinkCreate, LinkId, LinkSettings, PortFec, PortId,
+    PortSettings, PortSpeed,
 };
 use dpd_client::{Client, ROLLBACK_FAILURE_ERROR_CODE};
 use http::status::StatusCode;
 use pretty_assertions::{Comparison, assert_eq};
 use rand::Rng;
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use tokio::time::Duration;
@@ -31,6 +36,17 @@ const TESTING_RADIX: usize = 33;
 // we give up?
 const RETRY_INTERVAL: Duration = Duration::from_millis(200);
 const RETRY_MAX: Duration = Duration::from_secs(5);
+
+/// A `LinkCreate` config with common defaults.
+const LINK_CREATE: LinkCreate = LinkCreate {
+    lane: None,
+    autoneg: false,
+    kr: false,
+    speed: PortSpeed::Speed100G,
+    fec: Some(PortFec::None),
+    tx_eq: None,
+    allow_ddm_traffic: false,
+};
 
 #[cfg(test)]
 mod retry {
@@ -83,18 +99,7 @@ async fn test_basic_autoneg_chaos() -> anyhow::Result<()> {
     let (_guard, client) = init_harness("autoneg", &config);
 
     let err = client
-        .link_create(
-            &"qsfp0".parse().unwrap(),
-            &LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: false,
-                speed: PortSpeed::Speed100G,
-                fec: Some(PortFec::None),
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
-        )
+        .link_create(&"qsfp0".parse().unwrap(), &LINK_CREATE)
         .await
         .expect_err("Expected error on create");
 
@@ -122,15 +127,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: false,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LINK_CREATE,
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
     );
@@ -164,15 +161,7 @@ async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: true,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LinkCreate { kr: true, ..LINK_CREATE },
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
     );
@@ -204,15 +193,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: true,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LinkCreate { kr: true, ..LINK_CREATE },
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
     );
@@ -234,15 +215,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: true,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LinkCreate { kr: true, ..LINK_CREATE },
             addrs: vec![
                 "203.0.113.46".parse().unwrap(),
                 "203.0.113.48".parse().unwrap(),
@@ -275,15 +248,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate {
-                lane: None,
-                autoneg: false,
-                kr: true,
-                fec: Some(PortFec::None),
-                speed: PortSpeed::Speed100G,
-                tx_eq: None,
-                allow_ddm_traffic: false,
-            },
+            params: LinkCreate { kr: true, ..LINK_CREATE },
             addrs: vec![
                 "203.0.113.47".parse().unwrap(),
                 "fd00:1701::d".parse().unwrap(),
@@ -551,4 +516,325 @@ fn random_port_settings() -> PortSettings {
             LinkSettings { params, addrs },
         )]),
     }
+}
+
+const TAG1: &str = "chaos1";
+const TAG2: &str = "chaos2";
+
+/// Verifies tagged port_settings_apply actions don't affect
+/// resources from other tags.
+#[tokio::test]
+async fn addr_ns_persistent_create() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("addr_ns_persistent_create", &no_failures);
+
+    let mut rng = IpRng::new(12345);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id =
+        client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+    let tag2 = TestAddrs::new(
+        &mut rng,
+        TAG2.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    tag1.create_addrs().await?;
+    tag2.apply_addrs().await?;
+
+    tag1.verify_addrs_exist(Verify::NonExhaustive).await?;
+    tag2.verify_addrs_exist(Verify::NonExhaustive).await?;
+
+    client
+        .port_settings_apply(
+            &port_id,
+            Some(TAG2),
+            &PortSettings {
+                links: HashMap::from([(
+                    link_id.to_string(),
+                    LinkSettings { params: LINK_CREATE, addrs: Vec::new() },
+                )]),
+            },
+        )
+        .await?;
+
+    tag1.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    Ok(())
+}
+
+/// Verifies tagged address_*_create and delete don't affect
+/// resources under different tags.
+#[tokio::test]
+async fn addr_ns_spot_delete() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("addr_ns_spot_delete", &no_failures);
+
+    let mut rng = IpRng::new(54321);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id = LinkId(0);
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+    let tag2 = TestAddrs::new(
+        &mut rng,
+        TAG2.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    tag2.apply_addrs().await?;
+
+    client
+        .link_ipv4_create(
+            &port_id,
+            &link_id,
+            &Ipv4Entry { addr: tag2.v4_entry.addr, tag: TAG1.to_string() },
+        )
+        .await
+        .expect_err(
+            "Registering the same address under different tags should fail",
+        );
+
+    tag1.create_addrs().await?;
+
+    tag1.verify_addrs_exist(Verify::NonExhaustive).await?;
+    tag2.verify_addrs_exist(Verify::NonExhaustive).await?;
+
+    client.link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr).await?;
+    client.link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr).await?;
+
+    tag2.verify_addrs_exist(Verify::Exhaustive).await?;
+    tag1.verify_addrs_exist(Verify::NonExhaustive)
+        .await
+        .expect_err("tag1 addresses should have been deleted");
+
+    Ok(())
+}
+
+/// Verifies port_settings_clear only affects resources of the given tag.
+#[tokio::test]
+#[ignore]
+async fn addr_ns_settings_clear() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("addr_ns_spot_delete", &no_failures);
+
+    let mut rng = IpRng::new(1010101);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id =
+        client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
+
+    let tag1 = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+    let tag2 = TestAddrs::new(
+        &mut rng,
+        TAG2.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    tag1.create_addrs().await?;
+    tag2.apply_addrs().await?;
+
+    tag1.verify_addrs_exist(Verify::NonExhaustive).await?;
+    tag2.verify_addrs_exist(Verify::NonExhaustive).await?;
+
+    client.port_settings_clear(&port_id, Some(TAG2)).await?;
+
+    tag1.verify_addrs_exist(Verify::Exhaustive).await?;
+    tag2.verify_addrs_exist(Verify::NonExhaustive).await.expect_err(
+        "Addresses do not exist because we cleared the tag2 port settings.",
+    );
+
+    Ok(())
+}
+
+/// This struct simplifies repetitive CRUD operations
+/// on tagged links with random address registrations.
+struct TestAddrs<'a> {
+    v4_entry: Ipv4Entry,
+    v6_entry: Ipv6Entry,
+    client: &'a Client,
+    port_id: PortId,
+    link_id: LinkId,
+}
+
+impl<'a> TestAddrs<'a> {
+    /// Creates a new instance with a random IPv4 and IPv6 address
+    /// for this port and link.
+    fn new(
+        rng: &mut IpRng,
+        tag: String,
+        client: &'a Client,
+        port_id: PortId,
+        link_id: LinkId,
+    ) -> Self {
+        Self {
+            v4_entry: Ipv4Entry { addr: rng.unique_ipv4(), tag: tag.clone() },
+            v6_entry: Ipv6Entry { addr: rng.unique_ipv6(), tag },
+            client,
+            port_id,
+            link_id,
+        }
+    }
+
+    /// Adds both tagged addresses to this link using dpd's `link_*_create` endpoints.
+    async fn create_addrs(&self) -> anyhow::Result<()> {
+        self.client
+            .link_ipv4_create(&self.port_id, &self.link_id, &self.v4_entry)
+            .await?;
+        self.client
+            .link_ipv6_create(&self.port_id, &self.link_id, &self.v6_entry)
+            .await?;
+        Ok(())
+    }
+
+    /// Adds both tagged addresses to this link using dpd's `port_settings_apply` endpoint.
+    async fn apply_addrs(&self) -> anyhow::Result<()> {
+        self.client
+            .port_settings_apply(
+                &self.port_id,
+                Some(&self.v4_entry.tag),
+                &PortSettings {
+                    links: HashMap::from([(
+                        self.link_id.to_string(),
+                        LinkSettings {
+                            params: LINK_CREATE,
+                            addrs: vec![
+                                self.v4_entry.addr.into(),
+                                self.v6_entry.addr.into(),
+                            ],
+                        },
+                    )]),
+                },
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    /// Fetches this tag's addresses using `link_*_list` and `port_settings_get`.
+    /// Returns Err if both addresses are not found.
+    /// If `scope == Verify::Exhaustive`, returns Err if other addresses
+    /// are found on the link besides those in `self`.
+    async fn verify_addrs_exist(&self, scope: Verify) -> anyhow::Result<()> {
+        let v4 = self
+            .client
+            .link_ipv4_list(&self.port_id, &self.link_id, None, None)
+            .await?
+            .into_inner();
+        let v6 = self
+            .client
+            .link_ipv6_list(&self.port_id, &self.link_id, None, None)
+            .await?
+            .into_inner();
+
+        if !v4.items.contains(&self.v4_entry) {
+            bail!(
+                "Entry {:?} not found in listed addresses: {:?}",
+                self.v4_entry,
+                v4.items
+            );
+        }
+
+        if !v6.items.contains(&self.v6_entry) {
+            bail!(
+                "Entry {:?} not found in listed addresses: {:?}",
+                self.v6_entry,
+                v6.items
+            );
+        }
+
+        if scope == Verify::Exhaustive && v4.items.len() != 1 {
+            bail!(
+                "Link IPv4 items don't exactly match. Expected({:?}) v. Found({:?})",
+                [&self.v4_entry],
+                &v4.items
+            );
+        }
+
+        if scope == Verify::Exhaustive && v6.items.len() != 1 {
+            bail!(
+                "Link IPv6 items don't exactly match. Expected({:?}) v. Found({:?})",
+                [&self.v6_entry],
+                &v6.items
+            );
+        }
+
+        // Verify the port_settings endpoint returns the same.
+        let mut settings = self
+            .client
+            .port_settings_get(&self.port_id, Some(&self.v4_entry.tag))
+            .await?
+            .into_inner();
+
+        let Some(mut settings) =
+            settings.links.remove(&self.link_id.to_string()).map(|s| s.addrs)
+        else {
+            bail!(
+                "port_settings_get should return the target link id({:?}): found {settings:?}",
+                self.link_id
+            );
+        };
+
+        let mut listed = v4
+            .items
+            .into_iter()
+            .filter_map(|entry| {
+                (entry.tag == self.v4_entry.tag)
+                    .then(|| IpAddr::from(entry.addr))
+            })
+            .chain(v6.items.into_iter().filter_map(|entry| {
+                (entry.tag == self.v4_entry.tag)
+                    .then(|| IpAddr::from(entry.addr))
+            }))
+            .collect::<Vec<_>>();
+
+        listed.sort();
+        settings.sort();
+
+        if listed != settings {
+            bail!(
+                "Tagged address sources disagree: link_*_list({listed:?}) v. port_settings_get({settings:?})",
+            );
+        }
+
+        Ok(())
+    }
+}
+
+/// Informs the behavior of address registration verification.
+#[derive(Debug, PartialEq, Eq)]
+enum Verify {
+    /// Expect that the target resources are the only of their
+    /// kind on this link regardless of tag.
+    Exhaustive,
+
+    /// Expect that the target resources exist on the link, but
+    /// resources from other tags may also exist.
+    NonExhaustive,
 }
