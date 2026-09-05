@@ -209,7 +209,6 @@ pub(crate) fn add_port_mapping_entry(
 
 /// Update a port ID entry in the port ID table for converting ASIC port IDs
 /// to port numbers.
-#[allow(dead_code)]
 pub(crate) fn update_port_mapping_entry(
     s: &Switch,
     asic_port_id: u16,

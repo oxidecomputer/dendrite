@@ -52,6 +52,30 @@ fn mac_set_common(
     }
 }
 
+fn mac_update_common(
+    s: &Switch,
+    type_: TableType,
+    port: u16,
+    mac: MacAddr,
+) -> DpdResult<()> {
+    let match_key = MacMatchKey { port };
+    let action_data = MacAction::Rewrite { mac };
+
+    match s.table_entry_update(type_, &match_key, &action_data) {
+        Ok(_) => {
+            info!(s.log, "updated mac on {port} in table {type_}: {mac}",);
+            Ok(())
+        }
+        Err(e) => {
+            error!(
+                s.log,
+                "update mac on {port} in table {type_}: {mac} failed: {e:?}",
+            );
+            Err(e)
+        }
+    }
+}
+
 fn mac_clear_common(s: &Switch, type_: TableType, port: u16) -> DpdResult<()> {
     let match_key = MacMatchKey { port };
 
@@ -72,6 +96,14 @@ fn mac_clear_common(s: &Switch, type_: TableType, port: u16) -> DpdResult<()> {
 /// An error is returned if the entry already exists. Use `mac_update` instead.
 pub fn mac_set(s: &Switch, port: u16, mac: MacAddr) -> DpdResult<()> {
     mac_set_common(s, TableType::PortMacAddress, port, mac)
+}
+
+/// Rewrite an existing entry in the MAC table.
+///
+/// An error is returned if the entry does not already exist.  Use `mac_set`
+/// instead.
+pub fn mac_update(s: &Switch, port: u16, mac: MacAddr) -> DpdResult<()> {
+    mac_update_common(s, TableType::PortMacAddress, port, mac)
 }
 
 /// Remove an entry from the MAC table.
@@ -105,6 +137,15 @@ pub fn reset(s: &Switch) -> DpdResult<()> {
 #[cfg(feature = "multicast")]
 pub fn mcast_mac_set(s: &Switch, port: u16, mac: MacAddr) -> DpdResult<()> {
     mac_set_common(s, TableType::PortMacAddressMcast, port, mac)
+}
+
+/// Rewrite an existing entry in the multicast MAC table.
+///
+/// An error is returned if the entry does not already exist.  Use
+/// `mcast_mac_set` instead.
+#[cfg(feature = "multicast")]
+pub fn mcast_mac_update(s: &Switch, port: u16, mac: MacAddr) -> DpdResult<()> {
+    mac_update_common(s, TableType::PortMacAddressMcast, port, mac)
 }
 
 /// Remove an entry from the MAC table.

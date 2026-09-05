@@ -11,7 +11,7 @@ use slog::{error, info};
 
 use crate::Switch;
 use crate::table::*;
-use aal::{ActionParse, MatchParse};
+use aal::{ActionParse, AsicError, MatchParse};
 use aal_macros::*;
 
 #[derive(MatchParse, Debug, Hash)]
@@ -38,13 +38,19 @@ enum EgressAction {
     Allowed,
 }
 
+// Both of these tables carry a single, argument-free action, so an entry that
+// is already present is already correct.  `uplink_set()` and `uplink_clear()`
+// are driven by the link reconciler, which retries them after a failure -
+// including a failure that left one of the two tables already converged - so
+// they have to treat "the entry is how I want it" as success rather than as an
+// error.
 fn set_ingress_uplink(s: &Switch, port: u16) -> DpdResult<()> {
     let match_key = IngressMatchKey { in_port: port };
     let action_data = IngressAction::UplinkPort;
 
     match s.table_entry_add(TableType::UplinkIngress, &match_key, &action_data)
     {
-        Ok(_) => {
+        Ok(_) | Err(DpdError::Switch(AsicError::Exists)) => {
             info!(s.log, "set uplink on {}", port);
             Ok(())
         }
@@ -59,7 +65,7 @@ fn clear_ingress_uplink(s: &Switch, port: u16) -> DpdResult<()> {
     let match_key = IngressMatchKey { in_port: port };
 
     match s.table_entry_del(TableType::UplinkIngress, &match_key) {
-        Ok(_) => {
+        Ok(_) | Err(DpdError::Switch(AsicError::Missing(_))) => {
             info!(s.log, "cleared uplink on {}", port);
             Ok(())
         }
@@ -78,7 +84,7 @@ pub fn uplink_set(s: &Switch, port: u16) -> DpdResult<()> {
     let action_data = EgressAction::Allowed;
 
     match s.table_entry_add(TableType::UplinkEgress, &match_key, &action_data) {
-        Ok(_) => {
+        Ok(_) | Err(DpdError::Switch(AsicError::Exists)) => {
             info!(s.log, "set guest_traffic_allowed on {}", port);
             Ok(())
         }
@@ -99,7 +105,7 @@ pub fn uplink_clear(s: &Switch, port: u16) -> DpdResult<()> {
 
     let match_key = EgressMatchKey { out_port: port };
     match s.table_entry_del(TableType::UplinkEgress, &match_key) {
-        Ok(_) => {
+        Ok(_) | Err(DpdError::Switch(AsicError::Missing(_))) => {
             info!(s.log, "cleared guest_traffic_allowed on {}", port);
             Ok(())
         }
