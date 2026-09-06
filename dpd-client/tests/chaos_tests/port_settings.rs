@@ -1064,7 +1064,8 @@ async fn link_init_recovers_unbounded() -> anyhow::Result<()> {
     let link_id =
         client.link_create(&port_id, &LINK_CREATE).await?.into_inner();
 
-    while !client.link_enabled_get(&port_id, &link_id).await?.into_inner() {
+    while !client.link_get_asic(&port_id, &link_id).await?.into_inner().enabled
+    {
         // This pokes the reconciler and thus speeds up the test.
         client.link_enabled_set(&port_id, &link_id, true).await?;
         self::slow_down().await;

@@ -89,7 +89,20 @@ pub enum DpdError {
     #[error("Tag is required for idempotent validation")]
     MissingTag,
     #[error("Address {addr} exists, but it is owned by another tag: {tag}")]
-    AddrTagConflict { addr: IpAddr, tag: String },
+    AddrTagConflict {
+        addr: IpAddr,
+        /// The tag that currently owns the address.
+        tag: String,
+    },
+    #[error("Address {addr} is already in use elsewhere: {owner:?}")]
+    AddrOwnerConflict { addr: IpAddr, owner: crate::addr::AsicAddrOwner },
+    #[error(
+        "These IP addresses belonging to {owner:?} could not be deleted: {addrs:?}"
+    )]
+    AddrClear {
+        owner: crate::addr::AsicAddrOwner,
+        addrs: Vec<(IpAddr, DpdError)>,
+    },
 }
 
 impl From<smf::ScfError> for DpdError {
@@ -289,13 +302,34 @@ impl convert::From<DpdError> for dropshot::HttpError {
             e @ DpdError::MissingTag => {
                 dropshot::HttpError::for_bad_request(None, format!("{e}"))
             }
-            e @ DpdError::AddrTagConflict { .. } => dropshot::HttpError {
+            e @ (DpdError::AddrTagConflict { .. }
+            | DpdError::AddrOwnerConflict { .. }) => dropshot::HttpError {
                 status_code: dropshot::ErrorStatusCode::CONFLICT,
                 error_code: None,
                 internal_message: e.to_string(),
                 external_message: e.to_string(),
                 headers: None,
             },
+            e @ DpdError::AddrClear { .. } => {
+                let msg = e.to_string();
+                let DpdError::AddrClear { addrs, .. } = e else {
+                    unreachable!();
+                };
+                addrs
+                    .into_iter()
+                    .next()
+                    .map(|(_, e)| dropshot::HttpError {
+                        internal_message: msg.clone(),
+                        external_message: msg,
+                        ..dropshot::HttpError::from(e)
+                    })
+                    .unwrap_or_else(|| {
+                        dropshot::HttpError::for_internal_error(
+                            "AddrClear error group contained no errors"
+                                .to_string(),
+                        )
+                    })
+            }
         }
     }
 }
