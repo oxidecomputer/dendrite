@@ -1050,6 +1050,7 @@ async fn link_init_recovers() -> anyhow::Result<()> {
     .context("Test timed out. DPD is probably wedged due to a bug.")?
 }
 
+#[cfg(feature = "multicast")]
 async fn link_init_recovers_unbounded() -> anyhow::Result<()> {
     let conf = AsicConfig {
         radix: TESTING_RADIX,

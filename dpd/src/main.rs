@@ -35,6 +35,7 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::time::Duration;
 use tokio::time::sleep;
 
+use crate::loopback::Loopback;
 use crate::macaddrs::BaseMac;
 use crate::port_map::SidecarRevision;
 use crate::rpw::WorkflowServer;
@@ -54,6 +55,7 @@ cfg_if::cfg_if! {
     }
 }
 
+mod addr;
 mod api_server;
 mod arp;
 mod attached_subnet;
@@ -195,7 +197,7 @@ pub struct Switch {
     pub arp: Mutex<arp::ArpData>,
     pub nat: nat::Nat,
     pub attached_subnet: Mutex<attached_subnet::AttachedSubnetData>,
-    pub loopback: Mutex<loopback::LoopbackData>,
+    pub loopback: Loopback,
     pub identifiers: Mutex<Option<SwitchIdentifiers>>,
     pub oximeter_producer: Mutex<Option<oximeter_producer::Server>>,
     pub oximeter_meta: Mutex<Option<OximeterMetadata>>,
@@ -310,7 +312,7 @@ impl Switch {
             arp: Mutex::new(arp::init()),
             nat: nat::Nat::new(),
             attached_subnet: Mutex::new(attached_subnet::init()),
-            loopback: Mutex::new(loopback::init()),
+            loopback: Loopback::default(),
             switch_ports,
             identifiers: Mutex::new(None),
             oximeter_producer: Mutex::new(None),
@@ -382,6 +384,28 @@ impl Switch {
         })
     }
 
+    /// Calls [`Self::table_entry_add`].
+    /// If add fails due to conflict, tries [`Self::table_entry_update`].
+    /// Returns err if the first failure is fatal or both calls fail.
+    pub fn table_entry_set<M: MatchParse + Hash, A: ActionParse>(
+        &self,
+        table_type: TableType,
+        key: &M,
+        data: &A,
+    ) -> DpdResult<()> {
+        match self.table_entry_add(table_type, key, data) {
+            Err(DpdError::Switch(AsicError::Exists)) => {
+                self.table_entry_update(table_type, key, data)
+            }
+            Err(full @ DpdError::TableFull(_)) => {
+                // If the table is full and this key does not exist,
+                // a "does not exist" error is just distracting.
+                self.table_entry_update(table_type, key, data).map_err(|_| full)
+            }
+            other => other,
+        }
+    }
+
     /// Delete a single table entry.
     pub fn table_entry_del<M: MatchParse + Hash>(
         &self,
@@ -396,6 +420,21 @@ impl Switch {
             );
             e
         })
+    }
+
+    /// A variant of [`Self::table_entry_del`] that returns Ok
+    /// if the deleted resource already does not exist.
+    pub fn table_entry_clear<M: MatchParse + Hash>(
+        &self,
+        table_type: TableType,
+        key: &M,
+    ) -> DpdResult<()> {
+        let maybe_deleted = self.table_entry_del(table_type, key);
+        if matches!(maybe_deleted, Err(DpdError::Switch(AsicError::Missing(_))))
+        {
+            return Ok(());
+        }
+        maybe_deleted
     }
 
     /// Fetch all of the entries in a P4 table and return them
