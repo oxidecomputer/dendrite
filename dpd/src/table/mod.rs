@@ -170,7 +170,7 @@ impl Table {
                 e.into()
             })
             .map(|()| {
-                self.usage.occupancy -= 1;
+                self.usage.occupancy = self.usage.occupancy.saturating_sub(1);
                 self.usage.deletes += 1;
             })
     }

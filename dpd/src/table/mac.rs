@@ -37,7 +37,7 @@ fn mac_set_common(
     let match_key = MacMatchKey { port };
     let action_data = MacAction::Rewrite { mac };
 
-    match s.table_entry_add(type_, &match_key, &action_data) {
+    match s.table_entry_set(type_, &match_key, &action_data) {
         Ok(_) => {
             info!(s.log, "set mac on {port} in table {type_}: {mac}",);
             Ok(())
@@ -55,7 +55,7 @@ fn mac_set_common(
 fn mac_clear_common(s: &Switch, type_: TableType, port: u16) -> DpdResult<()> {
     let match_key = MacMatchKey { port };
 
-    match s.table_entry_del(type_, &match_key) {
+    match s.table_entry_clear(type_, &match_key) {
         Ok(_) => {
             info!(s.log, "cleared mac on {port} in table {type_}",);
             Ok(())
@@ -68,8 +68,6 @@ fn mac_clear_common(s: &Switch, type_: TableType, port: u16) -> DpdResult<()> {
 }
 
 /// Add a new entry to the MAC table.
-///
-/// An error is returned if the entry already exists. Use `mac_update` instead.
 pub fn mac_set(s: &Switch, port: u16, mac: MacAddr) -> DpdResult<()> {
     mac_set_common(s, TableType::PortMacAddress, port, mac)
 }
@@ -100,8 +98,6 @@ pub fn reset(s: &Switch) -> DpdResult<()> {
 }
 
 /// Add a new entry to the MAC table.
-///
-/// An error is returned if the entry already exists. Use `mac_update` instead.
 #[cfg(feature = "multicast")]
 pub fn mcast_mac_set(s: &Switch, port: u16, mac: MacAddr) -> DpdResult<()> {
     mac_set_common(s, TableType::PortMacAddressMcast, port, mac)
