@@ -1,0 +1,15 @@
+Port ID    rear0
+Link ID    0
+Port/Link  rear0/0
+Connector  30
+ASIC ID    432
+Media      None
+Enabled    true
+KR         false
+Autoneg    false
+PRBS       Mission
+State      ConfigError(configuring link in the switch asic: Missing("Must specify FEC for unrecognized transceiver"))
+Speed      100G
+FEC        Unspecified
+MAC        a8:40:25:00:00:03
+Ipv6       true

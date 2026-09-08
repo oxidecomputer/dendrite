@@ -29,6 +29,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (14, LINK_GET_ASIC),
     (13, ALLOW_DDM_TRAFFIC),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
@@ -766,6 +767,25 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<v1::link::LinkView>, HttpError> {
         Self::link_get(rqctx, path).await.map(|resp| resp.map(Into::into))
     }
+
+    /// Two copies of settings exist for a link:
+    ///
+    /// (1) The settings a link is configured to use.
+    /// (2) The settings the asic is currently using.
+    ///
+    /// These should usually be the same, but they may diverge
+    /// during asic read/write failures. In such cases, it's
+    /// helpful to inspect differences. `link_get` serves (1),
+    /// and this route serves (2).
+    #[endpoint {
+        method = GET,
+        versions = VERSION_LINK_GET_ASIC..,
+        path = "/ports/{port_id}/links/{link_id}/asic"
+    }]
+    async fn link_get_asic(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkPath>,
+    ) -> Result<HttpResponseOk<latest::link::LinkView>, HttpError>;
 
     /// Delete a link from a switch port.
     #[endpoint {

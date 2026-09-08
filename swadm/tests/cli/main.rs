@@ -5,6 +5,8 @@
 // Copyright 2026 Oxide Computer Company
 
 mod cmd;
+mod common;
 mod counters;
 mod link_apply;
+mod link_get;
 mod tx_eq;

@@ -291,6 +291,11 @@ pub enum Link {
         /// printed.
         #[clap(long)]
         list_fields: bool,
+        /// Print what configuration dpd has successfully written to the asic.
+        /// This overrides the default behavior of printing what configuration
+        /// dpd has received and will reconcile the asic toward.
+        #[clap(long)]
+        asic: bool,
     },
 
     /// List all links on a switch port.
@@ -1680,16 +1685,20 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
             fields,
             sep,
             list_fields,
+            asic,
         } => {
             if list_fields {
                 print_link_fields();
                 return Ok(());
             }
-            let link = client
-                .link_get(&port_id, &link_id)
-                .await
-                .context("failed to get link")?
-                .into_inner();
+
+            let maybe_link = if asic {
+                client.link_get_asic(&port_id, &link_id).await
+            } else {
+                client.link_get(&port_id, &link_id).await
+            };
+            let link = maybe_link.context("failed to get link")?.into_inner();
+
             if parseable {
                 let fields =
                     fields.as_deref().unwrap_or(DEFAULT_PARSEABLE_FIELDS);

@@ -4,11 +4,11 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use anyhow::bail;
 use serial_test::serial;
 
 use crate::cmd;
 use crate::cmd::re;
+use crate::common;
 
 const LINK: &str = "rear0/0";
 
@@ -21,7 +21,7 @@ const LINK: &str = "rear0/0";
 fn apply_tx_eq_all() -> anyhow::Result<()> {
     const VAL: i32 = -1;
 
-    self::delete_link(LINK)?;
+    common::delete_link(LINK)?;
 
     // See tx_eq tests for an output example.
     cmd::swadm(format!(
@@ -48,7 +48,7 @@ fn apply_tx_eq_all() -> anyhow::Result<()> {
 #[serial]
 #[ignore]
 fn apply_tx_eq_custom() -> anyhow::Result<()> {
-    self::delete_link(LINK)?;
+    common::delete_link(LINK)?;
 
     cmd::swadm(format!(
         "link apply
@@ -87,24 +87,4 @@ fn tx_eq_exclusive() -> anyhow::Result<()> {
     .try_into()?;
 
     out.try_expectorate("link_apply_tx_eq_exclusive.txt")
-}
-
-/// Calls `swadm link delete` and loops until seeing a 404.
-///
-/// Returns error if the link isn't removed before timeout.
-pub fn delete_link(link: &str) -> anyhow::Result<()> {
-    // This will fail if the link is already gone, which is fine.
-    let _ = cmd::swadm(format!("link delete {link}"));
-
-    cmd::retry(|| {
-        let e = match cmd::swadm(format!("link get {link}")) {
-            Ok(got) => bail!("Get cmd on deleted link should fail: {got:?}"),
-            Err(e) => e,
-        };
-
-        cmd::Output::try_from(e)?
-            // Remove headers with UUID and timestamp
-            .trunc_at("headers:")
-            .try_expectorate("delete_link_404.txt")
-    })
 }

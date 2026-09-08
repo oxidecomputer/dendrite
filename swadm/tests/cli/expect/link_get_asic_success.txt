@@ -1,0 +1,15 @@
+Port ID    rear0
+Link ID    0
+Port/Link  rear0/0
+Connector  30
+ASIC ID    432
+Media      Unknown
+Enabled    true
+KR         false
+Autoneg    false
+PRBS       Mission
+State      Up
+Speed      100G
+FEC        RS
+MAC        a8:40:25:00:00:03
+Ipv6       true
