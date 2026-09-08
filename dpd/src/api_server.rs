@@ -860,10 +860,30 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseOk<LinkView>, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
-        switch
-            .get_link(path.port_id, path.link_id)
-            .map(HttpResponseOk)
-            .map_err(|e| e.into())
+
+        let link = switch
+            .get_link_lock(path.port_id, path.link_id)?
+            .lock()
+            .unwrap()
+            .view_configured();
+
+        Ok(HttpResponseOk(link))
+    }
+
+    async fn link_get_asic(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<LinkPath>,
+    ) -> Result<HttpResponseOk<LinkView>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let path = path.into_inner();
+
+        let link = switch
+            .get_link_lock(path.port_id, path.link_id)?
+            .lock()
+            .unwrap()
+            .view_asic();
+
+        Ok(HttpResponseOk(link?))
     }
 
     async fn link_delete(

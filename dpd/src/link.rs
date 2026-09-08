@@ -256,35 +256,6 @@ pub struct Link {
     pub(crate) plumbed: LinkPlumbed,
 }
 
-impl From<&Link> for LinkView {
-    fn from(m: &Link) -> Self {
-        Self {
-            port_id: m.port_id,
-            link_id: m.link_id,
-            tofino_connector: m.port_hdl.connector.as_u16(),
-            asic_id: m.asic_port_id,
-            presence: m.presence,
-            fsm_state: m.fsm_state.to_string(),
-            media: m.media,
-            link_state: m.link_state.clone(),
-            ipv6_enabled: m.ipv6_enabled,
-            enabled: m.config.enabled,
-            prbs: m.config.prbs,
-            speed: m.config.speed,
-            fec: m.get_fec(),
-            kr: m.config.kr,
-            autoneg: m.config.autoneg,
-            address: m.config.mac,
-        }
-    }
-}
-
-impl From<Link> for LinkView {
-    fn from(m: crate::link::Link) -> Self {
-        Self::from(&m)
-    }
-}
-
 impl From<&Link> for TfportData {
     fn from(m: &Link) -> Self {
         Self {
@@ -505,6 +476,54 @@ impl Link {
             self.config.fec
         }
     }
+
+    /// Creates a serializable representation of this link's settings.
+    ///
+    /// Returns what config the link has received and is actively
+    /// reconciling towards.
+    pub fn view_configured(&self) -> LinkView {
+        LinkView {
+            port_id: self.port_id,
+            link_id: self.link_id,
+            tofino_connector: self.port_hdl.connector.as_u16(),
+            asic_id: self.asic_port_id,
+            presence: self.presence,
+            fsm_state: self.fsm_state.to_string(),
+            media: self.media,
+            link_state: self.link_state.clone(),
+            ipv6_enabled: self.ipv6_enabled,
+            enabled: self.config.enabled,
+            prbs: self.config.prbs,
+            speed: self.config.speed,
+            fec: self.get_fec(),
+            kr: self.config.kr,
+            autoneg: self.config.autoneg,
+            address: self.config.mac,
+        }
+    }
+
+    /// Variant of [`Self::view_configured`] that returns what config
+    /// has been successfully written to the asic.
+    pub fn view_asic(&self) -> DpdResult<LinkView> {
+        if !self.plumbed.link_created {
+            return Err(DpdError::Missing(format!(
+                "Link declaration {:?}/{:?} has been received, but the switch has not yet confirmed its creation",
+                self.port_id, self.link_id
+            )));
+        }
+
+        Ok(LinkView {
+            kr: self.plumbed.kr,
+            autoneg: self.plumbed.autoneg,
+            speed: self.plumbed.speed,
+            fec: Some(self.plumbed.fec),
+            enabled: self.plumbed.enabled,
+            prbs: self.plumbed.prbs,
+            // Should probably make this field an Option.
+            address: self.plumbed.mac.unwrap_or(MacAddr::ZERO),
+            ..self.view_configured()
+        })
+    }
 }
 
 fn from_aal_ber(value: aal::Ber) -> Ber {
@@ -624,17 +643,6 @@ impl Switch {
         Ok(link_id)
     }
 
-    /// Return link with the given IDs, if it exists.
-    pub fn get_link(
-        &self,
-        port_id: PortId,
-        link_id: LinkId,
-    ) -> DpdResult<LinkView> {
-        let link_lock = self.get_link_lock(port_id, link_id)?;
-        let link = LinkView::from(&*link_lock.lock().unwrap());
-        Ok(link)
-    }
-
     /// List all links on the given switch port.
     pub fn list_links(&self, port_id: PortId) -> DpdResult<Vec<LinkView>> {
         self.switch_ports.verify_exists(port_id)?;
@@ -643,7 +651,7 @@ impl Switch {
         let mut all = Vec::new();
         for ((p_id, _), link_lock) in links.0.iter() {
             if *p_id == port_id {
-                all.push(LinkView::from(&*link_lock.lock().unwrap()))
+                all.push(Link::view_configured(&link_lock.lock().unwrap()));
             }
         }
         Ok(all)
