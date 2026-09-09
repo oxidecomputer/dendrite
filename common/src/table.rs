@@ -131,7 +131,7 @@ impl fmt::Display for TableType {
                 TableType::UplinkIngress =>
                     "Ingress.filter.uplink_ports".to_string(),
                 TableType::UplinkEgress =>
-                    "Ingress.egress_filter.egress_filter".to_string(),
+                    "Egress.egress_filter.egress_filter".to_string(),
                 TableType::AttachedSubnetIpv4 => {
                     "Ingress.attached_subnet_ingress.attached_subnets_v4"
                         .to_string()
@@ -205,9 +205,7 @@ impl TryFrom<&str> for TableType {
             "ingress.nat_ingress.ingress_ipv4" => Ok(TableType::NatIngressIpv4),
             "ingress.nat_ingress.ingress_ipv6" => Ok(TableType::NatIngressIpv6),
             "ingress.filter.uplink_ports" => Ok(TableType::UplinkIngress),
-            "ingress.egress_filter.egress_filter" => {
-                Ok(TableType::UplinkEgress)
-            }
+            "egress.egress_filter.egress_filter" => Ok(TableType::UplinkEgress),
             "ingress.attached_subnet_ingress.attached_subnets_v4" => {
                 Ok(TableType::AttachedSubnetIpv4)
             }

@@ -55,6 +55,8 @@ parser IngressParser(
 
 		meta.bridge_hdr.setValid();
 		meta.bridge_hdr.ingress_port = ig_intr_md.ingress_port;
+		meta.bridge_hdr.nat_egress_hit = false;
+		meta.bridge_hdr.reserved = 0;
 
 		transition port_metadata;
 	}
@@ -246,8 +248,8 @@ parser IngressParser(
 		});
 
 		transition select(hdr.ipv6.dst_addr[127:112]) {
-			16w0xff01: drop_interface_local_mcast;
-			16w0xff02: set_link_local_mcast;
+			IPV6_INTERFACE_LOCAL_16: drop_interface_local_mcast;
+			IPV6_LINK_LOCAL_16: set_link_local_mcast;
 			default: check_ipv6_mcast;
 		}
 	}
@@ -538,7 +540,6 @@ parser EgressParser(
 
 	state meta_init {
 		meta.drop_reason = 0;
-		meta.bridge_hdr.setInvalid();
 
 		meta.decap_ports_0 = 0;
 		meta.decap_ports_1 = 0;
@@ -561,9 +562,11 @@ parser EgressParser(
 	state parse_bridge_hdr {
 		pkt.extract(bridge_hdr);
 		meta.bridge_hdr = bridge_hdr;
-		meta.bridge_hdr.setValid();
 
-		transition parse_ethernet;
+		transition select(bridge_hdr.nat_egress_hit) {
+			true: accept;
+			default: parse_ethernet;
+		}
 	}
 
 	state parse_ethernet {
@@ -591,8 +594,6 @@ parser EgressParser(
 		pkt.extract(hdr.ipv4);
 
 		transition select(hdr.ipv4.protocol) {
-			IPPROTO_ICMP: parse_icmp;
-			IPPROTO_TCP: parse_tcp;
 			IPPROTO_UDP: parse_udp;
 			default: accept;
 		}
@@ -602,22 +603,9 @@ parser EgressParser(
 		pkt.extract(hdr.ipv6);
 
 		transition select(hdr.ipv6.next_hdr) {
-			IPPROTO_TCP: parse_tcp;
 			IPPROTO_UDP: parse_udp;
 			default: accept;
 		}
-	}
-
-	state parse_icmp {
-		pkt.extract(hdr.icmp);
-
-		transition accept;
-	}
-
-	state parse_tcp {
-		pkt.extract<tcp_h>(_);
-
-		transition accept;
 	}
 
 	state parse_udp {

@@ -48,7 +48,7 @@ fn table_name(type_: TableType) -> &'static str {
         TableType::NatIngressIpv4 => "pipe.Ingress.nat_ingress.ingress_ipv4",
         TableType::NatIngressIpv6 => "pipe.Ingress.nat_ingress.ingress_ipv6",
         TableType::UplinkIngress => "pipe.Ingress.filter.uplink_ports",
-        TableType::UplinkEgress => "pipe.Ingress.egress_filter.egress_filter",
+        TableType::UplinkEgress => "pipe.Egress.egress_filter.egress_filter",
         TableType::AttachedSubnetIpv4 => {
             "pipe.Ingress.attached_subnet_ingress.attached_subnets_v4"
         }

@@ -32,17 +32,17 @@ use crate::integration_tests::common::prelude::*;
 // oximeter, which will let this test query dpd for the table size rather than
 // hardcoding it below.
 //
-// The LPM tables are packed using a cuckoo hash algorithm. The conflict
-// resolution approach can result in some slots not being available for some
-// patterns of entries. Exactly which tables and which entries are unavailable
-// can change depending on table layout on the ASIC. All of this means that it
-// is normal for these table sizes to change slightly after updating the P4
-// code. If the table size appears to change dramatically, that's worth
-// investigating. If it only changes by an entry or two, it's fine to just
-// adjust the constant below to match the observed result.
-//
+// LPM lookups live in TCAM, placing entries without hash conflicts.
+// The exact-match index->target tables behind them are cuckoo-managed SRAM
+// (see pipe_mgr/cuckoo_move.h in p4lang/open-p4studio). Without enough
+// hash ways, cuckoo conflicts can cap capacity a few % below what's
+// declared. The @ways(8) annotation on those route tables helps us reach full
+// occupancy on this build. It is normal for these sizes to change slightly
+// after updating the P4 code. If the table size appears to change
+// dramatically, that's worth investigating. If it only changes by an
+// entry or two, it's fine to just adjust the constant below to match the
+// observed result.
 const IPV4_LPM_SIZE: usize = 8191; // ipv4 forwarding table
-
 const IPV6_LPM_SIZE: usize = 8191; // ipv6 forwarding table
 
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports

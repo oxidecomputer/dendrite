@@ -167,8 +167,6 @@ pub fn build(
     if let Some(s) = stages {
         args.push(format!("--num-stages-override={s}"));
     }
-    args.push("-D".to_string());
-    args.push("MULTICAST".to_string());
     args.push(app_path);
     println!("op: {args:?}");
 
