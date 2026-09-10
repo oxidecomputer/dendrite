@@ -29,6 +29,7 @@ struct sidecar_ingress_meta_t {
 	ipv6_addr_t nexthop_ipv6;	// ip address of next router
 	bit<10> pkt_type;
 	bit<8> drop_reason;		// reason a packet was dropped
+	bit<8> router_id;		// routing table selector (0 = default)
 	bit<16> l4_src_port;		// tcp or udp destination port
 	bit<16> l4_dst_port;		// tcp or udp destination port
 	ipv6_addr_t nat_ingress_tgt;	// target address for NAT ingress

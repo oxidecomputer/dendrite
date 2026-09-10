@@ -43,6 +43,9 @@ pub enum Addr {
         link: LinkName,
         /// The IP address to add.
         addr: IpAddr,
+        /// Claim a loopback IPv6 address for the given router (0 = default).
+        #[clap(long, default_value_t = 0)]
+        router_id: u8,
     },
     /// Delete an IP address from a link.
     Del {
@@ -50,6 +53,9 @@ pub enum Addr {
         link: LinkName,
         /// The IP address to delete.
         addr: IpAddr,
+        /// Owner of a loopback IPv6 address (0 = default).
+        #[clap(long, default_value_t = 0)]
+        router_id: u8,
     },
 }
 
@@ -362,6 +368,7 @@ async fn addr_add(
 async fn addr_add_loopback(
     client: &Client,
     addr: IpAddr,
+    router_id: u8,
 ) -> anyhow::Result<()> {
     match addr {
         IpAddr::V4(addr) => {
@@ -375,7 +382,7 @@ async fn addr_add_loopback(
         IpAddr::V6(addr) => {
             let entry = client.ipv6_entry(addr);
             client
-                .loopback_ipv6_create(&entry)
+                .router_loopback_ipv6_create(router_id, &entry)
                 .await
                 .context("failed to add IPv6 address")
                 .map(|_| ())
@@ -405,6 +412,7 @@ async fn addr_del(
 async fn addr_del_loopback(
     client: &Client,
     addr: IpAddr,
+    router_id: u8,
 ) -> anyhow::Result<()> {
     match addr {
         IpAddr::V4(addr) => client
@@ -413,7 +421,7 @@ async fn addr_del_loopback(
             .context("failed to delete IPv4 address")
             .map(|_| ()),
         IpAddr::V6(addr) => client
-            .loopback_ipv6_delete(&addr)
+            .router_loopback_ipv6_delete(router_id, &addr)
             .await
             .context("failed to delete IPv6 address")
             .map(|_| ()),
@@ -425,12 +433,16 @@ pub async fn addr_cmd(client: &Client, a: Addr) -> anyhow::Result<()> {
         Addr::List { ipv4, ipv6, parseable, link } => {
             addr_list(client, ipv4, ipv6, parseable, link).await
         }
-        Addr::Add { link, addr } => match &link {
-            LinkName::Loopback => addr_add_loopback(client, addr).await,
+        Addr::Add { link, addr, router_id } => match &link {
+            LinkName::Loopback => {
+                addr_add_loopback(client, addr, router_id).await
+            }
             LinkName::Link(l) => addr_add(client, l, addr).await,
         },
-        Addr::Del { link, addr } => match &link {
-            LinkName::Loopback => addr_del_loopback(client, addr).await,
+        Addr::Del { link, addr, router_id } => match &link {
+            LinkName::Loopback => {
+                addr_del_loopback(client, addr, router_id).await
+            }
             LinkName::Link(l) => addr_del(client, l, addr).await,
         },
     }

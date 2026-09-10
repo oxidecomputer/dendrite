@@ -50,6 +50,7 @@ parser IngressParser(
 		meta.orig_dst_ipv4 = 0;
 		meta.pkt_type = 0;
 		meta.drop_reason = 0;
+		meta.router_id = 0;
 		meta.nat_ingress_csum = 0;
 		meta.resolve_nexthop = false;
 
