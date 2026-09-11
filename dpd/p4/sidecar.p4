@@ -922,12 +922,12 @@ control RouterLookupIndex6(
 	 * test to pass.  We want the lookup and forward tables to have the same
 	 * capacity from dpd's perspective, and the "default" entry consumes a
 	 * slot in the lookup table.
-     *
-     * Note: we annotate @ways here, increasing cuckoo placement choices to 8
-     * candidate buckets per key. Full occupancy of the route-target table
-     * is a measured result for this build, not a compiler guarantee.
-     *
-     * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/common/pragma/pragmas.cpp#L1172-L1183.
+	 *
+	 * Note: we annotate @ways here, increasing cuckoo placement choices to 8
+	 * candidate buckets per key. Full occupancy of the route-target table
+	 * is a measured result for this build, not a compiler guarantee.
+	 *
+	 * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/common/pragma/pragmas.cpp#L1172-L1183.
 	 */
 	@ways(8)
 	table route {
@@ -1050,12 +1050,12 @@ control RouterLookupIndex4(
 	 * test to pass.  We want the lookup and forward tables to have the same
 	 * capacity from dpd's perspective, and the "default" entry consumes a
 	 * slot in the lookup table.
-     *
-     * Note: we annotate @ways here, increasing cuckoo placement choices to 8
-     * candidate buckets per key. Full occupancy of the route-target table
-     * is a measured result for this build, not a compiler guarantee.
-     *
-     * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/common/pragma/pragmas.cpp#L1172-L1183.
+	 *
+	 * Note: we annotate @ways here, increasing cuckoo placement choices to 8
+	 * candidate buckets per key. Full occupancy of the route-target table
+	 * is a measured result for this build, not a compiler guarantee.
+	 *
+	 * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/common/pragma/pragmas.cpp#L1172-L1183.
 	 */
 	@ways(8)
 	table route {

@@ -1934,10 +1934,7 @@ impl DpdApi for DpdApiImpl {
         _rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<String>>, HttpError> {
         Ok(HttpResponseOk(
-            counters::get_counter_ids()
-                .iter()
-                .map(|id| id.to_string())
-                .collect(),
+            counters::COUNTER_IDS.iter().map(|id| id.to_string()).collect(),
         ))
     }
 

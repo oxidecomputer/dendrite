@@ -106,8 +106,7 @@ cargo test \
     --no-fail-fast \
     $TESTNAME \
     -- \
-    --ignored \
-    --skip succeeds_when_table_fragmented
+    --ignored
 
 popd
 
