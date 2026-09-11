@@ -23,7 +23,7 @@ use aal::MatchParse;
 use aal_macros::*;
 use asic::Handle;
 use common::counters::CounterId;
-use common::counters::MulticastCounterId;
+use common::counters::EgressCounterId;
 use common::table::TableType;
 
 use anyhow::Context;
@@ -45,24 +45,22 @@ pub struct Counter {
     table: table::Table,
 }
 
-pub fn get_counter_ids() -> Vec<CounterId> {
-    vec![
-        CounterId::Service,
-        CounterId::Ingress,
-        CounterId::Egress,
-        CounterId::Packet,
-        CounterId::DropPort,
-        CounterId::DropReason,
-        CounterId::Multicast(MulticastCounterId::EgressDropPort),
-        CounterId::Multicast(MulticastCounterId::EgressDropReason),
-        CounterId::Multicast(MulticastCounterId::Unicast),
-        CounterId::Multicast(MulticastCounterId::Multicast),
-        CounterId::Multicast(MulticastCounterId::MulticastExt),
-        CounterId::Multicast(MulticastCounterId::MulticastLL),
-        CounterId::Multicast(MulticastCounterId::MulticastUL),
-        CounterId::Multicast(MulticastCounterId::MulticastDrop),
-    ]
-}
+pub const COUNTER_IDS: &[CounterId] = &[
+    CounterId::Service,
+    CounterId::Ingress,
+    CounterId::Egress,
+    CounterId::Packet,
+    CounterId::DropPort,
+    CounterId::DropReason,
+    CounterId::EgressPipeline(EgressCounterId::DropPort),
+    CounterId::EgressPipeline(EgressCounterId::DropReason),
+    CounterId::EgressPipeline(EgressCounterId::Unicast),
+    CounterId::EgressPipeline(EgressCounterId::Multicast),
+    CounterId::EgressPipeline(EgressCounterId::MulticastExt),
+    CounterId::EgressPipeline(EgressCounterId::MulticastLL),
+    CounterId::EgressPipeline(EgressCounterId::MulticastUL),
+    CounterId::EgressPipeline(EgressCounterId::MulticastDrop),
+];
 
 /// Fetch a counter by name from the switch's list of counters.  This call
 /// returns a pointer to the mutex that controls access to the counter, and the
@@ -316,16 +314,16 @@ pub async fn get_values(
                 port_label(switch, idx.idx).await
             }
             CounterId::DropReason => reason_label(idx.idx as u8)?,
-            CounterId::Multicast(MulticastCounterId::EgressDropPort)
-            | CounterId::Multicast(MulticastCounterId::Unicast)
-            | CounterId::Multicast(MulticastCounterId::Multicast)
-            | CounterId::Multicast(MulticastCounterId::MulticastExt)
-            | CounterId::Multicast(MulticastCounterId::MulticastLL)
-            | CounterId::Multicast(MulticastCounterId::MulticastUL)
-            | CounterId::Multicast(MulticastCounterId::MulticastDrop) => {
+            CounterId::EgressPipeline(EgressCounterId::DropPort)
+            | CounterId::EgressPipeline(EgressCounterId::Unicast)
+            | CounterId::EgressPipeline(EgressCounterId::Multicast)
+            | CounterId::EgressPipeline(EgressCounterId::MulticastExt)
+            | CounterId::EgressPipeline(EgressCounterId::MulticastLL)
+            | CounterId::EgressPipeline(EgressCounterId::MulticastUL)
+            | CounterId::EgressPipeline(EgressCounterId::MulticastDrop) => {
                 port_label(switch, idx.idx).await
             }
-            CounterId::Multicast(MulticastCounterId::EgressDropReason) => {
+            CounterId::EgressPipeline(EgressCounterId::DropReason) => {
                 reason_label(idx.idx as u8)?
             }
         };
@@ -363,7 +361,7 @@ pub fn init(
 ) -> anyhow::Result<BTreeMap<CounterId, Mutex<Counter>>> {
     let mut counters = BTreeMap::new();
 
-    for id in get_counter_ids() {
+    for &id in COUNTER_IDS {
         let name = id.to_string();
         counters.insert(
             id,

@@ -33,7 +33,7 @@ pub enum CounterId {
     Packet,
     DropPort,
     DropReason,
-    Multicast(MulticastCounterId),
+    EgressPipeline(EgressCounterId),
 }
 
 #[derive(
@@ -48,9 +48,9 @@ pub enum CounterId {
     Serialize,
     Deserialize,
 )]
-pub enum MulticastCounterId {
-    EgressDropPort,
-    EgressDropReason,
+pub enum EgressCounterId {
+    DropPort,
+    DropReason,
     Unicast,
     Multicast,
     MulticastExt,
@@ -71,7 +71,7 @@ impl fmt::Display for CounterId {
                 CounterId::Packet => "Packet".to_string(),
                 CounterId::DropPort => "Ingress_Drop_Port".to_string(),
                 CounterId::DropReason => "Ingress_Drop_Reason".to_string(),
-                CounterId::Multicast(id) => id.to_string(),
+                CounterId::EgressPipeline(id) => id.to_string(),
             }
         )
     }
@@ -89,45 +89,47 @@ impl std::str::FromStr for CounterId {
             "ingressdropport" => Ok(CounterId::DropPort),
             "ingressdropreason" => Ok(CounterId::DropReason),
             "egressdropport" => {
-                Ok(CounterId::Multicast(MulticastCounterId::EgressDropPort))
+                Ok(CounterId::EgressPipeline(EgressCounterId::DropPort))
             }
             "egressdropreason" => {
-                Ok(CounterId::Multicast(MulticastCounterId::EgressDropReason))
+                Ok(CounterId::EgressPipeline(EgressCounterId::DropReason))
             }
-            "unicast" => Ok(CounterId::Multicast(MulticastCounterId::Unicast)),
+            "unicast" => {
+                Ok(CounterId::EgressPipeline(EgressCounterId::Unicast))
+            }
             "multicast" => {
-                Ok(CounterId::Multicast(MulticastCounterId::Multicast))
+                Ok(CounterId::EgressPipeline(EgressCounterId::Multicast))
             }
             "multicastext" | "multicastexternal" => {
-                Ok(CounterId::Multicast(MulticastCounterId::MulticastExt))
+                Ok(CounterId::EgressPipeline(EgressCounterId::MulticastExt))
             }
             "multicastll" | "multicastlinklocal" => {
-                Ok(CounterId::Multicast(MulticastCounterId::MulticastLL))
+                Ok(CounterId::EgressPipeline(EgressCounterId::MulticastLL))
             }
             "multicastul" | "multicastunderlay" => {
-                Ok(CounterId::Multicast(MulticastCounterId::MulticastUL))
+                Ok(CounterId::EgressPipeline(EgressCounterId::MulticastUL))
             }
             "multicastdrop" => {
-                Ok(CounterId::Multicast(MulticastCounterId::MulticastDrop))
+                Ok(CounterId::EgressPipeline(EgressCounterId::MulticastDrop))
             }
             x => Err(format!("No such counter: {x}")),
         }
     }
 }
-impl fmt::Display for MulticastCounterId {
+impl fmt::Display for EgressCounterId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "{}",
             match self {
-                MulticastCounterId::EgressDropPort => "Egress_Drop_Port",
-                MulticastCounterId::EgressDropReason => "Egress_Drop_Reason",
-                MulticastCounterId::Unicast => "Unicast",
-                MulticastCounterId::Multicast => "Multicast",
-                MulticastCounterId::MulticastExt => "Multicast_External",
-                MulticastCounterId::MulticastLL => "Multicast_Link_Local",
-                MulticastCounterId::MulticastUL => "Multicast_Underlay",
-                MulticastCounterId::MulticastDrop => "Multicast_Drop",
+                EgressCounterId::DropPort => "Egress_Drop_Port",
+                EgressCounterId::DropReason => "Egress_Drop_Reason",
+                EgressCounterId::Unicast => "Unicast",
+                EgressCounterId::Multicast => "Multicast",
+                EgressCounterId::MulticastExt => "Multicast_External",
+                EgressCounterId::MulticastLL => "Multicast_Link_Local",
+                EgressCounterId::MulticastUL => "Multicast_Underlay",
+                EgressCounterId::MulticastDrop => "Multicast_Drop",
             }
         )
     }
