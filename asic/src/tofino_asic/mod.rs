@@ -20,7 +20,6 @@ mod genpd;
 #[cfg(feature = "interrupts")]
 pub mod interrupt_monitor;
 mod link_fsm;
-#[cfg(feature = "multicast")]
 pub mod mcast;
 pub mod ports;
 pub mod qsfp;
@@ -30,7 +29,6 @@ pub mod snapshot;
 pub mod stats;
 pub mod table;
 
-#[cfg(feature = "multicast")]
 use aal::AsicMulticastOps;
 use aal::{
     AsicError, AsicOps, AsicResult, Connector, PortHdl, SidecarIdentifiers,
@@ -73,7 +71,6 @@ impl Default for AsicConfig {
     }
 }
 
-#[cfg(feature = "multicast")]
 impl AsicMulticastOps for Handle {
     fn mc_domains(&self) -> Vec<u16> {
         mcast::domains(self)
@@ -330,7 +327,6 @@ pub struct Handle {
     rt: tofino_common::BfRt,
     log: slog::Logger,
     phys_ports: Mutex<ports::PortData>,
-    #[cfg(feature = "multicast")]
     domains: Mutex<std::collections::HashMap<u16, mcast::DomainState>>,
     eth_connector_id: Option<u32>,
 }
@@ -395,28 +391,18 @@ impl Handle {
 
         let p4_dir = tofino_common::get_p4_dir()?;
 
-        #[cfg(feature = "multicast")]
         let mut bf = bf_wrapper::bf_init(
             &log,
             &config.devpath,
             &p4_dir,
             &config.board_rev,
         )?;
-        #[cfg(not(feature = "multicast"))]
-        let bf = bf_wrapper::bf_init(
-            &log,
-            &config.devpath,
-            &p4_dir,
-            &config.board_rev,
-        )?;
-
         let rt = tofino_common::BfRt::init(&p4_dir)?;
         let phys_ports = ports::init(dev_id)?;
         let eth_connector_id = phys_ports.eth_connector_id;
 
         // Note: we assume that bf_mc_init() has been called as part of the
         // bf_switch_init() operation.
-        #[cfg(feature = "multicast")]
         {
             bf.mcast_hdl = mcast::create_session()?;
         }
@@ -429,7 +415,6 @@ impl Handle {
             rt,
             log: log.new(o!("unit" => "tofino_asic")),
             phys_ports: Mutex::new(phys_ports),
-            #[cfg(feature = "multicast")]
             domains: Mutex::new(std::collections::HashMap::new()),
             eth_connector_id,
         })

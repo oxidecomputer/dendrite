@@ -6,24 +6,20 @@
 
 const bit<16> L2_ISOLATED_FLAG = 0x8000;
 
-// TODO: these all need to be bigger. Early experimentation is showing that this
-// is going to need to come either through ATCAM/ALPM or code restructuring.
-const int IPV4_NAT_TABLE_SIZE       = 1024; // nat routing table
-const int IPV6_NAT_TABLE_SIZE       = 1024; // nat routing table
-const int IPV4_LPM_SIZE             = 8192; // ipv4 forwarding table
-#ifdef MULTICAST
-const int IPV6_LPM_SIZE             = 1024; // ipv6 forwarding table
-#else
-const int IPV6_LPM_SIZE             = 8192; // ipv6 forwarding table
-#endif
-const int IPV4_ARP_SIZE             = 512;  // arp cache
-const int IPV6_NEIGHBOR_SIZE        = 512;  // ipv6 neighbor cache
-const int SWITCH_IPV4_ADDRS_SIZE    = 512;  // ipv4 addrs assigned to our ports
-const int SWITCH_IPV6_ADDRS_SIZE    = 512;  // ipv6 addrs assigned to our ports
-const int IPV4_MULTICAST_TABLE_SIZE = 1024; // multicast routing table(s) for IPv4
-const int IPV6_MULTICAST_TABLE_SIZE = 1024; // multicast routing table(s) for IPv6
-const int ATTACHED_SUBNETS_V4_SIZE  = 512;  // external subnets mapped to instances
-const int ATTACHED_SUBNETS_V6_SIZE  = 512;  // external subnets mapped to instances
+const int IPV4_NAT_TABLE_SIZE           = 1024; // nat routing table
+const int IPV6_NAT_TABLE_SIZE           = 1024; // nat routing table
+const int IPV4_LPM_SIZE                 = 8192; // ipv4 forwarding table
+const int IPV6_LPM_SIZE                 = 8192; // ipv6 forwarding table
+const int IPV4_ARP_SIZE                 =  512; // arp cache
+const int IPV6_NEIGHBOR_SIZE            =  512; // ipv6 neighbor cache
+const int SWITCH_IPV4_ADDRS_SIZE        =  512; // ipv4 addrs assigned to our ports
+const int SWITCH_IPV6_ADDRS_SIZE        =  512; // ipv6 addrs assigned to our ports
+const int IPV4_MULTICAST_TABLE_SIZE     = 1024; // multicast routing table(s) for IPv4
+const int IPV6_MULTICAST_TABLE_SIZE     = 1024; // multicast routing table(s) for IPv6
+const int MCAST_SOURCE_FILTER_IPV4_SIZE = 1024; // source filter size for IPv4
+const int MCAST_SOURCE_FILTER_IPV6_SIZE = 1024; // source filter size for IPv6
+const int ATTACHED_SUBNETS_V4_SIZE      =  512; // external subnets mapped to instances
+const int ATTACHED_SUBNETS_V6_SIZE      =  512; // external subnets mapped to instances
 
 const bit<8> SC_FWD_FROM_USERSPACE  = 0x00;
 const bit<8> SC_FWD_TO_USERSPACE    = 0x01;
@@ -59,6 +55,9 @@ const bit<32> SVC_COUNTER_MAX = 7;
 const bit<2> MULTICAST_TAG_EXTERNAL = 0;
 const bit<2> MULTICAST_TAG_UNDERLAY = 1;
 const bit<2> MULTICAST_TAG_UNDERLAY_EXTERNAL = 2;
+
+const bit<16> IPV6_INTERFACE_LOCAL_16 = 0xff01;   // ff01::/16
+const bit<16> IPV6_LINK_LOCAL_16 = 0xff02;        // ff02::/16
 
 /* IPv6 Address Mask and Pattern Constants */
 // Reserved underlay multicast subnet (ff04::/64). This /64 within admin-local
@@ -97,4 +96,3 @@ const bit<8> DROP_GENEVE_OPTION_UNKNOWN         = 0x1A;
 const bit<8> DROP_SCTP                          = 0x1B;
 // MAX(DROP_xxx) + 1
 const bit<32> DROP_REASON_MAX                   = 0x1C;
-

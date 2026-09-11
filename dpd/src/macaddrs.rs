@@ -24,7 +24,6 @@ use common::ports::PortId;
 cfg_if::cfg_if! {
     if #[cfg(feature = "tofino_asic")] {
         use std::convert::TryFrom;
-        #[cfg(feature = "multicast")]
         use crate::table::mcast;
         use common::ports::PortFec;
         use common::ports::PortSpeed;
@@ -434,7 +433,6 @@ impl Switch {
 
         // Reset ingress and egress MAC tables and Port ID table(s).
         mac::reset(self)?;
-        #[cfg(feature = "multicast")]
         {
             mac::mcast_reset(self)?;
             mcast::mcast_egress::reset_bitmap_table(self)?;
