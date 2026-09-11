@@ -2346,29 +2346,33 @@ control Egress(
 		} else if (is_mcast == true) {
 			mcast_ctr.count(eg_intr_md.egress_port);
 
-			// Count each multicast replica by type, one simple gateway
-			// per condition:
+			// Per-type replica counters. There are three disjoint
+			// cases presented here, with one simple gateway each.
+			// The compiler cannot carry a negated condition across
+			// gateways, so each case gets its own gateway instead
+			// of an else branch (the IngressDeparser notes the same
+			// limitation):
 			//
-			//  - link-local (ff02::/16 outer dst) — never replicated by
-			//    the PRE; it arrives with egress_rid == 0.
-			//  - egress_rid > 0, Geneve hdr still valid — bound for an
-			//    underlay port.
-			//  - egress_rid > 0, no Geneve hdr — decapped at ingress
-			//    (external-only groups) or by the mcast_egress control
-			//    above (bifurcated, external + underlay members), and
-			//    bound for an external member.
+			// - link-local (ff02::/16 outer dst): always forwarded,
+			//   never PRE (Packet Replication Engine)-replicated;
+			//   it arrives with egress_rid == 0.
+			// - egress_rid > 0 + a valid Geneve hdr: an underlay
+			//   replica that's still encapsulated.
+			// - egress_rid > 0 + no Geneve hdr: an external replica
+			//   that's decapped at ingress (external-only groups)
+			//   or by mcast_egress above (bifurcated groups).
 			//
-			// The mcast_tag option is not read here: a replica headed
-			// for the underlay still carries its encapsulation whether
-			// or not the group is bifurcated.
+			// These rid branch arms avoid checking
+			// !is_link_local_ipv6_mcast because scope 2 (link-local
+			// scope) groups are rejected at creation time and no
+			// PRE-replica ever carries a link-local outer
+			// destination.
 			//
-			// The rid arms don't test !is_link_local_ipv6_mcast: the
-			// compiler doesn't carry the negation across gateways.
-			// They don't need to either, since scope 2 is refused at
-			// group creation, so a replica never carries a link-local
-			// outer destination.
-			//
-			// The IngressDeparser above notes the same compiler limitation.
+			// The mcast_tag option is not doing any work here:
+			// underlay replicas keep their encapsulation whether or
+			// not the group is bifurcated; Geneve header validity
+			// separates the two rid cases.
+
 			if (is_link_local_ipv6_mcast) {
 				link_local_mcast_ctr.count(eg_intr_md.egress_port);
 			}
