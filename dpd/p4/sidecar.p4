@@ -1823,7 +1823,7 @@ control MulticastIngress (
 		} else if (hdr.geneve.isValid() && hdr.inner_ipv6.isValid()) {
 			// Check if the inner destination address is an IPv6 multicast
 			// address (ff00::/8). Apply source filtering for both SSM
-			// (ff3x::/16) and ASM ranges.
+			// (ff3x::/32) and ASM ranges.
 			if (hdr.inner_ipv6.dst_addr[127:120] == 8w0xff) {
 				mcast_source_filter_ipv6.apply();
 			} else {
@@ -2346,14 +2346,41 @@ control Egress(
 		} else if (is_mcast == true) {
 			mcast_ctr.count(eg_intr_md.egress_port);
 
+			// Per-type replica counters. There are three disjoint
+			// cases presented here, with one simple gateway each.
+			// The compiler cannot carry a negated condition across
+			// gateways, so each case gets its own gateway instead
+			// of an else branch (the IngressDeparser notes the same
+			// limitation):
+			//
+			// - link-local (ff02::/16 outer dst): always forwarded,
+			//   never PRE (Packet Replication Engine)-replicated;
+			//   it arrives with egress_rid == 0.
+			// - egress_rid > 0 + a valid Geneve hdr: an underlay
+			//   replica that's still encapsulated.
+			// - egress_rid > 0 + no Geneve hdr: an external replica
+			//   that's decapped at ingress (external-only groups)
+			//   or by mcast_egress above (bifurcated groups).
+			//
+			// These rid branch arms avoid checking
+			// !is_link_local_ipv6_mcast because scope 2 (link-local
+			// scope) groups are rejected at creation time and no
+			// PRE-replica ever carries a link-local outer
+			// destination.
+			//
+			// The mcast_tag option is not doing any work here:
+			// underlay replicas keep their encapsulation whether or
+			// not the group is bifurcated; Geneve header validity
+			// separates the two rid cases.
+
 			if (is_link_local_ipv6_mcast) {
 				link_local_mcast_ctr.count(eg_intr_md.egress_port);
-			} else if (hdr.geneve.isValid()) {
-				external_mcast_ctr.count(eg_intr_md.egress_port);
-			} else if (hdr.geneve.isValid() &&
-			           hdr.geneve_opts.oxg_mcast.isValid() &&
-			           hdr.geneve_opts.oxg_mcast.mcast_tag == MULTICAST_TAG_UNDERLAY) {
+			}
+			if (is_egress_rid_mcast && hdr.geneve.isValid()) {
 				underlay_mcast_ctr.count(eg_intr_md.egress_port);
+			}
+			if (is_egress_rid_mcast && !hdr.geneve.isValid()) {
+				external_mcast_ctr.count(eg_intr_md.egress_port);
 			}
 		} else {
 			unicast_ctr.count(eg_intr_md.egress_port);
