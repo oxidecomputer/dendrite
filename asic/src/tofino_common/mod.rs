@@ -15,7 +15,7 @@ use aal::AsicError;
 use aal::AsicResult;
 use aal::MatchType;
 use common::counters::CounterId;
-use common::counters::MulticastCounterId;
+use common::counters::EgressCounterId;
 use common::table::TableType;
 
 pub mod ports;
@@ -89,22 +89,20 @@ fn counter_table_name(id: CounterId) -> &'static str {
         CounterId::Egress => "pipe.Ingress.egress_ctr",
         CounterId::DropPort => "pipe.Ingress.drop_port_ctr",
         CounterId::DropReason => "pipe.Ingress.drop_reason_ctr",
-        CounterId::Multicast(id) => mulitcast_counter_table_name(id),
+        CounterId::EgressPipeline(id) => egress_counter_table_name(id),
     }
 }
 
-fn mulitcast_counter_table_name(id: MulticastCounterId) -> &'static str {
+fn egress_counter_table_name(id: EgressCounterId) -> &'static str {
     match id {
-        MulticastCounterId::EgressDropPort => "pipe.Egress.drop_port_ctr",
-        MulticastCounterId::EgressDropReason => "pipe.Egress.drop_reason_ctr",
-        MulticastCounterId::Unicast => "pipe.Egress.unicast_ctr",
-        MulticastCounterId::Multicast => "pipe.Egress.mcast_ctr",
-        MulticastCounterId::MulticastExt => "pipe.Egress.external_mcast_ctr",
-        MulticastCounterId::MulticastLL => "pipe.Egress.link_local_mcast_ctr",
-        MulticastCounterId::MulticastUL => "pipe.Egress.underlay_mcast_ctr",
-        MulticastCounterId::MulticastDrop => {
-            "pipe.Ingress.filter.drop_mcast_ctr"
-        }
+        EgressCounterId::DropPort => "pipe.Egress.drop_port_ctr",
+        EgressCounterId::DropReason => "pipe.Egress.drop_reason_ctr",
+        EgressCounterId::Unicast => "pipe.Egress.unicast_ctr",
+        EgressCounterId::Multicast => "pipe.Egress.mcast_ctr",
+        EgressCounterId::MulticastExt => "pipe.Egress.external_mcast_ctr",
+        EgressCounterId::MulticastLL => "pipe.Egress.link_local_mcast_ctr",
+        EgressCounterId::MulticastUL => "pipe.Egress.underlay_mcast_ctr",
+        EgressCounterId::MulticastDrop => "pipe.Ingress.filter.drop_mcast_ctr",
     }
 }
 
