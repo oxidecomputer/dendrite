@@ -1149,7 +1149,7 @@ impl DpdApi for DpdApiImpl {
         let link_id = path.link_id;
         let entry = entry.into_inner();
         switch
-            .create_ipv4_address(port_id, link_id, entry)
+            .create_ipv4_address(port_id, link_id, entry.addr, entry.tag)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
@@ -1178,7 +1178,7 @@ impl DpdApi for DpdApiImpl {
         let link_id = path.link_id;
         let address = path.address;
         switch
-            .delete_ipv4_address(port_id, link_id, address)
+            .delete_ipv4_address(port_id, link_id, address, None)
             .map(|_| HttpResponseDeleted())
             .map_err(|e| e.into())
     }
@@ -1224,7 +1224,7 @@ impl DpdApi for DpdApiImpl {
         let link_id = path.link_id;
         let entry = entry.into_inner();
         switch
-            .create_ipv6_address(port_id, link_id, entry)
+            .create_ipv6_address(port_id, link_id, entry.addr, entry.tag)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
@@ -1253,7 +1253,7 @@ impl DpdApi for DpdApiImpl {
         let link_id = path.link_id;
         let address = path.address;
         switch
-            .delete_ipv6_address(port_id, link_id, address)
+            .delete_ipv6_address(port_id, link_id, address, None)
             .map(|_| HttpResponseDeleted())
             .map_err(|e| e.into())
     }
@@ -1842,9 +1842,10 @@ impl DpdApi for DpdApiImpl {
         let query = query.into_inner();
         let port_id = path.port_id;
         let settings = body.into_inner();
+        let tag = query.tag.as_deref().unwrap_or("");
 
         switch
-            .apply_port_settings(port_id, settings, query.tag)
+            .apply_port_settings(port_id, settings, tag)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -1859,9 +1860,10 @@ impl DpdApi for DpdApiImpl {
         let path = path.into_inner();
         let query = query.into_inner();
         let port_id = path.port_id;
+        let tag = query.tag.as_deref().unwrap_or("");
 
         switch
-            .clear_port_settings(port_id, query.tag)
+            .clear_port_settings(port_id, tag)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -1876,9 +1878,10 @@ impl DpdApi for DpdApiImpl {
         let path = path.into_inner();
         let query = query.into_inner();
         let port_id = path.port_id;
+        let tag = query.tag.as_deref().unwrap_or("");
 
         switch
-            .get_port_settings(port_id, query.tag)
+            .get_port_settings(port_id, tag)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -2946,24 +2949,28 @@ pub(crate) fn build_info() -> BuildInfo {
     }
 }
 
-impl From<&crate::link::Link> for LinkSettings {
-    fn from(l: &crate::link::Link) -> Self {
-        let mut addrs: HashSet<IpAddr> = HashSet::new();
-        for a in &l.ipv4 {
-            addrs.insert(a.addr.into());
-        }
-        for a in &l.ipv6 {
-            addrs.insert(a.addr.into());
-        }
+impl crate::link::Link {
+    /// Creates a serializable [`LinkSettings`] representation with the
+    /// current link state and this tag's resources.
+    pub fn settings(&self, tag: &str) -> LinkSettings {
+        let addrs: HashSet<IpAddr> = self
+            .ipv4
+            .iter()
+            .map(|(&addr, t)| (IpAddr::from(addr), t))
+            .chain(self.ipv6.iter().map(|(&addr, t)| (addr.into(), t)))
+            .filter(|(_, t)| *t == tag)
+            .map(|(addr, _)| addr)
+            .collect();
+
         LinkSettings {
             params: LinkCreate {
-                lane: Some(l.link_id),
-                speed: l.config.speed,
-                fec: l.config.fec,
-                autoneg: l.config.autoneg,
-                kr: l.config.kr,
-                tx_eq: l.tx_eq,
-                allow_ddm_traffic: l.config.allow_ddm_traffic,
+                lane: Some(self.link_id),
+                speed: self.config.speed,
+                fec: self.config.fec,
+                autoneg: self.config.autoneg,
+                kr: self.config.kr,
+                tx_eq: self.tx_eq,
+                allow_ddm_traffic: self.config.allow_ddm_traffic,
             },
             addrs,
         }
