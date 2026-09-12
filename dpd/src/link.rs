@@ -21,6 +21,7 @@ use crate::table::uplink;
 use crate::transceivers::qsfp_xcvr_mpn;
 use crate::types::DpdError;
 use crate::types::DpdResult;
+use aal::AsicError;
 use aal::AsicId;
 use aal::AsicOps;
 use aal::AsicResult;
@@ -1622,28 +1623,66 @@ pub async fn init_update_handler(switch: &Arc<Switch>) -> AsicResult<()> {
     Ok(())
 }
 
+// A table entry we were asked to remove is already gone, so the state we want
+// is the state we have.  This is the expected result when the reconciler
+// retries a teardown that previously failed partway through.
+fn ignore_missing(r: DpdResult<()>) -> DpdResult<()> {
+    match r {
+        Err(DpdError::Switch(AsicError::Missing(_))) => Ok(()),
+        r => r,
+    }
+}
+
+// Program all of the table entries that map a link to its MAC address.
+//
+// Each of these steps is tracked by the single `plumbed.mac` field, which is
+// only updated once all of them have succeeded.  The reconciler will therefore
+// call this again after a partial failure, and every step has to converge on
+// the requested state rather than fail on an entry it installed itself.  An
+// `Exists` error means the entry is present but may hold stale contents, so we
+// rewrite it.
 fn set_mac_config(
     switch: &Switch,
     asic_id: AsicId,
     mac: MacAddr,
 ) -> DpdResult<()> {
-    mac::mac_set(switch, asic_id, mac)?;
+    match mac::mac_set(switch, asic_id, mac) {
+        Err(DpdError::Switch(AsicError::Exists)) => {
+            mac::mac_update(switch, asic_id, mac)
+        }
+        r => r,
+    }?;
 
     #[cfg(feature = "multicast")]
     {
-        mac::mcast_mac_set(switch, asic_id, mac)?;
-        mcast::mcast_egress::add_port_mapping_entry(switch, asic_id)?;
+        match mac::mcast_mac_set(switch, asic_id, mac) {
+            Err(DpdError::Switch(AsicError::Exists)) => {
+                mac::mcast_mac_update(switch, asic_id, mac)
+            }
+            r => r,
+        }?;
+        match mcast::mcast_egress::add_port_mapping_entry(switch, asic_id) {
+            Err(DpdError::Switch(AsicError::Exists)) => {
+                mcast::mcast_egress::update_port_mapping_entry(switch, asic_id)
+            }
+            r => r,
+        }?;
     }
     Ok(())
 }
 
+// Remove the table entries programmed by `set_mac_config()`.  As above, the
+// reconciler may be retrying after a partial failure, so an entry that is
+// already gone is not an error.
 fn clear_mac_config(switch: &Switch, asic_id: AsicId) -> DpdResult<()> {
-    mac::mac_clear(switch, asic_id)?;
+    ignore_missing(mac::mac_clear(switch, asic_id))?;
 
     #[cfg(feature = "multicast")]
     {
-        mac::mcast_mac_clear(switch, asic_id)?;
-        mcast::mcast_egress::del_port_mapping_entry(switch, asic_id)?;
+        ignore_missing(mac::mcast_mac_clear(switch, asic_id))?;
+        ignore_missing(mcast::mcast_egress::del_port_mapping_entry(
+            switch, asic_id,
+        ))?;
     }
     Ok(())
 }
