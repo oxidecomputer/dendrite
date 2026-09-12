@@ -9,6 +9,10 @@
 //! Reserved multicast addresses are defined by IANA:
 //! <https://www.iana.org/assignments/multicast-addresses/multicast-addresses.xhtml>.
 
+// TODO: Move the address validation shared with omicron and maghemite
+// (SSM ranges, scope checks, source rules, newtypes; see omicron's
+// `common/src/address.rs` multicast helpers) into oxnet.
+
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use super::IpSrc;
@@ -177,7 +181,7 @@ fn validate_ipv6_multicast(
     // global (e) scopes. Reject reserved, interface-local, link-local,
     // realm-local, and unassigned scopes. See RFC 7346 §2.
     let scope = addr.segments()[0] & 0x000f;
-    let scope_name = match scope {
+    let unsupported_scope = match scope {
         0x0 | 0xf => Some("reserved"),
         0x1 => Some("interface-local"),
         0x2 => Some("link-local"),
@@ -186,7 +190,7 @@ fn validate_ipv6_multicast(
         _ => Some("unassigned"),
     };
 
-    if let Some(scope_name) = scope_name {
+    if let Some(scope_name) = unsupported_scope {
         return Err(DpdError::Invalid(format!(
             "{addr} has {scope_name} multicast scope ({scope:#x}), which \
              cannot be used for multicast groups. Allowed scopes are 0x4 \
