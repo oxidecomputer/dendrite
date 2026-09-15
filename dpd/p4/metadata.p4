@@ -10,6 +10,8 @@
 @flexible
 header bridge_h {
 	PortId_t ingress_port;
+	bool nat_egress_hit;
+	bit<6> reserved;
 }
 
 struct sidecar_ingress_meta_t {

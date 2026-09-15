@@ -102,18 +102,15 @@ pub fn reset(s: &Switch) -> DpdResult<()> {
 /// Add a new entry to the MAC table.
 ///
 /// An error is returned if the entry already exists. Use `mac_update` instead.
-#[cfg(feature = "multicast")]
 pub fn mcast_mac_set(s: &Switch, port: u16, mac: MacAddr) -> DpdResult<()> {
     mac_set_common(s, TableType::PortMacAddressMcast, port, mac)
 }
 
 /// Remove an entry from the MAC table.
-#[cfg(feature = "multicast")]
 pub fn mcast_mac_clear(s: &Switch, port: u16) -> DpdResult<()> {
     mac_clear_common(s, TableType::PortMacAddressMcast, port)
 }
 
-#[cfg(feature = "multicast")]
 pub fn mcast_table_dump(
     s: &Switch,
     from_hardware: bool,
@@ -124,7 +121,6 @@ pub fn mcast_table_dump(
     )
 }
 
-#[cfg(feature = "multicast")]
 pub fn mcast_counter_fetch(
     s: &Switch,
     force_sync: bool,
@@ -133,7 +129,6 @@ pub fn mcast_counter_fetch(
 }
 
 /// Remove all entries from the MAC table.
-#[cfg(feature = "multicast")]
 #[cfg(feature = "tofino_asic")]
 pub fn mcast_reset(s: &Switch) -> DpdResult<()> {
     s.table_clear(TableType::PortMacAddressMcast)
