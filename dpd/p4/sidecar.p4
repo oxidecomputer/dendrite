@@ -925,9 +925,12 @@ control RouterLookupIndex6(
 	 *
 	 * Note: we annotate @ways here, increasing cuckoo placement choices to 8
 	 * candidate buckets per key. Full occupancy of the route-target table
-	 * is a measured result for this build, not a compiler guarantee.
+	 * was measured on this build; the compiler does not guarantee it.
 	 *
-	 * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/common/pragma/pragmas.cpp#L1172-L1183.
+	 * By default, without this pragma, p4c computes the way count, bumping
+	 * it up to 4 independent ways when it comes out lower.
+	 *
+	 * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/mau/resource_estimate.cpp#L570-L620
 	 */
 	@ways(8)
 	table route {
@@ -1053,9 +1056,12 @@ control RouterLookupIndex4(
 	 *
 	 * Note: we annotate @ways here, increasing cuckoo placement choices to 8
 	 * candidate buckets per key. Full occupancy of the route-target table
-	 * is a measured result for this build, not a compiler guarantee.
+	 * was measured on this build; the compiler does not guarantee it.
 	 *
-	 * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/common/pragma/pragmas.cpp#L1172-L1183.
+	 * By default, without this pragma, p4c computes the way count, bumping
+	 * it up to 4 independent ways when it comes out lower.
+	 *
+	 * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/mau/resource_estimate.cpp#L570-L620
 	 */
 	@ways(8)
 	table route {
@@ -2075,7 +2081,6 @@ control Ingress(
 	MacRewrite() mac_rewrite;
 
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) ingress_ctr;
-	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) egress_ctr;
 	Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS) drop_port_ctr;
 	Counter<bit<32>, bit<8>>(DROP_REASON_MAX, CounterType_t.PACKETS) drop_reason_ctr;
 	Counter<bit<32>, bit<10>>(1024, CounterType_t.PACKETS) packet_ctr;
@@ -2128,15 +2133,11 @@ control Ingress(
 			drop_port_ctr.count(ig_intr_md.ingress_port);
 			drop_reason_ctr.count(meta.drop_reason);
 		} else if (!meta.is_mcast) {
-			egress_ctr.count(ig_tm_md.ucast_egress_port);
 			if (ig_tm_md.ucast_egress_port != USER_SPACE_SERVICE_PORT) {
 				mac_rewrite.apply(hdr, ig_tm_md.ucast_egress_port);
 			}
 			if (meta.nat_egress_hit && !meta.service_routed) {
 				meta.bridge_hdr.nat_egress_hit = true;
-			} else {
-				meta.bridge_hdr.setInvalid();
-				ig_tm_md.bypass_egress = 1w1;
 			}
 		}
 
@@ -2302,6 +2303,15 @@ control Egress(
 	MulticastMacRewrite() mac_rewrite;
 	MulticastEgress() mcast_egress;
 
+	// The Ingress pipeline never sets bypass_egress; every packet copy
+	// that is not dropped traverses this pipeline and is counted exactly
+	// once:
+	//
+	// - forwarded_ctr records all packets leaving a port
+	// - unicast_ctr and mcast_ctr partition what gets forwarded by type
+	// - drops are recorded separately in drop_port_ctr and
+	//   drop_reason_ctr
+	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) forwarded_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) unicast_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) mcast_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) link_local_mcast_ctr;
@@ -2343,20 +2353,24 @@ control Egress(
 			drop_port_ctr.count(eg_intr_md.egress_port);
 			drop_reason_ctr.count(meta.drop_reason);
 			eg_dprsr_md.drop_ctl = 1;
-		} else if (is_mcast == true) {
-			mcast_ctr.count(eg_intr_md.egress_port);
-
-			if (is_link_local_ipv6_mcast) {
-				link_local_mcast_ctr.count(eg_intr_md.egress_port);
-			} else if (hdr.geneve.isValid()) {
-				external_mcast_ctr.count(eg_intr_md.egress_port);
-			} else if (hdr.geneve.isValid() &&
-			           hdr.geneve_opts.oxg_mcast.isValid() &&
-			           hdr.geneve_opts.oxg_mcast.mcast_tag == MULTICAST_TAG_UNDERLAY) {
-				underlay_mcast_ctr.count(eg_intr_md.egress_port);
-			}
 		} else {
-			unicast_ctr.count(eg_intr_md.egress_port);
+			forwarded_ctr.count(eg_intr_md.egress_port);
+
+			if (is_mcast == true) {
+				mcast_ctr.count(eg_intr_md.egress_port);
+
+				if (is_link_local_ipv6_mcast) {
+					link_local_mcast_ctr.count(eg_intr_md.egress_port);
+				} else if (hdr.geneve.isValid()) {
+					external_mcast_ctr.count(eg_intr_md.egress_port);
+				} else if (hdr.geneve.isValid() &&
+				           hdr.geneve_opts.oxg_mcast.isValid() &&
+				           hdr.geneve_opts.oxg_mcast.mcast_tag == MULTICAST_TAG_UNDERLAY) {
+					underlay_mcast_ctr.count(eg_intr_md.egress_port);
+				}
+			} else {
+				unicast_ctr.count(eg_intr_md.egress_port);
+			}
 		}
 	}
 }
