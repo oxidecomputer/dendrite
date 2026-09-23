@@ -20,6 +20,7 @@ use crate::table::uplink;
 use crate::transceivers::qsfp_xcvr_mpn;
 use crate::types::DpdError;
 use crate::types::DpdResult;
+use crate::types::ignore_missing;
 use aal::AsicId;
 use aal::AsicOps;
 use aal::AsicResult;
@@ -1645,9 +1646,11 @@ fn set_mac_config(
 }
 
 fn clear_mac_config(switch: &Switch, asic_id: AsicId) -> DpdResult<()> {
-    mac::mac_clear(switch, asic_id)?;
-    mac::mcast_mac_clear(switch, asic_id)?;
-    mcast::mcast_egress::del_port_mapping_entry(switch, asic_id)?;
+    ignore_missing(mac::mac_clear(switch, asic_id))?;
+    ignore_missing(mac::mcast_mac_clear(switch, asic_id))?;
+    ignore_missing(mcast::mcast_egress::del_port_mapping_entry(
+        switch, asic_id,
+    ))?;
     Ok(())
 }
 

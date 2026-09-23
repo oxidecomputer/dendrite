@@ -6,10 +6,10 @@
 
 //! Client library for the Dendrite data plane daemon.
 
-pub use common::ROLLBACK_FAILURE_ERROR_CODE;
 use common::counters;
 use common::network;
 use common::ports;
+pub use common::{MISSING_NAT_TARGET_ERROR_CODE, ROLLBACK_FAILURE_ERROR_CODE};
 use slog::Logger;
 use std::cmp::Ordering;
 use std::fmt;
@@ -49,6 +49,13 @@ progenitor::generate_api!(
     },
     crates = {
         "oxnet" = "0.1.0",
+    },
+    // The generated `format: ip` newtype accepts any IP address. Use
+    // `ExternalMulticastIp` to apply the server's scope validation in the
+    // client's `TryFrom<IpAddr>` conversion.
+    replace = {
+        ExternalMulticastIp = dpd_types_versions::latest::mcast::ExternalMulticastIp,
+        UnderlayMulticastIpv6 = dpd_types_versions::latest::mcast::UnderlayMulticastIpv6,
     },
 );
 

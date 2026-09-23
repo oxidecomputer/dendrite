@@ -104,7 +104,7 @@ impl TableOps<StubHandle> for Table {
         _s: &StubHandle,
         _from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>> {
-        Err(AsicError::OperationUnsupported)
+        Ok(Vec::new())
     }
 
     fn get_counters<M: MatchParse>(

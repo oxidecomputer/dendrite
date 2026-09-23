@@ -1249,7 +1249,7 @@
     "/multicast/external-groups": {
       "post": {
         "summary": "Create an external-only multicast group configuration.",
-        "description": "External-only groups are used for IPv4 and IPv6 multicast traffic that does not require replication infrastructure. Any admitted IPv6 scope may be used, admin-local included, except within the reserved underlay subnet ff04::/64, which belongs to the internal multicast API.\n\nThese groups carry no direct members and require a NAT target.",
+        "description": "External-only groups carry either IPv4 or IPv6 traffic and share their NAT target's replication groups. Any admitted IPv6 scope can be used, including admin-local, except for the reserved underlay subnet of ff04::/64, which belongs specifically to the internal multicast API.\n\nThe request body is decoded into either an ASM or SSM-classified request with validation running on the group address and source list.\n\nThese groups do not carry member subscribers, as membership lives only on the underlay group mapped to by the required NAT target.\n\nThe NAT target must reference an existing underlay group. The underlay group cannot already be referenced by another external group.",
         "operationId": "multicast_group_create_external",
         "requestBody": {
           "content": {
@@ -1284,16 +1284,16 @@
     "/multicast/external-groups/{group_ip}": {
       "put": {
         "summary": "Update an external-only multicast group configuration for a given group IP address.",
-        "description": "External-only groups are used for IPv4 and IPv6 multicast traffic that does not require replication infrastructure. Any admitted IPv6 scope may be used, admin-local included, except within the reserved underlay subnet ff04::/64, which belongs to the internal multicast API.\n\nThe `tag` query parameter must match the group's existing tag.",
+        "description": "External-only groups carry IPv4 or IPv6 traffic and share their NAT target's replication groups. Any admitted IPv6 scope can be used, including admin-local, except for the reserved underlay subnet of ff04::/64, which belongs to the internal multicast API.\n\nThe path address is checked as an external multicast address before the handler runs.\n\nOmitting `sources` preserves the group's existing source filter.\n\nThe `tag` query parameter must match the group's existing tag. The NAT target must reference an existing underlay group. The underlay group cannot be referenced by another external group.",
         "operationId": "multicast_group_update_external",
         "parameters": [
           {
             "in": "path",
             "name": "group_ip",
+            "description": "A validated external multicast group IP address.",
             "required": true,
             "schema": {
-              "type": "string",
-              "format": "ip"
+              "$ref": "#/components/schemas/ExternalMulticastIp"
             }
           },
           {
@@ -6489,6 +6489,48 @@
           }
         }
       },
+      "ExternalInternalForwarding": {
+        "description": "Internal forwarding for an external multicast group.\n\nExternal groups always carry a NAT target.",
+        "type": "object",
+        "properties": {
+          "nat_target": {
+            "description": "The group's underlay NAT target.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalNatTarget"
+              }
+            ]
+          }
+        },
+        "required": [
+          "nat_target"
+        ]
+      },
+      "ExternalMulticastIp": {
+        "description": "A validated IP address for a customer-visible overlay multicast group.\n\nJSON uses the ordinary IP-address string form. Deserialization applies the module's validation rules before the request reaches an endpoint handler.",
+        "type": "string",
+        "format": "ip"
+      },
+      "ExternalNatTarget": {
+        "description": "NAT target for an external multicast group.\n\nThe MAC must be a multicast MAC and the internal IP must lie within the `ff04::/64` internal underlay block.",
+        "type": "object",
+        "properties": {
+          "inner_mac": {
+            "$ref": "#/components/schemas/MacAddr"
+          },
+          "internal_ip": {
+            "$ref": "#/components/schemas/UnderlayMulticastIpv6"
+          },
+          "vni": {
+            "$ref": "#/components/schemas/Vni"
+          }
+        },
+        "required": [
+          "inner_mac",
+          "internal_ip",
+          "vni"
+        ]
+      },
       "Fault": {
         "description": "A Fault represents a specific kind of failure, and carries some additional context.  Currently Faults are only used to describe Link failures, but there is no reason they couldn't be used elsewhere.",
         "oneOf": [
@@ -6830,20 +6872,6 @@
           "internal_ip",
           "vni"
         ]
-      },
-      "InternalForwarding": {
-        "description": "Represents the NAT target for multicast traffic for internal/underlay forwarding.",
-        "type": "object",
-        "properties": {
-          "nat_target": {
-            "nullable": true,
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/NatTarget"
-              }
-            ]
-          }
-        }
       },
       "IpNet": {
         "x-rust-type": {
@@ -8394,21 +8422,36 @@
         ]
       },
       "MulticastGroupCreateExternalEntry": {
-        "description": "A multicast group configuration for POST requests for external (to the rack) groups.",
+        "description": "A flat request schema for creating a customer-visible overlay multicast group.\n\nThe group IP address disambiguates whether the group is ASM or SSM.",
         "type": "object",
         "properties": {
           "external_forwarding": {
-            "$ref": "#/components/schemas/ExternalForwarding"
+            "description": "Egress VLAN configuration for external forwarding.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalForwarding"
+              }
+            ]
           },
           "group_ip": {
-            "type": "string",
-            "format": "ip"
+            "description": "The multicast address for the group.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalMulticastIp"
+              }
+            ]
           },
           "internal_forwarding": {
-            "$ref": "#/components/schemas/InternalForwarding"
+            "description": "The required NAT target is checked against switch state by the server.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalInternalForwarding"
+              }
+            ]
           },
           "sources": {
             "nullable": true,
+            "description": "Optional source list.\n\nA source list can be absent from ASM group requests. If absent, empty, or containing `Any`, the group permits every source (i.e., a wildcard).\n\nSSM groups require at least one exact source in the list and reject `Any` wildcard entries.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/IpSrc"
@@ -8451,26 +8494,42 @@
         ]
       },
       "MulticastGroupExternalResponse": {
-        "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin-local IPv6 multicast via NAT targets.",
+        "description": "Response structure for external multicast group operations.",
         "type": "object",
         "properties": {
           "external_forwarding": {
-            "$ref": "#/components/schemas/ExternalForwarding"
+            "description": "Egress VLAN configuration for external forwarding.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalForwarding"
+              }
+            ]
           },
           "external_group_id": {
+            "description": "ASIC replication group ID for the external group.",
             "type": "integer",
             "format": "uint16",
             "minimum": 0
           },
           "group_ip": {
-            "type": "string",
-            "format": "ip"
+            "description": "The validated multicast address of the group.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalMulticastIp"
+              }
+            ]
           },
           "internal_forwarding": {
-            "$ref": "#/components/schemas/InternalForwarding"
+            "description": "NAT target for forwarding onto the underlay.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalInternalForwarding"
+              }
+            ]
           },
           "sources": {
             "nullable": true,
+            "description": "Source filter, or `None` when any source is permitted.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/IpSrc"
@@ -8513,7 +8572,7 @@
         "description": "Unified response type for operations that return mixed group types.",
         "oneOf": [
           {
-            "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-local IPv6 multicast with full replication.",
+            "description": "An internal group on the underlay, with members.",
             "type": "object",
             "properties": {
               "external_group_id": {
@@ -8556,23 +8615,38 @@
             ]
           },
           {
-            "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin-local IPv6 multicast via NAT targets.",
+            "description": "An external overlay group; NAT target and VLAN, no direct members.",
             "type": "object",
             "properties": {
               "external_forwarding": {
-                "$ref": "#/components/schemas/ExternalForwarding"
+                "description": "Egress VLAN configuration for external forwarding.",
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ExternalForwarding"
+                  }
+                ]
               },
               "external_group_id": {
+                "description": "ASIC replication group ID for the external group.",
                 "type": "integer",
                 "format": "uint16",
                 "minimum": 0
               },
               "group_ip": {
-                "type": "string",
-                "format": "ip"
+                "description": "The validated multicast address of the group.",
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ExternalMulticastIp"
+                  }
+                ]
               },
               "internal_forwarding": {
-                "$ref": "#/components/schemas/InternalForwarding"
+                "description": "NAT target for forwarding onto the underlay.",
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ExternalInternalForwarding"
+                  }
+                ]
               },
               "kind": {
                 "type": "string",
@@ -8582,6 +8656,7 @@
               },
               "sources": {
                 "nullable": true,
+                "description": "Source filter, or `None` when any source is permitted.",
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/IpSrc"
@@ -8661,17 +8736,28 @@
         ]
       },
       "MulticastGroupUpdateExternalEntry": {
-        "description": "A multicast group update entry for PUT requests for external (to the rack) groups.\n\nTag validation is performed via the `tag` query parameter.",
+        "description": "Updated forwarding and source-filter settings for an external group.",
         "type": "object",
         "properties": {
           "external_forwarding": {
-            "$ref": "#/components/schemas/ExternalForwarding"
+            "description": "External VLAN config.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalForwarding"
+              }
+            ]
           },
           "internal_forwarding": {
-            "$ref": "#/components/schemas/InternalForwarding"
+            "description": "Required internal forwarding config.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalInternalForwarding"
+              }
+            ]
           },
           "sources": {
             "nullable": true,
+            "description": "Replacement source list, or `None` to preserve the current filter.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/IpSrc"

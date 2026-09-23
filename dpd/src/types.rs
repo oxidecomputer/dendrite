@@ -7,16 +7,77 @@
 //! General types used throughout Dendrite.
 
 use aal::AsicError;
+use common::MISSING_NAT_TARGET_ERROR_CODE;
 use common::ROLLBACK_FAILURE_ERROR_CODE;
 use common::SmfError;
 use common::ports::PortId;
 use common::ports::QsfpPort;
 use dpd_types::link::LinkId;
+use nonempty::NonEmpty;
 use std::{convert, net::IpAddr};
 use transceiver_controller::Error as TransceiverError;
 
+/// Result of any operation that can fail with a [`DpdError`].
 pub type DpdResult<T> = Result<T, DpdError>;
 
+/// Ignore the [`AsicError::Missing`] ASIC error, as deleting something
+/// already removed still counts as success.
+///
+/// Every other error is returned as-is.
+pub(crate) fn ignore_missing(res: DpdResult<()>) -> DpdResult<()> {
+    match res {
+        Err(DpdError::Switch(AsicError::Missing(_))) => Ok(()),
+        res => res,
+    }
+}
+
+/// Combine an initial failure with the outcome after unwinding it.
+///
+/// Returns `initial` when the undo succeeded, and a [`DpdError::Unwind`]
+/// carrying the initial error and rollback failures when it did not. The HTTP
+/// mapping keeps the initial error's status and flags the rollback through the
+/// `ROLLBACK_FAILURE_ERROR_CODE` error code.
+///
+/// For an existing `Unwind`, this appends the new failure to its unwind list.
+pub(crate) fn after_unwind(
+    initial: DpdError,
+    unwind_outcome: DpdResult<()>,
+) -> DpdError {
+    match (initial, unwind_outcome) {
+        (initial, Ok(())) => initial,
+        (DpdError::Unwind { initial, mut unwind }, Err(e)) => {
+            unwind.push(e);
+            DpdError::Unwind { initial, unwind }
+        }
+        (initial, Err(unwind)) => DpdError::Unwind {
+            initial: Box::new(initial),
+            unwind: Box::new(NonEmpty::new(unwind)),
+        },
+    }
+}
+
+fn display_unwind(unwind: &NonEmpty<DpdError>) -> String {
+    unwind.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")
+}
+
+/// Ignore `Exists` errors from the ASIC or from dpd itself, acting as
+/// the add-side counterpart to [`ignore_missing`].
+///
+/// The existing entry is left as is. If its action data differs from what the
+/// caller meant to program, then nothing warns.
+pub(crate) fn ignore_exists(res: DpdResult<()>) -> DpdResult<()> {
+    match res {
+        Err(DpdError::Switch(AsicError::Exists(_)) | DpdError::Exists(_)) => {
+            Ok(())
+        }
+        res => res,
+    }
+}
+
+/// The possible failures the dataplane daemon can report.
+// The `From<DpdError> for dropshot::HttpError` implementation maps each
+// variant to a status code; each new variant added here needs a decision about
+// what the client will see.
 #[derive(Debug, thiserror::Error)]
 pub enum DpdError {
     #[error("I/O error: {0:?}")]
@@ -27,6 +88,8 @@ pub enum DpdError {
     Exists(String),
     #[error("Resource is busy: {0}")]
     Busy(String),
+    #[error("Missing NAT target: {0}")]
+    MissingNatTarget(String),
     #[error("Resource is missing: {0}")]
     Missing(String),
     #[error("Invalid argument: {0}")]
@@ -63,8 +126,8 @@ pub enum DpdError {
     NoLanesAvailable { port_id: PortId },
     #[error("Port \"{port_id}\" is not a QSFP port")]
     NotAQsfpPort { port_id: PortId },
-    #[error("Unwind: initial: {initial}, unwind: {unwind}")]
-    Unwind { initial: Box<DpdError>, unwind: Box<DpdError> },
+    #[error("Unwind: initial: {initial}, unwind: {}", display_unwind(.unwind))]
+    Unwind { initial: Box<DpdError>, unwind: Box<NonEmpty<DpdError>> },
     #[error("No transceiver controller initialized")]
     NoTransceiverController,
     #[error("Failed to operate on transceivers")]
@@ -159,10 +222,11 @@ impl convert::From<DpdError> for dropshot::HttpError {
                     headers: None,
                 }
             }
-            DpdError::Switch(AsicError::Exists) => {
-                dropshot::HttpError::for_client_error_with_status(
+            DpdError::Switch(AsicError::Exists(msg)) => {
+                dropshot::HttpError::for_client_error(
                     None,
                     dropshot::ClientErrorStatusCode::CONFLICT,
+                    msg,
                 )
             }
             DpdError::Switch(AsicError::Synthetic(message)) => {
@@ -196,21 +260,22 @@ impl convert::From<DpdError> for dropshot::HttpError {
             DpdError::Io(e) => {
                 dropshot::HttpError::for_internal_error(e.to_string())
             }
-            DpdError::Exists(e) => {
-                dropshot::HttpError::for_client_error_with_status(
-                    Some(e),
-                    dropshot::ClientErrorStatusCode::CONFLICT,
-                )
-            }
+            DpdError::Exists(e) => dropshot::HttpError::for_client_error(
+                None,
+                dropshot::ClientErrorStatusCode::CONFLICT,
+                e,
+            ),
             DpdError::Busy(e) => {
                 dropshot::HttpError::for_unavail(None, e.to_string())
             }
-            DpdError::Missing(e) => {
-                dropshot::HttpError::for_client_error_with_status(
-                    Some(e),
-                    dropshot::ClientErrorStatusCode::NOT_FOUND,
+            DpdError::MissingNatTarget(e) => {
+                dropshot::HttpError::for_client_error(
+                    Some(MISSING_NAT_TARGET_ERROR_CODE.into()),
+                    dropshot::ClientErrorStatusCode::CONFLICT,
+                    e,
                 )
             }
+            DpdError::Missing(e) => dropshot::HttpError::for_not_found(None, e),
             DpdError::Invalid(e) => {
                 dropshot::HttpError::for_bad_request(None, e)
             }
@@ -250,15 +315,16 @@ impl convert::From<DpdError> for dropshot::HttpError {
             e @ DpdError::NotAQsfpPort { .. } => {
                 dropshot::HttpError::for_bad_request(None, format!("{e}"))
             }
-            DpdError::Unwind { initial, unwind } => dropshot::HttpError {
-                status_code: dropshot::ErrorStatusCode::INTERNAL_SERVER_ERROR,
-                error_code: Some(ROLLBACK_FAILURE_ERROR_CODE.into()),
-                external_message: "inconsistent internal state".into(),
-                internal_message: format!(
-                    "rollback error: initial: {initial}, unwind: {unwind}"
-                ),
-                headers: None,
-            },
+            DpdError::Unwind { initial, unwind } => {
+                let detail = format!(
+                    "rollback error: initial: {initial}, unwind: {}",
+                    display_unwind(&unwind)
+                );
+                let mut err = dropshot::HttpError::from(*initial);
+                err.error_code = Some(ROLLBACK_FAILURE_ERROR_CODE.into());
+                err.internal_message = detail;
+                err
+            }
             e @ DpdError::NoTransceiverController => {
                 dropshot::HttpError::for_unavail(None, format!("{e}"))
             }
@@ -316,6 +382,18 @@ impl convert::From<common::network::VlanError> for DpdError {
 
 impl convert::From<dpd_types::mcast::Error> for DpdError {
     fn from(err: dpd_types::mcast::Error) -> Self {
+        DpdError::Invalid(err.to_string())
+    }
+}
+
+impl convert::From<dpd_types::mcast::ExternalMulticastIpError> for DpdError {
+    fn from(err: dpd_types::mcast::ExternalMulticastIpError) -> Self {
+        DpdError::Invalid(err.to_string())
+    }
+}
+
+impl convert::From<dpd_types::mcast::MulticastTagParseError> for DpdError {
+    fn from(err: dpd_types::mcast::MulticastTagParseError) -> Self {
         DpdError::Invalid(err.to_string())
     }
 }

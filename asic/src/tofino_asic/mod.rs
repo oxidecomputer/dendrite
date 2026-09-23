@@ -459,7 +459,7 @@ impl Handle {
 
 pub fn sde_error(ctx: impl ToString, err: bf_status_t) -> AsicError {
     match err {
-        bf_wrapper::BF_ALREADY_EXISTS => AsicError::Exists,
+        bf_wrapper::BF_ALREADY_EXISTS => AsicError::Exists(ctx.to_string()),
         bf_wrapper::BF_OBJECT_NOT_FOUND => AsicError::Missing(ctx.to_string()),
         _ => AsicError::SdeError {
             ctx: ctx.to_string(),
