@@ -47,7 +47,7 @@ use slog::debug;
 use slog::error;
 use slog::info;
 use slog::o;
-use slog::warn;
+use slog_error_chain::InlineErrorChain;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::btree_map::Entry;
@@ -905,12 +905,15 @@ impl Switch {
                     link.updated = common::timestamp_ns();
                     self.record_event(asic_port_id, event);
                 }
-                debug!(log, "Link update";
-		       "state" => "Enabled",
-		       "port_id" => %port_id,
-		       "link_id" => %link_id,
-		       "old" => old,
-		       "new" => enabled);
+                debug!(
+                    log,
+                    "Link update";
+                    "state" => "Enabled",
+                    "port_id" => %port_id,
+                    "link_id" => %link_id,
+                    "old" => old,
+                    "new" => enabled
+                );
             }
             PortUpdate::LinkUp { linkup, .. } => {
                 let old_state = link.link_state.clone();
@@ -933,12 +936,15 @@ impl Switch {
                     // that took down the link in the first place.
                     link.link_state = LinkState::Down;
                 }
-                debug!(log, "Link update";
-		       "state" => "LinkUp",
-		       "port_id" => %port_id,
-		       "link_id" => %link_id,
-		       "old" => %old_state,
-		       "new" => %link.link_state);
+                debug!(
+                    log,
+                    "Link update";
+                    "state" => "LinkUp",
+                    "port_id" => %port_id,
+                    "link_id" => %link_id,
+                    "old" => %old_state,
+                    "new" => %link.link_state
+                );
             }
             PortUpdate::FSM { .. } => {
                 if let Some(new_state) = port_fsm_state {
@@ -952,12 +958,15 @@ impl Switch {
                             self.link_set_fault_locked(&mut link, fault)?;
                         }
                     }
-                    debug!(log, "Link update";
-			   "state" => "asic FSM",
-			   "port_id" => %port_id,
-			   "link_id" => %link_id,
-			   "old" => %old_state,
-			   "new" => %new_state);
+                    debug!(
+                        log,
+                        "Link update";
+                        "state" => "asic FSM",
+                        "port_id" => %port_id,
+                        "link_id" => %link_id,
+                        "old" => %old_state,
+                        "new" => %new_state
+                    );
                 }
             }
             PortUpdate::Presence { presence, .. } => {
@@ -967,12 +976,15 @@ impl Switch {
                     true => self.asic_hdl.port_get_media(link.port_hdl)?,
                     false => PortMedia::None,
                 };
-                debug!(log, "Link update";
-		       "state" => "Presence",
-		       "port_id" => %port_id,
-		       "link_id" => %link_id,
-		       "old" => old,
-		       "new" => presence);
+                debug!(
+                        log,
+                        "Link update";
+                        "state" => "Presence",
+                        "port_id" => %port_id,
+                        "link_id" => %link_id,
+                        "old" => old,
+                        "new" => presence
+                );
             }
         }
         Ok(())
@@ -1327,7 +1339,7 @@ impl Switch {
             {
                 return Err(DpdError::Invalid(String::from(
                     "PRBS errors can only be counted when a link is enabled\n\
-		    and has PRBS configured",
+                    and has PRBS configured",
                 )));
             }
             self.asic_hdl
@@ -1771,7 +1783,7 @@ async fn reconcile_link(
     port_id: PortId,
     link_id: LinkId,
 ) {
-    let mpn = {
+    let maybe_mpn = {
         let qsfp = switch
             .switch_ports
             .ports
@@ -1782,20 +1794,13 @@ async fn reconcile_link(
             .as_qsfp()
             .cloned();
 
-        if let Some(qsfp) = &qsfp {
-            match qsfp_xcvr_mpn(qsfp) {
-                Ok(mpn) => Some(mpn),
-                Err(e) => {
-                    warn!(log, "failed to get MPN for qsfp";
-                        "port" => %port_id,
-                        "error" => %e,
-                    );
-                    return;
-                }
-            }
-        } else {
-            None
-        }
+        // Attempt to fetch the transcever part number.
+        //
+        // This is fallible, but we can't fail here yet. If we're attempting to
+        // _create_ a link, we definitely need this first. But if we're deleting
+        // a link, it should be fine to continue without one. E.g., if the
+        // transceiver is yanked out, we should be able to delete the link.
+        qsfp.as_ref().map(qsfp_xcvr_mpn).transpose()
     };
 
     let mut links = switch.links.lock().unwrap();
@@ -1877,8 +1882,24 @@ async fn reconcile_link(
     }
     drop(links);
 
+    // At this point, we should only block creating a link if there is
+    // definitely a transceiver, but we could not read its part number. If there
+    // isn't a transceiver at all, we should be fine to continue.
+    let maybe_mpn = match maybe_mpn {
+        Ok(m) => m,
+        Err(e) => {
+            error!(
+                log,
+                "failed to get transceiver MPN when trying to create link";
+                "port" => %port_id,
+                "error" => InlineErrorChain::new(&e),
+            );
+            return;
+        }
+    };
+
     if !link.plumbed.link_created
-        && let Err(e) = plumb_link(switch, &log, &mut link, &mpn)
+        && let Err(e) = plumb_link(switch, &log, &mut link, &maybe_mpn)
     {
         error!(log, "Failed to plumb link: {e:?}");
         record_plumb_failure(
@@ -1963,7 +1984,7 @@ async fn reconcile_link(
     }
 
     if link.config.enabled && !link.plumbed.tx_eq_pushed {
-        if let Err(e) = switch.push_tx_eq(&link, &mpn) {
+        if let Err(e) = switch.push_tx_eq(&link, &maybe_mpn) {
             record_plumb_failure(
                 switch,
                 &mut link,
@@ -2065,11 +2086,11 @@ async fn wait_for_trigger(
         timeout - now
     };
 
-    #[rustfmt::skip]
     tokio::select! {
-	trigger = rx.recv() => trigger
-	    .expect("channel shouldn't be dropped while the reconciler thread is alive"),
-	_ = tokio::time::sleep(delay) => LinkTrigger::Timeout,
+        trigger = rx.recv() => {
+            trigger.expect("channel shouldn't be dropped while the reconciler thread is alive")
+        }
+        _ = tokio::time::sleep(delay) => LinkTrigger::Timeout,
     }
 }
 
