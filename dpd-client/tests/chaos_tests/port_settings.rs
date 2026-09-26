@@ -883,6 +883,69 @@ async fn apply_fails_on_tag_conflict() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Verifies link state config and asic queries correctly
+/// differ amid failures.
+#[tokio::test]
+async fn link_asic_and_config_differ() -> anyhow::Result<()> {
+    let fail_enable = AsicConfig {
+        radix: TESTING_RADIX,
+        port_enable_set: Chaos::new(1.),
+        ..Default::default()
+    };
+    let (_guard, client) =
+        harness::init_harness("link_asic_and_config_differ", &fail_enable);
+
+    let mut rng = IpRng::new(1340);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id = LinkId(0);
+
+    let cmd = TestAddrs::new(
+        &mut rng,
+        TAG1.to_string(),
+        &client,
+        port_id.clone(),
+        link_id,
+    );
+
+    cmd.apply_addrs().await?;
+
+    retry::retry_op(RETRY_INTERVAL, RETRY_MAX, || async {
+        client
+            .link_enabled_set(&cmd.port_id, &cmd.link_id, true)
+            .await
+            .map_err(|e| retry::ReturnCode::Fatal(e.to_string()))?;
+
+        let mut configured = client
+            .link_get(&cmd.port_id, &cmd.link_id)
+            .await
+            .map_err(|e| retry::ReturnCode::Fatal(e.to_string()))?
+            .into_inner();
+        let asic = client
+            .link_get_asic(&cmd.port_id, &cmd.link_id)
+            .await
+            .map_err(|e| retry::ReturnCode::Fatal(e.to_string()))?
+            .into_inner();
+
+        let config_is_enabled = configured.enabled;
+        let asic_is_not_enabled = !asic.enabled;
+        let otherwise_eq = {
+            configured.enabled = asic.enabled;
+            configured == asic
+        };
+
+        if config_is_enabled && asic_is_not_enabled && otherwise_eq {
+            return Ok(());
+        }
+
+        Err(retry::ReturnCode::Retry(
+            "Link state does not match expectation".to_string(),
+        ))
+    })
+    .await?;
+
+    Ok(())
+}
+
 /// This struct simplifies repetitive CRUD operations
 /// on tagged links with random address registrations.
 struct TestAddrs<'a> {
