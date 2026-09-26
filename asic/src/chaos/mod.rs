@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use slog::Logger;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use tokio::sync::mpsc;
 
 #[cfg(feature = "multicast")]
@@ -344,6 +345,7 @@ pub struct Handle {
     ports: Mutex<HashMap<PortHdl, Port>>,
     config: AsicConfig,
     log: Logger,
+    updates: OnceLock<mpsc::UnboundedSender<PortUpdate>>,
 }
 
 impl Handle {
@@ -353,6 +355,7 @@ impl Handle {
             ports: Mutex::new(HashMap::new()),
             config: config.clone(),
             log: log.clone(),
+            updates: OnceLock::new(),
         })
     }
     /// Chaos ASICs always report as a model.
@@ -494,6 +497,14 @@ impl AsicOps for Handle {
         unfurl!(self, port_enable_set);
         let mut ports = self.ports.lock().unwrap();
         get_port_mut(&mut ports, port_hdl)?.enabled = val;
+
+        if let Some(chan) = self.updates.get() {
+            let _ = chan.send(PortUpdate::Enable {
+                asic_port_id: port_hdl.connector.as_u16(),
+                enabled: val,
+            });
+        };
+
         Ok(())
     }
 
@@ -579,9 +590,12 @@ impl AsicOps for Handle {
 
     fn register_port_update_handler(
         &self,
-        _tx_channel: mpsc::UnboundedSender<PortUpdate>,
+        tx_channel: mpsc::UnboundedSender<PortUpdate>,
     ) -> AsicResult<()> {
         unfurl!(self, register_port_update_handler);
+        if self.updates.set(tx_channel).is_err() {
+            return Err(AsicError::Exists);
+        }
         Ok(())
     }
 
