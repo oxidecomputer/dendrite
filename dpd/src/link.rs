@@ -1783,25 +1783,22 @@ async fn reconcile_link(
     port_id: PortId,
     link_id: LinkId,
 ) {
-    let maybe_mpn = {
-        let qsfp = switch
-            .switch_ports
-            .ports
-            .get(&port_id)
-            .expect("port existence verified in create_link()")
-            .lock()
-            .await
-            .as_qsfp()
-            .cloned();
-
-        // Attempt to fetch the transcever part number.
-        //
-        // This is fallible, but we can't fail here yet. If we're attempting to
-        // _create_ a link, we definitely need this first. But if we're deleting
-        // a link, it should be fine to continue without one. E.g., if the
-        // transceiver is yanked out, we should be able to delete the link.
-        qsfp.as_ref().map(qsfp_xcvr_mpn).transpose()
-    };
+    // Attempt to fetch the transcever part number.
+    //
+    // This is fallible, but we can't fail here yet. If we're attempting to
+    // _create_ a link, we definitely need this first. But if we're deleting a
+    // link, it should be fine to continue without one. E.g., if the transceiver
+    // is yanked out, we should be able to delete the link.
+    let maybe_mpn = switch
+        .switch_ports
+        .ports
+        .get(&port_id)
+        .expect("port existence verified in create_link()")
+        .lock()
+        .await
+        .as_qsfp()
+        .map(qsfp_xcvr_mpn)
+        .transpose();
 
     let mut links = switch.links.lock().unwrap();
     let link_lock = match links.get_link(port_id, link_id) {
