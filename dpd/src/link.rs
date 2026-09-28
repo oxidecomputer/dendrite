@@ -1887,7 +1887,7 @@ async fn reconcile_link(
         Err(e) => {
             error!(
                 log,
-                "failed to get transceiver MPN when trying to create link";
+                "failed to get transceiver MPN, link will not be plumbed";
                 "port" => %port_id,
                 "error" => InlineErrorChain::new(&e),
             );
