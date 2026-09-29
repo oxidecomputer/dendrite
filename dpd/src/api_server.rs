@@ -1380,10 +1380,8 @@ impl DpdApi for DpdApiImpl {
         path: Path<LoopbackIpv4Path>,
         tag: Query<MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
-        let switch: &Switch = rqctx.context();
-
-        loopback::clear_loopback(
-            switch,
+        loopback::delete_loopback(
+            rqctx.context(),
             path.into_inner().ipv4.into(),
             tag.into_inner().tag.as_deref(),
         )
@@ -1421,13 +1419,15 @@ impl DpdApi for DpdApiImpl {
     async fn loopback_ipv6_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LoopbackIpv6Path>,
+        tag: Query<MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let addr = path.into_inner().ipv6;
-
-        loopback::clear_loopback(switch, addr.into(), None)
-            .map(|_| HttpResponseDeleted())
-            .map_err(HttpError::from)
+        loopback::delete_loopback(
+            rqctx.context(),
+            path.into_inner().ipv6.into(),
+            tag.into_inner().tag.as_deref(),
+        )
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
     }
 
     async fn nat_ipv6_addresses_list(

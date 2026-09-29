@@ -413,7 +413,7 @@ async fn addr_del_loopback(
             .context("failed to delete IPv4 address")
             .map(|_| ()),
         IpAddr::V6(addr) => client
-            .loopback_ipv6_delete(&addr)
+            .loopback_ipv6_delete(&addr, None)
             .await
             .context("failed to delete IPv6 address")
             .map(|_| ()),

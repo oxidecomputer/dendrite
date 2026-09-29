@@ -1057,8 +1057,7 @@ impl Switch {
         self.link_update(port_id, link_id, |link| {
             if !self.clear_ip_address_locked(link, addr, tag)? {
                 return Err(DpdError::NoSuchAddress {
-                    port_id,
-                    link_id,
+                    owner: format!("{port_id}/{link_id}").into(),
                     address: addr,
                 });
             }

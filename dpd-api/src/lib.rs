@@ -1365,18 +1365,42 @@ pub trait DpdApi {
         val: TypedBody<latest::port::Ipv6Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /**
-     * Remove one loopback IPv6 address.
-     */
-    // TODO::cory: require tag. Possibly Tagged<Ipv6Addr>
+    /// Remove a loopback IPv6 address.
+    ///
+    /// If a tag is provided, the address will only be deleted
+    /// if it belongs to the given tag.
+    ///
+    /// Returns an error if the address does not currently
+    /// exist (under this tag).
     #[endpoint {
         method = DELETE,
         path = "/loopback/ipv6/{ipv6}",
+        versions = VERSION_ADDRESS_TAGS..,
     }]
     async fn loopback_ipv6_delete(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::loopback::LoopbackIpv6Path>,
+        tag: Query<latest::misc::MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError>;
+
+    // Replaced for the same reason as [`link_ipv4_delete_v1`].
+    #[endpoint {
+        method = DELETE,
+        path = "/loopback/ipv6/{ipv6}",
+        versions = ..VERSION_ADDRESS_TAGS,
+        operation_id = "loopback_ipv6_delete"
+    }]
+    async fn loopback_ipv6_delete_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::loopback::LoopbackIpv6Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Self::loopback_ipv6_delete(
+            rqctx,
+            path,
+            latest::misc::MaybeTagged::default().into(),
+        )
+        .await
+    }
 
     /**
      * Get all of the external addresses in use for NAT mappings.

@@ -98,7 +98,7 @@ async fn test_api() -> TestResult {
 
     switch
         .client
-        .loopback_ipv6_delete(&lo6)
+        .loopback_ipv6_delete(&lo6, Some(TAG))
         .await
         .expect("delete v6 loopback once");
 
@@ -111,7 +111,7 @@ async fn test_api() -> TestResult {
 
     assert_eq!(lo6s_empty, Vec::new(), "IPv6 loopback delete should work");
 
-    switch.client.loopback_ipv6_delete(&lo6).await.expect_err(
+    switch.client.loopback_ipv6_delete(&lo6, Some(TAG)).await.expect_err(
         "v6 address was already deleted. Second delete should err.",
     );
 
