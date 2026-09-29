@@ -1139,7 +1139,8 @@
     },
     "/loopback/ipv4/{ipv4}": {
       "delete": {
-        "summary": "Remove one loopback IPv4 address.",
+        "summary": "Delete a loopback IPv4 address.",
+        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\nReturns an error if the address does not currently exist (under this tag).",
         "operationId": "loopback_ipv4_delete",
         "parameters": [
           {
@@ -1149,6 +1150,14 @@
             "schema": {
               "type": "string",
               "format": "ipv4"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "schema": {
+              "nullable": true,
+              "type": "string"
             }
           }
         ],
@@ -3365,8 +3374,8 @@
     },
     "/ports/{port_id}/links/{link_id}/ipv4/{address}": {
       "delete": {
-        "summary": "Remove an IPv4 address from a link.",
-        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.",
+        "summary": "Delete an IPv4 address from this link.",
+        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\nReturns an error if the address does not currently exist (under this tag).",
         "operationId": "link_ipv4_delete",
         "parameters": [
           {
@@ -3568,8 +3577,8 @@
     },
     "/ports/{port_id}/links/{link_id}/ipv6/{address}": {
       "delete": {
-        "summary": "Remove an IPv6 address from a link.",
-        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.",
+        "summary": "Delete an IPv6 address from this link.",
+        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\nReturns an error if the address does not currently exist (under this tag).",
         "operationId": "link_ipv6_delete",
         "parameters": [
           {

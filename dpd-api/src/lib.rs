@@ -1070,10 +1070,13 @@ pub trait DpdApi {
         path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /// Remove an IPv4 address from a link.
+    /// Remove an IPv4 address from this link.
     ///
     /// If a tag is provided, the address will only be deleted
     /// if it belongs to the given tag.
+    ///
+    /// Returns an error if the address does not currently
+    /// exist (under this tag).
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv4/{address}",
@@ -1138,10 +1141,13 @@ pub trait DpdApi {
         path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /// Remove an IPv6 address from a link.
+    /// Remove an IPv6 address from this link.
     ///
     /// If a tag is provided, the address will only be deleted
     /// if it belongs to the given tag.
+    ///
+    /// Returns an error if the address does not currently
+    /// exist (under this tag).
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv6/{address}",
@@ -1299,18 +1305,42 @@ pub trait DpdApi {
         val: TypedBody<latest::port::Ipv4Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /**
-     * Remove one loopback IPv4 address.
-     */
-    // TODO::cory: require tag. Possibly Tagged<Ipv4Addr>
+    /// Remove a loopback IPv4 address.
+    ///
+    /// If a tag is provided, the address will only be deleted
+    /// if it belongs to the given tag.
+    ///
+    /// Returns an error if the address does not currently
+    /// exist (under this tag).
     #[endpoint {
         method = DELETE,
         path = "/loopback/ipv4/{ipv4}",
+        versions = VERSION_ADDRESS_TAGS..
     }]
     async fn loopback_ipv4_delete(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::loopback::LoopbackIpv4Path>,
+        tag: Query<latest::misc::MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError>;
+
+    // Replaced for the same reason as [`link_ipv4_delete_v1`].
+    #[endpoint {
+        method = DELETE,
+        path = "/loopback/ipv4/{ipv4}",
+        versions = ..VERSION_ADDRESS_TAGS,
+        operation_id = "loopback_ipv4_delete"
+    }]
+    async fn loopback_ipv4_delete_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::loopback::LoopbackIpv4Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Self::loopback_ipv4_delete(
+            rqctx,
+            path,
+            latest::misc::MaybeTagged::default().into(),
+        )
+        .await
+    }
 
     /**
      * Get loopback IPv6 addresses.

@@ -408,7 +408,7 @@ async fn addr_del_loopback(
 ) -> anyhow::Result<()> {
     match addr {
         IpAddr::V4(addr) => client
-            .loopback_ipv4_delete(&addr)
+            .loopback_ipv4_delete(&addr, None)
             .await
             .context("failed to delete IPv4 address")
             .map(|_| ()),

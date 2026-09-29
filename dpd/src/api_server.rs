@@ -1378,13 +1378,17 @@ impl DpdApi for DpdApiImpl {
     async fn loopback_ipv4_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LoopbackIpv4Path>,
+        tag: Query<MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
-        let addr = path.into_inner().ipv4;
 
-        loopback::clear_loopback(switch, addr.into(), None)
-            .map(|_| HttpResponseDeleted())
-            .map_err(HttpError::from)
+        loopback::clear_loopback(
+            switch,
+            path.into_inner().ipv4.into(),
+            tag.into_inner().tag.as_deref(),
+        )
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
     }
 
     async fn loopback_ipv6_list(

@@ -744,7 +744,7 @@ impl AddrCheck {
     }
 }
 
-// TODO::cory: need a test for new tagged deletion on link and loopback.
+// TODO::cory: need a test for new tagged deletion on loopback.
 
 /// Verifies tagged address_*_create and delete don't affect
 /// resources under different tags.
@@ -960,7 +960,6 @@ async fn deleted_address_must_exist() -> anyhow::Result<()> {
         .await
         .expect_err("Must not delete an IPv6 address belonging to another tag")
         .expect_status(StatusCode::CONFLICT);
-    // TODO::cory: wrong tag ipv6 delete as well
     tag1.verify_addrs_exist(Verify::NonExhaustive).await?;
 
     client
