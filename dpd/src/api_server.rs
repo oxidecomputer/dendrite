@@ -40,9 +40,7 @@ use dpd_types::mcast::{
     MulticastGroupUpdateUnderlayEntry, MulticastTagPath,
     MulticastUnderlayGroupIpParam,
 };
-use dpd_types::misc::MaybeTagged;
-use dpd_types::misc::Tagged;
-use dpd_types::misc::{BuildInfo, TagPath};
+use dpd_types::misc::{BuildInfo, MaybeTagged, TagPath, Tagged};
 use dpd_types::nat::{
     NatIpv4Path, NatIpv4PortPath, NatIpv4RangePath, NatIpv6Path,
     NatIpv6PortPath, NatIpv6RangePath, NatToken,

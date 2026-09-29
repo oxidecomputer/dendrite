@@ -1140,7 +1140,7 @@
     "/loopback/ipv4/{ipv4}": {
       "delete": {
         "summary": "Remove a loopback IPv4 address.",
-        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\nReturns an error if the address does not currently exist (under this tag).",
+        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\n- Returns 404 NOT_FOUND if the address is not registered on the switch. - Returns 409 CONFLICT if the address exists on the switch but is owned by something else (link, loopback, tag, etc).",
         "operationId": "loopback_ipv4_delete",
         "parameters": [
           {
@@ -1230,7 +1230,7 @@
     "/loopback/ipv6/{ipv6}": {
       "delete": {
         "summary": "Remove a loopback IPv6 address.",
-        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\nReturns an error if the address does not currently exist (under this tag).",
+        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\n- Returns 404 NOT_FOUND if the address is not registered on the switch. - Returns 409 CONFLICT if the address exists on the switch but is owned by something else (link, loopback, tag, etc).",
         "operationId": "loopback_ipv6_delete",
         "parameters": [
           {
@@ -3349,7 +3349,7 @@
     "/ports/{port_id}/links/{link_id}/ipv4/{address}": {
       "delete": {
         "summary": "Remove an IPv4 address from this link.",
-        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\nReturns an error if the address does not currently exist (under this tag).",
+        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\n- Returns 404 NOT_FOUND if the address is not registered on the switch. - Returns 409 CONFLICT if the address exists on the switch but is owned by something else (link, loopback, tag, etc).",
         "operationId": "link_ipv4_delete",
         "parameters": [
           {
@@ -3517,7 +3517,7 @@
     "/ports/{port_id}/links/{link_id}/ipv6/{address}": {
       "delete": {
         "summary": "Remove an IPv6 address from this link.",
-        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\nReturns an error if the address does not currently exist (under this tag).",
+        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\n- Returns 404 NOT_FOUND if the address is not registered on the switch. - Returns 409 CONFLICT if the address exists on the switch but is owned by something else (link, loopback, tag, etc).",
         "operationId": "link_ipv6_delete",
         "parameters": [
           {

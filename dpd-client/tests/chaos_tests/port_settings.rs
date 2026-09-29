@@ -809,6 +809,17 @@ async fn address_cmds_respect_tags() -> anyhow::Result<()> {
         .await?;
 
     tag2.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    client
+        .link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr, Some(TAG1))
+        .await
+        .expect_err("v4 address was deleted, should see 404")
+        .expect_status(StatusCode::NOT_FOUND);
+    client
+        .link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr, Some(TAG1))
+        .await
+        .expect_err("v6 address was deleted, should see 404")
+        .expect_status(StatusCode::NOT_FOUND);
     tag1.verify_addrs_exist(Verify::NonExhaustive)
         .await
         .expect_err("tag1 addresses should have been deleted");
@@ -919,6 +930,17 @@ async fn loopback_respects_tags() -> anyhow::Result<()> {
     client.loopback_ipv4_delete(&loop4, Some(TAG1)).await?;
     client.loopback_ipv6_delete(&loop6, Some(TAG1)).await?;
 
+    client
+        .loopback_ipv4_delete(&loop4, Some(TAG1))
+        .await
+        .expect_err("v4 was already deleted, should see 404")
+        .expect_status(StatusCode::NOT_FOUND);
+    client
+        .loopback_ipv6_delete(&loop6, Some(TAG1))
+        .await
+        .expect_err("v6 was already deleted, should see 404")
+        .expect_status(StatusCode::NOT_FOUND);
+
     assert_eq!(
         &client.loopback_ipv4_list().await?.into_inner(),
         &[Ipv4Entry { addr: extra4, tag: TAG2.to_string() }]
@@ -940,8 +962,8 @@ async fn loopback_respects_tags() -> anyhow::Result<()> {
 /// Verifies port_settings_clear, which deletes the link
 /// and all its config from the port regardless of tag.
 ///
-/// "ignores" sounds condemning, but there's not really an
-/// obvious alternative short of making tag ownership a
+/// Ignoring seems like the best option for now. There's not
+/// an obvious alternative short of making tag ownership a
 /// property of the link itself.
 #[tokio::test]
 async fn settings_clear_ignores_tags() -> anyhow::Result<()> {

@@ -1087,8 +1087,10 @@ pub trait DpdApi {
     /// If a tag is provided, the address will only be deleted
     /// if it belongs to the given tag.
     ///
-    /// Returns an error if the address does not currently
-    /// exist (under this tag).
+    /// - Returns 404 NOT_FOUND if the address is not registered
+    ///   on the switch.
+    /// - Returns 409 CONFLICT if the address exists on the switch
+    ///   but is owned by something else (link, loopback, tag, etc).
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv4/{address}",
@@ -1100,9 +1102,8 @@ pub trait DpdApi {
         tag: Query<latest::misc::MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError>;
 
-    /// The version that replaced this allows consumers to specify
-    /// a tag scope for deletion. This allows callers to cooperate
-    /// more easily.
+    /// This version's replacement allows users to specify a tag
+    /// scope for deletion. That allows callers to cooperate more easily.
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv4/{address}",
@@ -1170,8 +1171,10 @@ pub trait DpdApi {
     /// If a tag is provided, the address will only be deleted
     /// if it belongs to the given tag.
     ///
-    /// Returns an error if the address does not currently
-    /// exist (under this tag).
+    /// - Returns 404 NOT_FOUND if the address is not registered
+    ///   on the switch.
+    /// - Returns 409 CONFLICT if the address exists on the switch
+    ///   but is owned by something else (link, loopback, tag, etc).
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv6/{address}",
@@ -1334,8 +1337,10 @@ pub trait DpdApi {
     /// If a tag is provided, the address will only be deleted
     /// if it belongs to the given tag.
     ///
-    /// Returns an error if the address does not currently
-    /// exist (under this tag).
+    /// - Returns 404 NOT_FOUND if the address is not registered
+    ///   on the switch.
+    /// - Returns 409 CONFLICT if the address exists on the switch
+    ///   but is owned by something else (link, loopback, tag, etc).
     #[endpoint {
         method = DELETE,
         path = "/loopback/ipv4/{ipv4}",
@@ -1394,8 +1399,10 @@ pub trait DpdApi {
     /// If a tag is provided, the address will only be deleted
     /// if it belongs to the given tag.
     ///
-    /// Returns an error if the address does not currently
-    /// exist (under this tag).
+    /// - Returns 404 NOT_FOUND if the address is not registered
+    ///   on the switch.
+    /// - Returns 409 CONFLICT if the address exists on the switch
+    ///   but is owned by something else (link, loopback, tag, etc).
     #[endpoint {
         method = DELETE,
         path = "/loopback/ipv6/{ipv6}",

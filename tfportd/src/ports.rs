@@ -246,7 +246,7 @@ async fn ensure_address_match(g: &Global, link: &LinkInfo) -> Result<()> {
     {
         warn!(g.log, "deleting stale dpd address: {addr}");
         g.client
-            .link_ipv6_delete(&link.port_id, &link.link_id, &addr, Some(tag))
+            .link_ipv6_delete(&link.port_id, &link.link_id, &addr, None)
             .await
             .context("deleting stale link-local address")?;
     }
