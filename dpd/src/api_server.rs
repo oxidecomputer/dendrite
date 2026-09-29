@@ -40,6 +40,7 @@ use dpd_types::mcast::{
     MulticastGroupUpdateUnderlayEntry, MulticastTagPath,
     MulticastUnderlayGroupIpParam,
 };
+use dpd_types::misc::Tagged;
 use dpd_types::misc::{BuildInfo, TagPath};
 use dpd_types::nat::{
     NatIpv4Path, NatIpv4PortPath, NatIpv4RangePath, NatIpv6Path,
@@ -1851,20 +1852,16 @@ impl DpdApi for DpdApiImpl {
     }
 
     async fn port_settings_apply(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
+        rqctx: RequestContext<Self::Context>,
+        path: Path<Tagged<PortIdPathParams>>,
         body: TypedBody<PortSettings>,
     ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
         let switch = rqctx.context();
-        let path = path.into_inner();
-        let query = query.into_inner();
-        let port_id = path.port_id;
-        let settings = body.into_inner();
-        let tag = query.tag.as_deref().unwrap_or("");
+        let Tagged { tag, value: PortIdPathParams { port_id } } =
+            path.into_inner();
 
         switch
-            .apply_port_settings(port_id, settings, tag)
+            .apply_port_settings(port_id, body.into_inner(), &tag)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)

@@ -29,6 +29,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (14, ADDRESS_TAGS),
     (13, ALLOW_DDM_TRAFFIC),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
@@ -1070,6 +1071,7 @@ pub trait DpdApi {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Remove an IPv4 address from a link.
+    /// TODO::cory: Possibly Tagged<LinkIpv4Path>
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv4/{address}",
@@ -1251,6 +1253,7 @@ pub trait DpdApi {
     /**
      * Remove one loopback IPv4 address.
      */
+    /// TODO::cory: require tag. Possibly Tagged<Ipv4Addr>
     #[endpoint {
         method = DELETE,
         path = "/loopback/ipv4/{ipv4}",
@@ -1286,6 +1289,7 @@ pub trait DpdApi {
     /**
      * Remove one loopback IPv6 address.
      */
+    /// TODO::cory: require tag. Possibly Tagged<Ipv6Addr>
     #[endpoint {
         method = DELETE,
         path = "/loopback/ipv6/{ipv6}",
@@ -1564,6 +1568,7 @@ pub trait DpdApi {
     /// This removes all data entirely.
     // Note: Unlike `reset_all_tagged`, this endpoint does clear multicast groups.
     // TODO-security: This endpoint should probably not exist.
+    /// TODO::cory: delete this
     #[endpoint {
         method = DELETE,
         path = "/all-settings"
@@ -1646,26 +1651,51 @@ pub trait DpdApi {
         HttpError,
     >;
 
-    /**
-     * Apply port settings atomically.
-     *
-     * These settings will be applied holistically, and to the extent possible
-     * atomically to a given port. In the event of a failure a rollback is
-     * attempted. If the rollback fails there will be inconsistent state. This
-     * failure mode returns the error code "rollback failure". For more details see
-     * the docs on the [`PortSettings`] type.
-     */
+    /// Apply port settings atomically.
+    ///
+    /// These settings will be applied holistically, and to the extent possible
+    /// atomically to a given port. In the event of a failure, a rollback is
+    /// attempted. If the rollback fails, there will be inconsistent state. This
+    /// failure mode returns the error code "rollback failure". For more details see
+    /// the docs on the [`PortSettings`] type.
+    ///
+    /// Resource modifications within a link respect tag ownership. For example,
+    /// this will not clear link addresses belonging to other tags. However, this
+    /// may delete a link even if it contains resources belonging to other tags.
     #[endpoint {
         method = POST,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
-        path = "/port/{port_id}/settings"
+        versions = VERSION_ADDRESS_TAGS..,
+        path = "/port/{port_id}/settings/{tag}"
     }]
     async fn port_settings_apply(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::misc::Tagged<latest::port::PortIdPathParams>>,
+        body: TypedBody<latest::port::PortSettings>,
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /// This was replaced by a version that requires a tag.
+    ///
+    /// DPD tags all addresses, so allowing a `None` tag just used
+    /// an implicit empty string tag. That's confusing and unnecessary.
+    #[endpoint {
+        method = POST,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_ADDRESS_TAGS,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_apply"
+    }]
+    async fn port_settings_apply_v2(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
         query: Query<latest::port::PortSettingsTag>,
         body: TypedBody<latest::port::PortSettings>,
-    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError> {
+        let tagged_port = path.map(|port| latest::misc::Tagged {
+            tag: query.into_inner().tag.unwrap_or_default(),
+            value: port,
+        });
+
+        Self::port_settings_apply(rqctx, tagged_port, body).await
+    }
 
     /**
      * Apply port settings atomically.
@@ -1688,7 +1718,7 @@ pub trait DpdApi {
         query: Query<v1::port::PortSettingsTag>,
         body: TypedBody<v1::port::PortSettings>,
     ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
-        Self::port_settings_apply(rqctx, path, query, body.map(Into::into))
+        Self::port_settings_apply_v2(rqctx, path, query, body.map(Into::into))
             .await
             .map(|resp| resp.map(Into::into))
     }
@@ -1696,6 +1726,7 @@ pub trait DpdApi {
     /**
      * Clear port settings atomically.
      */
+    /// TODO::cory: Do not accept a tag. Differs from delete_link in that it does rollback?
     #[endpoint {
         method = DELETE,
         versions = VERSION_ALLOW_DDM_TRAFFIC..,
@@ -1729,6 +1760,7 @@ pub trait DpdApi {
     /**
      * Get port settings atomically.
      */
+    /// TODO::cory: tag should not be optional: Tagged<PortId>
     #[endpoint {
         method = GET,
         versions = VERSION_ALLOW_DDM_TRAFFIC..,

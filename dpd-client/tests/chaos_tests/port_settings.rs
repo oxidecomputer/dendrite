@@ -107,11 +107,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
     );
 
     let err = client
-        .port_settings_apply(
-            &"qsfp0".parse().unwrap(),
-            Some("chaos"),
-            &settings,
-        )
+        .port_settings_apply(&"qsfp0".parse().unwrap(), "chaos", &settings)
         .await
         .expect_err("Expected error on port settings apply");
 
@@ -141,11 +137,7 @@ async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
     );
 
     client
-        .port_settings_apply(
-            &"qsfp0".parse().unwrap(),
-            Some("chaos"),
-            &settings,
-        )
+        .port_settings_apply(&"qsfp0".parse().unwrap(), "chaos", &settings)
         .await?;
 
     let addrs = link_list_ipv4(&client, "qsfp0", "0").await.unwrap();
@@ -173,11 +165,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     );
 
     client
-        .port_settings_apply(
-            &"qsfp0".parse().unwrap(),
-            Some("chaos"),
-            &settings,
-        )
+        .port_settings_apply(&"qsfp0".parse().unwrap(), "chaos", &settings)
         .await?;
 
     let addrs = link_list_ipv4(&client, "qsfp0", "0").await.unwrap();
@@ -202,11 +190,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     );
 
     client
-        .port_settings_apply(
-            &"qsfp0".parse().unwrap(),
-            Some("chaos"),
-            &settings,
-        )
+        .port_settings_apply(&"qsfp0".parse().unwrap(), "chaos", &settings)
         .await?;
 
     let addrs = link_list_ipv4(&client, "qsfp0", "0").await.unwrap();
@@ -231,11 +215,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     );
 
     client
-        .port_settings_apply(
-            &"qsfp0".parse().unwrap(),
-            Some("chaos"),
-            &settings,
-        )
+        .port_settings_apply(&"qsfp0".parse().unwrap(), "chaos", &settings)
         .await?;
 
     let addrs = link_list_ipv4(&client, "qsfp0", "0").await.unwrap();
@@ -309,7 +289,7 @@ async fn test_port_settings_txn_sweep() -> anyhow::Result<()> {
         let target = random_port_settings();
         print!("current/target: {}", Comparison::new(&current, &target));
 
-        match client.port_settings_apply(&port, Some("chaos"), &target).await {
+        match client.port_settings_apply(&port, "chaos", &target).await {
             Ok(mut returned) => {
                 sort_addrs(&mut returned);
                 // Verify that what the server attempted to configure matches
@@ -386,10 +366,7 @@ async fn test_port_settings_txn_par_sweep() -> anyhow::Result<()> {
             let client = new_dpd_client(4705);
             let target = random_port_settings();
 
-            match client
-                .port_settings_apply(&port, Some("chaos"), &target)
-                .await
-            {
+            match client.port_settings_apply(&port, "chaos", &target).await {
                 Ok(mut returned) => {
                     sort_addrs(&mut returned);
                     assert_eq!(target, returned.into_inner());
@@ -535,9 +512,8 @@ Reconciliation retries:
     // the sequence a few times.
     for _ in 0..3 {
         retry::retry_op(RETRY_INTERVAL, LONG_ENOUGH, async || {
-            let Err(e) = client
-                .port_settings_apply(&port_id, Some(TAG1), &settings)
-                .await
+            let Err(e) =
+                client.port_settings_apply(&port_id, TAG1, &settings).await
             else {
                 return Ok(());
             };
@@ -617,7 +593,7 @@ async fn settings_apply_respects_tags() -> anyhow::Result<()> {
     client
         .port_settings_apply(
             &port_id,
-            Some(TAG2),
+            TAG2,
             &TestAddrs::empty_settings(link_id),
         )
         .await?;
@@ -1148,7 +1124,7 @@ async fn partial_failures_are_recoverable() -> anyhow::Result<()> {
     }
 
     client
-        .port_settings_apply(&"qsfp1".parse()?, Some(TAG2), &v4_only)
+        .port_settings_apply(&"qsfp1".parse()?, TAG2, &v4_only)
         .await
         .expect_err("Stuck entry cannot be stolen by another tag.");
 
@@ -1157,7 +1133,7 @@ async fn partial_failures_are_recoverable() -> anyhow::Result<()> {
     }
 
     let mut applied = client
-        .port_settings_apply(&port_id, Some(TAG1), &v4_only)
+        .port_settings_apply(&port_id, TAG1, &v4_only)
         .await
         .context("Apply should succeed because we can at least overwrite the IPv4 table entry")?
         .into_inner();
@@ -1326,7 +1302,7 @@ async fn deletion_doesnt_leak_table_entries() -> anyhow::Result<()> {
     client
         .port_settings_apply(
             &port_id,
-            Some(TAG1),
+            TAG1,
             &TestAddrs::empty_settings(link_id),
         )
         .await
@@ -1375,7 +1351,7 @@ async fn deletion_prevails() -> anyhow::Result<()> {
         let applied = client
             .port_settings_apply(
                 &port_id,
-                Some(TAG1),
+                TAG1,
                 &TestAddrs::empty_settings(link_id),
             )
             .await;
@@ -1652,7 +1628,7 @@ impl<'a> TestAddrs<'a> {
         self.client
             .port_settings_apply(
                 &self.port_id,
-                Some(&self.v4_entry.tag),
+                &self.v4_entry.tag,
                 &self.settings(),
             )
             .await?;
