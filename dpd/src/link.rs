@@ -1880,8 +1880,9 @@ async fn reconcile_link(
     drop(links);
 
     // At this point, we should only block creating a link if there is
-    // definitely a transceiver, but we could not read its part number. If there
-    // isn't a transceiver at all, we should be fine to continue.
+    // definitely a transceiver, but we could not read its part number. If the
+    // port we're operating on isn't a QSFP port at all, we should be fine to
+    // continue.
     let maybe_mpn = match maybe_mpn {
         Ok(m) => m,
         Err(e) => {
