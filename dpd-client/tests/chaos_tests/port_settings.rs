@@ -744,8 +744,6 @@ impl AddrCheck {
     }
 }
 
-// TODO::cory: need a test for new tagged deletion on loopback.
-
 /// Verifies tagged address_*_create and delete don't affect
 /// resources under different tags.
 #[tokio::test]
@@ -793,6 +791,17 @@ async fn address_cmds_respect_tags() -> anyhow::Result<()> {
     tag2.verify_addrs_exist(Verify::NonExhaustive).await?;
 
     client
+        .link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr, Some(TAG2))
+        .await
+        .expect_err("v4 addr shouldn't be deleted because it belongs to TAG1")
+        .expect_status(StatusCode::CONFLICT);
+    client
+        .link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr, Some(TAG2))
+        .await
+        .expect_err("v6 addr shouldn't be deleted because it belongs to TAG1")
+        .expect_status(StatusCode::CONFLICT);
+
+    client
         .link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr, Some(TAG1))
         .await?;
     client
@@ -803,6 +812,127 @@ async fn address_cmds_respect_tags() -> anyhow::Result<()> {
     tag1.verify_addrs_exist(Verify::NonExhaustive)
         .await
         .expect_err("tag1 addresses should have been deleted");
+
+    Ok(())
+}
+
+/// Verifies tagged loopback address isolation against a sequence
+/// of CRUD commands.
+#[tokio::test]
+async fn loopback_respects_tags() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("loopback_respects_tags", &no_failures);
+
+    let mut rng = IpRng::new(1819);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id = LinkId(0);
+
+    let mut loop4 = rng.unique_ipv4();
+    let mut loop6 = rng.unique_ipv6();
+
+    let mut link =
+        TestAddrs::new(&mut rng, TAG1.to_string(), &client, port_id, link_id);
+    link.apply_addrs().await?;
+
+    client
+        .loopback_ipv4_create(&Ipv4Entry { addr: loop4, tag: TAG1.to_string() })
+        .await?;
+    client
+        .loopback_ipv6_create(&Ipv6Entry { addr: loop6, tag: TAG1.to_string() })
+        .await?;
+
+    client
+        .loopback_ipv4_create(&Ipv4Entry { addr: loop4, tag: TAG2.to_string() })
+        .await
+        .expect_err("v4 should already belong to TAG1")
+        .expect_status(StatusCode::CONFLICT);
+    client
+        .loopback_ipv6_create(&Ipv6Entry { addr: loop6, tag: TAG2.to_string() })
+        .await
+        .expect_err("v6 should already belong to TAG1")
+        .expect_status(StatusCode::CONFLICT);
+
+    client
+        .loopback_ipv4_delete(&loop4, Some(TAG2))
+        .await
+        .expect_err("must not delete loopback v4 belonging to another tag")
+        .expect_status(StatusCode::CONFLICT);
+    client
+        .loopback_ipv6_delete(&loop6, Some(TAG2))
+        .await
+        .expect_err("must not delete loopback v6 belonging to another tag")
+        .expect_status(StatusCode::CONFLICT);
+
+    std::mem::swap(&mut loop4, &mut link.v4_entry.addr);
+    link.apply_addrs()
+        .await
+        .expect_err("Apply must not steal v4 loopback address")
+        .expect_status(StatusCode::CONFLICT);
+    std::mem::swap(&mut loop4, &mut link.v4_entry.addr);
+
+    std::mem::swap(&mut loop6, &mut link.v6_entry.addr);
+    link.apply_addrs()
+        .await
+        .expect_err("Apply must not steal v6 loopback address")
+        .expect_status(StatusCode::CONFLICT);
+    std::mem::swap(&mut loop6, &mut link.v6_entry.addr);
+
+    link.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    client
+        .loopback_ipv4_delete(&link.v4_entry.addr, None)
+        .await
+        .expect_err("Loopback API must not delete a v4 link address")
+        .expect_status(StatusCode::CONFLICT);
+    client
+        .loopback_ipv6_delete(&link.v6_entry.addr, None)
+        .await
+        .expect_err("Loopback API must not delete a v6 link address")
+        .expect_status(StatusCode::CONFLICT);
+
+    assert_eq!(
+        &client.loopback_ipv4_list().await?.into_inner(),
+        &[Ipv4Entry { addr: loop4, tag: TAG1.to_string() }]
+    );
+    assert_eq!(
+        &client.loopback_ipv6_list().await?.into_inner(),
+        &[Ipv6Entry { addr: loop6, tag: TAG1.to_string() }]
+    );
+
+    let extra4 = rng.unique_ipv4();
+    let extra6 = rng.unique_ipv6();
+
+    client
+        .loopback_ipv4_create(&Ipv4Entry {
+            addr: extra4,
+            tag: TAG2.to_string(),
+        })
+        .await?;
+    client
+        .loopback_ipv6_create(&Ipv6Entry {
+            addr: extra6,
+            tag: TAG2.to_string(),
+        })
+        .await?;
+
+    client.loopback_ipv4_delete(&loop4, Some(TAG1)).await?;
+    client.loopback_ipv6_delete(&loop6, Some(TAG1)).await?;
+
+    assert_eq!(
+        &client.loopback_ipv4_list().await?.into_inner(),
+        &[Ipv4Entry { addr: extra4, tag: TAG2.to_string() }]
+    );
+    assert_eq!(
+        &client.loopback_ipv6_list().await?.into_inner(),
+        &[Ipv6Entry { addr: extra6, tag: TAG2.to_string() }]
+    );
+
+    client.loopback_ipv4_delete(&extra4, None).await?;
+    client.loopback_ipv6_delete(&extra6, None).await?;
+
+    assert!(client.loopback_ipv4_list().await?.into_inner().is_empty());
+    assert!(client.loopback_ipv6_list().await?.into_inner().is_empty());
 
     Ok(())
 }
