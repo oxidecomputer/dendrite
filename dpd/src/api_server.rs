@@ -1163,20 +1163,6 @@ impl DpdApi for DpdApiImpl {
             .map_err(|e| e.into())
     }
 
-    async fn link_ipv4_reset(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let path = path.into_inner();
-        let port_id = path.port_id;
-        let link_id = path.link_id;
-        switch
-            .reset_addresses::<Ipv4Addr>(port_id, link_id)
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(|e| e.into())
-    }
-
     async fn link_ipv4_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkIpv4Path>,
@@ -1240,20 +1226,6 @@ impl DpdApi for DpdApiImpl {
         let entry = entry.into_inner();
         switch
             .create_ip_address(port_id, link_id, entry.addr.into(), entry.tag)
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(|e| e.into())
-    }
-
-    async fn link_ipv6_reset(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let path = path.into_inner();
-        let port_id = path.port_id;
-        let link_id = path.link_id;
-        switch
-            .reset_addresses::<Ipv6Addr>(port_id, link_id)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }

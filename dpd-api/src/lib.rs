@@ -11,9 +11,9 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 use dpd_types_versions::{latest, v1, v4, v7};
 use dropshot::{
-    EmptyScanParams, HttpError, HttpResponseCreated, HttpResponseDeleted,
-    HttpResponseOk, HttpResponseUpdatedNoContent, PaginationParams, Path,
-    Query, RequestContext, ResultsPage, TypedBody,
+    EmptyScanParams, ErrorStatusCode, HttpError, HttpResponseCreated,
+    HttpResponseDeleted, HttpResponseOk, HttpResponseUpdatedNoContent,
+    PaginationParams, Path, Query, RequestContext, ResultsPage, TypedBody,
 };
 use dropshot_api_manager_types::api_versions;
 
@@ -1064,11 +1064,23 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv4",
+        versions = ..VERSION_ADDRESS_TAGS
     }]
     async fn link_ipv4_reset(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let _ = rqctx;
+        let _ = path;
+
+        Err(HttpError {
+            status_code: ErrorStatusCode::GONE,
+            error_code: None,
+            external_message: ADDR_RESET_EMSG.to_string(),
+            internal_message: ADDR_RESET_EMSG.to_string(),
+            headers: None,
+        })
+    }
 
     /// Remove an IPv4 address from this link.
     ///
@@ -1135,11 +1147,23 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv6",
+        versions = ..VERSION_ADDRESS_TAGS
     }]
     async fn link_ipv6_reset(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let _ = rqctx;
+        let _ = path;
+
+        Err(HttpError {
+            status_code: ErrorStatusCode::GONE,
+            error_code: None,
+            external_message: ADDR_RESET_EMSG.to_string(),
+            internal_message: ADDR_RESET_EMSG.to_string(),
+            headers: None,
+        })
+    }
 
     /// Remove an IPv6 address from this link.
     ///
@@ -2972,3 +2996,11 @@ pub trait DpdApi {
         HttpError,
     >;
 }
+
+const ADDR_RESET_EMSG: &str = "
+This endpoint was deprecated because it provides redundant functionality and interacts poorly with ownership tags. The following endpoints may also be used to delete addresses:
+
+- port_settings_apply
+- port_settings_clear
+- link_ipv*_list followed by link_ipv*_delete
+";

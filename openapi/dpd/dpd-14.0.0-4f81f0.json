@@ -3344,41 +3344,6 @@
             "$ref": "#/components/responses/Error"
           }
         }
-      },
-      "delete": {
-        "summary": "Clear all IPv4 addresses from a link.",
-        "operationId": "link_ipv4_reset",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "link_id",
-            "description": "The link in the switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/LinkId"
-            }
-          },
-          {
-            "in": "path",
-            "name": "port_id",
-            "description": "The switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/PortId"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "resource updated"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
       }
     },
     "/ports/{port_id}/links/{link_id}/ipv4/{address}": {
@@ -3536,41 +3501,6 @@
           },
           "required": true
         },
-        "responses": {
-          "204": {
-            "description": "resource updated"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Clear all IPv6 addresses from a link.",
-        "operationId": "link_ipv6_reset",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "link_id",
-            "description": "The link in the switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/LinkId"
-            }
-          },
-          {
-            "in": "path",
-            "name": "port_id",
-            "description": "The switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/PortId"
-            }
-          }
-        ],
         "responses": {
           "204": {
             "description": "resource updated"

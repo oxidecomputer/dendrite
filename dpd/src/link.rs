@@ -1090,23 +1090,6 @@ impl Switch {
         })
     }
 
-    /// Delete all addresses of the given type on the specified link.
-    ///
-    /// Returns [`DpdError::AddrClear`] if any addresses could not be deleted.
-    pub fn reset_addresses<A: IpAddrLike>(
-        &self,
-        port_id: PortId,
-        link_id: LinkId,
-    ) -> DpdResult<()> {
-        self.link_update(port_id, link_id, |link| {
-            self.addrs.write().unwrap().try_retain_by_owner::<A>(
-                self,
-                link.asic_addr_id(),
-                |_, _| false,
-            )
-        })
-    }
-
     /// Return a link's configured MAC address.
     pub fn link_mac_address(
         &self,
