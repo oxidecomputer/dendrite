@@ -630,11 +630,9 @@ impl Switch {
     }
 
     /// Clear port settings as an atomic transaction.
-    pub async fn clear_port_settings(
-        &self,
-        port_id: PortId,
-        tag: &str,
-    ) -> DpdResult<PortSettings> {
+    pub async fn clear_port_settings(&self, port_id: PortId) -> DpdResult<()> {
+        // Doesn't matter because we're deleting all links anyway.
+        let tag = "";
         let mut ctx = context!(port_id, self, tag);
 
         let settings = PortSettings::default();
@@ -642,7 +640,7 @@ impl Switch {
         trace!(self.log, "port settings diff: {:#?}", diff);
         diff.execute(&mut ctx)?;
 
-        Self::get_port_settings_locked(&mut ctx, true)
+        Ok(())
     }
 
     /// Get port settings as an atomic transaction.

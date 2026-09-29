@@ -2371,7 +2371,8 @@
     },
     "/port/{port_id}/settings": {
       "delete": {
-        "summary": "Clear port settings atomically.",
+        "summary": "Clears port settings atomically.",
+        "description": "This is similar to calling link_delete on all links of a port, however it also attempts to roll back to the previous state if something fails.",
         "operationId": "port_settings_clear",
         "parameters": [
           {
@@ -2382,27 +2383,11 @@
             "schema": {
               "$ref": "#/components/schemas/PortId"
             }
-          },
-          {
-            "in": "query",
-            "name": "tag",
-            "description": "Restrict operations on this port to the provided tag.",
-            "schema": {
-              "nullable": true,
-              "type": "string"
-            }
           }
         ],
         "responses": {
-          "200": {
-            "description": "successful operation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PortSettings"
-                }
-              }
-            }
+          "204": {
+            "description": "successful deletion"
           },
           "4XX": {
             "$ref": "#/components/responses/Error"

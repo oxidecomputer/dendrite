@@ -226,9 +226,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
 
     // Clear all settings
 
-    client
-        .port_settings_clear(&"qsfp0".parse().unwrap(), Some("chaos"))
-        .await?;
+    client.port_settings_clear(&"qsfp0".parse().unwrap()).await?;
 
     // The addresses are all cleared synchronously, but the link deletion is
     // async.  We pause briefly to give it a chance to complete.  The subsequent
@@ -525,8 +523,7 @@ Reconciliation retries:
         .context("Timeout in port_settings_apply")?;
 
         retry::retry_op(RETRY_INTERVAL, LONG_ENOUGH, async || {
-            let Err(e) = client.port_settings_clear(&port_id, Some(TAG1)).await
-            else {
+            let Err(e) = client.port_settings_clear(&port_id).await else {
                 return Ok(());
             };
             clear += 1;
@@ -804,11 +801,12 @@ async fn address_cmds_respect_tags() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Verifies the current known behavior of port_settings_clear, which
-/// is to delete the link and all its config from the port.
+/// Verifies port_settings_clear, which deletes the link
+/// and all its config from the port regardless of tag.
 ///
-/// This test isn't necessarily endorsing the implementation, but
-/// it does seek to track API's current behavior.
+/// "ignores" sounds condemning, but there's not really an
+/// obvious alternative short of making tag ownership a
+/// property of the link itself.
 #[tokio::test]
 async fn settings_clear_ignores_tags() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
@@ -842,7 +840,7 @@ async fn settings_clear_ignores_tags() -> anyhow::Result<()> {
     tag2.verify_addrs_exist(Verify::NonExhaustive).await?;
 
     // Tag2 means nothing here
-    client.port_settings_clear(&port_id, Some(TAG2)).await?;
+    client.port_settings_clear(&port_id).await?;
 
     tag1.verify_addrs_exist(Verify::Exhaustive).await.expect_err(
         "Addresses do not exist because we cleared the port settings.",
@@ -1110,7 +1108,7 @@ async fn partial_failures_are_recoverable() -> anyhow::Result<()> {
     );
 
     client
-        .port_settings_clear(&port_id, Some(TAG1))
+        .port_settings_clear(&port_id)
         .await
         .expect_err("Port couldn't be cleared because IPv4 addr is stuck");
 
@@ -1294,7 +1292,7 @@ async fn deletion_doesnt_leak_table_entries() -> anyhow::Result<()> {
     tag1.apply_addrs().await?;
 
     let msg = "Link should not be dropped because that would orphan the stuck table entry";
-    client.port_settings_clear(&port_id, None).await.expect_err(msg);
+    client.port_settings_clear(&port_id).await.expect_err(msg);
     client
         .port_settings_apply(
             &port_id,

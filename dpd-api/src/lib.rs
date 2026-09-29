@@ -1723,20 +1723,44 @@ pub trait DpdApi {
             .map(|resp| resp.map(Into::into))
     }
 
-    /**
-     * Clear port settings atomically.
-     */
-    // TODO::cory: Do not accept a tag. Differs from delete_link in that it does rollback?
+    /// Clears port settings atomically.
+    ///
+    /// This is similar to calling link_delete on all links of
+    /// a port, however it also attempts to roll back to the
+    /// previous state if something fails.
     #[endpoint {
         method = DELETE,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
+        versions = VERSION_ADDRESS_TAGS..,
         path = "/port/{port_id}/settings"
     }]
     async fn port_settings_clear(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /// This was replaced due to two issues:
+    /// - Tags have no effect on link deletion, and requiring
+    ///   an unused tag parameter was misleading.
+    /// - This returns PortSettings. It's unclear whether that's the previous
+    ///   settings or the resulting settings. The implementation chose the
+    ///   latter, which is pointless because a successful clear definitionally
+    ///   produces empty settings.
+    #[endpoint {
+        method = DELETE,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_ADDRESS_TAGS,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_clear"
+    }]
+    async fn port_settings_clear_v2(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::port::PortIdPathParams>,
         query: Query<latest::port::PortSettingsTag>,
-    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError> {
+        let _ = query;
+        Self::port_settings_clear(rqctx, path)
+            .await
+            .map(|_| HttpResponseOk(latest::port::PortSettings::default()))
+    }
 
     /**
      * Clear port settings atomically.
@@ -1752,7 +1776,7 @@ pub trait DpdApi {
         path: Path<v1::port::PortIdPathParams>,
         query: Query<v1::port::PortSettingsTag>,
     ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
-        Self::port_settings_clear(rqctx, path, query)
+        Self::port_settings_clear_v2(rqctx, path, query)
             .await
             .map(|resp| resp.map(Into::into))
     }
