@@ -1067,8 +1067,7 @@ impl Switch {
             let iface_id = link.asic_addr_iface();
             if !self.addrs.clear_addr(self, iface_id, addr, tag)? {
                 return Err(DpdError::NoSuchAddress {
-                    port_id,
-                    link_id,
+                    owner: format!("{port_id}/{link_id}").into(),
                     address: addr.into(),
                 });
             }
@@ -1117,23 +1116,6 @@ impl Switch {
                 })
                 .take(limit)
                 .collect()
-        })
-    }
-
-    /// Delete all addresses of the given type on the specified link.
-    ///
-    /// Returns [`DpdError::AddrClear`] if any addresses could not be deleted.
-    pub fn reset_addresses<A: IpAddrLike>(
-        &self,
-        port_id: PortId,
-        link_id: LinkId,
-    ) -> DpdResult<()> {
-        self.link_update(port_id, link_id, |link| {
-            self.addrs.clear_addrs::<A>(
-                self,
-                link.asic_addr_iface(),
-                &OptTag::Any,
-            )
         })
     }
 

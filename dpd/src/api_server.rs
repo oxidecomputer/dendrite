@@ -42,14 +42,14 @@ use dpd_types::mcast::{
     MulticastGroupUpdateUnderlayEntry, MulticastTagPath,
     MulticastUnderlayGroupIpParam,
 };
-use dpd_types::misc::{BuildInfo, TagPath};
+use dpd_types::misc::{BuildInfo, MaybeTagged, TagPath, Tagged};
 use dpd_types::nat::{
     NatIpv4Path, NatIpv4PortPath, NatIpv4RangePath, NatIpv6Path,
     NatIpv6PortPath, NatIpv6RangePath, NatToken,
 };
 use dpd_types::oxstats::OximeterMetadata;
 use dpd_types::port::{
-    FreeChannels, LinkSettings, PortIdPathParams, PortSettings, PortSettingsTag,
+    FreeChannels, LinkSettings, PortIdPathParams, PortSettings,
 };
 use dpd_types::port_map::BackplaneLink;
 use dpd_types::route::{
@@ -1165,31 +1165,21 @@ impl DpdApi for DpdApiImpl {
             .map_err(|e| e.into())
     }
 
-    async fn link_ipv4_reset(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let path = path.into_inner();
-        let port_id = path.port_id;
-        let link_id = path.link_id;
-        switch
-            .reset_addresses::<Ipv4Addr>(port_id, link_id)
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(|e| e.into())
-    }
-
     async fn link_ipv4_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkIpv4Path>,
+        tag: Query<MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
-        let path = path.into_inner();
-        let port_id = path.port_id;
-        let link_id = path.link_id;
-        let address = path.address.to_ip().try_into()?;
+        let LinkIpv4Path { port_id, link_id, address } = path.into_inner();
+        let address = address.to_ip().try_into()?;
+        let tag = tag
+            .into_inner()
+            .tag
+            .map_or_else(|| OptTag::Any, |tag| OptTag::Tag(tag.into()));
+
         switch
-            .delete_ip_address(port_id, link_id, address, &OptTag::Any)
+            .delete_ip_address(port_id, link_id, address, &tag)
             .map(|_| HttpResponseDeleted())
             .map_err(|e| e.into())
     }
@@ -1248,31 +1238,21 @@ impl DpdApi for DpdApiImpl {
             .map_err(|e| e.into())
     }
 
-    async fn link_ipv6_reset(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<LinkPath>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let path = path.into_inner();
-        let port_id = path.port_id;
-        let link_id = path.link_id;
-        switch
-            .reset_addresses::<Ipv6Addr>(port_id, link_id)
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(|e| e.into())
-    }
-
     async fn link_ipv6_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkIpv6Path>,
+        tag: Query<MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
-        let path = path.into_inner();
-        let port_id = path.port_id;
-        let link_id = path.link_id;
-        let address = path.address.to_ip().try_into()?;
+        let LinkIpv6Path { port_id, link_id, address } = path.into_inner();
+        let address = address.to_ip().try_into()?;
+        let tag = tag
+            .into_inner()
+            .tag
+            .map_or_else(|| OptTag::Any, |s| OptTag::Tag(s.into()));
+
         switch
-            .delete_ip_address(port_id, link_id, address, &OptTag::Any)
+            .delete_ip_address(port_id, link_id, address, &tag)
             .map(|_| HttpResponseDeleted())
             .map_err(|e| e.into())
     }
@@ -1379,7 +1359,7 @@ impl DpdApi for DpdApiImpl {
         let entry = val.into_inner();
         let addr = IpAddr::V4(entry.addr).try_into().map_err(DpdError::from)?;
 
-        loopback::set_loopback(switch, addr, entry.tag)?;
+        loopback::set_loopback_addr(switch, addr, entry.tag)?;
 
         Ok(HttpResponseUpdatedNoContent {})
     }
@@ -1387,13 +1367,15 @@ impl DpdApi for DpdApiImpl {
     async fn loopback_ipv4_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LoopbackIpv4Path>,
+        tag: Query<MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let addr = IpAddr::V4(path.into_inner().ipv4)
-            .try_into()
+        let tag = tag
+            .into_inner()
+            .tag
+            .map_or_else(|| OptTag::Any, |s| OptTag::Tag(s.into()));
+        let addr = RouterIfaceIpAddr::try_new(path.into_inner().ipv4.to_ip())
             .map_err(DpdError::from)?;
-
-        loopback::clear_loopback(switch, addr, &OptTag::Any)
+        loopback::delete_loopback_addr(rqctx.context(), addr, &tag)
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
     }
@@ -1425,7 +1407,7 @@ impl DpdApi for DpdApiImpl {
         let entry = val.into_inner();
         let addr = IpAddr::V6(entry.addr).try_into().map_err(DpdError::from)?;
 
-        loopback::set_loopback(switch, addr, entry.tag)?;
+        loopback::set_loopback_addr(switch, addr, entry.tag)?;
 
         Ok(HttpResponseUpdatedNoContent {})
     }
@@ -1433,13 +1415,16 @@ impl DpdApi for DpdApiImpl {
     async fn loopback_ipv6_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LoopbackIpv6Path>,
+        tag: Query<MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let addr = IpAddr::V6(path.into_inner().ipv6)
-            .try_into()
+        let tag = tag
+            .into_inner()
+            .tag
+            .map_or_else(|| OptTag::Any, |tag| OptTag::Tag(tag.into()));
+        let addr = RouterIfaceIpAddr::try_new(path.into_inner().ipv6.to_ip())
             .map_err(DpdError::from)?;
 
-        loopback::clear_loopback(switch, addr, &OptTag::Any)
+        loopback::delete_loopback_addr(rqctx.context(), addr, &tag)
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
     }
@@ -1871,56 +1856,45 @@ impl DpdApi for DpdApiImpl {
     }
 
     async fn port_settings_apply(
-        rqctx: RequestContext<Arc<Switch>>,
-        path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
+        rqctx: RequestContext<Self::Context>,
+        path: Path<Tagged<PortIdPathParams>>,
         body: TypedBody<PortSettings>,
-    ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch = rqctx.context();
-        let path = path.into_inner();
-        let query = query.into_inner();
-        let port_id = path.port_id;
-        let settings = body.into_inner();
-        let tag = query.tag.as_deref().unwrap_or("");
+        let Tagged { tag, value: PortIdPathParams { port_id } } =
+            path.into_inner();
 
         switch
-            .apply_port_settings(port_id, settings, tag)
+            .apply_port_settings(port_id, body.into_inner(), &tag)
             .await
-            .map(HttpResponseOk)
+            .map(|()| HttpResponseUpdatedNoContent())
             .map_err(HttpError::from)
     }
 
     async fn port_settings_clear(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
-    ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
+    ) -> Result<HttpResponseDeleted, HttpError> {
         let switch = rqctx.context();
-        let path = path.into_inner();
-        let query = query.into_inner();
-        let port_id = path.port_id;
-        let tag = query.tag.as_deref().unwrap_or("");
+        let port_id = path.into_inner().port_id;
 
         switch
-            .clear_port_settings(port_id, tag)
+            .clear_port_settings(port_id)
             .await
-            .map(HttpResponseOk)
+            .map(|()| HttpResponseDeleted())
             .map_err(HttpError::from)
     }
 
     async fn port_settings_get(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
+        path: Path<Tagged<PortIdPathParams>>,
     ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
         let switch = rqctx.context();
-        let path = path.into_inner();
-        let query = query.into_inner();
-        let port_id = path.port_id;
-        let tag = query.tag.as_deref().unwrap_or("");
+        let Tagged { tag, value: PortIdPathParams { port_id } } =
+            path.into_inner();
 
         switch
-            .get_port_settings(port_id, tag)
+            .get_port_settings(port_id, &tag)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
