@@ -395,7 +395,7 @@ async fn addr_del(
             .context("failed to delete IPv4 address")
             .map(|_| ()),
         IpAddr::V6(addr) => client
-            .link_ipv6_delete(&link.port_id, &link.link_id, &addr)
+            .link_ipv6_delete(&link.port_id, &link.link_id, &addr, None)
             .await
             .context("failed to delete IPv6 address")
             .map(|_| ()),

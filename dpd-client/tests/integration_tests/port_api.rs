@@ -332,9 +332,10 @@ async fn test_ipv6_clear() -> TestResult {
         .await
         .unwrap();
 
-    switch.client.link_ipv6_delete(&port_id, &link_id, &a).await.unwrap();
-    switch.client.link_ipv6_delete(&port_id, &link_id, &b).await.unwrap();
-    switch.client.link_ipv6_delete(&port_id, &link_id, &c).await.unwrap();
+    let tag = Some(switch.client.inner().tag.as_str());
+    switch.client.link_ipv6_delete(&port_id, &link_id, &a, tag).await.unwrap();
+    switch.client.link_ipv6_delete(&port_id, &link_id, &b, None).await.unwrap();
+    switch.client.link_ipv6_delete(&port_id, &link_id, &c, tag).await.unwrap();
     assert!(
         switch
             .client
@@ -356,6 +357,7 @@ async fn test_ipv6_delete() -> TestResult {
     let b: Ipv6Addr = "fe80::8:20ff:fe1d:b677".parse().unwrap();
     let c: Ipv6Addr = "fe80::240:54ff:fe08:808".parse().unwrap();
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
+    let tag = Some(switch.client.inner().tag.as_str());
 
     switch
         .client
@@ -373,7 +375,7 @@ async fn test_ipv6_delete() -> TestResult {
         .await
         .unwrap();
 
-    switch.client.link_ipv6_delete(&port_id, &link_id, &b).await.unwrap();
+    switch.client.link_ipv6_delete(&port_id, &link_id, &b, tag).await.unwrap();
     let l = switch
         .client
         .link_ipv6_list_stream(&port_id, &link_id, None)
@@ -383,7 +385,7 @@ async fn test_ipv6_delete() -> TestResult {
         .unwrap();
     addr_compare(vec![a, c], l).unwrap();
 
-    switch.client.link_ipv6_delete(&port_id, &link_id, &a).await.unwrap();
+    switch.client.link_ipv6_delete(&port_id, &link_id, &a, tag).await.unwrap();
     let l = switch
         .client
         .link_ipv6_list_stream(&port_id, &link_id, None)

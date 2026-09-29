@@ -1261,14 +1261,14 @@ impl DpdApi for DpdApiImpl {
     async fn link_ipv6_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkIpv6Path>,
+        tag: Query<MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
-        let path = path.into_inner();
-        let port_id = path.port_id;
-        let link_id = path.link_id;
-        let address = path.address;
+        let LinkIpv6Path { port_id, link_id, address } = path.into_inner();
+        let tag = tag.into_inner().tag;
+
         switch
-            .delete_ip_address(port_id, link_id, address.into(), None)
+            .delete_ip_address(port_id, link_id, address.into(), tag.as_deref())
             .map(|_| HttpResponseDeleted())
             .map_err(|e| e.into())
     }

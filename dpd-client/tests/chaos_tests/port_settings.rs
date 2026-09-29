@@ -795,7 +795,9 @@ async fn address_cmds_respect_tags() -> anyhow::Result<()> {
     client
         .link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr, Some(TAG1))
         .await?;
-    client.link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr).await?;
+    client
+        .link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr, Some(TAG1))
+        .await?;
 
     tag2.verify_addrs_exist(Verify::Exhaustive).await?;
     tag1.verify_addrs_exist(Verify::NonExhaustive)
@@ -943,7 +945,7 @@ async fn deleted_address_must_exist() -> anyhow::Result<()> {
         .expect_status(StatusCode::NOT_FOUND);
 
     client
-        .link_ipv6_delete(&port_id, &link_id, &rng.unique_ipv6())
+        .link_ipv6_delete(&port_id, &link_id, &rng.unique_ipv6(), None)
         .await
         .expect_err("Deleting a non-existent IPv6 addr fails")
         .expect_status(StatusCode::NOT_FOUND);
@@ -953,13 +955,20 @@ async fn deleted_address_must_exist() -> anyhow::Result<()> {
         .await
         .expect_err("Must not delete an IPv4 address belonging to another tag")
         .expect_status(StatusCode::CONFLICT);
+    client
+        .link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr, Some(TAG2))
+        .await
+        .expect_err("Must not delete an IPv6 address belonging to another tag")
+        .expect_status(StatusCode::CONFLICT);
     // TODO::cory: wrong tag ipv6 delete as well
     tag1.verify_addrs_exist(Verify::NonExhaustive).await?;
 
     client
         .link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr, Some(TAG1))
         .await?;
-    client.link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr).await?;
+    client
+        .link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr, Some(TAG1))
+        .await?;
     tag1.verify_addrs_exist(Verify::NonExhaustive)
         .await
         .expect_err("Addresses were deleted");
@@ -1072,7 +1081,9 @@ async fn apply_fails_on_tag_conflict() -> anyhow::Result<()> {
         "tag2's entry should remain untouched"
     );
 
-    client.link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr).await?;
+    client
+        .link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr, Some(TAG2))
+        .await?;
 
     tag1.apply_addrs().await?;
     tag1.verify_addrs_exist(Verify::Exhaustive).await?;

@@ -1139,15 +1139,38 @@ pub trait DpdApi {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Remove an IPv6 address from a link.
-    // TODO::cory: tag scope
+    ///
+    /// If a tag is provided, the address will only be deleted
+    /// if it belongs to the given tag.
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv6/{address}",
+        versions = VERSION_ADDRESS_TAGS..,
     }]
     async fn link_ipv6_delete(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkIpv6Path>,
+        tag: Query<latest::misc::MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError>;
+
+    // Replaced for the same reason as [`link_ipv4_delete_v1`].
+    #[endpoint {
+        method = DELETE,
+        path = "/ports/{port_id}/links/{link_id}/ipv6/{address}",
+        versions = ..VERSION_ADDRESS_TAGS,
+        operation_id = "link_ipv6_delete"
+    }]
+    async fn link_ipv6_delete_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkIpv6Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Self::link_ipv6_delete(
+            rqctx,
+            path,
+            latest::misc::MaybeTagged::default().into(),
+        )
+        .await
+    }
 
     /// Get a link's MAC address.
     #[endpoint {

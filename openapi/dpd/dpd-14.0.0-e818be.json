@@ -3569,6 +3569,7 @@
     "/ports/{port_id}/links/{link_id}/ipv6/{address}": {
       "delete": {
         "summary": "Remove an IPv6 address from a link.",
+        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.",
         "operationId": "link_ipv6_delete",
         "parameters": [
           {
@@ -3597,6 +3598,14 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/PortId"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "schema": {
+              "nullable": true,
+              "type": "string"
             }
           }
         ],
