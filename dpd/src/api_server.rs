@@ -1887,17 +1887,14 @@ impl DpdApi for DpdApiImpl {
 
     async fn port_settings_get(
         rqctx: RequestContext<Arc<Switch>>,
-        path: Path<PortIdPathParams>,
-        query: Query<PortSettingsTag>,
+        path: Path<Tagged<PortIdPathParams>>,
     ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
         let switch = rqctx.context();
-        let path = path.into_inner();
-        let query = query.into_inner();
-        let port_id = path.port_id;
-        let tag = query.tag.as_deref().unwrap_or("");
+        let Tagged { tag, value: PortIdPathParams { port_id } } =
+            path.into_inner();
 
         switch
-            .get_port_settings(port_id, tag)
+            .get_port_settings(port_id, &tag)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)

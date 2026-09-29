@@ -1071,7 +1071,7 @@ pub trait DpdApi {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Remove an IPv4 address from a link.
-    /// TODO::cory: Possibly Tagged<LinkIpv4Path>
+    // TODO::cory: Possibly Tagged<LinkIpv4Path>
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv4/{address}",
@@ -1253,7 +1253,7 @@ pub trait DpdApi {
     /**
      * Remove one loopback IPv4 address.
      */
-    /// TODO::cory: require tag. Possibly Tagged<Ipv4Addr>
+    // TODO::cory: require tag. Possibly Tagged<Ipv4Addr>
     #[endpoint {
         method = DELETE,
         path = "/loopback/ipv4/{ipv4}",
@@ -1289,7 +1289,7 @@ pub trait DpdApi {
     /**
      * Remove one loopback IPv6 address.
      */
-    /// TODO::cory: require tag. Possibly Tagged<Ipv6Addr>
+    // TODO::cory: require tag. Possibly Tagged<Ipv6Addr>
     #[endpoint {
         method = DELETE,
         path = "/loopback/ipv6/{ipv6}",
@@ -1568,7 +1568,7 @@ pub trait DpdApi {
     /// This removes all data entirely.
     // Note: Unlike `reset_all_tagged`, this endpoint does clear multicast groups.
     // TODO-security: This endpoint should probably not exist.
-    /// TODO::cory: delete this
+    // TODO::cory: delete this
     #[endpoint {
         method = DELETE,
         path = "/all-settings"
@@ -1726,7 +1726,7 @@ pub trait DpdApi {
     /**
      * Clear port settings atomically.
      */
-    /// TODO::cory: Do not accept a tag. Differs from delete_link in that it does rollback?
+    // TODO::cory: Do not accept a tag. Differs from delete_link in that it does rollback?
     #[endpoint {
         method = DELETE,
         versions = VERSION_ALLOW_DDM_TRAFFIC..,
@@ -1757,20 +1757,44 @@ pub trait DpdApi {
             .map(|resp| resp.map(Into::into))
     }
 
-    /**
-     * Get port settings atomically.
-     */
-    /// TODO::cory: tag should not be optional: Tagged<PortId>
+    /// Retrieves the settings for all links on this port.
+    ///
+    /// Among tagged resources, only those matching the given
+    /// tag are returned.
+    ///
+    /// Use link_ipv*_list if you want all addresses on a link
+    /// regardless of tag.
     #[endpoint {
         method = GET,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
-        path = "/port/{port_id}/settings"
+        versions = VERSION_ADDRESS_TAGS..,
+        path = "/port/{port_id}/settings/{tag}"
     }]
     async fn port_settings_get(
         rqctx: RequestContext<Self::Context>,
+        path: Path<latest::misc::Tagged<latest::port::PortIdPathParams>>,
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /// The version replacing this makes tag a required parameter.
+    /// Reconciler usage doesn't want tag `None` to return all addresses,
+    /// which forced dpd to implicitly unwrap tag `None` to a default `""`.
+    #[endpoint {
+        method = GET,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_ADDRESS_TAGS,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_get"
+    }]
+    async fn port_settings_get_v2(
+        rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
         query: Query<latest::port::PortSettingsTag>,
-    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError> {
+        let tagged_port = path.map(|port| latest::misc::Tagged {
+            tag: query.into_inner().tag.unwrap_or_default(),
+            value: port,
+        });
+
+        Self::port_settings_get(rqctx, tagged_port).await
+    }
 
     /**
      * Get port settings atomically.
@@ -1786,7 +1810,7 @@ pub trait DpdApi {
         path: Path<v1::port::PortIdPathParams>,
         query: Query<v1::port::PortSettingsTag>,
     ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
-        Self::port_settings_get(rqctx, path, query)
+        Self::port_settings_get_v2(rqctx, path, query)
             .await
             .map(|resp| resp.map(Into::into))
     }

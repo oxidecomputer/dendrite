@@ -13,7 +13,7 @@
     "/all-settings": {
       "delete": {
         "summary": "Clear all settings.",
-        "description": "This removes all data entirely. TODO::cory: delete this",
+        "description": "This removes all data entirely.",
         "operationId": "reset_all",
         "responses": {
           "204": {
@@ -1140,7 +1140,6 @@
     "/loopback/ipv4/{ipv4}": {
       "delete": {
         "summary": "Remove one loopback IPv4 address.",
-        "description": "TODO::cory: require tag. Possibly Tagged<Ipv4Addr>",
         "operationId": "loopback_ipv4_delete",
         "parameters": [
           {
@@ -1222,7 +1221,6 @@
     "/loopback/ipv6/{ipv6}": {
       "delete": {
         "summary": "Remove one loopback IPv6 address.",
-        "description": "TODO::cory: require tag. Possibly Tagged<Ipv6Addr>",
         "operationId": "loopback_ipv6_delete",
         "parameters": [
           {
@@ -2372,52 +2370,8 @@
       }
     },
     "/port/{port_id}/settings": {
-      "get": {
-        "summary": "Get port settings atomically.",
-        "description": "TODO::cory: tag should not be optional: Tagged<PortId>",
-        "operationId": "port_settings_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "port_id",
-            "description": "The switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/PortId"
-            }
-          },
-          {
-            "in": "query",
-            "name": "tag",
-            "description": "Restrict operations on this port to the provided tag.",
-            "schema": {
-              "nullable": true,
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "successful operation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PortSettings"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      },
       "delete": {
         "summary": "Clear port settings atomically.",
-        "description": "TODO::cory: Do not accept a tag. Differs from delete_link in that it does rollback?",
         "operationId": "port_settings_clear",
         "parameters": [
           {
@@ -2460,6 +2414,48 @@
       }
     },
     "/port/{port_id}/settings/{tag}": {
+      "get": {
+        "summary": "Retrieves the settings for all links on this port.",
+        "description": "Among tagged resources, only those matching the given tag are returned.\n\nUse link_ipv*_list if you want all addresses on a link regardless of tag.",
+        "operationId": "port_settings_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "tag",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortSettings"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
       "post": {
         "summary": "Apply port settings atomically.",
         "description": "These settings will be applied holistically, and to the extent possible atomically to a given port. In the event of a failure, a rollback is attempted. If the rollback fails, there will be inconsistent state. This failure mode returns the error code \"rollback failure\". For more details see the docs on the [`PortSettings`] type.\n\nResource modifications within a link respect tag ownership. For example, this will not clear link addresses belonging to other tags. However, this may delete a link even if it contains resources belonging to other tags.",
@@ -3385,7 +3381,6 @@
     "/ports/{port_id}/links/{link_id}/ipv4/{address}": {
       "delete": {
         "summary": "Remove an IPv4 address from a link.",
-        "description": "TODO::cory: Possibly Tagged<LinkIpv4Path>",
         "operationId": "link_ipv4_delete",
         "parameters": [
           {

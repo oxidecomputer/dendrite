@@ -415,7 +415,7 @@ async fn current_port_settings(
     port: &PortId,
 ) -> anyhow::Result<PortSettings> {
     let mut settings =
-        client.port_settings_get(port, Some("chaos")).await?.into_inner();
+        client.port_settings_get(port, "chaos").await?.into_inner();
     sort_addrs(&mut settings);
     Ok(settings)
 }
@@ -537,8 +537,7 @@ Reconciliation retries:
         .context("Timeout in port_settings_clear")?;
 
         retry::retry_op(RETRY_INTERVAL, LONG_ENOUGH, async || {
-            let err = match client.port_settings_get(&port_id, Some(TAG1)).await
-            {
+            let err = match client.port_settings_get(&port_id, TAG1).await {
                 Ok(s) if s.links.is_empty() => return Ok(()),
                 Ok(s) => Err(ReturnCode::Retry(format!(
                     "Link settings should be empty. Found {s:?}"
@@ -731,10 +730,7 @@ impl AddrCheck {
             Self::Empty => {
                 let link_is_empty = addrs
                     .client
-                    .port_settings_get(
-                        &addrs.port_id,
-                        Some(&addrs.v4_entry.tag),
-                    )
+                    .port_settings_get(&addrs.port_id, &addrs.v4_entry.tag)
                     .await?
                     .into_inner()
                     .links
@@ -1367,7 +1363,7 @@ async fn deletion_prevails() -> anyhow::Result<()> {
     .context("Timeout trying to successfully clear addresses")?;
 
     let cleared_addrs = client
-        .port_settings_get(&port_id, Some(TAG1))
+        .port_settings_get(&port_id, TAG1)
         .await?
         .links
         .get(&link_id.to_string())
@@ -1679,7 +1675,7 @@ impl<'a> TestAddrs<'a> {
         // Verify the port_settings endpoint returns the same.
         let mut settings = self
             .client
-            .port_settings_get(&self.port_id, Some(&self.v4_entry.tag))
+            .port_settings_get(&self.port_id, &self.v4_entry.tag)
             .await?
             .into_inner();
 
