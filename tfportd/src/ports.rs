@@ -31,13 +31,13 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
-use std::net::Ipv6Addr;
 use std::sync::Arc;
 
 use anyhow::Context;
 use anyhow::Result;
 use dpd_client::ClientInfo;
 use dpd_client::types;
+use oxnet::UnicastLinkLocalIpv6Addr;
 use slog::debug;
 use slog::error;
 use slog::info;
@@ -64,14 +64,14 @@ pub struct LinkInfo {
     /// Is this link configured to support IPv6?
     pub ipv6_enabled: bool,
     /// The IPv6 link-local address of the link in dpd, if it exists.
-    pub dpd_link_local: Option<Ipv6Addr>,
+    pub dpd_link_local: Option<UnicastLinkLocalIpv6Addr>,
 
     /// The name of the `tfport` device, if it exists.
     pub tfport: Option<String>,
     /// The index of the `tfport` interface, if it exists.
     pub tfport_ifindex: Option<u32>,
     /// The IPv6 link-local address of the tfport in illumos, if it exists.
-    pub tfport_link_local: Option<Ipv6Addr>,
+    pub tfport_link_local: Option<UnicastLinkLocalIpv6Addr>,
 }
 
 impl fmt::Display for LinkInfo {
@@ -239,12 +239,14 @@ async fn illumos_port_update(
 //     happen if the mac address changes which, as noted in dpd_port_update(),
 //     would also be very weird.
 async fn ensure_address_match(g: &Global, link: &LinkInfo) -> Result<()> {
+    let tag = g.client.inner().tag.as_str();
+
     if let Some(addr) = link.dpd_link_local
         && link.dpd_link_local != link.tfport_link_local
     {
         warn!(g.log, "deleting stale dpd address: {addr}");
         g.client
-            .link_ipv6_delete(&link.port_id, &link.link_id, &addr)
+            .link_ipv6_delete(&link.port_id, &link.link_id, &addr, None)
             .await
             .context("deleting stale link-local address")?;
     }
@@ -257,7 +259,7 @@ async fn ensure_address_match(g: &Global, link: &LinkInfo) -> Result<()> {
             .link_ipv6_create(
                 &link.port_id,
                 &link.link_id,
-                &types::Ipv6Entry { tag: g.client.inner().tag.clone(), addr },
+                &types::Ipv6Entry { tag: tag.to_string(), addr: addr.into() },
             )
             .await
             .context("sending new link-local address")?;

@@ -49,7 +49,6 @@ pub mod link {
     pub use crate::v1::link::LinkPath;
     pub use crate::v1::link::LinkState;
     pub use crate::v1::link::LinkUpCounter;
-    pub use crate::v1::link::TfportData;
 
     pub use crate::v11::link::LinkHistory;
 
@@ -57,6 +56,9 @@ pub mod link {
     pub use crate::v12::link::MsDuration;
 
     pub use crate::v13::link::LinkCreate;
+
+    pub use crate::v14::IpToken;
+    pub use crate::v14::link::TfportData;
 }
 
 pub mod loopback {
@@ -96,6 +98,11 @@ pub mod mcast {
 pub mod misc {
     pub use crate::v1::misc::BuildInfo;
     pub use crate::v1::misc::TagPath;
+
+    pub use crate::v14::CmdAck;
+    pub use crate::v14::MaybeTagged;
+    pub use crate::v14::OptTag;
+    pub use crate::v14::Tagged;
 }
 
 pub mod nat {

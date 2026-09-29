@@ -11,6 +11,7 @@ tofino_asic = ["asic/tofino_asic"]
 
 [dependencies]
 async-trait = "0.1.89"
+anyhow.workspace = true
 chrono.workspace = true
 futures.workspace = true
 http.workspace = true

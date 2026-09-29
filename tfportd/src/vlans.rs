@@ -87,7 +87,7 @@ async fn vlans_get(tfport: &str) -> anyhow::Result<IdOrdMap<VlanInfo>> {
         let link = fields[0].to_string();
         let vid = fields[1].parse::<u16>().context("invalid vlan_id")?;
         let ifindex = crate::netsupport::get_ifindex(&link);
-        let link_local = link_locals.get(&link).copied();
+        let link_local = link_locals.get(&link).copied().map(Ipv6Addr::from);
         let vlan = VlanInfo { name: link, vid, ifindex, link_local };
 
         // NOTE: We previously used a BTreeMap here, and ignored any duplicates.

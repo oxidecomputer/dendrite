@@ -8,7 +8,6 @@
 
 use crate::MacAddr;
 use crate::Switch;
-use crate::addr::OptTag;
 use crate::addr::SyncAddrMap;
 use crate::fault::AutonegTracker;
 use crate::fault::Faultable;
@@ -43,6 +42,7 @@ use dpd_types::link::LinkState;
 use dpd_types::link::LinkUpCounter;
 use dpd_types::link::LinkView;
 use dpd_types::link::TfportData;
+use dpd_types::misc::OptTag;
 use dpd_types::serdes::Ber;
 use slog::debug;
 use slog::error;
@@ -54,7 +54,6 @@ use std::collections::BTreeSet;
 use std::collections::btree_map;
 use std::collections::btree_map::Entry;
 use std::net::IpAddr;
-use std::net::Ipv6Addr;
 use std::ops::Bound;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -521,8 +520,7 @@ impl Link {
                 .get()
                 .read()
                 .unwrap()
-                .get_link_local(self.asic_addr_iface())
-                .map(Ipv6Addr::from),
+                .get_link_local(self.asic_addr_iface()),
         }
     }
 }
@@ -1033,7 +1031,7 @@ impl Switch {
 
         let (addr_bounds, tag_bounds) = if let Some((addr, tag)) = last_entry {
             start_addr = Some(addr);
-            let addr = (Bound::Excluded(addr), Bound::Unbounded);
+            let addr = (Bound::Included(addr), Bound::Unbounded);
             let tag = (Bound::Excluded(tag), Bound::Unbounded);
             (addr, tag)
         } else {
@@ -1061,23 +1059,6 @@ impl Switch {
                 })
                 .take(limit)
                 .collect()
-        })
-    }
-
-    /// Delete all addresses of the given type on the specified link.
-    ///
-    /// Returns [`DpdError::AddrClear`] if any addresses could not be deleted.
-    pub fn reset_addresses<A: IpAddrLike>(
-        &self,
-        port_id: PortId,
-        link_id: LinkId,
-    ) -> DpdResult<()> {
-        self.link_update(port_id, link_id, |link| {
-            self.addrs.clear_addrs::<A>(
-                self,
-                link.asic_addr_iface(),
-                &OptTag::Any,
-            )
         })
     }
 
