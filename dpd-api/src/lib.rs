@@ -16,6 +16,7 @@ use dropshot::{
     Query, RequestContext, ResultsPage, TypedBody,
 };
 use dropshot_api_manager_types::api_versions;
+use uuid::Uuid;
 
 api_versions!([
     // WHEN CHANGING THE API (part 1 of 2):
@@ -486,7 +487,7 @@ pub trait DpdApi {
     }
 
     /**
-     * List the routers that have any routes or IPv6 loopback addresses.
+     * List the routers that exist, including the default router.
      */
     #[endpoint {
         method = GET,
@@ -495,7 +496,35 @@ pub trait DpdApi {
     }]
     async fn router_list(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<latest::route::RouterId>>, HttpError>;
+    ) -> Result<HttpResponseOk<Vec<Uuid>>, HttpError>;
+
+    /**
+     * Create a router.  Creating a router that already exists succeeds.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/router/{router_id}",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_create(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterPath>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Delete a router, along with all of its routes and IPv6 loopback
+     * addresses.  Deleting a router that doesn't exist succeeds.  The
+     * default router can't be deleted.
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/router/{router_id}",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_delete(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::route::RouterPath>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
      * Fetch the IPv6 routes configured on the given router, mapping IPv6

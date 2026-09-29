@@ -105,21 +105,23 @@
 //      both IPv4 and IPv6 routes.  We should look at using traits and/or
 //      generics to coalesce common functionality into shared implementations.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv6Addr};
 use std::ops::Bound;
 
+use aal::AsicError;
 use dpd_types::link::LinkId;
 use dpd_types::route::Ipv4Route;
 use dpd_types::route::Ipv6Route;
-use dpd_types::route::RouterId;
 use slog::debug;
 use slog::error;
 use slog::info;
 use slog::warn;
+use uuid::Uuid;
 
 use crate::freemap;
+use crate::router::{RouterId, Routers};
 use crate::types::{DpdError, DpdResult};
 use crate::{Switch, table};
 use common::ports::PortId;
@@ -280,6 +282,7 @@ impl RouteEntry {
 }
 
 pub struct RouteData {
+    pub routers: Routers,
     v4: BTreeMap<RouteDest, RouteEntry>,
     v6: BTreeMap<RouteDest, RouteEntry>,
     v4_freemap: freemap::FreeMap,
@@ -946,13 +949,15 @@ fn add_route_locked(
 // just this single target.
 async fn add_route(
     switch: &Switch,
-    dest: RouteDest,
+    router: Uuid,
+    subnet: IpNet,
     route: Route,
 ) -> DpdResult<()> {
     let asic_port_id =
         switch.link_asic_port_id(route.port_id, route.link_id)?;
 
     let mut route_data = switch.routes.lock().await;
+    let dest = RouteDest::new(route_data.routers.get(router)?, subnet);
 
     // Adding the same route multiple times is a harmless no-op
     if let Some(entry) = route_data.get(dest)
@@ -971,7 +976,8 @@ async fn add_route(
 // is, it is not an error to "replace" a non- existent route.
 async fn set_route(
     switch: &Switch,
-    dest: RouteDest,
+    router: Uuid,
+    subnet: IpNet,
     route: Route,
     replace: bool,
 ) -> DpdResult<()> {
@@ -979,6 +985,7 @@ async fn set_route(
         switch.link_asic_port_id(route.port_id, route.link_id)?;
 
     let mut route_data = switch.routes.lock().await;
+    let dest = RouteDest::new(route_data.routers.get(router)?, subnet);
     if let Some(entry) = route_data.get(dest) {
         // setting the same route multiple times is a harmless no-op
         if entry.targets.len() == 1 && entry.targets[0].route == route {
@@ -1029,67 +1036,68 @@ fn delete_route_target_locked(
 
 pub async fn add_route_ipv4(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     subnet: Ipv4Net,
     route: Ipv4Route,
 ) -> DpdResult<()> {
-    add_route(switch, RouteDest::new(rid, subnet), route.into()).await
+    add_route(switch, router, subnet.into(), route.into()).await
 }
 
 pub async fn add_route_ipv4_over_ipv6(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     subnet: Ipv4Net,
     route: Ipv6Route,
 ) -> DpdResult<()> {
-    add_route(switch, RouteDest::new(rid, subnet), route.into()).await
+    add_route(switch, router, subnet.into(), route.into()).await
 }
 
 pub async fn add_route_ipv6(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     subnet: Ipv6Net,
     route: Ipv6Route,
 ) -> DpdResult<()> {
-    add_route(switch, RouteDest::new(rid, subnet), route.into()).await
+    add_route(switch, router, subnet.into(), route.into()).await
 }
 
 pub async fn set_route_ipv4(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     subnet: Ipv4Net,
     route: Ipv4Route,
     replace: bool,
 ) -> DpdResult<()> {
-    set_route(switch, RouteDest::new(rid, subnet), route.into(), replace).await
+    set_route(switch, router, subnet.into(), route.into(), replace).await
 }
 
 pub async fn set_route_ipv4_over_ipv6(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     subnet: Ipv4Net,
     route: Ipv6Route,
     replace: bool,
 ) -> DpdResult<()> {
-    set_route(switch, RouteDest::new(rid, subnet), route.into(), replace).await
+    set_route(switch, router, subnet.into(), route.into(), replace).await
 }
 
 pub async fn set_route_ipv6(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     subnet: Ipv6Net,
     route: Ipv6Route,
     replace: bool,
 ) -> DpdResult<()> {
-    set_route(switch, RouteDest::new(rid, subnet), route.into(), replace).await
+    set_route(switch, router, subnet.into(), route.into(), replace).await
 }
 
 pub async fn get_route_ipv4(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     subnet: Ipv4Net,
 ) -> DpdResult<Vec<dpd_types::route::Route>> {
     let route_data = switch.routes.lock().await;
+    let rid = route_data.routers.get(router)?;
     match route_data.get(RouteDest::new(rid, subnet)) {
         None => Err(DpdError::Missing("no such route".into())),
         Some(entry) => {
@@ -1100,10 +1108,11 @@ pub async fn get_route_ipv4(
 
 pub async fn get_route_ipv6(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     subnet: Ipv6Net,
 ) -> DpdResult<Vec<Ipv6Route>> {
     let route_data = switch.routes.lock().await;
+    let rid = route_data.routers.get(router)?;
     match route_data.get(RouteDest::new(rid, subnet)) {
         None => Err(DpdError::Missing("no such route".into())),
         Some(entry) => {
@@ -1128,10 +1137,11 @@ fn delete_route_locked(
 // Delete a route and all of its targets
 pub async fn delete_route_ipv4(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     subnet: Ipv4Net,
 ) -> DpdResult<()> {
     let mut route_data = switch.routes.lock().await;
+    let rid = route_data.routers.get(router)?;
 
     delete_route_locked(switch, &mut route_data, RouteDest::new(rid, subnet))
 }
@@ -1139,10 +1149,11 @@ pub async fn delete_route_ipv4(
 // Delete a route and all of its targets
 pub async fn delete_route_ipv6(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     subnet: Ipv6Net,
 ) -> DpdResult<()> {
     let mut route_data = switch.routes.lock().await;
+    let rid = route_data.routers.get(router)?;
 
     delete_route_locked(switch, &mut route_data, RouteDest::new(rid, subnet))
 }
@@ -1151,7 +1162,7 @@ pub async fn delete_route_ipv6(
 // target.
 pub async fn delete_route_target_ipv4(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     subnet: Ipv4Net,
     port_id: PortId,
     link_id: LinkId,
@@ -1161,6 +1172,7 @@ pub async fn delete_route_target_ipv4(
         Route { tag: String::new(), port_id, link_id, tgt_ip, vlan_id: None };
 
     let mut route_data = switch.routes.lock().await;
+    let rid = route_data.routers.get(router)?;
     delete_route_target_locked(
         switch,
         &mut route_data,
@@ -1173,7 +1185,7 @@ pub async fn delete_route_target_ipv4(
 // target.
 pub async fn delete_route_target_ipv6(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     subnet: Ipv6Net,
     port_id: PortId,
     link_id: LinkId,
@@ -1188,6 +1200,7 @@ pub async fn delete_route_target_ipv6(
     };
 
     let mut route_data = switch.routes.lock().await;
+    let rid = route_data.routers.get(router)?;
     delete_route_target_locked(
         switch,
         &mut route_data,
@@ -1196,19 +1209,67 @@ pub async fn delete_route_target_ipv6(
     )
 }
 
-/// The routers that have at least one route.
-pub async fn router_ids(switch: &Switch) -> BTreeSet<RouterId> {
-    let route_data = switch.routes.lock().await;
-    route_data.v4.keys().chain(route_data.v6.keys()).map(|d| d.rid).collect()
+// Remove a route from the switch, then forget it.  If any switch write fails,
+// the route is kept so the delete can be retried; entries already removed by
+// an earlier attempt count as removed.  This matters when a router is deleted:
+// an entry left on the switch without a record would be inherited by the next
+// router given the same table number.
+fn remove_then_forget_route(
+    ops: &dyn RouteTableOps,
+    route_data: &mut RouteData,
+    dest: RouteDest,
+) -> DpdResult<()> {
+    let already_gone = |r: DpdResult<()>| match r {
+        Err(DpdError::Switch(AsicError::Missing(_))) => Ok(()),
+        r => r,
+    };
+    let Some(entry) = route_data.get(dest).cloned() else {
+        return Ok(());
+    };
+    already_gone(ops.delete_index(dest))?;
+    for idx in 0..entry.targets.len() as u16 {
+        already_gone(ops.delete_target(dest.subnet, entry.index + idx))?;
+    }
+    route_data.remove(dest);
+    route_data.freemap_mut(entry.is_ipv4).free(entry.index, entry.slots as u16);
+    Ok(())
+}
+
+fn delete_router_routes_locked(
+    ops: &dyn RouteTableOps,
+    route_data: &mut RouteData,
+    rid: RouterId,
+) -> DpdResult<()> {
+    let dests: Vec<RouteDest> = route_data
+        .v4
+        .keys()
+        .chain(route_data.v6.keys())
+        .filter(|dest| dest.rid == rid)
+        .copied()
+        .collect();
+    for dest in dests {
+        remove_then_forget_route(ops, route_data, dest)?;
+    }
+    Ok(())
+}
+
+/// Delete every route in the given router's table.
+pub fn delete_router_routes(
+    switch: &Switch,
+    route_data: &mut RouteData,
+    rid: RouterId,
+) -> DpdResult<()> {
+    delete_router_routes_locked(switch, route_data, rid)
 }
 
 pub async fn get_range_ipv4(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     last: Option<Ipv4Net>,
     max: u32,
 ) -> DpdResult<Vec<dpd_types::route::Ipv4Routes>> {
     let route_data = switch.routes.lock().await;
+    let rid = route_data.routers.get(router)?;
     let lower = match last {
         None => Bound::Included(RouteDest::new(
             rid,
@@ -1242,11 +1303,12 @@ pub async fn get_range_ipv4(
 
 pub async fn get_range_ipv6(
     switch: &Switch,
-    rid: RouterId,
+    router: Uuid,
     last: Option<Ipv6Net>,
     max: u32,
 ) -> DpdResult<Vec<dpd_types::route::Ipv6Routes>> {
     let route_data = switch.routes.lock().await;
+    let rid = route_data.routers.get(router)?;
     let lower = match last {
         None => Bound::Included(RouteDest::new(
             rid,
@@ -1331,6 +1393,7 @@ pub async fn reset(switch: &Switch) -> DpdResult<()> {
 
 pub fn init(log: &slog::Logger) -> RouteData {
     RouteData {
+        routers: Routers::default(),
         v4: BTreeMap::new(),
         v6: BTreeMap::new(),
         v4_freemap: freemap::FreeMap::new(log, "route_ipv4"),
@@ -1375,7 +1438,6 @@ mod tests {
         }
     }
 
-    use aal::AsicError;
     use std::cell::Cell;
 
     /// Total size to use for the per-family FreeMap in tests that exercise
@@ -1906,6 +1968,85 @@ mod tests {
         assert_ne!(
             probe, before.index,
             "identity replace must not have freed the original reservation"
+        );
+    }
+
+    #[test]
+    fn delete_router_routes_leaves_other_routers() {
+        let (ops, mut rd) = make_test_ctx();
+        let v4: Ipv4Net = "192.168.1.0/24".parse().unwrap();
+        let v6: Ipv6Net = "fd00:1::/64".parse().unwrap();
+        let gw4: IpAddr = "10.0.0.1".parse().unwrap();
+        let gw6: IpAddr = "fd00::1".parse().unwrap();
+        for rid in [RouterId(0), RouterId(1), RouterId(2)] {
+            install_victim(&ops, &mut rd, RouteDest::new(rid, v4), [gw4]);
+            install_victim(&ops, &mut rd, RouteDest::new(rid, v6), [gw6]);
+        }
+
+        delete_router_routes_locked(&ops, &mut rd, RouterId(1))
+            .expect("router delete must succeed");
+
+        for subnet in [IpNet::from(v4), IpNet::from(v6)] {
+            assert!(rd.get(RouteDest::new(RouterId(1), subnet)).is_none());
+            assert!(rd.get(RouteDest::new(RouterId(0), subnet)).is_some());
+            assert!(rd.get(RouteDest::new(RouterId(2), subnet)).is_some());
+        }
+    }
+
+    fn install_router(rd: &mut RouteData, ops: &TestOps, rid: RouterId) {
+        let v4: Ipv4Net = "192.168.1.0/24".parse().unwrap();
+        let gw: IpAddr = "10.0.0.1".parse().unwrap();
+        let gw2: IpAddr = "10.0.0.2".parse().unwrap();
+        install_victim(ops, rd, RouteDest::new(rid, v4), [gw, gw2]);
+    }
+
+    #[test]
+    fn delete_router_routes_keeps_route_when_index_delete_fails() {
+        let (ops, mut rd) = make_test_ctx();
+        install_router(&mut rd, &ops, RouterId(1));
+        let dest = RouteDest::new(
+            RouterId(1),
+            "192.168.1.0/24".parse::<Ipv4Net>().unwrap(),
+        );
+
+        ops.arm(Op::DelIndex, 0);
+        assert!(
+            delete_router_routes_locked(&ops, &mut rd, RouterId(1)).is_err()
+        );
+        assert!(rd.get(dest).is_some(), "route must be kept for a retry");
+
+        delete_router_routes_locked(&ops, &mut rd, RouterId(1))
+            .expect("retry must succeed");
+        assert!(rd.get(dest).is_none());
+    }
+
+    #[test]
+    fn delete_router_routes_keeps_route_when_target_delete_fails() {
+        let (ops, mut rd) = make_test_ctx();
+        install_router(&mut rd, &ops, RouterId(1));
+        let dest = RouteDest::new(
+            RouterId(1),
+            "192.168.1.0/24".parse::<Ipv4Net>().unwrap(),
+        );
+        let entry = rd.get(dest).unwrap().clone();
+
+        ops.arm(Op::DelTarget, 1);
+        assert!(
+            delete_router_routes_locked(&ops, &mut rd, RouterId(1)).is_err()
+        );
+        assert_eq!(
+            rd.get(dest),
+            Some(&entry),
+            "route must be kept for a retry"
+        );
+
+        delete_router_routes_locked(&ops, &mut rd, RouterId(1))
+            .expect("retry must succeed");
+        assert!(rd.get(dest).is_none());
+        // The slots are free again only after the retry succeeded.
+        assert_eq!(
+            rd.freemap_mut(true).alloc(entry.slots).unwrap(),
+            entry.index
         );
     }
 

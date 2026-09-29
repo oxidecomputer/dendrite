@@ -9,7 +9,7 @@ use std::convert::TryInto;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 
-use dpd_types::route::RouterId;
+use crate::router::RouterId;
 use slog::error;
 use slog::info;
 

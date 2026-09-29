@@ -6,10 +6,10 @@
 
 //! Version `MULTI_ROUTER` of the DPD API.
 //!
-//! Adds router-scoped route and loopback endpoints under
-//! `/router/{router_id}/...`.  A `RouterId` selects one of the switch's
-//! routing tables; table 0 is the default table, which all pre-multi-router
-//! endpoints continue to operate on.
+//! Adds routers, identified by the control plane's uuid, and router-scoped
+//! route and loopback endpoints under `/router/{router_id}/...`.  A router
+//! must be created before it is used.  The default router has the nil uuid,
+//! always exists, and is the one all pre-multi-router endpoints operate on.
 
 pub mod loopback;
 pub mod route;

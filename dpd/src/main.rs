@@ -73,6 +73,7 @@ mod port_map;
 mod port_settings;
 mod ports;
 mod route;
+mod router;
 mod rpw;
 #[cfg(feature = "tofino_asic")]
 mod snapshot;

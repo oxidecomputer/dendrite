@@ -5,75 +5,33 @@
 // Copyright 2026 Oxide Computer Company
 
 use std::net::{IpAddr, Ipv6Addr};
-use std::str::FromStr;
 
 use crate::v1::port::PortId;
 use oxnet::{Ipv4Net, Ipv6Net};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::v1::link::LinkId;
 
-/// Selects one of the switch's routing tables.
-///
-/// Table 0 is the default table, used by all pre-multi-router endpoints.
-/// The id is a switch-local table index; mapping any fleet-wide router
-/// identity onto it is the caller's responsibility.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    Deserialize,
-    Eq,
-    Hash,
-    JsonSchema,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Serialize,
-)]
-#[serde(transparent)]
-pub struct RouterId(pub u8);
-
-impl std::fmt::Display for RouterId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl FromStr for RouterId {
-    type Err = std::num::ParseIntError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        s.parse::<u8>().map(RouterId)
-    }
-}
-
-impl From<u8> for RouterId {
-    fn from(id: u8) -> Self {
-        RouterId(id)
-    }
-}
-
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct RouterPath {
-    /// The routing table being addressed.
-    pub router_id: RouterId,
+    /// The router being addressed.
+    pub router_id: Uuid,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct RouterRoutePathV4 {
-    /// The routing table being addressed.
-    pub router_id: RouterId,
+    /// The router being addressed.
+    pub router_id: Uuid,
     /// The IPv4 subnet in CIDR notation whose route entry is addressed.
     pub cidr: Ipv4Net,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct RouterRoutePathV6 {
-    /// The routing table being addressed.
-    pub router_id: RouterId,
+    /// The router being addressed.
+    pub router_id: Uuid,
     /// The IPv6 subnet in CIDR notation whose route entry is addressed.
     pub cidr: Ipv6Net,
 }
@@ -81,8 +39,8 @@ pub struct RouterRoutePathV6 {
 /// Represents a single subnet->target route entry within a routing table.
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct RouterRouteTargetIpv4Path {
-    /// The routing table being addressed.
-    pub router_id: RouterId,
+    /// The router being addressed.
+    pub router_id: Uuid,
     /// The subnet being routed
     pub cidr: Ipv4Net,
     /// The switch port to which packets should be sent
@@ -96,8 +54,8 @@ pub struct RouterRouteTargetIpv4Path {
 /// Represents a single subnet->target route entry within a routing table.
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct RouterRouteTargetIpv6Path {
-    /// The routing table being addressed.
-    pub router_id: RouterId,
+    /// The router being addressed.
+    pub router_id: Uuid,
     /// The subnet being routed
     pub cidr: Ipv6Net,
     /// The switch port to which packets should be sent

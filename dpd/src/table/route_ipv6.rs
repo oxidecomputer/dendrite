@@ -4,7 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use dpd_types::route::RouterId;
+use crate::router::RouterId;
 use dpd_types::table;
 use std::convert::TryInto;
 use std::net::Ipv6Addr;

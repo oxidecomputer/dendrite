@@ -12,6 +12,7 @@ use clap::Subcommand;
 use colored::*;
 use futures::stream::TryStreamExt;
 use tabwriter::TabWriter;
+use uuid::Uuid;
 
 use dpd_client::Client;
 
@@ -43,9 +44,10 @@ pub enum Addr {
         link: LinkName,
         /// The IP address to add.
         addr: IpAddr,
-        /// Claim a loopback IPv6 address for the given router (0 = default).
-        #[clap(long, default_value_t = 0)]
-        router_id: u8,
+        /// Claim a loopback IPv6 address for the given router (nil uuid =
+        /// default).
+        #[clap(long, default_value_t = Uuid::nil())]
+        router_id: Uuid,
     },
     /// Delete an IP address from a link.
     Del {
@@ -53,9 +55,9 @@ pub enum Addr {
         link: LinkName,
         /// The IP address to delete.
         addr: IpAddr,
-        /// Owner of a loopback IPv6 address (0 = default).
-        #[clap(long, default_value_t = 0)]
-        router_id: u8,
+        /// Owner of a loopback IPv6 address (nil uuid = default).
+        #[clap(long, default_value_t = Uuid::nil())]
+        router_id: Uuid,
     },
 }
 
@@ -368,7 +370,7 @@ async fn addr_add(
 async fn addr_add_loopback(
     client: &Client,
     addr: IpAddr,
-    router_id: u8,
+    router_id: Uuid,
 ) -> anyhow::Result<()> {
     match addr {
         IpAddr::V4(addr) => {
@@ -382,7 +384,7 @@ async fn addr_add_loopback(
         IpAddr::V6(addr) => {
             let entry = client.ipv6_entry(addr);
             client
-                .router_loopback_ipv6_create(router_id, &entry)
+                .router_loopback_ipv6_create(&router_id, &entry)
                 .await
                 .context("failed to add IPv6 address")
                 .map(|_| ())
@@ -412,7 +414,7 @@ async fn addr_del(
 async fn addr_del_loopback(
     client: &Client,
     addr: IpAddr,
-    router_id: u8,
+    router_id: Uuid,
 ) -> anyhow::Result<()> {
     match addr {
         IpAddr::V4(addr) => client
@@ -421,7 +423,7 @@ async fn addr_del_loopback(
             .context("failed to delete IPv4 address")
             .map(|_| ()),
         IpAddr::V6(addr) => client
-            .router_loopback_ipv6_delete(router_id, &addr)
+            .router_loopback_ipv6_delete(&router_id, &addr)
             .await
             .context("failed to delete IPv6 address")
             .map(|_| ()),

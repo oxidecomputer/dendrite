@@ -5275,7 +5275,7 @@
     },
     "/router": {
       "get": {
-        "summary": "List the routers that have any routes or IPv6 loopback addresses.",
+        "summary": "List the routers that exist, including the default router.",
         "operationId": "router_list",
         "responses": {
           "200": {
@@ -5283,16 +5283,72 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "title": "Array_of_uint8",
+                  "title": "Array_of_Uuid",
                   "type": "array",
                   "items": {
-                    "type": "integer",
-                    "format": "uint8",
-                    "minimum": 0
+                    "type": "string",
+                    "format": "uuid"
                   }
                 }
               }
             }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/router/{router_id}": {
+      "put": {
+        "summary": "Create a router.  Creating a router that already exists succeeds.",
+        "operationId": "router_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a router, along with all of its routes and IPv6 loopback",
+        "description": "addresses.  Deleting a router that doesn't exist succeeds.  The default router can't be deleted.",
+        "operationId": "router_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
           },
           "4XX": {
             "$ref": "#/components/responses/Error"
@@ -5311,12 +5367,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -5351,12 +5406,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -5400,12 +5454,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table the address is claimed for.",
+            "description": "The router the address is claimed for.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -5431,12 +5484,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           },
           {
@@ -5490,12 +5542,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -5529,12 +5580,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -5578,12 +5628,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -5626,12 +5675,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -5684,12 +5732,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           },
           {
@@ -5725,12 +5772,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           },
           {
@@ -5784,12 +5830,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -5823,12 +5868,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -5872,12 +5916,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -5920,12 +5963,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -5977,12 +6019,11 @@
           {
             "in": "path",
             "name": "router_id",
-            "description": "The routing table being addressed.",
+            "description": "The router being addressed.",
             "required": true,
             "schema": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0
+              "type": "string",
+              "format": "uuid"
             }
           },
           {

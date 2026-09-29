@@ -4,14 +4,15 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use crate::router::RouterId;
 use crate::{DpdError, DpdResult, Switch, table};
 use aal::AsicError;
 use common::ports::{Ipv4Entry, Ipv6Entry};
-use dpd_types::route::RouterId;
 use slog::debug;
 use slog::warn;
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{Ipv4Addr, Ipv6Addr};
+use uuid::Uuid;
 
 /// The set of configured loopback addresses on the switch.
 pub struct LoopbackData {
@@ -80,12 +81,7 @@ struct Ipv6Claim {
 }
 
 impl LoopbackData {
-    /// The routers that own at least one IPv6 address.
-    pub fn router_ids(&self) -> impl Iterator<Item = RouterId> + '_ {
-        self.v6_addrs.values().map(|claim| claim.router_id)
-    }
-
-    pub fn ipv6_addresses(&self, rid: RouterId) -> Vec<Ipv6Entry> {
+    fn ipv6_addresses(&self, rid: RouterId) -> Vec<Ipv6Entry> {
         self.v6_addrs
             .values()
             .filter(|claim| claim.router_id == rid)
@@ -99,12 +95,9 @@ impl LoopbackData {
         rid: RouterId,
     ) -> DpdResult<bool> {
         match self.v6_addrs.get(&addr) {
-            Some(claim) if claim.router_id != rid => {
-                Err(DpdError::Exists(format!(
-                    "IPv6 loopback {addr} belongs to router {}, not {rid}",
-                    claim.router_id
-                )))
-            }
+            Some(claim) if claim.router_id != rid => Err(DpdError::Exists(
+                format!("IPv6 loopback {addr} belongs to another router"),
+            )),
             Some(_) => Ok(true),
             None => Ok(false),
         }
@@ -146,14 +139,44 @@ impl LoopbackData {
             Err(e) => Err(e),
         }
     }
+
+    fn delete_router_ipv6(
+        &mut self,
+        rid: RouterId,
+        mut remove: impl FnMut(Ipv6Addr) -> DpdResult<()>,
+    ) -> DpdResult<()> {
+        let addrs: Vec<Ipv6Addr> = self
+            .v6_addrs
+            .iter()
+            .filter(|(_, claim)| claim.router_id == rid)
+            .map(|(addr, _)| *addr)
+            .collect();
+        for addr in addrs {
+            self.delete_ipv6(addr, rid, || remove(addr))?;
+        }
+        Ok(())
+    }
+}
+
+/// The IPv6 loopbacks owned by the given router.
+pub async fn ipv6_addresses(
+    switch: &Switch,
+    router: Uuid,
+) -> DpdResult<Vec<Ipv6Entry>> {
+    let route_data = switch.routes.lock().await;
+    let rid = route_data.routers.get(router)?;
+    let data = switch.loopback.lock().unwrap();
+    Ok(data.ipv6_addresses(rid))
 }
 
 /// Add an IPv6 loopback; another router cannot claim the same address.
-pub fn add_loopback_ipv6(
+pub async fn add_loopback_ipv6(
     switch: &Switch,
     addr: &Ipv6Entry,
-    rid: RouterId,
+    router: Uuid,
 ) -> DpdResult<()> {
+    let route_data = switch.routes.lock().await;
+    let rid = route_data.routers.get(router)?;
     let mut data = switch.loopback.lock().unwrap();
     data.add_ipv6(addr, rid, || {
         table::port_ip::loopback_ipv6_add(switch, addr.addr, rid)
@@ -161,14 +184,25 @@ pub fn add_loopback_ipv6(
 }
 
 /// Delete an IPv6 loopback only if it belongs to the requesting router.
-pub fn delete_loopback_ipv6(
+pub async fn delete_loopback_ipv6(
     switch: &Switch,
     addr: &Ipv6Addr,
-    rid: RouterId,
+    router: Uuid,
 ) -> DpdResult<()> {
+    let route_data = switch.routes.lock().await;
+    let rid = route_data.routers.get(router)?;
     let mut data = switch.loopback.lock().unwrap();
     data.delete_ipv6(*addr, rid, || {
         table::port_ip::loopback_ipv6_delete(switch, *addr)
+    })
+}
+
+/// Delete every IPv6 loopback owned by the given router.  The caller holds
+/// the routes lock.
+pub fn delete_router_ipv6(switch: &Switch, rid: RouterId) -> DpdResult<()> {
+    let mut data = switch.loopback.lock().unwrap();
+    data.delete_router_ipv6(rid, |addr| {
+        table::port_ip::loopback_ipv6_delete(switch, addr)
     })
 }
 
@@ -228,6 +262,27 @@ mod tests {
                 .is_err()
         );
         assert_eq!(data.ipv6_addresses(RouterId(0)).len(), 1);
+    }
+
+    #[test]
+    fn ipv6_router_delete_leaves_other_routers() {
+        let mut data = init();
+        let other =
+            Ipv6Entry { addr: "fd00::2".parse().unwrap(), tag: "t".into() };
+        let third =
+            Ipv6Entry { addr: "fd00::3".parse().unwrap(), tag: "t".into() };
+        data.add_ipv6(&address(), RouterId(2), || Ok(())).unwrap();
+        data.add_ipv6(&third, RouterId(2), || Ok(())).unwrap();
+        data.add_ipv6(&other, RouterId(3), || Ok(())).unwrap();
+        let mut removed = Vec::new();
+        data.delete_router_ipv6(RouterId(2), |addr| {
+            removed.push(addr);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(removed, [address().addr, third.addr]);
+        assert!(data.ipv6_addresses(RouterId(2)).is_empty());
+        assert_eq!(data.ipv6_addresses(RouterId(3))[0].addr, other.addr);
     }
 
     #[test]

@@ -8,12 +8,11 @@ use std::net::Ipv6Addr;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-
-use super::route::RouterId;
+use uuid::Uuid;
 
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct RouterLoopbackIpv6Path {
-    /// The routing table the address is claimed for.
-    pub router_id: RouterId,
+    /// The router the address is claimed for.
+    pub router_id: Uuid,
     pub ipv6: Ipv6Addr,
 }
