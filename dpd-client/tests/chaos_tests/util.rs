@@ -7,6 +7,7 @@
 use futures::TryStreamExt;
 
 use dpd_client::Client;
+use dpd_client::types::CmdAck;
 use dpd_client::types::Ipv4Entry;
 use dpd_client::types::Ipv6Entry;
 
@@ -52,4 +53,36 @@ impl HttpResponseCheck for dpd_client::Error<dpd_client::types::Error> {
         assert_eq!(self.status(), Some(code), "Unexpected HTTP status code");
         self
     }
+}
+
+/// Simplifies asserting on command acknowledgements.
+pub trait AckCheck {
+    /// Returns err if `self` is not [`CmdAck::Updated`].
+    fn verify_updated(&self, msg: impl AsRef<str>) -> anyhow::Result<()>;
+
+    /// Returns err if `self` is not [`CmdAck::NoChange`].
+    fn verify_no_change(&self, msg: impl AsRef<str>) -> anyhow::Result<()>;
+}
+
+impl AckCheck for CmdAck {
+    fn verify_updated(&self, msg: impl AsRef<str>) -> anyhow::Result<()> {
+        self::verify_state(self, msg, Self::Updated)
+    }
+
+    fn verify_no_change(&self, msg: impl AsRef<str>) -> anyhow::Result<()> {
+        self::verify_state(self, msg, Self::NoChange)
+    }
+}
+
+fn verify_state(
+    ack: &CmdAck,
+    msg: impl AsRef<str>,
+    want: CmdAck,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        ack == &want,
+        "Expectation failed, {ack:?} != {want:?}: {}",
+        msg.as_ref()
+    );
+    Ok(())
 }

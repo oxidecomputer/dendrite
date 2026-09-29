@@ -39,7 +39,7 @@ progenitor::generate_api!(
         PortId = {derives = [PartialOrd, Ord, PartialEq, Eq, Hash, Clone] },
     },
     crates = {
-        "oxnet" = "0.1.0",
+        "oxnet" = "0.1.7",
     },
 );
 
