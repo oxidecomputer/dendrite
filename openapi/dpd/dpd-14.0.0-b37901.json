@@ -5273,6 +5273,36 @@
         }
       }
     },
+    "/router": {
+      "get": {
+        "summary": "List the routers that have any routes or IPv6 loopback addresses.",
+        "operationId": "router_list",
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Array_of_uint8",
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "uint8",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/router/{router_id}/loopback/ipv6": {
       "get": {
         "summary": "List IPv6 loopback addresses owned by the given router.",

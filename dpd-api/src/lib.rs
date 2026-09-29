@@ -486,6 +486,18 @@ pub trait DpdApi {
     }
 
     /**
+     * List the routers that have any routes or IPv6 loopback addresses.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/router",
+        versions = VERSION_MULTI_ROUTER..
+    }]
+    async fn router_list(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<Vec<latest::route::RouterId>>, HttpError>;
+
+    /**
      * Fetch the IPv6 routes configured on the given router, mapping IPv6
      * CIDR blocks to the switch port used for sending out that traffic, and
      * optionally a gateway.

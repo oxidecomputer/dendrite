@@ -1674,6 +1674,21 @@ impl DpdApi for DpdApiImpl {
             .map_err(HttpError::from)
     }
 
+    async fn router_list(
+        rqctx: RequestContext<Arc<Switch>>,
+    ) -> Result<HttpResponseOk<Vec<RouterId>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let mut ids = route::router_ids(switch).await;
+        ids.extend(
+            switch
+                .loopback
+                .lock()
+                .map_err(|e| HttpError::for_internal_error(e.to_string()))?
+                .router_ids(),
+        );
+        Ok(HttpResponseOk(ids.into_iter().collect()))
+    }
+
     async fn router_loopback_ipv6_list(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<RouterPath>,

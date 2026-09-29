@@ -105,7 +105,7 @@
 //      both IPv4 and IPv6 routes.  We should look at using traits and/or
 //      generics to coalesce common functionality into shared implementations.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv6Addr};
 use std::ops::Bound;
@@ -1194,6 +1194,12 @@ pub async fn delete_route_target_ipv6(
         RouteDest::new(rid, subnet),
         route,
     )
+}
+
+/// The routers that have at least one route.
+pub async fn router_ids(switch: &Switch) -> BTreeSet<RouterId> {
+    let route_data = switch.routes.lock().await;
+    route_data.v4.keys().chain(route_data.v6.keys()).map(|d| d.rid).collect()
 }
 
 pub async fn get_range_ipv4(

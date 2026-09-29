@@ -80,6 +80,11 @@ struct Ipv6Claim {
 }
 
 impl LoopbackData {
+    /// The routers that own at least one IPv6 address.
+    pub fn router_ids(&self) -> impl Iterator<Item = RouterId> + '_ {
+        self.v6_addrs.values().map(|claim| claim.router_id)
+    }
+
     pub fn ipv6_addresses(&self, rid: RouterId) -> Vec<Ipv6Entry> {
         self.v6_addrs
             .values()
