@@ -25,9 +25,7 @@ cfg_if::cfg_if! {
 }
 
 /// If this qsfp port has a supported transceiver that provides an MPN,
-/// return it to the caller.  If we have a supported transceiver that hasn't
-/// returned an MPN yet, return Ok(None).  If there is no transceiver
-/// detected at all, return DpdError::Missing.
+/// return it to the caller.
 pub fn qsfp_xcvr_mpn(
     #[allow(unused_variables)] qsfp: &QsfpDevice,
 ) -> DpdResult<String> {
