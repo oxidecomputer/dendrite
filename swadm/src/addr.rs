@@ -390,7 +390,7 @@ async fn addr_del(
 ) -> anyhow::Result<()> {
     match addr {
         IpAddr::V4(addr) => client
-            .link_ipv4_delete(&link.port_id, &link.link_id, &addr)
+            .link_ipv4_delete(&link.port_id, &link.link_id, &addr, None)
             .await
             .context("failed to delete IPv4 address")
             .map(|_| ()),

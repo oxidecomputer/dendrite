@@ -40,6 +40,7 @@ use dpd_types::mcast::{
     MulticastGroupUpdateUnderlayEntry, MulticastTagPath,
     MulticastUnderlayGroupIpParam,
 };
+use dpd_types::misc::MaybeTagged;
 use dpd_types::misc::Tagged;
 use dpd_types::misc::{BuildInfo, TagPath};
 use dpd_types::nat::{
@@ -1179,14 +1180,14 @@ impl DpdApi for DpdApiImpl {
     async fn link_ipv4_delete(
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<LinkIpv4Path>,
+        tag: Query<MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
-        let path = path.into_inner();
-        let port_id = path.port_id;
-        let link_id = path.link_id;
-        let address = path.address;
+        let LinkIpv4Path { port_id, link_id, address } = path.into_inner();
+        let tag = tag.into_inner().tag;
+
         switch
-            .delete_ip_address(port_id, link_id, address.into(), None)
+            .delete_ip_address(port_id, link_id, address.into(), tag.as_deref())
             .map(|_| HttpResponseDeleted())
             .map_err(|e| e.into())
     }

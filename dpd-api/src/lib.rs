@@ -1071,15 +1071,40 @@ pub trait DpdApi {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Remove an IPv4 address from a link.
-    // TODO::cory: Possibly Tagged<LinkIpv4Path>
+    ///
+    /// If a tag is provided, the address will only be deleted
+    /// if it belongs to the given tag.
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv4/{address}",
+        versions = VERSION_ADDRESS_TAGS..
     }]
     async fn link_ipv4_delete(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkIpv4Path>,
+        tag: Query<latest::misc::MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /// The version that replaced this allows consumers to specify
+    /// a tag scope for deletion. This allows callers to cooperate
+    /// more easily.
+    #[endpoint {
+        method = DELETE,
+        path = "/ports/{port_id}/links/{link_id}/ipv4/{address}",
+        versions = ..VERSION_ADDRESS_TAGS,
+        operation_id = "link_ipv4_delete"
+    }]
+    async fn link_ipv4_delete_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkIpv4Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Self::link_ipv4_delete(
+            rqctx,
+            path,
+            latest::misc::MaybeTagged::default().into(),
+        )
+        .await
+    }
 
     /// List the IPv6 addresses associated with a link.
     #[endpoint {
@@ -1114,6 +1139,7 @@ pub trait DpdApi {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// Remove an IPv6 address from a link.
+    // TODO::cory: tag scope
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv6/{address}",
@@ -1568,7 +1594,6 @@ pub trait DpdApi {
     /// This removes all data entirely.
     // Note: Unlike `reset_all_tagged`, this endpoint does clear multicast groups.
     // TODO-security: This endpoint should probably not exist.
-    // TODO::cory: delete this
     #[endpoint {
         method = DELETE,
         path = "/all-settings"

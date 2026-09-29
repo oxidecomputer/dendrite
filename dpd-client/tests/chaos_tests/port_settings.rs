@@ -744,6 +744,8 @@ impl AddrCheck {
     }
 }
 
+// TODO::cory: need a test for new tagged deletion on link and loopback.
+
 /// Verifies tagged address_*_create and delete don't affect
 /// resources under different tags.
 #[tokio::test]
@@ -790,7 +792,9 @@ async fn address_cmds_respect_tags() -> anyhow::Result<()> {
     tag1.verify_addrs_exist(Verify::NonExhaustive).await?;
     tag2.verify_addrs_exist(Verify::NonExhaustive).await?;
 
-    client.link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr).await?;
+    client
+        .link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr, Some(TAG1))
+        .await?;
     client.link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr).await?;
 
     tag2.verify_addrs_exist(Verify::Exhaustive).await?;
@@ -933,7 +937,7 @@ async fn deleted_address_must_exist() -> anyhow::Result<()> {
     tag1.apply_addrs().await?;
 
     client
-        .link_ipv4_delete(&port_id, &link_id, &rng.unique_ipv4())
+        .link_ipv4_delete(&port_id, &link_id, &rng.unique_ipv4(), None)
         .await
         .expect_err("Deleting a non-existent IPv4 addr fails")
         .expect_status(StatusCode::NOT_FOUND);
@@ -944,10 +948,17 @@ async fn deleted_address_must_exist() -> anyhow::Result<()> {
         .expect_err("Deleting a non-existent IPv6 addr fails")
         .expect_status(StatusCode::NOT_FOUND);
 
-    // Deletion is not currently tagged, so there's no way/reason to test
-    // tag conflicts.
+    client
+        .link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr, Some(TAG2))
+        .await
+        .expect_err("Must not delete an IPv4 address belonging to another tag")
+        .expect_status(StatusCode::CONFLICT);
+    // TODO::cory: wrong tag ipv6 delete as well
+    tag1.verify_addrs_exist(Verify::NonExhaustive).await?;
 
-    client.link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr).await?;
+    client
+        .link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr, Some(TAG1))
+        .await?;
     client.link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr).await?;
     tag1.verify_addrs_exist(Verify::NonExhaustive)
         .await
@@ -1039,7 +1050,9 @@ async fn apply_fails_on_tag_conflict() -> anyhow::Result<()> {
         .expect_err("Addrs conflicted and should not exist");
     tag2.verify_addrs_exist(Verify::Exhaustive).await?;
 
-    client.link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr).await?;
+    client
+        .link_ipv4_delete(&port_id, &link_id, &tag2.v4_entry.addr, Some(TAG2))
+        .await?;
 
     tag1.apply_addrs()
         .await

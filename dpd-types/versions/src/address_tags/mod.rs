@@ -17,3 +17,12 @@ pub struct Tagged<T> {
     #[serde(flatten)]
     pub value: T,
 }
+
+/// Variant of [`Tagged`] where tag is optional.
+/// If None, the action applies to all tags.
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct MaybeTagged<T> {
+    pub tag: Option<String>,
+    #[serde(flatten)]
+    pub value: T,
+}

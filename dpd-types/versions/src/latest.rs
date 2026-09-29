@@ -96,6 +96,8 @@ pub mod mcast {
 pub mod misc {
     pub use crate::v1::misc::BuildInfo;
     pub use crate::v1::misc::TagPath;
+
+    pub use crate::v14::MaybeTagged;
     pub use crate::v14::Tagged;
 }
 
