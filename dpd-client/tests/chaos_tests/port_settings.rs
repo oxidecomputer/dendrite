@@ -287,47 +287,38 @@ async fn test_port_settings_txn_sweep() -> anyhow::Result<()> {
         let target = random_port_settings();
         print!("current/target: {}", Comparison::new(&current, &target));
 
-        match client.port_settings_apply(&port, "chaos", &target).await {
-            Ok(mut returned) => {
-                sort_addrs(&mut returned);
-                // Verify that what the server attempted to configure matches
-                // what we asked them to configure.
-                assert_eq!(target, returned.into_inner());
-
-                // While attempting to apply our requested config on the server
-                // side, some operations will be async - as will cleanup after
-                // any errors.  We retry the test operation for a few seconds
-                // waiting for that to happen.
-                retry::retry_op(RETRY_INTERVAL, RETRY_MAX, || async {
-                    match current_port_settings(&client, &port).await {
-                        Err(e) => Err(retry::ReturnCode::Fatal(e.to_string())),
-                        Ok(new) => {
-                            if new == target {
-                                Ok(())
-                            } else {
-                                Err(retry::ReturnCode::Retry(format!(
-				"desired settings: {target:#?}\ncurrent settings: {new:#?}"
-			    )))
-                            }
-                        }
-                    }
-                })
-                .await?;
-                print!("operation succeeded, settings changed as expected");
-                success += 1;
-            }
-            Err(e) => {
-                if is_rollback_error(&e) {
-                    rollback_fail += 1;
-                    continue;
-                }
-                expect_random_chaos!(e);
+        let Err(e) = client.port_settings_apply(&port, "chaos", &target).await
+        else {
+            // While attempting to apply our requested config on the server
+            // side, some operations will be async - as will cleanup after
+            // any errors.  We retry the test operation for a few seconds
+            // waiting for that to happen.
+            retry::retry_op(RETRY_INTERVAL, RETRY_MAX, || async {
                 let new = current_port_settings(&client, &port).await?;
-                assert_eq!(new, current);
-                print!("operation failed, settings remained as expected");
-                fail += 1;
-            }
+                if new == target {
+                    return Ok(());
+                }
+                Err(retry::ReturnCode::Retry(format!(
+                    "
+desired settings: {target:#?}
+current settings: {new:#?}"
+                )))
+            })
+            .await?;
+            print!("operation succeeded, settings changed as expected");
+            success += 1;
+            continue;
+        };
+
+        if is_rollback_error(&e) {
+            rollback_fail += 1;
+            continue;
         }
+        expect_random_chaos!(e);
+        let new = current_port_settings(&client, &port).await?;
+        assert_eq!(new, current);
+        print!("operation failed, settings remained as expected");
+        fail += 1;
     }
 
     println!("SUCCESS: {}", success);
@@ -339,14 +330,14 @@ async fn test_port_settings_txn_sweep() -> anyhow::Result<()> {
 
 // This is a transaction sweep test that is more or less the same as the one
 // above, except it runs the loop in parallel. Because of this we cannot
-// meaningfully check current state after modifying. The only thing we can check
-// is that the return value for the updated state is exactly what we asked for.
+// meaningfully check current state after modifying.
 // This test is useful to ensure that a concurrent barrage of transaction
-// requests cannot corrupt each other.
+// requests cannot corrupt link settings.
 #[tokio::test]
 async fn test_port_settings_txn_par_sweep() -> anyhow::Result<()> {
     let config = AsicConfig::uniform_set(TESTING_RADIX, OPERATION_FAILURE_RATE);
     let _guard = run_dpd("txn-par-sweep", &config, 4705);
+    let port: PortId = "qsfp0".parse().unwrap();
 
     let success = Arc::new(AtomicU8::new(0));
     let fail = Arc::new(AtomicU8::new(0));
@@ -358,36 +349,76 @@ async fn test_port_settings_txn_par_sweep() -> anyhow::Result<()> {
         let success = success.clone();
         let fail = fail.clone();
         let rollback_fail = rollback_fail.clone();
+        let port = port.clone();
 
         let j = tokio::spawn(async move {
-            let port: PortId = "qsfp0".parse().unwrap();
             let client = new_dpd_client(4705);
             let target = random_port_settings();
 
-            match client.port_settings_apply(&port, "chaos", &target).await {
-                Ok(mut returned) => {
-                    sort_addrs(&mut returned);
-                    assert_eq!(target, returned.into_inner());
-                    success.fetch_add(1, Ordering::Relaxed);
-                }
-                Err(e) => {
-                    // TODO return current state on error so we can check
-                    // transaction properties here?
-                    if is_rollback_error(&e) {
-                        rollback_fail.fetch_add(1, Ordering::Relaxed);
-                        return;
-                    }
-                    //expect_random_chaos!(e);
-                    fail.fetch_add(1, Ordering::Relaxed);
-                }
+            let Err(e) =
+                client.port_settings_apply(&port, "chaos", &target).await
+            else {
+                success.fetch_add(1, Ordering::Relaxed);
+                return;
+            };
+
+            // TODO return current state on error so we can check
+            // transaction properties here?
+            if is_rollback_error(&e) {
+                rollback_fail.fetch_add(1, Ordering::Relaxed);
+                return;
             }
+            //expect_random_chaos!(e);
+            fail.fetch_add(1, Ordering::Relaxed);
         });
         joins.push(j);
     }
 
     for j in joins {
-        j.await?;
+        j.await.context("task failed")?;
     }
+
+    // After all that, the link should still behave properly and accept new settings.
+    let client = new_dpd_client(4705);
+    let target = random_port_settings();
+
+    retry::retry_op(Duration::ZERO, RETRY_MAX, async || {
+        let Err(e) = client.port_settings_apply(&port, "chaos", &target).await
+        else {
+            return Ok(());
+        };
+        Err(ReturnCode::Retry(format!(
+            "port_settings_apply failed: {e:?}. Target: {target:?}"
+        )))
+    })
+    .await
+    .context("final port_settings_apply")?;
+
+    retry::retry_op(Duration::ZERO, RETRY_MAX, async || {
+        let mut settings = match client.port_settings_get(&port, "chaos").await
+        {
+            Err(e) => {
+                return Err(ReturnCode::Retry(format!(
+                    "port_settings_get failed: {e:?}"
+                )));
+            }
+            Ok(s) => s.into_inner(),
+        };
+
+        self::sort_addrs(&mut settings);
+        if settings == target {
+            return Ok(());
+        }
+
+        Err(retry::ReturnCode::Retry(format!(
+            "
+Mismatched settings in final check.
+desired settings: {target:#?}
+current settings: {settings:#?}"
+        )))
+    })
+    .await
+    .context("final_port_settings_get")?;
 
     println!("SUCCESS: {}", success.load(Ordering::Relaxed));
     println!("FAIL: {}", fail.load(Ordering::Relaxed));
@@ -411,7 +442,7 @@ fn is_rollback_error(e: &dpd_client::Error<dpd_client::types::Error>) -> bool {
 async fn current_port_settings(
     client: &Client,
     port: &PortId,
-) -> anyhow::Result<PortSettings> {
+) -> Result<PortSettings, dpd_client::Error<dpd_client::types::Error>> {
     let mut settings =
         client.port_settings_get(port, "chaos").await?.into_inner();
     sort_addrs(&mut settings);
@@ -1301,11 +1332,13 @@ async fn partial_failures_are_recoverable() -> anyhow::Result<()> {
         link.addrs.push(rng.unique_ipv4().into());
     }
 
-    let mut applied = client
+    client
         .port_settings_apply(&port_id, TAG1, &v4_only)
         .await
         .context("Apply should succeed because we can at least overwrite the IPv4 table entry")?
         .into_inner();
+    let mut applied =
+        client.port_settings_get(&port_id, TAG1).await?.into_inner();
 
     self::sort_addrs(&mut v4_only);
     self::sort_addrs(&mut applied);

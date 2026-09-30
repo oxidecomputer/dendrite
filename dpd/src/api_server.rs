@@ -1830,7 +1830,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Self::Context>,
         path: Path<Tagged<PortIdPathParams>>,
         body: TypedBody<PortSettings>,
-    ) -> Result<HttpResponseOk<PortSettings>, HttpError> {
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch = rqctx.context();
         let Tagged { tag, value: PortIdPathParams { port_id } } =
             path.into_inner();
@@ -1838,7 +1838,7 @@ impl DpdApi for DpdApiImpl {
         switch
             .apply_port_settings(port_id, body.into_inner(), &tag)
             .await
-            .map(HttpResponseOk)
+            .map(|()| HttpResponseUpdatedNoContent())
             .map_err(HttpError::from)
     }
 

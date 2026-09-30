@@ -2461,7 +2461,7 @@
       },
       "post": {
         "summary": "Apply port settings atomically.",
-        "description": "These settings will be applied holistically, and to the extent possible atomically to a given port. In the event of a failure, a rollback is attempted. If the rollback fails, there will be inconsistent state. This failure mode returns the error code \"rollback failure\". For more details see the docs on the [`PortSettings`] type.\n\nResource modifications within a link respect tag ownership. For example, this will not clear link addresses belonging to other tags. However, this may delete a link even if it contains resources belonging to other tags.",
+        "description": "These settings will be applied holistically, and to the extent possible atomically to a given port. In the event of a failure, a rollback is attempted. If the rollback fails, there will be inconsistent state. This failure mode returns the error code \"rollback failure\". For more details see the docs on the [`PortSettings`] type.\n\nModifications within a link respect address tags. However, this may still delete a link even if it contains addresses belonging to other tags.",
         "operationId": "port_settings_apply",
         "parameters": [
           {
@@ -2493,15 +2493,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "successful operation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PortSettings"
-                }
-              }
-            }
+          "204": {
+            "description": "resource updated"
           },
           "4XX": {
             "$ref": "#/components/responses/Error"

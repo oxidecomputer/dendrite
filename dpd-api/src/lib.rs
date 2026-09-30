@@ -1792,9 +1792,8 @@ pub trait DpdApi {
     /// failure mode returns the error code "rollback failure". For more details see
     /// the docs on the [`PortSettings`] type.
     ///
-    /// Resource modifications within a link respect tag ownership. For example,
-    /// this will not clear link addresses belonging to other tags. However, this
-    /// may delete a link even if it contains resources belonging to other tags.
+    /// Modifications within a link respect address tags. However, this may still
+    /// delete a link even if it contains addresses belonging to other tags.
     #[endpoint {
         method = POST,
         versions = VERSION_ADDRESS_TAGS..,
@@ -1804,12 +1803,16 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::misc::Tagged<latest::port::PortIdPathParams>>,
         body: TypedBody<latest::port::PortSettings>,
-    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /// This was replaced by a version that requires a tag.
     ///
-    /// DPD tags all addresses, so allowing a `None` tag just used
-    /// an implicit empty string tag. That's confusing and unnecessary.
+    /// - DPD tags all addresses, so allowing a `None` tag just used
+    ///   an implicit empty string tag. That's confusing and unnecessary.
+    /// - This method ostensibly only succeeds if all settings were
+    ///   idempotently applied. So returning those same settings
+    ///   isn't super useful. And doing so implicates awkward
+    ///   async reconciler assumptions.
     #[endpoint {
         method = POST,
         versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_ADDRESS_TAGS,
@@ -1827,7 +1830,14 @@ pub trait DpdApi {
             value: port,
         });
 
-        Self::port_settings_apply(rqctx, tagged_port, body).await
+        let mut settings = latest::port::PortSettings::default();
+        let body = body.map(|s| {
+            settings = s.clone();
+            s
+        });
+
+        Self::port_settings_apply(rqctx, tagged_port, body).await?;
+        Ok(HttpResponseOk(settings))
     }
 
     /**
