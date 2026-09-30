@@ -5,18 +5,19 @@
 // Copyright 2026 Oxide Computer Company
 
 use std::collections::HashSet;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv6Addr};
 use std::str::FromStr;
 use std::sync::Arc;
 
-use futures::TryStreamExt;
+use dpd_client::types::Ipv6Entry;
+use futures::{StreamExt, TryStreamExt};
 use slog::{debug, error, warn};
 
 use crate::Global;
 use crate::oxstats::link;
 use crate::poll_interval;
 use common::illumos;
-use dpd_client::types;
+use dpd_client::{ClientInfo, types};
 
 async fn simnet_tfport_get() -> anyhow::Result<Vec<String>> {
     // dladm show-simnet seems to be broken when not in the global zone.
@@ -68,34 +69,43 @@ pub async fn simnet_loop(g: Arc<Global>) {
     debug!(g.log, "simnet loop exiting");
 }
 
+/// Reconciles each port's illumos IPv6 link local address with
+/// the link config in DPD.
 async fn simnet_process(g: &Global) -> anyhow::Result<()> {
     let simports = simnet_tfport_get().await?;
     debug!(g.log, "found simports {:#?}", simports);
     let addrs = ipadm_addrs().await?;
+    let tag = g.client.inner().tag.as_str();
+
     for p in &simports {
         if let Err(e) = illumos::iface_ensure(p).await {
             warn!(g.log, "{e}");
             continue;
         }
-        let p_addrs =
-            addrs
-                .iter()
-                .filter_map(|(name, addr)| {
-                    if name.starts_with(p) { Some(*addr) } else { None }
-                })
-                .collect::<Vec<IpAddr>>();
+
+        let p_addrs = addrs
+            .iter()
+            .filter_map(|(name, addr)| {
+                if let IpAddr::V6(v6) = addr
+                    && v6.is_unicast_link_local()
+                    && name.starts_with(p)
+                {
+                    return Some(*v6);
+                }
+                None
+            })
+            .collect::<Vec<Ipv6Addr>>();
 
         if p_addrs.is_empty() {
-            warn!(g.log, "{p} has no addrs");
+            warn!(g.log, "{p} has no IPv6 unicast link local addr(s)");
             continue;
         } else {
             debug!(g.log, "sync {p} addrs {:?}", p_addrs);
         }
 
         // need to go from tfport<something>M_N to port_id=<something>M link_id=N
-        let port_name = match p.strip_prefix("tfport") {
-            Some(name) => name,
-            None => continue,
+        let Some(port_name) = p.strip_prefix("tfport") else {
+            continue;
         };
         let port_name = port_name.split('_').next().unwrap();
 
@@ -108,27 +118,25 @@ async fn simnet_process(g: &Global) -> anyhow::Result<()> {
                 continue;
             }
         };
+
         // ensure the link for the tfport exists
-        match g.client.link_get(&port_id, &link_id).await {
-            Ok(_) => {}
-            Err(_) => {
-                // this is for softnpu environments which do not currently care
-                // about these parameters, so just pick some
-                let params = types::LinkCreate {
-                    lane: None,
-                    speed: types::PortSpeed::Speed100G,
-                    fec: Some(types::PortFec::None),
-                    autoneg: false,
-                    kr: false,
-                    tx_eq: None,
-                    allow_ddm_traffic: false,
-                };
-                if let Err(e) = g.client.link_create(&port_id, &params).await {
-                    error!(
-                        g.log,
-                        "failed to create link for tfport {port_name}: {e}"
-                    );
-                }
+        if g.client.link_get(&port_id, &link_id).await.is_err() {
+            // this is for softnpu environments which do not currently care
+            // about these parameters, so just pick some
+            let params = types::LinkCreate {
+                lane: None,
+                speed: types::PortSpeed::Speed100G,
+                fec: Some(types::PortFec::None),
+                autoneg: false,
+                kr: false,
+                tx_eq: None,
+                allow_ddm_traffic: false,
+            };
+            if let Err(e) = g.client.link_create(&port_id, &params).await {
+                error!(
+                    g.log,
+                    "failed to create link for tfport {port_name}: {e}"
+                );
             }
         };
 
@@ -137,31 +145,20 @@ async fn simnet_process(g: &Global) -> anyhow::Result<()> {
             error!(g.log, "failed to track link {p}: {e}");
         }
 
-        // sync addresses to the ASIC
-        let asic_v4_addrs: HashSet<Ipv4Addr> = match g
-            .client
-            .link_ipv4_list_stream(&port_id, &link_id, None)
-            .map_ok(|entry| entry.addr)
-            .try_collect()
-            .await
-        {
-            Ok(addrs) => addrs,
-            Err(e) => {
-                error!(
-                    g.log,
-                    "failed to collect stream of ipv4 addresses: {e}"
-                );
-                continue;
-            }
-        };
-
-        let asic_v6_addrs: HashSet<Ipv6Addr> = match g
+        let maybe_addrs: Result<HashSet<_>, _> = g
             .client
             .link_ipv6_list_stream(&port_id, &link_id, None)
-            .map_ok(|entry| entry.addr)
+            .filter_map(|res| async {
+                match res {
+                    Ok(entry) if entry.tag == tag => Some(Ok(entry.addr)),
+                    Ok(_) => None,
+                    Err(e) => Some(Err(e)),
+                }
+            })
             .try_collect()
-            .await
-        {
+            .await;
+
+        let asic_ll = match maybe_addrs {
             Ok(addrs) => addrs,
             Err(e) => {
                 error!(
@@ -172,56 +169,30 @@ async fn simnet_process(g: &Global) -> anyhow::Result<()> {
             }
         };
 
-        let mut port_v4_addrs: HashSet<Ipv4Addr> = HashSet::new();
-        let mut port_v6_addrs: HashSet<Ipv6Addr> = HashSet::new();
-        for a in &p_addrs {
-            match a {
-                IpAddr::V4(a) => {
-                    port_v4_addrs.insert(*a);
-                }
-                IpAddr::V6(a) => {
-                    port_v6_addrs.insert(*a);
-                }
+        for addr in &asic_ll {
+            if p_addrs.contains(addr) {
+                continue;
             }
-        }
-
-        let to_add_v4 = port_v4_addrs.difference(&asic_v4_addrs);
-        let to_del_v4 = asic_v4_addrs.difference(&port_v4_addrs);
-
-        let to_add_v6 = port_v6_addrs.difference(&asic_v6_addrs);
-        let to_del_v6 = asic_v6_addrs.difference(&port_v6_addrs);
-
-        for a in to_add_v4 {
-            let entry = g.client.ipv4_entry(*a);
-            if let Err(e) =
-                g.client.link_ipv4_create(&port_id, &link_id, &entry).await
+            if let Err(e) = g
+                .client
+                .link_ipv6_delete(&port_id, &link_id, addr, Some(tag))
+                .await
             {
-                error!(g.log, "failed to add v4 address {a}: {e}");
+                error!(g.log, "failed to delete v6 address {addr}: {e}");
             }
         }
 
-        for a in to_del_v4 {
-            if let Err(e) =
-                g.client.link_ipv4_delete(&port_id, &link_id, a).await
-            {
-                error!(g.log, "failed to delete v4 address {a}: {e}");
+        let mut entry =
+            Ipv6Entry { addr: Ipv6Addr::UNSPECIFIED, tag: tag.to_string() };
+        for addr in &p_addrs {
+            if asic_ll.contains(addr) {
+                continue;
             }
-        }
-
-        for a in to_add_v6 {
-            let entry = g.client.ipv6_entry(*a);
+            entry.addr = *addr;
             if let Err(e) =
                 g.client.link_ipv6_create(&port_id, &link_id, &entry).await
             {
-                error!(g.log, "failed to add v6 address {a}: {e}");
-            }
-        }
-
-        for a in to_del_v6 {
-            if let Err(e) =
-                g.client.link_ipv6_delete(&port_id, &link_id, a).await
-            {
-                error!(g.log, "failed to delete v6 address {a}: {e}");
+                error!(g.log, "failed to create v6 address {addr}: {e}");
             }
         }
     }
