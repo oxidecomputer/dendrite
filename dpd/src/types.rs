@@ -46,10 +46,8 @@ pub enum DpdError {
     NoSuchSwitchPort { port_id: PortId },
     #[error("Link {link_id} does not exist in switch port \"{port_id}\"")]
     NoSuchLink { port_id: PortId, link_id: LinkId },
-    #[error(
-        "Address {address} is not associated with port \"{port_id}\" link \"{link_id}\""
-    )]
-    NoSuchAddress { port_id: PortId, link_id: LinkId, address: IpAddr },
+    #[error("Address {address} is not associated with {owner}")]
+    NoSuchAddress { owner: std::borrow::Cow<'static, str>, address: IpAddr },
     #[error("no matching route found")]
     NoSuchRoute,
     #[error("No such table: {0}")]

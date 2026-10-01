@@ -239,12 +239,14 @@ async fn illumos_port_update(
 //     happen if the mac address changes which, as noted in dpd_port_update(),
 //     would also be very weird.
 async fn ensure_address_match(g: &Global, link: &LinkInfo) -> Result<()> {
+    let tag = g.client.inner().tag.as_str();
+
     if let Some(addr) = link.dpd_link_local
         && link.dpd_link_local != link.tfport_link_local
     {
         warn!(g.log, "deleting stale dpd address: {addr}");
         g.client
-            .link_ipv6_delete(&link.port_id, &link.link_id, &addr)
+            .link_ipv6_delete(&link.port_id, &link.link_id, &addr, None)
             .await
             .context("deleting stale link-local address")?;
     }
@@ -257,7 +259,7 @@ async fn ensure_address_match(g: &Global, link: &LinkInfo) -> Result<()> {
             .link_ipv6_create(
                 &link.port_id,
                 &link.link_id,
-                &types::Ipv6Entry { tag: g.client.inner().tag.clone(), addr },
+                &types::Ipv6Entry { tag: tag.to_string(), addr },
             )
             .await
             .context("sending new link-local address")?;

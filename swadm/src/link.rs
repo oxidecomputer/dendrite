@@ -2181,7 +2181,7 @@ pub async fn link_cmd(client: &Client, link: Link) -> anyhow::Result<()> {
                 },
             );
             client
-                .port_settings_apply(port_id, Some(tag.as_str()), &body)
+                .port_settings_apply(port_id, tag.as_str(), &body)
                 .await
                 .context("port settings apply failed")?;
         }

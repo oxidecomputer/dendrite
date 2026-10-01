@@ -112,7 +112,6 @@ impl HttpResponseCheck for dpd_client::Error<dpd_client::types::Error> {
 #[cfg(test)]
 pub mod retry {
     use std::time::Duration;
-    use std::time::Instant;
     use thiserror::Error;
 
     #[derive(Error, Debug)]
@@ -141,19 +140,31 @@ pub mod retry {
         poll_max: Duration,
         mut op: impl AsyncFnMut() -> Result<(), ReturnCode>,
     ) -> anyhow::Result<()> {
-        let poll_start = Instant::now();
-        loop {
-            let retry_msg = match op().await {
-                Ok(()) => return Ok(()),
-                Err(ReturnCode::Fatal(e)) => return Err(anyhow::anyhow!(e)),
-                Err(ReturnCode::Retry(msg)) => msg,
-            };
+        let mut err = anyhow::anyhow!(
+            "Operation timed out before returning for the first time"
+        );
 
-            let duration = Instant::now().duration_since(poll_start);
-            if duration > poll_max {
-                return Err(anyhow::anyhow!("operation failed: {retry_msg}"));
+        let deadline = tokio::time::Instant::now() + poll_max;
+        let attempt = tokio::time::timeout_at(deadline, async {
+            loop {
+                match op().await {
+                    Ok(()) => return Ok(()),
+                    Err(ReturnCode::Fatal(e)) => {
+                        return Err(anyhow::anyhow!("fatal error: {e:?}"));
+                    }
+                    Err(ReturnCode::Retry(msg)) => {
+                        err = anyhow::anyhow!("operation failed: {msg}");
+                        tokio::time::sleep(poll_interval).await;
+                    }
+                };
             }
-            tokio::time::sleep(poll_interval).await;
+        })
+        .await;
+
+        match attempt {
+            Err(_) => Err(anyhow::anyhow!("Timed out. Most recent err: {err}")),
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
         }
     }
 }

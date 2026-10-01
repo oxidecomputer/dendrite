@@ -5,6 +5,7 @@
 // Copyright 2026 Oxide Computer Company
 
 use crate::addr::AsicAddrOwner;
+use crate::types::DpdError;
 use crate::{DpdResult, Switch};
 use std::net::IpAddr;
 
@@ -23,16 +24,30 @@ pub fn set_loopback(
     Ok(())
 }
 
-pub fn clear_loopback(
+/// Clears this loopback address from the switch address table.
+///
+/// If a tag is provided, the address is only deleted if it belongs
+/// to that tag.
+///
+/// Returns error if the address does not currently exist (under that tag).
+pub fn delete_loopback(
     switch: &Switch,
     addr: IpAddr,
     tag: Option<&str>,
 ) -> DpdResult<()> {
-    switch.addrs.write().unwrap().try_clear(
+    let cleared = switch.addrs.write().unwrap().try_clear(
         switch,
         addr,
         AsicAddrOwner::Loopback,
         tag,
     )?;
+
+    if !cleared {
+        return Err(DpdError::NoSuchAddress {
+            owner: "loopback".into(),
+            address: addr,
+        });
+    }
+
     Ok(())
 }
