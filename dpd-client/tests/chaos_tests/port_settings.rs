@@ -107,11 +107,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
     );
 
     let err = client
-        .port_settings_apply(
-            &"qsfp0".parse().unwrap(),
-            Some("chaos"),
-            &settings,
-        )
+        .port_settings_apply(&"qsfp0".parse().unwrap(), "chaos", &settings)
         .await
         .expect_err("Expected error on port settings apply");
 
@@ -141,11 +137,7 @@ async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
     );
 
     client
-        .port_settings_apply(
-            &"qsfp0".parse().unwrap(),
-            Some("chaos"),
-            &settings,
-        )
+        .port_settings_apply(&"qsfp0".parse().unwrap(), "chaos", &settings)
         .await?;
 
     let addrs = link_list_ipv4(&client, "qsfp0", "0").await.unwrap();
@@ -173,11 +165,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     );
 
     client
-        .port_settings_apply(
-            &"qsfp0".parse().unwrap(),
-            Some("chaos"),
-            &settings,
-        )
+        .port_settings_apply(&"qsfp0".parse().unwrap(), "chaos", &settings)
         .await?;
 
     let addrs = link_list_ipv4(&client, "qsfp0", "0").await.unwrap();
@@ -202,11 +190,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     );
 
     client
-        .port_settings_apply(
-            &"qsfp0".parse().unwrap(),
-            Some("chaos"),
-            &settings,
-        )
+        .port_settings_apply(&"qsfp0".parse().unwrap(), "chaos", &settings)
         .await?;
 
     let addrs = link_list_ipv4(&client, "qsfp0", "0").await.unwrap();
@@ -231,11 +215,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     );
 
     client
-        .port_settings_apply(
-            &"qsfp0".parse().unwrap(),
-            Some("chaos"),
-            &settings,
-        )
+        .port_settings_apply(&"qsfp0".parse().unwrap(), "chaos", &settings)
         .await?;
 
     let addrs = link_list_ipv4(&client, "qsfp0", "0").await.unwrap();
@@ -246,9 +226,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
 
     // Clear all settings
 
-    client
-        .port_settings_clear(&"qsfp0".parse().unwrap(), Some("chaos"))
-        .await?;
+    client.port_settings_clear(&"qsfp0".parse().unwrap()).await?;
 
     // The addresses are all cleared synchronously, but the link deletion is
     // async.  We pause briefly to give it a chance to complete.  The subsequent
@@ -309,47 +287,38 @@ async fn test_port_settings_txn_sweep() -> anyhow::Result<()> {
         let target = random_port_settings();
         print!("current/target: {}", Comparison::new(&current, &target));
 
-        match client.port_settings_apply(&port, Some("chaos"), &target).await {
-            Ok(mut returned) => {
-                sort_addrs(&mut returned);
-                // Verify that what the server attempted to configure matches
-                // what we asked them to configure.
-                assert_eq!(target, returned.into_inner());
-
-                // While attempting to apply our requested config on the server
-                // side, some operations will be async - as will cleanup after
-                // any errors.  We retry the test operation for a few seconds
-                // waiting for that to happen.
-                retry::retry_op(RETRY_INTERVAL, RETRY_MAX, || async {
-                    match current_port_settings(&client, &port).await {
-                        Err(e) => Err(retry::ReturnCode::Fatal(e.to_string())),
-                        Ok(new) => {
-                            if new == target {
-                                Ok(())
-                            } else {
-                                Err(retry::ReturnCode::Retry(format!(
-				"desired settings: {target:#?}\ncurrent settings: {new:#?}"
-			    )))
-                            }
-                        }
-                    }
-                })
-                .await?;
-                print!("operation succeeded, settings changed as expected");
-                success += 1;
-            }
-            Err(e) => {
-                if is_rollback_error(&e) {
-                    rollback_fail += 1;
-                    continue;
-                }
-                expect_random_chaos!(e);
+        let Err(e) = client.port_settings_apply(&port, "chaos", &target).await
+        else {
+            // While attempting to apply our requested config on the server
+            // side, some operations will be async - as will cleanup after
+            // any errors.  We retry the test operation for a few seconds
+            // waiting for that to happen.
+            retry::retry_op(RETRY_INTERVAL, RETRY_MAX, || async {
                 let new = current_port_settings(&client, &port).await?;
-                assert_eq!(new, current);
-                print!("operation failed, settings remained as expected");
-                fail += 1;
-            }
+                if new == target {
+                    return Ok(());
+                }
+                Err(retry::ReturnCode::Retry(format!(
+                    "
+desired settings: {target:#?}
+current settings: {new:#?}"
+                )))
+            })
+            .await?;
+            print!("operation succeeded, settings changed as expected");
+            success += 1;
+            continue;
+        };
+
+        if is_rollback_error(&e) {
+            rollback_fail += 1;
+            continue;
         }
+        expect_random_chaos!(e);
+        let new = current_port_settings(&client, &port).await?;
+        assert_eq!(new, current);
+        print!("operation failed, settings remained as expected");
+        fail += 1;
     }
 
     println!("SUCCESS: {}", success);
@@ -361,14 +330,14 @@ async fn test_port_settings_txn_sweep() -> anyhow::Result<()> {
 
 // This is a transaction sweep test that is more or less the same as the one
 // above, except it runs the loop in parallel. Because of this we cannot
-// meaningfully check current state after modifying. The only thing we can check
-// is that the return value for the updated state is exactly what we asked for.
+// meaningfully check current state after modifying.
 // This test is useful to ensure that a concurrent barrage of transaction
-// requests cannot corrupt each other.
+// requests cannot corrupt link settings.
 #[tokio::test]
 async fn test_port_settings_txn_par_sweep() -> anyhow::Result<()> {
     let config = AsicConfig::uniform_set(TESTING_RADIX, OPERATION_FAILURE_RATE);
     let _guard = run_dpd("txn-par-sweep", &config, 4705);
+    let port: PortId = "qsfp0".parse().unwrap();
 
     let success = Arc::new(AtomicU8::new(0));
     let fail = Arc::new(AtomicU8::new(0));
@@ -380,39 +349,76 @@ async fn test_port_settings_txn_par_sweep() -> anyhow::Result<()> {
         let success = success.clone();
         let fail = fail.clone();
         let rollback_fail = rollback_fail.clone();
+        let port = port.clone();
 
         let j = tokio::spawn(async move {
-            let port: PortId = "qsfp0".parse().unwrap();
             let client = new_dpd_client(4705);
             let target = random_port_settings();
 
-            match client
-                .port_settings_apply(&port, Some("chaos"), &target)
-                .await
-            {
-                Ok(mut returned) => {
-                    sort_addrs(&mut returned);
-                    assert_eq!(target, returned.into_inner());
-                    success.fetch_add(1, Ordering::Relaxed);
-                }
-                Err(e) => {
-                    // TODO return current state on error so we can check
-                    // transaction properties here?
-                    if is_rollback_error(&e) {
-                        rollback_fail.fetch_add(1, Ordering::Relaxed);
-                        return;
-                    }
-                    //expect_random_chaos!(e);
-                    fail.fetch_add(1, Ordering::Relaxed);
-                }
+            let Err(e) =
+                client.port_settings_apply(&port, "chaos", &target).await
+            else {
+                success.fetch_add(1, Ordering::Relaxed);
+                return;
+            };
+
+            // TODO return current state on error so we can check
+            // transaction properties here?
+            if is_rollback_error(&e) {
+                rollback_fail.fetch_add(1, Ordering::Relaxed);
+                return;
             }
+            //expect_random_chaos!(e);
+            fail.fetch_add(1, Ordering::Relaxed);
         });
         joins.push(j);
     }
 
     for j in joins {
-        j.await?;
+        j.await.context("task failed")?;
     }
+
+    // After all that, the link should still behave properly and accept new settings.
+    let client = new_dpd_client(4705);
+    let target = random_port_settings();
+
+    retry::retry_op(Duration::ZERO, RETRY_MAX, async || {
+        let Err(e) = client.port_settings_apply(&port, "chaos", &target).await
+        else {
+            return Ok(());
+        };
+        Err(ReturnCode::Retry(format!(
+            "port_settings_apply failed: {e:?}. Target: {target:?}"
+        )))
+    })
+    .await
+    .context("final port_settings_apply")?;
+
+    retry::retry_op(Duration::ZERO, RETRY_MAX, async || {
+        let mut settings = match client.port_settings_get(&port, "chaos").await
+        {
+            Err(e) => {
+                return Err(ReturnCode::Retry(format!(
+                    "port_settings_get failed: {e:?}"
+                )));
+            }
+            Ok(s) => s.into_inner(),
+        };
+
+        self::sort_addrs(&mut settings);
+        if settings == target {
+            return Ok(());
+        }
+
+        Err(retry::ReturnCode::Retry(format!(
+            "
+Mismatched settings in final check.
+desired settings: {target:#?}
+current settings: {settings:#?}"
+        )))
+    })
+    .await
+    .context("final_port_settings_get")?;
 
     println!("SUCCESS: {}", success.load(Ordering::Relaxed));
     println!("FAIL: {}", fail.load(Ordering::Relaxed));
@@ -436,9 +442,9 @@ fn is_rollback_error(e: &dpd_client::Error<dpd_client::types::Error>) -> bool {
 async fn current_port_settings(
     client: &Client,
     port: &PortId,
-) -> anyhow::Result<PortSettings> {
+) -> Result<PortSettings, dpd_client::Error<dpd_client::types::Error>> {
     let mut settings =
-        client.port_settings_get(port, Some("chaos")).await?.into_inner();
+        client.port_settings_get(port, "chaos").await?.into_inner();
     sort_addrs(&mut settings);
     Ok(settings)
 }
@@ -535,9 +541,8 @@ Reconciliation retries:
     // the sequence a few times.
     for _ in 0..3 {
         retry::retry_op(RETRY_INTERVAL, LONG_ENOUGH, async || {
-            let Err(e) = client
-                .port_settings_apply(&port_id, Some(TAG1), &settings)
-                .await
+            let Err(e) =
+                client.port_settings_apply(&port_id, TAG1, &settings).await
             else {
                 return Ok(());
             };
@@ -549,8 +554,7 @@ Reconciliation retries:
         .context("Timeout in port_settings_apply")?;
 
         retry::retry_op(RETRY_INTERVAL, LONG_ENOUGH, async || {
-            let Err(e) = client.port_settings_clear(&port_id, Some(TAG1)).await
-            else {
+            let Err(e) = client.port_settings_clear(&port_id).await else {
                 return Ok(());
             };
             clear += 1;
@@ -561,8 +565,7 @@ Reconciliation retries:
         .context("Timeout in port_settings_clear")?;
 
         retry::retry_op(RETRY_INTERVAL, LONG_ENOUGH, async || {
-            let err = match client.port_settings_get(&port_id, Some(TAG1)).await
-            {
+            let err = match client.port_settings_get(&port_id, TAG1).await {
                 Ok(s) if s.links.is_empty() => return Ok(()),
                 Ok(s) => Err(ReturnCode::Retry(format!(
                     "Link settings should be empty. Found {s:?}"
@@ -617,7 +620,7 @@ async fn settings_apply_respects_tags() -> anyhow::Result<()> {
     client
         .port_settings_apply(
             &port_id,
-            Some(TAG2),
+            TAG2,
             &TestAddrs::empty_settings(link_id),
         )
         .await?;
@@ -755,10 +758,7 @@ impl AddrCheck {
             Self::Empty => {
                 let link_is_empty = addrs
                     .client
-                    .port_settings_get(
-                        &addrs.port_id,
-                        Some(&addrs.v4_entry.tag),
-                    )
+                    .port_settings_get(&addrs.port_id, &addrs.v4_entry.tag)
                     .await?
                     .into_inner()
                     .links
@@ -821,10 +821,36 @@ async fn address_cmds_respect_tags() -> anyhow::Result<()> {
     tag1.verify_addrs_exist(Verify::NonExhaustive).await?;
     tag2.verify_addrs_exist(Verify::NonExhaustive).await?;
 
-    client.link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr).await?;
-    client.link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr).await?;
+    client
+        .link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr, Some(TAG2))
+        .await
+        .expect_err("v4 addr shouldn't be deleted because it belongs to TAG1")
+        .expect_status(StatusCode::CONFLICT);
+    client
+        .link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr, Some(TAG2))
+        .await
+        .expect_err("v6 addr shouldn't be deleted because it belongs to TAG1")
+        .expect_status(StatusCode::CONFLICT);
+
+    client
+        .link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr, Some(TAG1))
+        .await?;
+    client
+        .link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr, Some(TAG1))
+        .await?;
 
     tag2.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    client
+        .link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr, Some(TAG1))
+        .await
+        .expect_err("v4 address was deleted, should see 404")
+        .expect_status(StatusCode::NOT_FOUND);
+    client
+        .link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr, Some(TAG1))
+        .await
+        .expect_err("v6 address was deleted, should see 404")
+        .expect_status(StatusCode::NOT_FOUND);
     tag1.verify_addrs_exist(Verify::NonExhaustive)
         .await
         .expect_err("tag1 addresses should have been deleted");
@@ -832,11 +858,144 @@ async fn address_cmds_respect_tags() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Verifies the current known behavior of port_settings_clear, which
-/// is to delete the link and all its config from the port.
+/// Verifies tagged loopback address isolation against a sequence
+/// of CRUD commands.
+#[tokio::test]
+async fn loopback_respects_tags() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) =
+        harness::init_harness("loopback_respects_tags", &no_failures);
+
+    let mut rng = IpRng::new(1819);
+    let port_id: PortId = "qsfp0".parse()?;
+    let link_id = LinkId(0);
+
+    let mut loop4 = rng.unique_ipv4();
+    let mut loop6 = rng.unique_ipv6();
+
+    let mut link =
+        TestAddrs::new(&mut rng, TAG1.to_string(), &client, port_id, link_id);
+    link.apply_addrs().await?;
+
+    client
+        .loopback_ipv4_create(&Ipv4Entry { addr: loop4, tag: TAG1.to_string() })
+        .await?;
+    client
+        .loopback_ipv6_create(&Ipv6Entry { addr: loop6, tag: TAG1.to_string() })
+        .await?;
+
+    client
+        .loopback_ipv4_create(&Ipv4Entry { addr: loop4, tag: TAG2.to_string() })
+        .await
+        .expect_err("v4 should already belong to TAG1")
+        .expect_status(StatusCode::CONFLICT);
+    client
+        .loopback_ipv6_create(&Ipv6Entry { addr: loop6, tag: TAG2.to_string() })
+        .await
+        .expect_err("v6 should already belong to TAG1")
+        .expect_status(StatusCode::CONFLICT);
+
+    client
+        .loopback_ipv4_delete(&loop4, Some(TAG2))
+        .await
+        .expect_err("must not delete loopback v4 belonging to another tag")
+        .expect_status(StatusCode::CONFLICT);
+    client
+        .loopback_ipv6_delete(&loop6, Some(TAG2))
+        .await
+        .expect_err("must not delete loopback v6 belonging to another tag")
+        .expect_status(StatusCode::CONFLICT);
+
+    std::mem::swap(&mut loop4, &mut link.v4_entry.addr);
+    link.apply_addrs()
+        .await
+        .expect_err("Apply must not steal v4 loopback address")
+        .expect_status(StatusCode::CONFLICT);
+    std::mem::swap(&mut loop4, &mut link.v4_entry.addr);
+
+    std::mem::swap(&mut loop6, &mut link.v6_entry.addr);
+    link.apply_addrs()
+        .await
+        .expect_err("Apply must not steal v6 loopback address")
+        .expect_status(StatusCode::CONFLICT);
+    std::mem::swap(&mut loop6, &mut link.v6_entry.addr);
+
+    link.verify_addrs_exist(Verify::Exhaustive).await?;
+
+    client
+        .loopback_ipv4_delete(&link.v4_entry.addr, None)
+        .await
+        .expect_err("Loopback API must not delete a v4 link address")
+        .expect_status(StatusCode::CONFLICT);
+    client
+        .loopback_ipv6_delete(&link.v6_entry.addr, None)
+        .await
+        .expect_err("Loopback API must not delete a v6 link address")
+        .expect_status(StatusCode::CONFLICT);
+
+    assert_eq!(
+        &client.loopback_ipv4_list().await?.into_inner(),
+        &[Ipv4Entry { addr: loop4, tag: TAG1.to_string() }]
+    );
+    assert_eq!(
+        &client.loopback_ipv6_list().await?.into_inner(),
+        &[Ipv6Entry { addr: loop6, tag: TAG1.to_string() }]
+    );
+
+    let extra4 = rng.unique_ipv4();
+    let extra6 = rng.unique_ipv6();
+
+    client
+        .loopback_ipv4_create(&Ipv4Entry {
+            addr: extra4,
+            tag: TAG2.to_string(),
+        })
+        .await?;
+    client
+        .loopback_ipv6_create(&Ipv6Entry {
+            addr: extra6,
+            tag: TAG2.to_string(),
+        })
+        .await?;
+
+    client.loopback_ipv4_delete(&loop4, Some(TAG1)).await?;
+    client.loopback_ipv6_delete(&loop6, Some(TAG1)).await?;
+
+    client
+        .loopback_ipv4_delete(&loop4, Some(TAG1))
+        .await
+        .expect_err("v4 was already deleted, should see 404")
+        .expect_status(StatusCode::NOT_FOUND);
+    client
+        .loopback_ipv6_delete(&loop6, Some(TAG1))
+        .await
+        .expect_err("v6 was already deleted, should see 404")
+        .expect_status(StatusCode::NOT_FOUND);
+
+    assert_eq!(
+        &client.loopback_ipv4_list().await?.into_inner(),
+        &[Ipv4Entry { addr: extra4, tag: TAG2.to_string() }]
+    );
+    assert_eq!(
+        &client.loopback_ipv6_list().await?.into_inner(),
+        &[Ipv6Entry { addr: extra6, tag: TAG2.to_string() }]
+    );
+
+    client.loopback_ipv4_delete(&extra4, None).await?;
+    client.loopback_ipv6_delete(&extra6, None).await?;
+
+    assert!(client.loopback_ipv4_list().await?.into_inner().is_empty());
+    assert!(client.loopback_ipv6_list().await?.into_inner().is_empty());
+
+    Ok(())
+}
+
+/// Verifies port_settings_clear, which deletes the link
+/// and all its config from the port regardless of tag.
 ///
-/// This test isn't necessarily endorsing the implementation, but
-/// it does seek to track API's current behavior.
+/// Ignoring seems like the best option for now. There's not
+/// an obvious alternative short of making tag ownership a
+/// property of the link itself.
 #[tokio::test]
 async fn settings_clear_ignores_tags() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
@@ -870,7 +1029,7 @@ async fn settings_clear_ignores_tags() -> anyhow::Result<()> {
     tag2.verify_addrs_exist(Verify::NonExhaustive).await?;
 
     // Tag2 means nothing here
-    client.port_settings_clear(&port_id, Some(TAG2)).await?;
+    client.port_settings_clear(&port_id).await?;
 
     tag1.verify_addrs_exist(Verify::Exhaustive).await.expect_err(
         "Addresses do not exist because we cleared the port settings.",
@@ -963,22 +1122,35 @@ async fn deleted_address_must_exist() -> anyhow::Result<()> {
     tag1.apply_addrs().await?;
 
     client
-        .link_ipv4_delete(&port_id, &link_id, &rng.unique_ipv4())
+        .link_ipv4_delete(&port_id, &link_id, &rng.unique_ipv4(), None)
         .await
         .expect_err("Deleting a non-existent IPv4 addr fails")
         .expect_status(StatusCode::NOT_FOUND);
 
     client
-        .link_ipv6_delete(&port_id, &link_id, &rng.unique_ipv6())
+        .link_ipv6_delete(&port_id, &link_id, &rng.unique_ipv6(), None)
         .await
         .expect_err("Deleting a non-existent IPv6 addr fails")
         .expect_status(StatusCode::NOT_FOUND);
 
-    // Deletion is not currently tagged, so there's no way/reason to test
-    // tag conflicts.
+    client
+        .link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr, Some(TAG2))
+        .await
+        .expect_err("Must not delete an IPv4 address belonging to another tag")
+        .expect_status(StatusCode::CONFLICT);
+    client
+        .link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr, Some(TAG2))
+        .await
+        .expect_err("Must not delete an IPv6 address belonging to another tag")
+        .expect_status(StatusCode::CONFLICT);
+    tag1.verify_addrs_exist(Verify::NonExhaustive).await?;
 
-    client.link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr).await?;
-    client.link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr).await?;
+    client
+        .link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr, Some(TAG1))
+        .await?;
+    client
+        .link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr, Some(TAG1))
+        .await?;
     tag1.verify_addrs_exist(Verify::NonExhaustive)
         .await
         .expect_err("Addresses were deleted");
@@ -1069,7 +1241,9 @@ async fn apply_fails_on_tag_conflict() -> anyhow::Result<()> {
         .expect_err("Addrs conflicted and should not exist");
     tag2.verify_addrs_exist(Verify::Exhaustive).await?;
 
-    client.link_ipv4_delete(&port_id, &link_id, &tag1.v4_entry.addr).await?;
+    client
+        .link_ipv4_delete(&port_id, &link_id, &tag2.v4_entry.addr, Some(TAG2))
+        .await?;
 
     tag1.apply_addrs()
         .await
@@ -1089,7 +1263,9 @@ async fn apply_fails_on_tag_conflict() -> anyhow::Result<()> {
         "tag2's entry should remain untouched"
     );
 
-    client.link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr).await?;
+    client
+        .link_ipv6_delete(&port_id, &link_id, &tag1.v6_entry.addr, Some(TAG2))
+        .await?;
 
     tag1.apply_addrs().await?;
     tag1.verify_addrs_exist(Verify::Exhaustive).await?;
@@ -1138,7 +1314,7 @@ async fn partial_failures_are_recoverable() -> anyhow::Result<()> {
     );
 
     client
-        .port_settings_clear(&port_id, Some(TAG1))
+        .port_settings_clear(&port_id)
         .await
         .expect_err("Port couldn't be cleared because IPv4 addr is stuck");
 
@@ -1148,7 +1324,7 @@ async fn partial_failures_are_recoverable() -> anyhow::Result<()> {
     }
 
     client
-        .port_settings_apply(&"qsfp1".parse()?, Some(TAG2), &v4_only)
+        .port_settings_apply(&"qsfp1".parse()?, TAG2, &v4_only)
         .await
         .expect_err("Stuck entry cannot be stolen by another tag.");
 
@@ -1156,11 +1332,13 @@ async fn partial_failures_are_recoverable() -> anyhow::Result<()> {
         link.addrs.push(rng.unique_ipv4().into());
     }
 
-    let mut applied = client
-        .port_settings_apply(&port_id, Some(TAG1), &v4_only)
+    client
+        .port_settings_apply(&port_id, TAG1, &v4_only)
         .await
         .context("Apply should succeed because we can at least overwrite the IPv4 table entry")?
         .into_inner();
+    let mut applied =
+        client.port_settings_get(&port_id, TAG1).await?.into_inner();
 
     self::sort_addrs(&mut v4_only);
     self::sort_addrs(&mut applied);
@@ -1322,11 +1500,11 @@ async fn deletion_doesnt_leak_table_entries() -> anyhow::Result<()> {
     tag1.apply_addrs().await?;
 
     let msg = "Link should not be dropped because that would orphan the stuck table entry";
-    client.port_settings_clear(&port_id, None).await.expect_err(msg);
+    client.port_settings_clear(&port_id).await.expect_err(msg);
     client
         .port_settings_apply(
             &port_id,
-            Some(TAG1),
+            TAG1,
             &TestAddrs::empty_settings(link_id),
         )
         .await
@@ -1375,7 +1553,7 @@ async fn deletion_prevails() -> anyhow::Result<()> {
         let applied = client
             .port_settings_apply(
                 &port_id,
-                Some(TAG1),
+                TAG1,
                 &TestAddrs::empty_settings(link_id),
             )
             .await;
@@ -1391,7 +1569,7 @@ async fn deletion_prevails() -> anyhow::Result<()> {
     .context("Timeout trying to successfully clear addresses")?;
 
     let cleared_addrs = client
-        .port_settings_get(&port_id, Some(TAG1))
+        .port_settings_get(&port_id, TAG1)
         .await?
         .links
         .get(&link_id.to_string())
@@ -1652,7 +1830,7 @@ impl<'a> TestAddrs<'a> {
         self.client
             .port_settings_apply(
                 &self.port_id,
-                Some(&self.v4_entry.tag),
+                &self.v4_entry.tag,
                 &self.settings(),
             )
             .await?;
@@ -1703,7 +1881,7 @@ impl<'a> TestAddrs<'a> {
         // Verify the port_settings endpoint returns the same.
         let mut settings = self
             .client
-            .port_settings_get(&self.port_id, Some(&self.v4_entry.tag))
+            .port_settings_get(&self.port_id, &self.v4_entry.tag)
             .await?
             .into_inner();
 

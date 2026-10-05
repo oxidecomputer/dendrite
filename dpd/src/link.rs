@@ -1069,8 +1069,7 @@ impl Switch {
         self.link_update(port_id, link_id, |link| {
             if !self.clear_ip_address_locked(link, addr, tag)? {
                 return Err(DpdError::NoSuchAddress {
-                    port_id,
-                    link_id,
+                    owner: format!("{port_id}/{link_id}").into(),
                     address: addr,
                 });
             }
@@ -1100,23 +1099,6 @@ impl Switch {
                 .filter_map(|(addr, tag)| Some(convert(A::from_ip(addr)?, tag)))
                 .take(limit)
                 .collect()
-        })
-    }
-
-    /// Delete all addresses of the given type on the specified link.
-    ///
-    /// Returns [`DpdError::AddrClear`] if any addresses could not be deleted.
-    pub fn reset_addresses<A: IpAddrLike>(
-        &self,
-        port_id: PortId,
-        link_id: LinkId,
-    ) -> DpdResult<()> {
-        self.link_update(port_id, link_id, |link| {
-            self.addrs.write().unwrap().try_retain_by_owner::<A>(
-                self,
-                link.asic_addr_id(),
-                |_, _| false,
-            )
         })
     }
 

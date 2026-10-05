@@ -619,22 +619,20 @@ impl Switch {
         port_id: PortId,
         settings: PortSettings,
         tag: &str,
-    ) -> DpdResult<PortSettings> {
+    ) -> DpdResult<()> {
         let mut ctx = context!(port_id, self, tag);
 
         let mut diff = PortSettingsDiff::calculate(&mut ctx, &settings)?;
         trace!(self.log, "port settings diff: {:#?}", diff);
         diff.execute(&mut ctx)?;
 
-        Self::get_port_settings_locked(&mut ctx, true)
+        Ok(())
     }
 
     /// Clear port settings as an atomic transaction.
-    pub async fn clear_port_settings(
-        &self,
-        port_id: PortId,
-        tag: &str,
-    ) -> DpdResult<PortSettings> {
+    pub async fn clear_port_settings(&self, port_id: PortId) -> DpdResult<()> {
+        // Doesn't matter because we're deleting all links anyway.
+        let tag = "";
         let mut ctx = context!(port_id, self, tag);
 
         let settings = PortSettings::default();
@@ -642,55 +640,26 @@ impl Switch {
         trace!(self.log, "port settings diff: {:#?}", diff);
         diff.execute(&mut ctx)?;
 
-        Self::get_port_settings_locked(&mut ctx, true)
+        Ok(())
     }
 
     /// Get port settings as an atomic transaction.
     pub async fn get_port_settings(
         &self,
-        port_id: PortId,
+        get_port_id: PortId,
         tag: &str,
     ) -> DpdResult<PortSettings> {
-        let mut ctx = context!(port_id, self, tag);
-        Self::get_port_settings_locked(&mut ctx, false)
-    }
-
-    fn get_port_settings_locked(
-        ctx: &mut Context<'_>,
-        ignore_deleting: bool,
-    ) -> DpdResult<PortSettings> {
-        let links = ctx
-            .link_map
+        let links = self
+            .links
+            .lock()
+            .unwrap()
             .get_links()
             .iter()
             .filter_map(|((port_id, link_id), link_lock)| {
-                if *port_id == ctx.port_id {
+                if *port_id == get_port_id {
                     let link = link_lock.lock().unwrap();
-
-                    // This is an awkward mechanism to work around the
-                    // asynchrony of link deletion.  When we return the
-                    // PortSettings as a side effect of the apply() and clear()
-                    // operations, we assume that any requested link deletion
-                    // will succeed - as indeed it almost certainly will.  This
-                    // optimism is primarily to allow the chaos tests to pass,
-                    // since they have no mechanism to wait for this async
-                    // operation to complete.  Arguably, we should simply stop
-                    // returning anything other than success or failure on these
-                    // operations.
-                    //
-                    // If we get an explicit request for the current settings,
-                    // we will return the actual state of any link marked for
-                    // deletion.  This allows the chaos tests to run correctly
-                    // even in the presence of repeated artificial errors.  More
-                    // importantly, it also ensures that a real consumer of the
-                    // port_settings API will be operating on the correct
-                    // information.
-                    if ignore_deleting && link.config.delete_me {
-                        None
-                    } else {
-                        let conf = link.settings(&ctx.switch.addrs, ctx.tag);
-                        Some(((*link_id).into(), conf))
-                    }
+                    let conf = link.settings(&self.addrs, tag);
+                    Some(((*link_id).into(), conf))
                 } else {
                     None
                 }
