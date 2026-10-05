@@ -88,6 +88,8 @@ pub enum DpdError {
     ResourceExhausted(String),
     #[error("Tag is required for idempotent validation")]
     MissingTag,
+    #[error("Address {addr} exists, but it is owned by another tag: {tag}")]
+    AddrTagConflict { addr: IpAddr, tag: String },
 }
 
 impl From<smf::ScfError> for DpdError {
@@ -287,6 +289,13 @@ impl convert::From<DpdError> for dropshot::HttpError {
             e @ DpdError::MissingTag => {
                 dropshot::HttpError::for_bad_request(None, format!("{e}"))
             }
+            e @ DpdError::AddrTagConflict { .. } => dropshot::HttpError {
+                status_code: dropshot::ErrorStatusCode::CONFLICT,
+                error_code: None,
+                internal_message: e.to_string(),
+                external_message: e.to_string(),
+                headers: None,
+            },
         }
     }
 }
