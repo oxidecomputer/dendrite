@@ -1,0 +1,21 @@
+#!/bin/bash
+#:
+#: name = "omicron-merge"
+#: variety = "basic"
+#: target = "ubuntu-24.04"
+#: skip_clone = true
+# 
+#: [dependencies.linux]
+#: job = "linux"
+#:
+#: [dependencies.image]
+#: job = "image"
+#:
+#: [dependencies.macos]
+#: job = "macos"
+
+# This doesn't actually test anything; it merely waits for the "linux",
+# "image" and "macos" jobs to complete. Automation in the omicron repo keys off
+# of this job to update a dendrite merge staging branch.
+
+exit 0
