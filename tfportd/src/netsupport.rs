@@ -5,6 +5,8 @@
 // Copyright 2025 Oxide Computer Company
 
 use anyhow::anyhow;
+use libnet::IpInfo;
+use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::net::{IpAddr, Ipv6Addr};
 
@@ -71,22 +73,105 @@ pub enum GetDhcp6Error {
     #[error("libnet error: {0}")]
     Libnet(#[from] libnet::Error),
 
+    #[cfg(not(test))]
     #[error("error mapping ifname to addrobj: {0}")]
     IfnameToAddrobj(String),
+}
+
+#[cfg(not(test))]
+fn get_ipaddrs() -> Result<BTreeMap<String, Vec<IpInfo>>, GetDhcp6Error> {
+    libnet::get_ipaddrs().map_err(GetDhcp6Error::Libnet)
+}
+
+#[cfg(test)]
+fn get_ipaddrs() -> Result<BTreeMap<String, Vec<IpInfo>>, GetDhcp6Error> {
+    Ok(BTreeMap::from([
+        (
+            String::from("net0"),
+            vec![IpInfo {
+                ifname: String::from("net0"),
+                index: 0,
+                addr: "1.2.3.0".parse().unwrap(),
+                mask: 24,
+                family: 4,
+                state: libnet::IpState::OK,
+            }],
+        ),
+        (
+            String::from("net1"),
+            vec![
+                // One static IPv4 address
+                IpInfo {
+                    ifname: String::from("net1"),
+                    index: 1,
+                    addr: "1.2.4.0".parse().unwrap(),
+                    mask: 24,
+                    family: 4,
+                    state: libnet::IpState::OK,
+                },
+                // One link-local IPv6
+                IpInfo {
+                    ifname: String::from("net1"),
+                    index: 2,
+                    addr: "fe80::1".parse().unwrap(),
+                    mask: 64,
+                    family: 6,
+                    state: libnet::IpState::OK,
+                },
+                // A "bootstrap" address
+                IpInfo {
+                    ifname: String::from("net1"),
+                    index: 2,
+                    addr: "fdb1::1".parse().unwrap(),
+                    mask: 64,
+                    family: 6,
+                    state: libnet::IpState::OK,
+                },
+                // And a DHCPv6 address
+                IpInfo {
+                    ifname: String::from("net1"),
+                    index: 2,
+                    addr: "2001:db8::1".parse().unwrap(),
+                    mask: 64,
+                    family: 6,
+                    state: libnet::IpState::OK,
+                },
+            ],
+        ),
+    ]))
+}
+
+#[cfg(not(test))]
+fn ifname_to_addrobj(
+    name: &str,
+    family: u16,
+) -> Result<(String, String), GetDhcp6Error> {
+    libnet::ip::ifname_to_addrobj(name, family)
+        .map_err(GetDhcp6Error::IfnameToAddrobj)
+}
+
+#[cfg(test)]
+fn ifname_to_addrobj(
+    name: &str,
+    family: u16,
+) -> Result<(String, String), GetDhcp6Error> {
+    match family {
+        4 => Ok((format!("{name}/v4"), String::from("static"))),
+        6 => Ok((format!("{name}/v6"), String::from("addrconf"))),
+        _ => unreachable!(),
+    }
 }
 
 pub fn get_dhcpv6(
     ifname: &str,
 ) -> anyhow::Result<Vec<Ipv6Addr>, GetDhcp6Error> {
     let mut result = Vec::default();
-    for (ifx, addrs) in libnet::get_ipaddrs()?.into_iter() {
+    for (ifx, addrs) in get_ipaddrs()?.into_iter() {
         for addr in addrs {
-            let (addrobj, src) =
-                libnet::ip::ifname_to_addrobj(ifx.as_str(), addr.family)
-                    .map_err(GetDhcp6Error::IfnameToAddrobj)?;
+            let (addrobj, src) = ifname_to_addrobj(ifx.as_str(), addr.family)?;
 
             // filter to the specified ifname
-            if addrobj.starts_with(ifname) {
+            if !addrobj.starts_with(ifname) {
                 continue;
             }
 
@@ -141,5 +226,24 @@ pub fn init() -> anyhow::Result<()> {
     match unsafe { netsupport_init() } {
         0 => Ok(()),
         _ => Err(anyhow!("failed to initialize netsupport code")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_dhcpv6;
+    use super::get_ipaddrs;
+
+    #[test]
+    fn test_get_dhcpv6() {
+        let all_addrs = get_ipaddrs().unwrap();
+        let addrs = get_dhcpv6("net1").unwrap();
+
+        assert_eq!(addrs.len(), 1);
+        let addr = addrs[0];
+
+        // We should have skipped the IPv4 address, the link-local, and the
+        // simulated bootstrap address.
+        assert_eq!(addr, all_addrs["net1"].last().as_ref().unwrap().addr);
     }
 }
