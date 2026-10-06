@@ -5,6 +5,7 @@
 // Copyright 2026 Oxide Computer Company
 
 use std::fmt::Write;
+use std::io::Write as IoWrite;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -23,7 +24,6 @@ use dpd_client::Client;
 use dpd_client::ClientInfo;
 use dpd_client::ClientState;
 use dpd_client::types;
-use packet::Endpoint;
 use packet::Packet;
 use packet::arp;
 use packet::eth;
@@ -31,6 +31,7 @@ use packet::icmp;
 use packet::ipv4;
 use packet::ipv6;
 use packet::sidecar;
+use packet::{Endpoint, L4Endpoint};
 use types::PortId;
 
 const SHOW_VERBOSE: u8 = 0x01;
@@ -49,6 +50,15 @@ const TEST_PCAP_TIMEOUT_MS: i32 = 1;
 #[derive(Clone, Copy, PartialOrd, Ord, Hash, PartialEq, Eq)]
 pub struct PhysPort(pub u16);
 pub const NO_PORT: PhysPort = PhysPort(0xffff);
+
+/// The type of an L4 packet carried over IP
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum L4Protocol {
+    Tcp = ipv4::IPPROTO_TCP,
+    Udp = ipv4::IPPROTO_UDP,
+    Icmp = ipv4::IPPROTO_ICMP,
+}
 
 // On real hardware the "service port" is the PCI port, which doesn't have a
 // real physical port - it's just a collection of ringbufs in PCI space.  On the
@@ -856,15 +866,23 @@ pub fn gen_udp_packet_loaded(
     Packet::generate(src, dst, udp_stack, Some(body)).unwrap()
 }
 
-// Construct a single ICMP packet with an optional payload
+// Construct a single ICMP echo request packet with an optional payload.
 pub fn gen_icmp_packet_loaded(
     src: Endpoint,
     dst: Endpoint,
     body: &[u8],
 ) -> Packet {
     let icmp_stack = match src.get_ip("src").unwrap() {
-        IpAddr::V4(_) => vec![ipv4::IPPROTO_ICMP.into(), eth::ETHER_IPV4],
-        IpAddr::V6(_) => vec![ipv6::IPPROTO_ICMPV6.into(), eth::ETHER_IPV6],
+        IpAddr::V4(_) => vec![
+            u16::from(icmp::ICMP_ECHO) << 8,
+            ipv4::IPPROTO_ICMP.into(),
+            eth::ETHER_IPV4,
+        ],
+        IpAddr::V6(_) => vec![
+            u16::from(icmp::ICMP6_ECHO_REQUEST) << 8,
+            ipv6::IPPROTO_ICMPV6.into(),
+            eth::ETHER_IPV6,
+        ],
     };
 
     Packet::generate(src, dst, icmp_stack, Some(body)).unwrap()
@@ -1441,8 +1459,55 @@ pub fn gen_arp_reply(src: Endpoint, tgt: Endpoint) -> Packet {
         .unwrap()
 }
 
+pub fn tofino_flow_hash(
+    src: Endpoint,
+    dst: Endpoint,
+    ip_proto: L4Protocol,
+) -> u16 {
+    let src = L4Endpoint::try_from(src).unwrap();
+    let dst = L4Endpoint::try_from(dst).unwrap();
+
+    let mut data = [0u8; 2 * std::mem::size_of::<(Ipv6Addr, u16, u8)>()];
+    let cap = data.len();
+    let mut cursor = &mut data[..];
+    let (src_port, dst_port, ip_proto_raw) = match (src, dst) {
+        (
+            L4Endpoint { ip: IpAddr::V6(sip), port: src_port, .. },
+            L4Endpoint { ip: IpAddr::V6(dip), port: dst_port, .. },
+        ) => {
+            cursor.write_all(&dip.octets()).unwrap();
+            cursor.write_all(&sip.octets()).unwrap();
+            match ip_proto {
+                L4Protocol::Icmp => (0, dst_port, ipv6::IPPROTO_ICMPV6),
+                _ => (src_port, dst_port, ip_proto as u8),
+            }
+        }
+        (
+            L4Endpoint { ip: IpAddr::V4(sip), port: src_port, .. },
+            L4Endpoint { ip: IpAddr::V4(dip), port: dst_port, .. },
+        ) => {
+            cursor.write_all(&dip.octets()).unwrap();
+            cursor.write_all(&sip.octets()).unwrap();
+            match ip_proto {
+                L4Protocol::Icmp => (0, dst_port, ipv4::IPPROTO_ICMP),
+                _ => (src_port, dst_port, ip_proto as u8),
+            }
+        }
+        _ => panic!("mismatched src/dst address families"),
+    };
+
+    cursor.write_all(&[ip_proto_raw]).unwrap();
+    cursor.write_all(&dst_port.to_be_bytes()).unwrap();
+    cursor.write_all(&src_port.to_be_bytes()).unwrap();
+
+    let written = cap - cursor.len();
+    let crc = crc::Crc::<u16>::new(&crc::CRC_16_ARC);
+    crc.checksum(&data[..written])
+}
+
 pub mod prelude {
     pub use super::ADMIN_LOCAL_MULTICAST_PREFIX;
+    pub use super::L4Protocol;
     pub use super::NO_PORT;
     pub use super::PhysPort;
     pub use super::SERVICE_PORT;

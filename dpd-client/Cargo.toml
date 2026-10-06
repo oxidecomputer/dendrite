@@ -12,7 +12,6 @@ tofino_asic = ["asic/tofino_asic"]
 [dependencies]
 async-trait = "0.1.89"
 chrono.workspace = true
-crc8 = "0.1.1"
 futures.workspace = true
 http.workspace = true
 oxnet.workspace = true
@@ -34,6 +33,7 @@ packet = { path = "../packet" }
 pcap = { path = "../pcap" }
 asic = { path = "../asic" }
 anyhow.workspace = true
+crc.workspace = true
 dpd-types.workspace = true
 lazy_static.workspace = true
 parking_lot.workspace = true

@@ -60,6 +60,8 @@ pub const ICMP6_DST_UNREACH: u8 = 1;
 pub const ICMP6_PACKET_TOO_BIG: u8 = 2;
 pub const ICMP6_TIME_EXCEEDED: u8 = 3;
 pub const ICMP6_PARAM_PROB: u8 = 4;
+pub const ICMP6_ECHO_REQUEST: u8 = 128;
+pub const ICMP6_ECHO_REPLY: u8 = 129;
 
 pub const ICMP6_DST_UNREACH_NOROUTE: u8 = 0;
 pub const ICMP6_DST_UNREACH_ADMIN: u8 = 1;
@@ -132,8 +134,13 @@ impl Protocol for IcmpHdr {
         let op = protos.pop().unwrap_or_default();
         let icmp_type = ((op >> 8) & 0xff) as u8;
         let icmp_code = (op & 0xff) as u8;
-        let icmp_id = match crate::L4Endpoint::try_from(dst) {
-            Ok(ep) => (ep.port as u32) << 16,
+        let is_v6 = crate::L3Endpoint::try_from(dst).unwrap().ip.is_ipv6();
+        let icmp_id = match (is_v6, icmp_type, crate::L4Endpoint::try_from(dst))
+        {
+            (false, ICMP_ECHO, Ok(ep))
+            | (false, ICMP_ECHOREPLY, Ok(ep))
+            | (true, ICMP6_ECHO_REQUEST, Ok(ep))
+            | (true, ICMP6_ECHO_REPLY, Ok(ep)) => u32::from(ep.port) << 16,
             _ => 0,
         };
 

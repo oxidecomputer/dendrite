@@ -41,6 +41,7 @@ parser IngressParser(
 		meta.icmp_csum = 0;
 		meta.l4_src_port = 0;
 		meta.l4_dst_port = 0;
+		meta.flow_hash = 0;
 		meta.l4_length = 0;
 		meta.body_checksum = 0;
 		meta.nexthop_ipv4 = 0;
@@ -317,7 +318,7 @@ parser IngressParser(
 
 	state goto_proto_ipv6 {
 		transition select(hdr.ipv6.next_hdr) {
-			IPPROTO_ICMPV6: parse_icmp;
+			IPPROTO_ICMPV6: parse_icmp6;
 			IPPROTO_TCP: parse_tcp;
 			IPPROTO_UDP: parse_udp;
 			IPPROTO_SCTP: drop_sctp;
@@ -338,6 +339,39 @@ parser IngressParser(
 		nat_checksum.subtract(hdr.icmp);
 		nat_checksum.subtract_all_and_deposit(meta.body_checksum);
 
+		meta.l4_dst_port = hdr.icmp.data[31:16];
+
+		transition select(hdr.icmp.type) {
+			ICMP_ECHO: accept;
+			ICMP_ECHOREPLY: accept;
+			default: icmp_no_dst_info;
+		}
+	}
+
+	state parse_icmp6 {
+		pkt.extract(hdr.icmp);
+		meta.pkt_type = meta.pkt_type | PKT_ICMP;
+
+		icmp_checksum.subtract({
+			hdr.icmp.hdr_checksum,
+			hdr.icmp.type, hdr.icmp.code
+		});
+		icmp_checksum.subtract_all_and_deposit(meta.icmp_csum);
+
+		nat_checksum.subtract(hdr.icmp);
+		nat_checksum.subtract_all_and_deposit(meta.body_checksum);
+
+		meta.l4_dst_port = hdr.icmp.data[31:16];
+
+		transition select(hdr.icmp.type) {
+			ICMP6_ECHO: accept;
+			ICMP6_ECHOREPLY: accept;
+			default: icmp_no_dst_info;
+		}
+	}
+
+	state icmp_no_dst_info {
+		meta.l4_dst_port = 0;
 		transition accept;
 	}
 
