@@ -433,10 +433,8 @@ impl Switch {
 
         // Reset ingress and egress MAC tables and Port ID table(s).
         mac::reset(self)?;
-        {
-            mac::mcast_reset(self)?;
-            mcast::mcast_egress::reset_bitmap_table(self)?;
-        }
+        mac::mcast_reset(self)?;
+        mcast::mcast_egress::reset_bitmap_table(self)?;
 
         // Create the link on the CPU port.
         let link_id = self.create_link(port_id, &params)?;

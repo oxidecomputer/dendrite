@@ -403,9 +403,7 @@ impl Handle {
 
         // Note: we assume that bf_mc_init() has been called as part of the
         // bf_switch_init() operation.
-        {
-            bf.mcast_hdl = mcast::create_session()?;
-        }
+        bf.mcast_hdl = mcast::create_session()?;
 
         Ok(Handle {
             dev_id,

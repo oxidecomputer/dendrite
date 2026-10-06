@@ -29,7 +29,7 @@ pub use dpd_types::counters::{
 pub enum CounterId {
     Service,
     Ingress,
-    Egress,
+    Forwarded,
     Packet,
     DropPort,
     DropReason,
@@ -67,7 +67,7 @@ impl fmt::Display for CounterId {
             match self {
                 CounterId::Service => "Service".to_string(),
                 CounterId::Ingress => "Ingress".to_string(),
-                CounterId::Egress => "Egress".to_string(),
+                CounterId::Forwarded => "Forwarded".to_string(),
                 CounterId::Packet => "Packet".to_string(),
                 CounterId::DropPort => "Ingress_Drop_Port".to_string(),
                 CounterId::DropReason => "Ingress_Drop_Reason".to_string(),
@@ -84,7 +84,7 @@ impl std::str::FromStr for CounterId {
         match s.to_lowercase().replace(['_'], "").as_str() {
             "service" => Ok(CounterId::Service),
             "ingress" => Ok(CounterId::Ingress),
-            "egress" => Ok(CounterId::Egress),
+            "forwarded" => Ok(CounterId::Forwarded),
             "packet" => Ok(CounterId::Packet),
             "ingressdropport" => Ok(CounterId::DropPort),
             "ingressdropreason" => Ok(CounterId::DropReason),
