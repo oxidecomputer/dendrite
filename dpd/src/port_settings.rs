@@ -109,7 +109,7 @@ impl LinkSpec {
         let addrs = amap
             .read()
             .unwrap()
-            .iter_by_owner(p.asic_addr_id())
+            .iter_by_iface(p.asic_addr_id())
             .map(|(ip, tag)| (*ip, tag.to_string()))
             .collect();
 

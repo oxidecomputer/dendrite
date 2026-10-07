@@ -469,7 +469,7 @@ impl Link {
 
     /// Return the link-local address for this link, if one has been added.
     pub fn link_local(&self, addrs: &SyncAddrMap) -> Option<Ipv6Addr> {
-        addrs.read().unwrap().iter_by_owner(self.asic_addr_id()).find_map(
+        addrs.read().unwrap().iter_by_iface(self.asic_addr_id()).find_map(
             |(addr, _tag)| {
                 Ipv6Addr::is_unicast_link_local(addr).then_some(*addr)
             },

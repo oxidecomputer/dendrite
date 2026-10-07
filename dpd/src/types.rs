@@ -97,7 +97,7 @@ pub enum DpdError {
     #[error("Address {addr} is already in use by {owner}")]
     AddrOwnerConflict { addr: IpAddr, owner: std::borrow::Cow<'static, str> },
     #[error("These IP addresses could not be deleted: {0:?}")]
-    AddrClear(Vec<(crate::addr::AsicAddrOwner, IpAddr, DpdError)>),
+    AddrClear(Vec<(crate::addr::AsicAddrIface, IpAddr, DpdError)>),
 }
 
 impl From<smf::ScfError> for DpdError {

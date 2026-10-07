@@ -10,7 +10,6 @@ use std::collections::hash_map;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
-use std::ops::Bound;
 use std::ops::RangeBounds;
 use std::sync::RwLock;
 
@@ -60,19 +59,23 @@ impl IpAddrLike for IpAddr {
 /// A mutex wrapper for [`AddrMap`].
 pub type SyncAddrMap = RwLock<AddrMap>;
 
-/// The switch has tables containing single-owner IP addresses. This
-/// struct abstracts CRUD operations on these addresses while keeping
-/// switch tables consistent.
+/// The switch has tables containing IP addresses. Each address
+/// belongs to a single interface. This struct abstracts CRUD
+/// operations on these addresses while keeping switch tables
+/// consistent.
 ///
 /// Global address registrations are shared among "Loopback" and
-/// "Link" owners. Link addresses are scoped to a link lifetime,
-/// while loopback addresses belong to the switch itself. This is
-/// tracked by the [`AsicAddrOwner`] enum. A namespace "tag" is
-/// also exposed to help mutually unaware controllers cooperate
-/// when reconciling addresses.
+/// "Link". This module uses the word "interface" for any
+/// `(PortId, LinkId)` or `Loopback` entity to which an address
+/// may be attached.
+///
+/// Link addresses are scoped to a link lifetime, while loopback
+/// addresses belong to the switch itself. This is tracked by the
+/// [`AsicAddrIface`] enum. A namespace "tag" is also exposed to
+/// help mutually unaware controllers cooperate when reconciling addresses.
 ///
 /// This upholds the following DPD address invariants:
-/// - Unicast addresses have exactly one owner across loopback and all links.
+/// - Unicast addresses belong to exactly one interface.
 /// - Such an address is in this soft state IFF it's in an asic table.
 ///
 /// # Synchronization
@@ -84,8 +87,8 @@ pub type SyncAddrMap = RwLock<AddrMap>;
 //
 // - A single `HashMap<IpAddr, ...>` is sufficient for
 //   correctness and better for simplicity. However, most common
-//   operations are scoped to a single owner. Caching a reverse
-//   `mirror` table avoids a full map scan in those cases.
+//   operations are scoped to a single interface. Caching a reverse
+//   map avoids a full map scan in those cases.
 // - IPv4 and IPv6 addresses have different tables in the switch, so
 //   we could parallelize better by splitting IPv4 and IPv6 soft state
 //   behind separate locks. I skipped this to avoid additional
@@ -95,40 +98,41 @@ pub type SyncAddrMap = RwLock<AddrMap>;
 //
 // These two tables should uphold the following:
 // - An address is in global IFF it's in mirror.
-// - An address' owner in global is equal to its owner in mirror.
+// - An address' interface in global is equal to its
+//   interface in mirror.
 #[derive(Default, Debug)]
 pub struct AddrMap {
     global: HashMap<IpAddr, AddrSpec>,
-    mirror: HashMap<AddrOwner, BTreeSet<IpAddr>>,
+    mirror: HashMap<AddrIface, BTreeSet<IpAddr>>,
 }
 
 impl AddrMap {
     /// Writes this address to switch tables.
     ///
     /// Errs without mutation if this address already
-    /// belongs to another owner/tag or if a switch
+    /// belongs to another interface/tag or if a switch
     /// operation fails.
     ///
     /// Returns Ok(true) if the address was claimed and written
     /// successfully to tables.
-    /// Returns Ok(false) if the owner has already claimed and
+    /// Returns Ok(false) if the interface has already claimed and
     /// written this address.
     pub fn try_set(
         &mut self,
         switch: &Switch,
         addr: IpAddr,
-        owner: AsicAddrOwner,
+        iface: AsicAddrIface,
         compare_tag: String,
     ) -> DpdResult<bool> {
-        let owner_id = owner.into();
+        let iface_id = iface.into();
         match self.global.entry(addr) {
             hash_map::Entry::Occupied(entry) => {
-                Self::compare(addr, entry.get(), owner, Some(&compare_tag))?;
+                Self::compare(addr, entry.get(), iface, Some(&compare_tag))?;
                 assert!(
                     self.mirror
-                        .get(&owner_id)
+                        .get(&iface_id)
                         .is_some_and(|addrs| addrs.contains(&addr)),
-                    "If an address is in global, then the owner has a copy of that address"
+                    "If an address is in global, then the interface has a copy of that address"
                 );
                 debug!(
                     switch.log,
@@ -138,10 +142,10 @@ impl AddrMap {
                 Ok(false)
             }
             hash_map::Entry::Vacant(slot) => {
-                Self::set_asic(switch, &addr, &owner)?;
-                slot.insert(AddrSpec { tag: compare_tag, owner: owner_id });
+                Self::set_asic(switch, &addr, &iface)?;
+                slot.insert(AddrSpec { tag: compare_tag, interface: iface_id });
                 let newly_added =
-                    self.mirror.entry(owner_id).or_default().insert(addr);
+                    self.mirror.entry(iface_id).or_default().insert(addr);
                 assert!(
                     newly_added,
                     "If an entry is new to global, it's new to the mirror"
@@ -154,25 +158,25 @@ impl AddrMap {
     /// Removes this address from switch tables.
     ///
     /// Errs without mutation if this address belongs to
-    /// another owner/tag or if a switch operation fails.
+    /// another interface/tag or if a switch operation fails.
     ///
-    /// If tag is `None`, only the owner field is checked
+    /// If tag is `None`, only the interface field is checked
     /// before clearing the entry.
     ///
-    /// Returns Ok(true) if the address belonging to this owner/tag
+    /// Returns Ok(true) if the address belonging to this interface/tag
     /// was successfully cleared.
     /// Returns Ok(false) if this entry did not exist on the switch.
     pub fn try_clear(
         &mut self,
         switch: &Switch,
         addr: IpAddr,
-        owner: AsicAddrOwner,
+        iface: AsicAddrIface,
         compare_tag: Option<&str>,
     ) -> DpdResult<bool> {
         let hash_map::Entry::Occupied(entry) = self.global.entry(addr) else {
             assert!(
                 self.mirror
-                    .get(&owner.into())
+                    .get(&iface.into())
                     .is_none_or(|addrs| !addrs.contains(&addr)),
                 "If an address is not in global, then it must not be in mirror."
             );
@@ -183,14 +187,14 @@ impl AddrMap {
             return Ok(false);
         };
 
-        Self::compare(addr, entry.get(), owner, compare_tag)?;
-        Self::clear_asic(switch, &addr, &owner)?;
+        Self::compare(addr, entry.get(), iface, compare_tag)?;
+        Self::clear_asic(switch, &addr, &iface)?;
 
         let removed = entry.remove_entry();
         let removed_mirror = self
             .mirror
-            .get_mut(&removed.1.owner)
-            .expect("If an owner was in global, it must be in mirror")
+            .get_mut(&removed.1.interface)
+            .expect("If an interface was in global, it must be in mirror")
             .remove(&removed.0);
         assert!(
             removed_mirror,
@@ -200,15 +204,15 @@ impl AddrMap {
         Ok(true)
     }
 
-    /// Iterates the addresses belonging to this owner for
+    /// Iterates the addresses belonging to this interface for
     /// which `A::from_ip` returns `Some`.
-    pub fn iter_by_owner<'a, A: IpAddrLike + 'a>(
+    pub fn iter_by_iface<'a, A: IpAddrLike + 'a>(
         &'a self,
-        owner: AsicAddrOwner,
+        iface: AsicAddrIface,
     ) -> impl Iterator<Item = (&'a A, &'a str)> + 'a {
-        let owner_id = owner.into();
+        let iface_id = iface.into();
         self.mirror
-            .get(&owner_id)
+            .get(&iface_id)
             .into_iter()
             .flat_map(|addrs| addrs.iter())
             .filter_map(move |addr| {
@@ -216,7 +220,10 @@ impl AddrMap {
                     .global
                     .get(addr)
                     .expect("If an address is in mirror, it must be in global");
-                assert_eq!(spec.owner, owner_id, "Address owners must concur");
+                assert_eq!(
+                    spec.interface, iface_id,
+                    "Address owners must concur"
+                );
                 Some((IpAddrLike::from_ip(addr)?, spec.tag.as_str()))
             })
     }
@@ -232,54 +239,51 @@ impl AddrMap {
     pub fn try_retain_by_owner<A: IpAddrLike>(
         &mut self,
         switch: &Switch,
-        owner: AsicAddrOwner,
+        iface: AsicAddrIface,
         keep: impl Fn(&A, &str) -> bool,
     ) -> DpdResult<()> {
         let hash_map::Entry::Occupied(mut mirror) =
-            self.mirror.entry(owner.into())
+            self.mirror.entry(iface.into())
         else {
             return Ok(());
         };
 
-        let owner_id = owner.into();
-        let addrs = mirror.get_mut();
         let mut errors: Option<Vec<_>> = None;
-        let mut cursor = Bound::Unbounded;
-        while let Some(&addr) = addrs.range((cursor, Bound::Unbounded)).next() {
-            cursor = Bound::Excluded(addr);
-
-            let Some(user_addr) = A::from_ip(&addr) else {
-                continue;
+        mirror.get_mut().retain(|addr| {
+            let Some(user_addr) = A::from_ip(addr) else {
+                return true;
             };
 
-            let hash_map::Entry::Occupied(global) = self.global.entry(addr)
+            let hash_map::Entry::Occupied(global) = self.global.entry(*addr)
             else {
                 panic!("If an addr is in mirror, then it must be in global");
             };
+
             let spec = global.get();
-            assert_eq!(spec.owner, owner_id);
+            assert_eq!(spec.interface, iface.into());
 
             if keep(user_addr, &spec.tag) {
-                continue;
+                return true;
             }
 
-            match Self::clear_asic(switch, &addr, &owner) {
+            match Self::clear_asic(switch, addr, &iface) {
                 Ok(()) => {
-                    addrs.remove(&addr);
                     global.remove();
+                    false
                 }
                 Err(e) => {
-                    errors.get_or_insert_default().push((owner, addr, e));
+                    errors.get_or_insert_default().push((iface, *addr, e));
+                    true
                 }
             }
+        });
+
+        if mirror.get().is_empty() {
+            mirror.remove();
         }
 
         if let Some(failed) = errors {
             return Err(DpdError::AddrClear(failed));
-        }
-
-        if addrs.is_empty() {
-            mirror.remove();
         }
 
         Ok(())
@@ -289,7 +293,7 @@ impl AddrMap {
     /// given range belonging to this owner.
     pub fn owner_addr_range<'a>(
         &'a self,
-        owner: AsicAddrOwner,
+        owner: AsicAddrIface,
         bounds: impl RangeBounds<IpAddr> + 'a,
     ) -> impl Iterator<Item = (&'a IpAddr, &'a str)> + 'a {
         self.mirror
@@ -314,13 +318,13 @@ impl AddrMap {
     fn compare(
         addr: IpAddr,
         spec: &AddrSpec,
-        owner: AsicAddrOwner,
+        owner: AsicAddrIface,
         tag_filter: Option<&str>,
     ) -> DpdResult<()> {
-        if AddrOwner::from(owner) != spec.owner {
-            let owner = match spec.owner {
-                AddrOwner::Loopback => "loopback".into(),
-                AddrOwner::Link { port_id, link_id } => {
+        if AddrIface::from(owner) != spec.interface {
+            let owner = match spec.interface {
+                AddrIface::Loopback => "loopback".into(),
+                AddrIface::Link { port_id, link_id } => {
                     format!("{port_id}/{link_id}").into()
                 }
             };
@@ -344,19 +348,19 @@ impl AddrMap {
     fn set_asic(
         switch: &Switch,
         addr: &IpAddr,
-        id: &AsicAddrOwner,
+        id: &AsicAddrIface,
     ) -> DpdResult<()> {
         match (addr, id) {
-            (IpAddr::V4(v4), AsicAddrOwner::Link { asic_id, .. }) => {
+            (IpAddr::V4(v4), AsicAddrIface::Link { asic_id, .. }) => {
                 port_ip::ipv4_set(switch, *asic_id, *v4)
             }
-            (IpAddr::V4(v4), AsicAddrOwner::Loopback) => {
+            (IpAddr::V4(v4), AsicAddrIface::Loopback) => {
                 port_ip::loopback_ipv4_set(switch, *v4)
             }
-            (IpAddr::V6(v6), AsicAddrOwner::Link { asic_id, .. }) => {
+            (IpAddr::V6(v6), AsicAddrIface::Link { asic_id, .. }) => {
                 port_ip::ipv6_set(switch, *asic_id, *v6)
             }
-            (IpAddr::V6(v6), AsicAddrOwner::Loopback) => {
+            (IpAddr::V6(v6), AsicAddrIface::Loopback) => {
                 port_ip::loopback_ipv6_set(switch, *v6)
             }
         }
@@ -368,19 +372,19 @@ impl AddrMap {
     fn clear_asic(
         switch: &Switch,
         addr: &IpAddr,
-        id: &AsicAddrOwner,
+        id: &AsicAddrIface,
     ) -> DpdResult<()> {
         match (addr, id) {
-            (IpAddr::V4(v4), AsicAddrOwner::Link { asic_id, .. }) => {
+            (IpAddr::V4(v4), AsicAddrIface::Link { asic_id, .. }) => {
                 port_ip::ipv4_clear(switch, *asic_id, *v4)
             }
-            (IpAddr::V4(v4), AsicAddrOwner::Loopback) => {
+            (IpAddr::V4(v4), AsicAddrIface::Loopback) => {
                 port_ip::loopback_ipv4_clear(switch, *v4)
             }
-            (IpAddr::V6(v6), AsicAddrOwner::Link { asic_id, .. }) => {
+            (IpAddr::V6(v6), AsicAddrIface::Link { asic_id, .. }) => {
                 port_ip::ipv6_clear(switch, *asic_id, *v6)
             }
-            (IpAddr::V6(v6), AsicAddrOwner::Loopback) => {
+            (IpAddr::V6(v6), AsicAddrIface::Loopback) => {
                 port_ip::loopback_ipv6_clear(switch, *v6)
             }
         }
@@ -391,13 +395,14 @@ impl AddrMap {
 /// Mostly used to determine ownership.
 #[derive(PartialEq, Eq, Debug)]
 struct AddrSpec {
-    owner: AddrOwner,
+    interface: AddrIface,
     tag: String,
 }
 
-/// Identifies the owner of an IP address registered on the switch.
+/// The switch entity to which an IP address uniquely belongs.
 ///
 /// Use [`crate::link::Link::asic_addr_id`] to construct a link ID.
+/// Loopback has no asic_id.
 ///
 /// # Correctness
 ///
@@ -405,12 +410,12 @@ struct AddrSpec {
 /// the link. Changing it will yield the switch table equivalent of
 /// internally mutating a [`HashMap`] key.
 #[derive(Debug, Clone, Copy)]
-pub enum AsicAddrOwner {
+pub enum AsicAddrIface {
     Loopback,
     Link { port_id: PortId, link_id: LinkId, asic_id: AsicId },
 }
 
-/// The owner of a globally-tracked IP address.
+/// The switch entity to which an IP address uniquely belongs.
 ///
 /// # Design
 ///
@@ -427,15 +432,15 @@ pub enum AsicAddrOwner {
 /// soft state depend on it. So we use [`AsicAddrOwner`] in
 /// the API but only store [`AddrOwner`] internally.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-enum AddrOwner {
+enum AddrIface {
     Loopback,
     Link { port_id: PortId, link_id: LinkId },
 }
 
 impl crate::link::Link {
     /// Constructs an address ownership ID for this link.
-    pub fn asic_addr_id(&self) -> AsicAddrOwner {
-        AsicAddrOwner::Link {
+    pub fn asic_addr_id(&self) -> AsicAddrIface {
+        AsicAddrIface::Link {
             port_id: self.port_id,
             link_id: self.link_id,
             asic_id: self.asic_port_id,
@@ -443,11 +448,11 @@ impl crate::link::Link {
     }
 }
 
-impl From<AsicAddrOwner> for AddrOwner {
-    fn from(value: AsicAddrOwner) -> Self {
+impl From<AsicAddrIface> for AddrIface {
+    fn from(value: AsicAddrIface) -> Self {
         match value {
-            AsicAddrOwner::Loopback => Self::Loopback,
-            AsicAddrOwner::Link { port_id, link_id, .. } => {
+            AsicAddrIface::Loopback => Self::Loopback,
+            AsicAddrIface::Link { port_id, link_id, .. } => {
                 Self::Link { port_id, link_id }
             }
         }

@@ -4,7 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use crate::addr::AsicAddrOwner;
+use crate::addr::AsicAddrIface;
 use crate::{DpdResult, Switch};
 use std::net::IpAddr;
 
@@ -17,7 +17,7 @@ pub fn set_loopback(
     switch.addrs.write().unwrap().try_set(
         switch,
         addr,
-        AsicAddrOwner::Loopback,
+        AsicAddrIface::Loopback,
         tag,
     )?;
     Ok(())
@@ -31,7 +31,7 @@ pub fn clear_loopback(
     switch.addrs.write().unwrap().try_clear(
         switch,
         addr,
-        AsicAddrOwner::Loopback,
+        AsicAddrIface::Loopback,
         tag,
     )?;
     Ok(())

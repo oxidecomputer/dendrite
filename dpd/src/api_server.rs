@@ -98,7 +98,7 @@ use common::ports::TxEq;
 #[cfg(any(feature = "softnpu", feature = "tofino_asic"))]
 use common::ports::TxEqSwHw;
 
-use crate::addr::AsicAddrOwner;
+use crate::addr::AsicAddrIface;
 use crate::addr::SyncAddrMap;
 use crate::attached_subnet;
 use crate::counters;
@@ -1354,7 +1354,7 @@ impl DpdApi for DpdApiImpl {
             .addrs
             .read()
             .unwrap()
-            .iter_by_owner(AsicAddrOwner::Loopback)
+            .iter_by_iface(AsicAddrIface::Loopback)
             .map(|(addr, tag)| Ipv4Entry { addr: *addr, tag: tag.to_string() })
             .collect();
 
@@ -1393,7 +1393,7 @@ impl DpdApi for DpdApiImpl {
             .addrs
             .read()
             .unwrap()
-            .iter_by_owner(AsicAddrOwner::Loopback)
+            .iter_by_iface(AsicAddrIface::Loopback)
             .map(|(addr, tag)| Ipv6Entry { addr: *addr, tag: tag.to_string() })
             .collect();
 
@@ -2975,7 +2975,7 @@ impl crate::link::Link {
         let addrs: HashSet<IpAddr> = amap
             .read()
             .unwrap()
-            .iter_by_owner(self.asic_addr_id())
+            .iter_by_iface(self.asic_addr_id())
             .filter(|(_, t)| *t == tag)
             .map(|(addr, _)| *addr)
             .collect();
