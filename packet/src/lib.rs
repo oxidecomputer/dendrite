@@ -5,8 +5,7 @@
 // Copyright 2026 Oxide Computer Company
 
 use std::convert::TryFrom;
-use std::fmt::Debug;
-use std::fmt::{self, Write};
+use std::fmt::{self, Debug, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::string::ToString;
 
@@ -90,7 +89,7 @@ pub fn parse_ip(ip: &str) -> PacketResult<IpAddr> {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct L2Endpoint {
     pub mac: MacAddr,
 }
@@ -107,7 +106,7 @@ impl fmt::Display for L2Endpoint {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct L3Endpoint {
     pub mac: MacAddr,
     pub ip: IpAddr,
@@ -129,7 +128,7 @@ impl fmt::Display for L3Endpoint {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct L4Endpoint {
     pub mac: MacAddr,
     pub ip: IpAddr,
@@ -152,7 +151,7 @@ impl L4Endpoint {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Endpoint {
     L2(L2Endpoint),
     L3(L3Endpoint),
@@ -292,9 +291,9 @@ impl TryFrom<Endpoint> for L4Endpoint {
 impl fmt::Display for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Endpoint::L2(e) => e.fmt(f),
-            Endpoint::L3(e) => e.fmt(f),
-            Endpoint::L4(e) => e.fmt(f),
+            Endpoint::L2(e) => fmt::Display::fmt(e, f),
+            Endpoint::L3(e) => fmt::Display::fmt(e, f),
+            Endpoint::L4(e) => fmt::Display::fmt(e, f),
         }
     }
 }
@@ -461,6 +460,76 @@ impl Packet {
         }
 
         Ok(data)
+    }
+
+    pub fn src(&self) -> Option<Endpoint> {
+        let mac = self.hdrs.eth_hdr?.eth_smac;
+
+        let (ip, v6) = match (&self.hdrs.ipv4_hdr, &self.hdrs.ipv6_hdr) {
+            (Some(v4), None) => (v4.ipv4_src_ip.into(), false),
+            (None, Some(v6)) => (v6.ipv6_src_ip.into(), true),
+            _ => return Some(L2Endpoint { mac }.into()),
+        };
+
+        let port =
+            match (&self.hdrs.udp_hdr, &self.hdrs.tcp_hdr, &self.hdrs.icmp_hdr)
+            {
+                (Some(udp), None, None) => udp.udp_sport,
+                (None, Some(tcp), None) => tcp.tcp_sport,
+                (None, None, Some(icmp))
+                    if (!v6
+                        && matches!(
+                            icmp.icmp_type,
+                            icmp::ICMP_ECHO | icmp::ICMP_ECHOREPLY
+                        ))
+                        || (v6
+                            && matches!(
+                                icmp.icmp_type,
+                                icmp::ICMP6_ECHO_REQUEST
+                                    | icmp::ICMP6_ECHO_REPLY
+                            )) =>
+                {
+                    0
+                }
+                _ => return Some(L3Endpoint { mac, ip }.into()),
+            };
+
+        Some(L4Endpoint { mac, ip, port }.into())
+    }
+
+    pub fn dst(&self) -> Option<Endpoint> {
+        let mac = self.hdrs.eth_hdr?.eth_dmac;
+
+        let (ip, v6) = match (&self.hdrs.ipv4_hdr, &self.hdrs.ipv6_hdr) {
+            (Some(v4), None) => (v4.ipv4_dst_ip.into(), false),
+            (None, Some(v6)) => (v6.ipv6_dst_ip.into(), true),
+            _ => return Some(L2Endpoint { mac }.into()),
+        };
+
+        let port =
+            match (&self.hdrs.udp_hdr, &self.hdrs.tcp_hdr, &self.hdrs.icmp_hdr)
+            {
+                (Some(udp), None, None) => udp.udp_dport,
+                (None, Some(tcp), None) => tcp.tcp_dport,
+                (None, None, Some(icmp))
+                    if (!v6
+                        && matches!(
+                            icmp.icmp_type,
+                            icmp::ICMP_ECHO | icmp::ICMP_ECHOREPLY
+                        ))
+                        || (v6
+                            && matches!(
+                                icmp.icmp_type,
+                                icmp::ICMP6_ECHO_REQUEST
+                                    | icmp::ICMP6_ECHO_REPLY
+                            )) =>
+                {
+                    (icmp.icmp_data >> 16) as u16
+                }
+                _ => return Some(L3Endpoint { mac, ip }.into()),
+            };
+
+        Some(L4Endpoint { mac, ip, port }.into())
     }
 }
 
