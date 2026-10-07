@@ -4,20 +4,22 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use crate::addr::AsicAddrOwner;
+use common::addr::RouterIfaceIpAddr;
+
+use crate::addr::AsicAddrIface;
+use crate::addr::OptTag;
 use crate::{DpdResult, Switch};
-use std::net::IpAddr;
 
 /// Add a loopback IPv4 address to the switch.
 pub fn set_loopback(
     switch: &Switch,
-    addr: IpAddr,
+    addr: RouterIfaceIpAddr,
     tag: String,
 ) -> DpdResult<()> {
-    switch.addrs.write().unwrap().try_set(
+    switch.addrs.get().write().unwrap().try_set(
         switch,
-        addr,
-        AsicAddrOwner::Loopback,
+        addr.into(),
+        AsicAddrIface::Loopback,
         tag,
     )?;
     Ok(())
@@ -25,13 +27,13 @@ pub fn set_loopback(
 
 pub fn clear_loopback(
     switch: &Switch,
-    addr: IpAddr,
-    tag: Option<&str>,
+    addr: RouterIfaceIpAddr,
+    tag: &OptTag,
 ) -> DpdResult<()> {
-    switch.addrs.write().unwrap().try_clear(
+    switch.addrs.get().write().unwrap().try_clear(
         switch,
-        addr,
-        AsicAddrOwner::Loopback,
+        addr.into(),
+        AsicAddrIface::Loopback,
         tag,
     )?;
     Ok(())

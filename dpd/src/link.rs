@@ -8,8 +8,9 @@
 
 use crate::MacAddr;
 use crate::Switch;
-use crate::addr::IpAddrLike;
+use crate::addr::OptTag;
 use crate::addr::SyncAddrMap;
+use crate::addr::TableIp;
 use crate::fault::AutonegTracker;
 use crate::fault::Faultable;
 use crate::fault::LinkUpTracker;
@@ -28,6 +29,7 @@ use aal::AsicOps;
 use aal::AsicResult;
 use aal::PortHdl;
 use aal::PortUpdate;
+use common::addr::IpAddrLike;
 use common::ports::PortFec;
 use common::ports::PortId;
 use common::ports::PortMedia;
@@ -54,6 +56,7 @@ use std::collections::btree_map;
 use std::collections::btree_map::Entry;
 use std::net::IpAddr;
 use std::net::Ipv6Addr;
+use std::ops::Bound;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -112,8 +115,11 @@ impl LinkMap {
                 link_id: link.link_id,
             });
         };
-
-        link.clear_link_addresses::<IpAddr>(switch, None)?;
+        switch.addrs.clear_addrs::<IpAddr>(
+            switch,
+            link.asic_addr_iface(),
+            &OptTag::Any,
+        )?;
         slot.remove();
 
         Ok(())
@@ -219,9 +225,32 @@ impl Switch {
 
 /// A `Link` is a configured Ethernet link.
 ///
-/// This object exists to capture all the Tofino-facing information required to
+/// This object exists to capture the Tofino-facing information required to
 /// keep track of the logical link. It is converted to a `crate::LinkView` for
 /// exposure in the public API.
+///
+/// # Addresses
+///
+/// The switch (loopback) and its links may have addresses. Addresses from
+/// all these interfaces coexist on the asic, so each address necessarily
+/// belongs to exactly one interface. DPD encodes this by storing all
+/// addresses in a single mapping defined in [`crate::addr`].
+///
+/// That means a [`Link`]'s addresses are managed by keying into
+/// [`crate::addr::AddrMap`] using this link's [`crate::addr::AsicAddrIface`] id.
+/// And a link should not be considered "deleted" until its state
+/// has been removed from that map. (And by extension, from the asic).
+///
+/// ### Link Local
+///
+/// Spec: On the Oxide platform, a link shall have at most one
+/// IPv6 link local address. That address shall be EUI-64
+/// derived from the physical MAC address.
+///
+/// Because MAC addresses are unique, Oxide IPv6 link local
+/// addresses are necessarily also unique. By this property,
+/// we can reuse the existing [`crate::addr`] machinery
+/// to track a link's Link Local as well.
 #[derive(Debug)]
 pub struct Link {
     /// The switch port on which this logical link resides.
@@ -467,15 +496,6 @@ impl Link {
         }
     }
 
-    /// Return the link-local address for this link, if one has been added.
-    pub fn link_local(&self, addrs: &SyncAddrMap) -> Option<Ipv6Addr> {
-        addrs.read().unwrap().iter_by_owner(self.asic_addr_id()).find_map(
-            |(addr, _tag)| {
-                Ipv6Addr::is_unicast_link_local(addr).then_some(*addr)
-            },
-        )
-    }
-
     /// Return the FEC scheme in use for this link.  If the link has not yet
     /// been successfully configured in the hardware, this value will reflect
     /// the scheme requested by the user - if any.  If the link has been
@@ -498,26 +518,13 @@ impl Link {
             asic_id: self.asic_port_id,
             mac: self.config.mac,
             ipv6_enabled: self.ipv6_enabled,
-            link_local: self.link_local(addrs),
+            link_local: addrs
+                .get()
+                .read()
+                .unwrap()
+                .get_link_local(self.asic_addr_iface())
+                .map(Ipv6Addr::from),
         }
-    }
-
-    /// Removes addresses of type `A` from asic and link tables.
-    ///
-    /// If `Some(tag)` is provided, only those addresses belonging
-    /// to the named tag are deleted.
-    ///
-    /// Returns [`DpdError::AddrClear`] if any addresses could not be deleted.
-    fn clear_link_addresses<A: IpAddrLike>(
-        &self,
-        switch: &Switch,
-        tag: Option<&str>,
-    ) -> DpdResult<()> {
-        switch.addrs.write().unwrap().try_retain_by_owner::<A>(
-            switch,
-            self.asic_addr_id(),
-            |_addr, entry_tag| tag.is_some_and(|t| t != entry_tag),
-        )
     }
 }
 
@@ -720,13 +727,18 @@ impl Switch {
         link_id: LinkId,
     ) -> DpdResult<()> {
         let link_lock = self.get_link_lock(port_id, link_id)?;
-        let mut link = link_lock.lock().unwrap();
-
-        link.clear_link_addresses::<IpAddr>(self, None)?;
+        {
+            let mut link = link_lock.lock().unwrap();
+            self.addrs.clear_addrs::<IpAddr>(
+                self,
+                link.asic_addr_iface(),
+                &OptTag::Any,
+            )?;
+            link.config.delete_me = true;
+        }
 
         // Notify the reconciliation task that this link's ASIC resources need
         // to be released.
-        link.config.delete_me = true;
         self.reconciler.trigger(port_id, link_id);
 
         Ok(())
@@ -734,18 +746,20 @@ impl Switch {
 
     /// Clear all IP addresses belonging to all links on the switch.
     ///
-    /// If `Some(tag)` is given, only addresses associated with that tag
-    /// are cleared from each link.
-    pub fn clear_link_addresses(&self, tag: Option<&str>) -> DpdResult<()> {
+    /// Optionally scoped to all IP addresses belonging to the specified tag.
+    pub fn clear_link_addresses(&self, tag: &OptTag) -> DpdResult<()> {
         let links = self.links.lock().unwrap();
         let mut errors: Option<Vec<_>> = None;
 
         for link_lock in links.0.values() {
-            let cleared = link_lock
-                .lock()
-                .unwrap()
-                .clear_link_addresses::<IpAddr>(self, tag);
-
+            let cleared = {
+                let link = link_lock.lock().unwrap();
+                self.addrs.clear_addrs::<IpAddr>(
+                    self,
+                    link.asic_addr_iface(),
+                    tag,
+                )
+            };
             match cleared {
                 Ok(()) => (),
                 Err(DpdError::AddrClear(failed)) => {
@@ -1013,13 +1027,13 @@ impl Switch {
     pub fn set_ip_address_locked(
         &self,
         link: &mut Link,
-        addr: IpAddr,
+        addr: TableIp,
         tag: String,
     ) -> DpdResult<bool> {
-        self.addrs.write().unwrap().try_set(
+        self.addrs.get().write().unwrap().try_set(
             self,
             addr,
-            link.asic_addr_id(),
+            link.asic_addr_iface(),
             tag,
         )
     }
@@ -1028,7 +1042,7 @@ impl Switch {
         &self,
         port_id: PortId,
         link_id: LinkId,
-        addr: IpAddr,
+        addr: TableIp,
         tag: String,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
@@ -1041,37 +1055,21 @@ impl Switch {
         })
     }
 
-    /// Removes the address from soft state and switch tables if it exists.
-    ///
-    /// On success, returns whether anything was actually deleted.
-    pub fn clear_ip_address_locked(
-        &self,
-        link: &mut Link,
-        addr: IpAddr,
-        tag: Option<&str>,
-    ) -> DpdResult<bool> {
-        self.addrs.write().unwrap().try_clear(
-            self,
-            addr,
-            link.asic_addr_id(),
-            tag,
-        )
-    }
-
     /// Delete one IP address on the specified link.
     pub fn delete_ip_address(
         &self,
         port_id: PortId,
         link_id: LinkId,
-        addr: IpAddr,
-        tag: Option<&str>,
+        addr: TableIp,
+        tag: &OptTag,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            if !self.clear_ip_address_locked(link, addr, tag)? {
+            let iface_id = link.asic_addr_iface();
+            if !self.addrs.clear_addr(self, iface_id, addr, tag)? {
                 return Err(DpdError::NoSuchAddress {
                     port_id,
                     link_id,
-                    address: addr,
+                    address: addr.into(),
                 });
             }
             Ok(())
@@ -1082,22 +1080,41 @@ impl Switch {
         &self,
         port_id: PortId,
         link_id: LinkId,
-        last_address: Option<IpAddr>,
+        last_entry: Option<(IpAddr, &str)>,
         limit: usize,
         convert: impl Fn(&A, &str) -> T,
     ) -> DpdResult<Vec<T>> {
-        self.link_fetch(port_id, link_id, |link| {
-            let bounds = if let Some(addr) = last_address {
-                (std::ops::Bound::Excluded(addr), std::ops::Bound::Unbounded)
-            } else {
-                (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
-            };
+        let mut start_addr = None;
+        let all_tags = (Bound::Unbounded, Bound::Unbounded);
 
+        let (addr_bounds, tag_bounds) = if let Some((addr, tag)) = last_entry {
+            start_addr = Some(addr);
+            let addr = (Bound::Excluded(addr), Bound::Unbounded);
+            let tag = (Bound::Excluded(tag), Bound::Unbounded);
+            (addr, tag)
+        } else {
+            let addr = (Bound::Unbounded, Bound::Unbounded);
+            let tag = (Bound::Unbounded, Bound::Unbounded);
+            (addr, tag)
+        };
+
+        self.link_fetch(port_id, link_id, |link| {
             self.addrs
+                .get()
                 .read()
                 .unwrap()
-                .owner_addr_range(link.asic_addr_id(), bounds)
-                .filter_map(|(addr, tag)| Some(convert(A::from_ip(addr)?, tag)))
+                .iface_addr_range(link.asic_addr_iface(), addr_bounds)
+                .flat_map(move |(addr, tags)| {
+                    let range = if start_addr.is_some_and(|a| a == addr) {
+                        tag_bounds
+                    } else {
+                        all_tags
+                    };
+                    tags.range::<str, _>(range).map(move |t| (addr, t.as_str()))
+                })
+                .filter_map(|(addr, tag)| {
+                    Some(convert(&A::from_ip(addr)?, tag))
+                })
                 .take(limit)
                 .collect()
         })
@@ -1112,10 +1129,10 @@ impl Switch {
         link_id: LinkId,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            self.addrs.write().unwrap().try_retain_by_owner::<A>(
+            self.addrs.clear_addrs::<A>(
                 self,
-                link.asic_addr_id(),
-                |_, _| false,
+                link.asic_addr_iface(),
+                &OptTag::Any,
             )
         })
     }
