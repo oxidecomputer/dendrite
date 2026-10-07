@@ -285,15 +285,25 @@ mod tests {
         let port_map = PortMap::new(SidecarRevision::A);
         let port_data = stub_ports::init().unwrap();
 
-        for i in 0..32u8 {
-            let port_id = PortId::Qsfp(QsfpPort::new(i).unwrap());
+        let qsfp_port_ids: Vec<_> = port_map
+            .port_ids()
+            .filter(|id| matches!(id, PortId::Qsfp(_)))
+            .collect();
+
+        assert_eq!(
+            qsfp_port_ids.len(),
+            32,
+            "We should have 32 QSFP front ports for Rev A"
+        );
+
+        for port_id in qsfp_port_ids {
             let connector =
-                port_map.id_to_connector(&port_id).unwrap_or_else(|| {
-                    panic!("qsfp{i} has no connector in PortMap")
+                port_map.id_to_connector(port_id).unwrap_or_else(|| {
+                    panic!("{port_id} has no connector in PortMap")
                 });
             assert!(
                 port_data.connectors.contains_key(&connector),
-                "qsfp{i} maps to {connector:?} which is absent from stub PortData"
+                "{port_id} maps to {connector:?} which is absent from stub PortData"
             );
         }
     }

@@ -283,7 +283,6 @@ pub fn init() -> AsicResult<PortData> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aal::Connector;
 
     #[test]
     fn test_no_asic_id_collisions() {
