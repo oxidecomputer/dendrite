@@ -12,8 +12,10 @@ use anyhow::anyhow;
 use futures::TryStreamExt;
 use reqwest::StatusCode;
 
-use ::common::ports::Ipv4Entry;
-use ::common::ports::Ipv6Entry;
+use common::ports::Ipv4Entry;
+use common::ports::Ipv6Entry;
+use common::test_utils::IpRng;
+use common::test_utils::fname_hash;
 use dpd_client::ClientInfo;
 use dpd_client::Error;
 use dpd_client::types;
@@ -255,10 +257,11 @@ async fn test_ipv4_delete() -> TestResult {
 #[ignore]
 async fn test_ipv6_set() -> TestResult {
     let switch = &*get_switch().await;
+    let mut rng = IpRng::new(fname_hash!());
 
-    let a: Ipv6Addr = "fc00:aabb:ccdd:18:8:20ff:fe1d:b677".parse().unwrap();
-    let b: Ipv6Addr = "fe80::8:20ff:fe1d:b677".parse().unwrap();
-    let c: Ipv6Addr = "fe80::240:54ff:fe08:808".parse().unwrap();
+    let a = rng.host_underlay();
+    let b = rng.host_underlay();
+    let c = rng.link_local_ipv6();
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
     switch
@@ -309,9 +312,11 @@ async fn test_ipv6_set() -> TestResult {
 #[ignore]
 async fn test_ipv6_clear() -> TestResult {
     let switch = &*get_switch().await;
-    let a: Ipv6Addr = "fc00:aabb:ccdd:18:8:20ff:fe1d:b677".parse().unwrap();
-    let b: Ipv6Addr = "fe80::8:20ff:fe1d:b677".parse().unwrap();
-    let c: Ipv6Addr = "fe80::240:54ff:fe08:808".parse().unwrap();
+    let mut rng = IpRng::new(fname_hash!());
+
+    let a = rng.host_underlay();
+    let b = rng.host_underlay();
+    let c = rng.link_local_ipv6();
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
     switch
@@ -349,10 +354,11 @@ async fn test_ipv6_clear() -> TestResult {
 #[ignore]
 async fn test_ipv6_delete() -> TestResult {
     let switch = &*get_switch().await;
+    let mut rng = IpRng::new(fname_hash!());
 
-    let a: Ipv6Addr = "fc00:aabb:ccdd:18:8:20ff:fe1d:b677".parse().unwrap();
-    let b: Ipv6Addr = "fe80::8:20ff:fe1d:b677".parse().unwrap();
-    let c: Ipv6Addr = "fe80::240:54ff:fe08:808".parse().unwrap();
+    let a = rng.host_underlay();
+    let b = rng.host_underlay();
+    let c = rng.link_local_ipv6();
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
     switch
