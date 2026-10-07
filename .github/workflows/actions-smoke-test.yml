@@ -1,0 +1,14 @@
+name: actions-smoke-test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "GitHub Actions ran for ${GITHUB_SHA} on ${GITHUB_EVENT_NAME}"

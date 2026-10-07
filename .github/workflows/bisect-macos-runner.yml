@@ -1,0 +1,14 @@
+name: bisect-macos-runner
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  hello:
+    runs-on: macos-15
+    steps:
+      - run: echo "GitHub Actions ran for ${GITHUB_SHA} on ${GITHUB_EVENT_NAME}"
