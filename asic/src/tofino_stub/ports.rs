@@ -249,7 +249,7 @@ pub fn init() -> AsicResult<PortData> {
     let eth_port = Some(CPU_PORT as u16);
     connectors.insert(Connector::CPU, PhysPort::new(Connector::CPU)?);
 
-    for id in 0..QSFP_PORT_COUNT {
+    for id in 1..=QSFP_PORT_COUNT {
         let connector = Connector::QSFP(id);
         let mut phys_port = PhysPort::new(connector)?;
         phys_port.media = PortMedia::Optical;
@@ -278,4 +278,23 @@ pub fn init() -> AsicResult<PortData> {
         map_to_asic_id,
         map_from_asic_id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_no_asic_id_collisions() {
+        let port_data = init().unwrap();
+        // ensure that comparing the port data in both directions
+        // gives us the same number of values. A different number
+        // of values indicate that we have overlapping AsicIds for
+        // some connectors.
+        assert_eq!(
+            port_data.map_to_asic_id.len(),
+            port_data.map_from_asic_id.len(),
+            "AsicId collision: some connectors share the same AsicId"
+        );
+    }
 }

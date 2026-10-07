@@ -276,4 +276,35 @@ mod tests {
         let rev: SidecarRevision = s.parse().expect("parse softnpu revision");
         assert_eq!(rev, SidecarRevision::Soft { front: 4, rear: 7 });
     }
+
+    #[cfg(feature = "tofino_stub")]
+    #[test]
+    fn test_all_qsfp_front_ports_have_valid_stub_connectors() {
+        use asic::tofino_stub::ports as stub_ports;
+
+        let port_map = PortMap::new(SidecarRevision::A);
+        let port_data = stub_ports::init().unwrap();
+
+        let qsfp_port_ids: Vec<_> = port_map
+            .port_ids()
+            .filter(|id| matches!(id, PortId::Qsfp(_)))
+            .collect();
+
+        assert_eq!(
+            qsfp_port_ids.len(),
+            32,
+            "We should have 32 QSFP front ports for Rev A"
+        );
+
+        for port_id in qsfp_port_ids {
+            let connector =
+                port_map.id_to_connector(port_id).unwrap_or_else(|| {
+                    panic!("{port_id} has no connector in PortMap")
+                });
+            assert!(
+                port_data.connectors.contains_key(&connector),
+                "{port_id} maps to {connector:?} which is absent from stub PortData"
+            );
+        }
+    }
 }
