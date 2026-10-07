@@ -925,9 +925,12 @@ control RouterLookupIndex6(
 	 *
 	 * Note: we annotate @ways here, increasing cuckoo placement choices to 8
 	 * candidate buckets per key. Full occupancy of the route-target table
-	 * is a measured result for this build, not a compiler guarantee.
+	 * was measured on this build; the compiler does not guarantee it.
 	 *
-	 * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/common/pragma/pragmas.cpp#L1172-L1183.
+	 * By default, without this pragma, p4c computes the way count, bumping
+	 * it up to 4 independent ways when it comes out lower.
+	 *
+	 * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/mau/resource_estimate.cpp#L570-L620
 	 */
 	@ways(8)
 	table route {
@@ -1053,9 +1056,12 @@ control RouterLookupIndex4(
 	 *
 	 * Note: we annotate @ways here, increasing cuckoo placement choices to 8
 	 * candidate buckets per key. Full occupancy of the route-target table
-	 * is a measured result for this build, not a compiler guarantee.
+	 * was measured on this build; the compiler does not guarantee it.
 	 *
-	 * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/common/pragma/pragmas.cpp#L1172-L1183.
+	 * By default, without this pragma, p4c computes the way count, bumping
+	 * it up to 4 independent ways when it comes out lower.
+	 *
+	 * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/mau/resource_estimate.cpp#L570-L620
 	 */
 	@ways(8)
 	table route {
@@ -2075,7 +2081,6 @@ control Ingress(
 	MacRewrite() mac_rewrite;
 
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) ingress_ctr;
-	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) egress_ctr;
 	Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS) drop_port_ctr;
 	Counter<bit<32>, bit<8>>(DROP_REASON_MAX, CounterType_t.PACKETS) drop_reason_ctr;
 	Counter<bit<32>, bit<10>>(1024, CounterType_t.PACKETS) packet_ctr;
@@ -2128,15 +2133,11 @@ control Ingress(
 			drop_port_ctr.count(ig_intr_md.ingress_port);
 			drop_reason_ctr.count(meta.drop_reason);
 		} else if (!meta.is_mcast) {
-			egress_ctr.count(ig_tm_md.ucast_egress_port);
 			if (ig_tm_md.ucast_egress_port != USER_SPACE_SERVICE_PORT) {
 				mac_rewrite.apply(hdr, ig_tm_md.ucast_egress_port);
 			}
 			if (meta.nat_egress_hit && !meta.service_routed) {
 				meta.bridge_hdr.nat_egress_hit = true;
-			} else {
-				meta.bridge_hdr.setInvalid();
-				ig_tm_md.bypass_egress = 1w1;
 			}
 		}
 
@@ -2302,6 +2303,15 @@ control Egress(
 	MulticastMacRewrite() mac_rewrite;
 	MulticastEgress() mcast_egress;
 
+	// The Ingress pipeline never sets bypass_egress; every packet copy
+	// that is not dropped traverses this pipeline and is counted exactly
+	// once:
+	//
+	// - forwarded_ctr records all packets leaving a port
+	// - unicast_ctr and mcast_ctr partition what gets forwarded by type
+	// - drops are recorded separately in drop_port_ctr and
+	//   drop_reason_ctr
+	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) forwarded_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) unicast_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) mcast_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) link_local_mcast_ctr;
@@ -2315,9 +2325,9 @@ control Egress(
 		bool is_egress_rid_mcast = eg_intr_md.egress_rid > 0;
 		// We track IPv6 multicast packets separately for counters.
 		bool is_link_local_ipv6_mcast = false;
-		if (hdr.ipv6.isValid()) {
-			bit<16> ipv6_prefix = (bit<16>)hdr.ipv6.dst_addr[127:112];
-			is_link_local_ipv6_mcast = (ipv6_prefix == IPV6_LINK_LOCAL_16);
+		if (hdr.ipv6.isValid() &&
+		    hdr.ipv6.dst_addr[127:112] == IPV6_LINK_LOCAL_16) {
+			is_link_local_ipv6_mcast = true;
 		}
 		bool is_mcast = is_egress_rid_mcast || is_link_local_ipv6_mcast;
 
@@ -2343,47 +2353,46 @@ control Egress(
 			drop_port_ctr.count(eg_intr_md.egress_port);
 			drop_reason_ctr.count(meta.drop_reason);
 			eg_dprsr_md.drop_ctl = 1;
-		} else if (is_mcast == true) {
-			mcast_ctr.count(eg_intr_md.egress_port);
-
-			// Per-type replica counters. There are three disjoint
-			// cases presented here, with one simple gateway each.
-			// The compiler cannot carry a negated condition across
-			// gateways, so each case gets its own gateway instead
-			// of an else branch (the IngressDeparser notes the same
-			// limitation):
-			//
-			// - link-local (ff02::/16 outer dst): always forwarded,
-			//   never PRE (Packet Replication Engine)-replicated;
-			//   it arrives with egress_rid == 0.
-			// - egress_rid > 0 + a valid Geneve hdr: an underlay
-			//   replica that's still encapsulated.
-			// - egress_rid > 0 + no Geneve hdr: an external replica
-			//   that's decapped at ingress (external-only groups)
-			//   or by mcast_egress above (bifurcated groups).
-			//
-			// These rid branch arms avoid checking
-			// !is_link_local_ipv6_mcast because scope 2 (link-local
-			// scope) groups are rejected at creation time and no
-			// PRE-replica ever carries a link-local outer
-			// destination.
-			//
-			// The mcast_tag option is not doing any work here:
-			// underlay replicas keep their encapsulation whether or
-			// not the group is bifurcated; Geneve header validity
-			// separates the two rid cases.
-
-			if (is_link_local_ipv6_mcast) {
-				link_local_mcast_ctr.count(eg_intr_md.egress_port);
-			}
-			if (is_egress_rid_mcast && hdr.geneve.isValid()) {
-				underlay_mcast_ctr.count(eg_intr_md.egress_port);
-			}
-			if (is_egress_rid_mcast && !hdr.geneve.isValid()) {
-				external_mcast_ctr.count(eg_intr_md.egress_port);
-			}
 		} else {
-			unicast_ctr.count(eg_intr_md.egress_port);
+			forwarded_ctr.count(eg_intr_md.egress_port);
+
+			if (is_mcast == true) {
+				mcast_ctr.count(eg_intr_md.egress_port);
+
+				// Per-type counters:
+				//
+				// - link-local (ff02::/16 outer dst) -> always
+				//   forwarded without PRE (Packet Replication Engine)
+				//   replication, arriving with egress_rid == 0.
+				// - egress_rid > 0 with a valid Geneve header -> an
+				//   underlay replica, still encapsulated.
+				// - egress_rid > 0 without a valid Geneve header -> an
+				//   external replica, decapped at ingress (external-only
+				//   groups) or by mcast_egress above (bifurcated groups).
+				//
+				// Geneve validity separates the two replica cases.
+				// Underlay replicas stay encapsulated whether or not the
+				// group is bifurcated, meaning that we can skip an
+				// mcast_tag check.
+				//
+				// This chain branches on egress_rid first. Within
+				// the scope of is_mcast, a zero rid already implies
+				// link-local, making the last branch avoid a test of
+				// is_link_local_ipv6_mcast. Scope 2 groups are rejected
+				// at the time of creation, meaning that no PRE replica
+				// would carry a link-local outer destination at this
+				// point.
+
+				if (is_egress_rid_mcast && hdr.geneve.isValid()) {
+					underlay_mcast_ctr.count(eg_intr_md.egress_port);
+				} else if (is_egress_rid_mcast) {
+					external_mcast_ctr.count(eg_intr_md.egress_port);
+				} else {
+					link_local_mcast_ctr.count(eg_intr_md.egress_port);
+				}
+			} else {
+				unicast_ctr.count(eg_intr_md.egress_port);
+			}
 		}
 	}
 }

@@ -133,7 +133,28 @@ async fn test_route_ipv4_unicast_impl(switch: &Switch) -> TestResult {
 #[ignore]
 async fn test_route_ipv4_unicast() -> TestResult {
     let switch = &*get_switch().await;
-    test_route_ipv4_unicast_impl(switch).await
+    let label = switch.port_label(PhysPort(14)).unwrap();
+
+    let unicast = switch.get_counter(&label, Some("unicast")).await?;
+    let mcast = switch.get_counter(&label, Some("multicast")).await?;
+    let link_local =
+        switch.get_counter(&label, Some("multicast_link_local")).await?;
+
+    test_route_ipv4_unicast_impl(switch).await?;
+
+    check_counter_incremented(switch, &label, unicast, 1, Some("unicast"))
+        .await?;
+    check_counter_incremented(switch, &label, mcast, 0, Some("multicast"))
+        .await?;
+    check_counter_incremented(
+        switch,
+        &label,
+        link_local,
+        0,
+        Some("multicast_link_local"),
+    )
+    .await?;
+    Ok(())
 }
 
 async fn test_deleted_route_ipv4_impl(switch: &Switch) -> TestResult {

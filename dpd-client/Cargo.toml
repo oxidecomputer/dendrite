@@ -26,6 +26,7 @@ transceiver-controller = { workspace = true, features = [ "api-traits" ] }
 uuid.workspace = true
 
 common.workspace = true
+dpd-types-versions.workspace = true
 progenitor.workspace = true
 
 [dev-dependencies]

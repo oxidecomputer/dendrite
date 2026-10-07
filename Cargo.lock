@@ -1680,6 +1680,7 @@ dependencies = [
  "libc",
  "mockall",
  "nexus-client",
+ "nonempty",
  "omicron-common",
  "openssl",
  "oxide-tokio-rt",
@@ -1733,6 +1734,7 @@ dependencies = [
  "common 0.1.0",
  "crc8",
  "dpd-types",
+ "dpd-types-versions",
  "futures",
  "http",
  "lazy_static",
@@ -1799,6 +1801,7 @@ dependencies = [
  "rand 0.9.3",
  "schemars 0.8.22",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "uuid",
 ]
@@ -4286,6 +4289,12 @@ dependencies = [
  "memchr",
  "minimal-lexical",
 ]
+
+[[package]]
+name = "nonempty"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9737e026353e5cd0736f98eddae28665118eb6f6600902a7f50db585621fecb6"
 
 [[package]]
 name = "normalize-line-endings"

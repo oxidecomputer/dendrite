@@ -139,21 +139,19 @@ impl fmt::Display for SourcesSummary<'_> {
 }
 
 struct ExternalSummary<'a> {
-    internal_forwarding: &'a types::InternalForwarding,
+    internal_forwarding: &'a types::ExternalInternalForwarding,
     external_forwarding: &'a types::ExternalForwarding,
     sources: Option<&'a [types::IpSrc]>,
 }
 
 impl fmt::Display for ExternalSummary<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.internal_forwarding.nat_target {
-            Some(t) => write!(
-                f,
-                "nat={} mac={} vni={}",
-                t.internal_ip, t.inner_mac, *t.vni,
-            )?,
-            None => f.write_str("nat=- mac=- vni=-")?,
-        }
+        let nat_target = &self.internal_forwarding.nat_target;
+        write!(
+            f,
+            "nat={} mac={} vni={}",
+            nat_target.internal_ip, nat_target.inner_mac, *nat_target.vni,
+        )?;
         match self.external_forwarding.vlan_id {
             Some(v) => write!(f, " vlan={v}")?,
             None => f.write_str(" vlan=-")?,
@@ -299,13 +297,11 @@ async fn multicast_get(
             println!("Kind:              external");
             println!("External group ID: {external_group_id}");
             println!("Tag:               {tag}");
-            match &internal_forwarding.nat_target {
-                Some(t) => println!(
-                    "NAT target:        {} (mac {}, vni {})",
-                    t.internal_ip, t.inner_mac, *t.vni,
-                ),
-                None => println!("NAT target:        (none)"),
-            }
+            let nat_target = &internal_forwarding.nat_target;
+            println!(
+                "NAT target:        {} (mac {}, vni {})",
+                nat_target.internal_ip, nat_target.inner_mac, *nat_target.vni,
+            );
             match external_forwarding.vlan_id {
                 Some(v) => println!("VLAN:              {v}"),
                 None => println!("VLAN:              (none)"),

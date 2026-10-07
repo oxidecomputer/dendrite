@@ -48,7 +48,7 @@ pub struct Counter {
 pub const COUNTER_IDS: &[CounterId] = &[
     CounterId::Service,
     CounterId::Ingress,
-    CounterId::Egress,
+    CounterId::Forwarded,
     CounterId::Packet,
     CounterId::DropPort,
     CounterId::DropReason,
@@ -310,7 +310,7 @@ pub async fn get_values(
         let key = match counter_id {
             CounterId::Packet => packet_label(idx.idx),
             CounterId::Service => service_label(idx.idx as u8),
-            CounterId::Ingress | CounterId::Egress | CounterId::DropPort => {
+            CounterId::Ingress | CounterId::Forwarded | CounterId::DropPort => {
                 port_label(switch, idx.idx).await
             }
             CounterId::DropReason => reason_label(idx.idx as u8)?,

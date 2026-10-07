@@ -86,7 +86,7 @@ fn counter_table_name(id: CounterId) -> &'static str {
         CounterId::Service => "pipe.Ingress.services.service_ctr",
         CounterId::Ingress => "pipe.Ingress.ingress_ctr",
         CounterId::Packet => "pipe.Ingress.packet_ctr",
-        CounterId::Egress => "pipe.Ingress.egress_ctr",
+        CounterId::Forwarded => "pipe.Egress.forwarded_ctr",
         CounterId::DropPort => "pipe.Ingress.drop_port_ctr",
         CounterId::DropReason => "pipe.Ingress.drop_reason_ctr",
         CounterId::EgressPipeline(id) => egress_counter_table_name(id),
