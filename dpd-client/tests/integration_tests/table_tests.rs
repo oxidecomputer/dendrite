@@ -46,9 +46,9 @@ use crate::integration_tests::common::prelude::*;
 // ingress TCAM pressure. Investigate moving MulticastRouter4/6 into the
 // egress pipeline to reclaim capacity.
 #[cfg(feature = "multicast")]
-const IPV4_LPM_SIZE: usize = 8177; // ipv4 forwarding table
+const IPV4_LPM_SIZE: usize = 8151; // ipv4 forwarding table
 #[cfg(not(feature = "multicast"))]
-const IPV4_LPM_SIZE: usize = 8190; // ipv4 forwarding table
+const IPV4_LPM_SIZE: usize = 8191; // ipv4 forwarding table
 
 #[cfg(feature = "multicast")]
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
