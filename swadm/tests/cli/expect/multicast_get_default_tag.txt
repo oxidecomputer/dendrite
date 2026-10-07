@@ -1,0 +1,7 @@
+Group IP:           224.0.1.51
+Kind:               external
+External group ID:
+Tag:                cli
+NAT target:         ff04::5ad:4 (mac 11:22:33:44:55:66, vni 77)
+VLAN:               (none)
+Sources:            any

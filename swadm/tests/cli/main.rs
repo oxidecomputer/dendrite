@@ -7,4 +7,5 @@
 mod cmd;
 mod counters;
 mod link_apply;
+mod multicast;
 mod tx_eq;

@@ -1,0 +1,3 @@
+Group IP       Kind      Ext Group ID  UL Group ID  Tag                   Detail
+224.0.1.50     external        -            swadm_multicast_test  nat=ff04::5ad:2 mac=11:22:33:44:55:66 vni=77 vlan=- src=any
+232.123.45.99  external        -            swadm_multicast_test  nat=ff04::5ad:1 mac=11:22:33:44:55:66 vni=77 vlan=10 src=10.0.0.1,10.0.0.2

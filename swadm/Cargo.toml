@@ -12,6 +12,7 @@ clap.workspace = true
 colored.workspace = true
 common.workspace = true
 dpd-client.workspace = true
+dpd-types.workspace = true
 futures.workspace = true
 humantime.workspace = true
 oxide-tokio-rt.workspace = true
@@ -27,4 +28,3 @@ expectorate.workspace = true
 predicates.workspace = true
 serial_test.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

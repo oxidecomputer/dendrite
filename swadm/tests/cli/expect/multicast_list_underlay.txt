@@ -1,0 +1,3 @@
+Group IP     Kind      Ext Group ID  UL Group ID  Tag                   Detail
+ff04::5ad:1  underlay       swadm_multicast_test  int0/0(underlay) int0/0(external)
+ff04::5ad:2  underlay       swadm_multicast_test  -
