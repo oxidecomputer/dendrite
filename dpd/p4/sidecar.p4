@@ -1724,7 +1724,7 @@ control MulticastIngress (
 		ig_tm_md.level2_exclusion_id = level2_excl_id;
 
 		// Set L3/ECMP and L2/LAG multicast hashes using the packet's
-		// flow hash. This will include entroy from the inner flow, see
+		// flow hash. This will include entropy from the inner flow, see
 		// the commentary on FlowHash.
 		ig_tm_md.level1_mcast_hash = meta.flow_hash[12:0];
 		ig_tm_md.level2_mcast_hash = meta.flow_hash[15:3];
