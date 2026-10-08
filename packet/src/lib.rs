@@ -462,13 +462,28 @@ impl Packet {
         Ok(data)
     }
 
-    pub fn src(&self) -> Option<Endpoint> {
-        let mac = self.hdrs.eth_hdr?.eth_smac;
+    /// Collect all source addresses from this packet's protocol stack.
+    ///
+    /// This function will return an error if the packet has no Ethernet
+    /// header, or if multiple protocols are present at the same layer.
+    pub fn src(&self) -> PacketResult<Endpoint> {
+        let mac = self
+            .hdrs
+            .eth_hdr
+            .ok_or_else(|| {
+                PacketError::Invalid("packet has no L2 header".into())
+            })?
+            .eth_smac;
 
         let (ip, v6) = match (&self.hdrs.ipv4_hdr, &self.hdrs.ipv6_hdr) {
             (Some(v4), None) => (v4.ipv4_src_ip.into(), false),
             (None, Some(v6)) => (v6.ipv6_src_ip.into(), true),
-            _ => return Some(L2Endpoint { mac }.into()),
+            (None, None) => return Ok(L2Endpoint { mac }.into()),
+            _ => {
+                return Err(PacketError::Invalid(
+                    "packet has multiple L3 headers".into(),
+                ));
+            }
         };
 
         let port =
@@ -476,34 +491,40 @@ impl Packet {
             {
                 (Some(udp), None, None) => udp.udp_sport,
                 (None, Some(tcp), None) => tcp.tcp_sport,
-                (None, None, Some(icmp))
-                    if (!v6
-                        && matches!(
-                            icmp.icmp_type,
-                            icmp::ICMP_ECHO | icmp::ICMP_ECHOREPLY
-                        ))
-                        || (v6
-                            && matches!(
-                                icmp.icmp_type,
-                                icmp::ICMP6_ECHO_REQUEST
-                                    | icmp::ICMP6_ECHO_REPLY
-                            )) =>
-                {
-                    0
+                (None, None, Some(icmp)) if icmp.is_echo(v6) => 0,
+                (None, None, _) => return Ok(L3Endpoint { mac, ip }.into()),
+                _ => {
+                    return Err(PacketError::Invalid(
+                        "packet has multiple L4 headers".into(),
+                    ));
                 }
-                _ => return Some(L3Endpoint { mac, ip }.into()),
             };
 
-        Some(L4Endpoint { mac, ip, port }.into())
+        Ok(L4Endpoint { mac, ip, port }.into())
     }
 
-    pub fn dst(&self) -> Option<Endpoint> {
-        let mac = self.hdrs.eth_hdr?.eth_dmac;
+    /// Collect all destination addresses from this packet's protocol stack.
+    ///
+    /// This function will return an error if the packet has no Ethernet
+    /// header, or if multiple protocols are present at the same layer.
+    pub fn dst(&self) -> PacketResult<Endpoint> {
+        let mac = self
+            .hdrs
+            .eth_hdr
+            .ok_or_else(|| {
+                PacketError::Invalid("packet has no L2 header".into())
+            })?
+            .eth_dmac;
 
         let (ip, v6) = match (&self.hdrs.ipv4_hdr, &self.hdrs.ipv6_hdr) {
             (Some(v4), None) => (v4.ipv4_dst_ip.into(), false),
             (None, Some(v6)) => (v6.ipv6_dst_ip.into(), true),
-            _ => return Some(L2Endpoint { mac }.into()),
+            (None, None) => return Ok(L2Endpoint { mac }.into()),
+            _ => {
+                return Err(PacketError::Invalid(
+                    "packet has multiple L3 headers".into(),
+                ));
+            }
         };
 
         let port =
@@ -511,25 +532,18 @@ impl Packet {
             {
                 (Some(udp), None, None) => udp.udp_dport,
                 (None, Some(tcp), None) => tcp.tcp_dport,
-                (None, None, Some(icmp))
-                    if (!v6
-                        && matches!(
-                            icmp.icmp_type,
-                            icmp::ICMP_ECHO | icmp::ICMP_ECHOREPLY
-                        ))
-                        || (v6
-                            && matches!(
-                                icmp.icmp_type,
-                                icmp::ICMP6_ECHO_REQUEST
-                                    | icmp::ICMP6_ECHO_REPLY
-                            )) =>
-                {
+                (None, None, Some(icmp)) if icmp.is_echo(v6) => {
                     (icmp.icmp_data >> 16) as u16
                 }
-                _ => return Some(L3Endpoint { mac, ip }.into()),
+                (None, None, _) => return Ok(L3Endpoint { mac, ip }.into()),
+                _ => {
+                    return Err(PacketError::Invalid(
+                        "packet has multiple L4 headers".into(),
+                    ));
+                }
             };
 
-        Some(L4Endpoint { mac, ip, port }.into())
+        Ok(L4Endpoint { mac, ip, port }.into())
     }
 }
 

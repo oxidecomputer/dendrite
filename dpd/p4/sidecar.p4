@@ -1238,7 +1238,7 @@ control Router4 (
 		// of that for our "slot count" index.  Thus, we only need 6
 		// bits of the 16-bit hash calculated earlier to complete the
 		// 11-bit index.
-		fwd.ecmp_hash = 2w0 ++ meta.flow_hash[5:0];
+		fwd.ecmp_hash = meta.flow_hash[5:0];
 
 		lookup_idx.apply(hdr, fwd);
 
@@ -1377,7 +1377,7 @@ control Router6 (
 		// of that for our "slot count" index.  Thus, we only need 6
 		// bits of the 16-bit hash calculated earlier to complete the
 		// 11-bit index.
-		fwd.ecmp_hash = 2w0 ++ meta.flow_hash[5:0];
+		fwd.ecmp_hash = meta.flow_hash[5:0];
 
 		lookup_idx.apply(hdr, fwd);
 
@@ -1653,9 +1653,6 @@ control MulticastIngress (
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv4_ssm_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv6_ssm_ctr;
 
-	Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv6_level1;
-	Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv6_level2;
-
 	// Drop action for IPv4 multicast packets with no group.
 	//
 	// At this point, We should only allow replication for IPv6 packets that
@@ -1726,20 +1723,11 @@ control MulticastIngress (
 		ig_tm_md.level1_exclusion_id = level1_excl_id;
 		ig_tm_md.level2_exclusion_id = level2_excl_id;
 
-		// Set multicast hash based on IPv6 packet fields
-		ig_tm_md.level1_mcast_hash = (bit<13>)mcast_hashv6_level1.get({
-			hdr.ipv6.src_addr,
-			hdr.ipv6.dst_addr,
-			hdr.ipv6.next_hdr,
-			meta.l4_src_port,
-			meta.l4_dst_port
-		});
-
-		// Set secondary multicast hash based on IPv6 packet fields
-		ig_tm_md.level2_mcast_hash = (bit<13>)mcast_hashv6_level2.get({
-			hdr.ipv6.flow_label,
-			ig_intr_md.ingress_port
-		});
+		// Set L3/ECMP and L2/LAG multicast hashes using the packet's
+		// flow hash. This will include entroy from the inner flow, see
+		// the commentary on FlowHash.
+		ig_tm_md.level1_mcast_hash = meta.flow_hash[12:0];
+		ig_tm_md.level2_mcast_hash = meta.flow_hash[15:3];
 
 		mcast_ipv6_ctr.count();
 	}
@@ -2086,6 +2074,13 @@ control MulticastEgress (
  * - Providing flow entropy in generated Geneve headers, so that
  *   destination NICs and transit switches can correctly fanout
  *   flows over rings and ports.
+ *
+ * While this is run at the head of packet processing, this is always
+ * derived from the inner flow 5-tuple, such that we don't need to re-hash
+ * the packet after NatEgress processing. OPTE (and other switches in a
+ * multirack world) store the inner flow hash in the UDP source port of
+ * encap headers, and as a result the outer flow hash will include that
+ * entropy.
  */
 control FlowHash(
 	in sidecar_headers_t hdr,

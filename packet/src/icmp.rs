@@ -260,6 +260,15 @@ impl IcmpHdr {
         let hdr = pkt.hdrs.icmp_hdr.as_mut().unwrap();
         hdr.icmp_sum = checksum;
     }
+
+    /// Return whether this is an ICMP(v6) echo request/reply packet.
+    pub fn is_echo(&self, is_v6: bool) -> bool {
+        matches!(
+            (is_v6, self.icmp_type),
+            (false, ICMP_ECHO | ICMP_ECHOREPLY)
+                | (true, ICMP6_ECHO_REQUEST | ICMP6_ECHO_REPLY)
+        )
+    }
 }
 
 #[test]

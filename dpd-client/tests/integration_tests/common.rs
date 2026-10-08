@@ -5,7 +5,6 @@
 // Copyright 2026 Oxide Computer Company
 
 use std::fmt::Write;
-use std::io::Write as IoWrite;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -24,6 +23,7 @@ use dpd_client::Client;
 use dpd_client::ClientInfo;
 use dpd_client::ClientState;
 use dpd_client::types;
+use packet::Endpoint;
 use packet::Packet;
 use packet::arp;
 use packet::eth;
@@ -31,7 +31,6 @@ use packet::icmp;
 use packet::ipv4;
 use packet::ipv6;
 use packet::sidecar;
-use packet::{Endpoint, L4Endpoint};
 use types::PortId;
 
 const SHOW_VERBOSE: u8 = 0x01;
@@ -1459,50 +1458,58 @@ pub fn gen_arp_reply(src: Endpoint, tgt: Endpoint) -> Packet {
         .unwrap()
 }
 
+/// Compute an identical flow hash to the `FlowHash` control in ingress
+/// processing.
+///
+/// This value is currently used in encap header generation and ECMP nexthop
+/// selection.
 pub fn tofino_flow_hash(
     src: Endpoint,
     dst: Endpoint,
     ip_proto: L4Protocol,
 ) -> u16 {
-    let src = L4Endpoint::try_from(src).unwrap();
-    let dst = L4Endpoint::try_from(dst).unwrap();
+    let Ok(src_ip) = src.get_ip("src") else {
+        return 0;
+    };
+    let Ok(dst_ip) = dst.get_ip("dst") else {
+        return 0;
+    };
 
-    let mut data = [0u8; 2 * std::mem::size_of::<(Ipv6Addr, u16, u8)>()];
-    let cap = data.len();
-    let mut cursor = &mut data[..];
-    let (src_port, dst_port, ip_proto_raw) = match (src, dst) {
-        (
-            L4Endpoint { ip: IpAddr::V6(sip), port: src_port, .. },
-            L4Endpoint { ip: IpAddr::V6(dip), port: dst_port, .. },
-        ) => {
-            cursor.write_all(&dip.octets()).unwrap();
-            cursor.write_all(&sip.octets()).unwrap();
-            match ip_proto {
-                L4Protocol::Icmp => (0, dst_port, ipv6::IPPROTO_ICMPV6),
-                _ => (src_port, dst_port, ip_proto as u8),
+    let crc = crc::Crc::<u16>::new(&crc::CRC_16_ARC);
+    let mut digest = crc.digest();
+
+    let proto = match (dst_ip, src_ip) {
+        (IpAddr::V6(dip), IpAddr::V6(sip)) => {
+            digest.update(&dip.octets());
+            digest.update(&sip.octets());
+            if ip_proto == L4Protocol::Icmp {
+                ipv6::IPPROTO_ICMPV6
+            } else {
+                ip_proto as u8
             }
         }
-        (
-            L4Endpoint { ip: IpAddr::V4(sip), port: src_port, .. },
-            L4Endpoint { ip: IpAddr::V4(dip), port: dst_port, .. },
-        ) => {
-            cursor.write_all(&dip.octets()).unwrap();
-            cursor.write_all(&sip.octets()).unwrap();
-            match ip_proto {
-                L4Protocol::Icmp => (0, dst_port, ipv4::IPPROTO_ICMP),
-                _ => (src_port, dst_port, ip_proto as u8),
-            }
+        (IpAddr::V4(dip), IpAddr::V4(sip)) => {
+            digest.update(&dip.octets());
+            digest.update(&sip.octets());
+            ip_proto as u8
         }
         _ => panic!("mismatched src/dst address families"),
     };
 
-    cursor.write_all(&[ip_proto_raw]).unwrap();
-    cursor.write_all(&dst_port.to_be_bytes()).unwrap();
-    cursor.write_all(&src_port.to_be_bytes()).unwrap();
+    // Ingress processing will compute an L3 hash when no ports
+    // are available.
+    let dst_port = dst.get_port("dst").unwrap_or(0);
+    let src_port = if ip_proto == L4Protocol::Icmp {
+        // The parser leaves l4_src_port at 0 for ICMP echo.
+        0
+    } else {
+        src.get_port("src").unwrap_or(0)
+    };
 
-    let written = cap - cursor.len();
-    let crc = crc::Crc::<u16>::new(&crc::CRC_16_ARC);
-    crc.checksum(&data[..written])
+    digest.update(&[proto]);
+    digest.update(&dst_port.to_be_bytes());
+    digest.update(&src_port.to_be_bytes());
+    digest.finalize()
 }
 
 pub mod prelude {

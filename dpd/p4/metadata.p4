@@ -92,7 +92,7 @@ struct route4_result_t {
 	 * A hash of the (address,port) fields, which is used to choose between
 	 * multiple potential routes.
 	 */
-	bit<8> ecmp_hash;
+	bit<6> ecmp_hash;
 
 	/* Index into the target table of the first potential route */
 	bit<16> idx;
@@ -117,7 +117,7 @@ struct route6_result_t {
 	 * A hash of the (address,port) fields, which is used to choose between
 	 * multiple potential routes.
 	 */
-	bit<8> ecmp_hash;
+	bit<6> ecmp_hash;
 
 	/* Index into the target table of the first potential route */
 	bit<16> idx;
