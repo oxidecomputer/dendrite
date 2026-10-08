@@ -46,14 +46,14 @@ use crate::integration_tests::common::prelude::*;
 // Investigate moving MulticastRouter4/6 into the egress pipeline to reclaim
 // capacity.
 #[cfg(feature = "multicast")]
-const IPV4_LPM_SIZE: usize = 8186; // ipv4 forwarding table
+const IPV4_LPM_SIZE: usize = 8145; // ipv4 forwarding table
 #[cfg(not(feature = "multicast"))]
-const IPV4_LPM_SIZE: usize = 8187; // ipv4 forwarding table
+const IPV4_LPM_SIZE: usize = 8191; // ipv4 forwarding table
 
 #[cfg(feature = "multicast")]
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
 #[cfg(not(feature = "multicast"))]
-const IPV6_LPM_SIZE: usize = 8190; // ipv6 forwarding table
+const IPV6_LPM_SIZE: usize = 8191; // ipv6 forwarding table
 
 const SWITCH_IPV4_ADDRS_SIZE: usize = 511; // ipv4 addrs assigned to our ports
 const SWITCH_IPV6_ADDRS_SIZE: usize = 511; // ipv6 addrs assigned to our ports

@@ -1238,7 +1238,7 @@ control Router4 (
 		// of that for our "slot count" index.  Thus, we only need 6
 		// bits of the 16-bit hash calculated earlier to complete the
 		// 11-bit index.
-		fwd.ecmp_hash = meta.flow_hash[5:0];
+		fwd.ecmp_hash = 2w0 ++ meta.flow_hash[5:0];
 
 		lookup_idx.apply(hdr, fwd);
 
@@ -1377,7 +1377,7 @@ control Router6 (
 		// of that for our "slot count" index.  Thus, we only need 6
 		// bits of the 16-bit hash calculated earlier to complete the
 		// 11-bit index.
-		fwd.ecmp_hash = meta.flow_hash[5:0];
+		fwd.ecmp_hash = 2w0 ++ meta.flow_hash[5:0];
 
 		lookup_idx.apply(hdr, fwd);
 
