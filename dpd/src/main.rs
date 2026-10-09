@@ -73,6 +73,7 @@ mod port_map;
 mod port_settings;
 mod ports;
 mod route;
+mod router;
 mod rpw;
 #[cfg(feature = "tofino_asic")]
 mod snapshot;
@@ -191,6 +192,7 @@ pub struct Switch {
     pub tables: BTreeMap<TableType, Mutex<Table>>,
     pub counters: BTreeMap<CounterId, Mutex<counters::Counter>>,
     pub links: Mutex<link::LinkMap>,
+    // This should be locked before `loopback`.
     pub routes: TokioMutex<route::RouteData>,
     pub arp: Mutex<arp::ArpData>,
     pub nat: nat::Nat,

@@ -410,6 +410,8 @@ impl TryFrom<&ValueTypes> for u8 {
     }
 }
 
+unwrap_value_entry!(u8);
+
 impl From<u16> for ValueTypes {
     fn from(v: u16) -> ValueTypes {
         ValueTypes::U64(v as u64)

@@ -121,6 +121,13 @@ impl TableOps<Handle> for Table {
             // TODO: implement mappings for natv6 actions
             (TableType::PortAddrIpv4, "claimv4") => ("local", Vec::new()),
             (TableType::PortAddrIpv6, "claimv6") => ("local", Vec::new()),
+            (TableType::PortAddrIpv6, "claimv6_rid") => {
+                let table_id = u8::try_from(
+                    &action_data.arg_by_name("routing_table_id")?.value,
+                )
+                .map_err(|e| AsicError::InvalidArg(e.into()))?;
+                ("local_rid", vec![table_id])
+            }
             (TableType::RouteIdxIpv4, "index") => {
                 let mut params = Vec::new();
                 for arg in action_data.args.iter() {
@@ -632,10 +639,10 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: TableType) -> Vec<u8> {
                         serialize_value_type(&x, &mut data);
                         keyset_data.extend_from_slice(&data[..2]);
                     }
-                    TableType::RouteIdxIpv4 => {
-                        // "idx" => exact => bit<16>
+                    TableType::RouteIdxIpv4 | TableType::RouteIdxIpv6 => {
+                        // "routing_table_id" => exact => bit<8>
                         serialize_value_type(&x, &mut data);
-                        keyset_data.extend_from_slice(&data[..2]);
+                        keyset_data.push(data[0]);
                     }
                     TableType::NatIngressIpv4 => {
                         // "dst_addr" => hdr.ipv4.dst: exact => bit<32>
@@ -723,5 +730,50 @@ fn serialize_value_type_be(x: &ValueTypes, data: &mut Vec<u8>) {
         ValueTypes::Ptr(v) => {
             data.extend_from_slice(v.as_slice());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn route_key(
+        table_id: u8,
+        prefix: ValueTypes,
+        len: u16,
+    ) -> Vec<MatchEntryField> {
+        vec![
+            MatchEntryField {
+                name: "routing_table_id".into(),
+                value: MatchEntryValue::Value(table_id.into()),
+            },
+            MatchEntryField {
+                name: "dst_addr".into(),
+                value: MatchEntryValue::Lpm(aal::MatchLpm { prefix, len }),
+            },
+        ]
+    }
+
+    #[test]
+    fn route_index_serializes_composite_key() {
+        assert_eq!(
+            keyset_data(
+                route_key(2, ValueTypes::U64(0xc000_0200), 24),
+                TableType::RouteIdxIpv4,
+            ),
+            [2, 192, 0, 2, 0, 24]
+        );
+
+        let prefix = 0x20010db8000000000000000000000000u128.to_be_bytes();
+        let mut expected = vec![3];
+        expected.extend_from_slice(&prefix);
+        expected.push(32);
+        assert_eq!(
+            keyset_data(
+                route_key(3, ValueTypes::Ptr(prefix.to_vec()), 32),
+                TableType::RouteIdxIpv6,
+            ),
+            expected
+        );
     }
 }

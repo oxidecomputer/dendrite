@@ -24,3 +24,4 @@ reqwest.workspace = true
 slog.workspace = true
 tabwriter.workspace = true
 tokio.workspace = true
+uuid.workspace = true

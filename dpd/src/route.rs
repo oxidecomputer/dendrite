@@ -110,6 +110,7 @@ use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv6Addr};
 use std::ops::Bound;
 
+use aal::AsicError;
 use dpd_types::link::LinkId;
 use dpd_types::route::Ipv4Route;
 use dpd_types::route::Ipv6Route;
@@ -119,6 +120,7 @@ use slog::info;
 use slog::warn;
 
 use crate::freemap;
+use crate::router::{RouterUuid, Routers, RoutingTableId};
 use crate::types::{DpdError, DpdResult};
 use crate::{Switch, table};
 use common::ports::PortId;
@@ -237,6 +239,25 @@ impl From<Ipv6Route> for Route {
     }
 }
 
+/// Identifies a route by its routing table and subnet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RouteKey {
+    table_id: RoutingTableId,
+    subnet: IpNet,
+}
+
+impl RouteKey {
+    fn new(table_id: RoutingTableId, subnet: impl Into<IpNet>) -> Self {
+        RouteKey { table_id, subnet: subnet.into() }
+    }
+}
+
+impl std::fmt::Display for RouteKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} (routing table {})", self.subnet, self.table_id)
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 struct NextHop {
     asic_port_id: u16,
@@ -257,9 +278,18 @@ impl RouteEntry {
     }
 }
 
-pub struct RouteData {
+#[derive(Default)]
+struct RoutingTable {
     v4: BTreeMap<IpNet, RouteEntry>,
     v6: BTreeMap<IpNet, RouteEntry>,
+}
+
+/// The routers and routing tables.
+pub struct RouteData {
+    /// The routers, kept here so that a router and its table change together.
+    pub routers: Routers,
+    /// The routing tables, keyed by `RoutingTableId`.
+    tables: BTreeMap<RoutingTableId, RoutingTable>,
     v4_freemap: freemap::FreeMap,
     v6_freemap: freemap::FreeMap,
 }
@@ -267,33 +297,57 @@ pub struct RouteData {
 impl RouteData {
     pub fn insert(
         &mut self,
-        subnet: impl Into<IpNet>,
+        key: RouteKey,
         entry: RouteEntry,
     ) -> Option<RouteEntry> {
-        let subnet: IpNet = subnet.into();
-        if subnet.is_ipv4() {
-            self.v4.insert(subnet, entry)
+        let table = self.tables.entry(key.table_id).or_default();
+        if key.subnet.is_ipv4() {
+            table.v4.insert(key.subnet, entry)
         } else {
-            self.v6.insert(subnet, entry)
+            table.v6.insert(key.subnet, entry)
         }
     }
 
-    pub fn get(&self, subnet: impl Into<IpNet>) -> Option<&RouteEntry> {
-        let subnet: IpNet = subnet.into();
-        if subnet.is_ipv4() {
-            self.v4.get(&subnet)
+    pub fn get(&self, key: RouteKey) -> Option<&RouteEntry> {
+        let table = self.tables.get(&key.table_id)?;
+        if key.subnet.is_ipv4() {
+            table.v4.get(&key.subnet)
         } else {
-            self.v6.get(&subnet)
+            table.v6.get(&key.subnet)
         }
     }
 
-    pub fn remove(&mut self, subnet: impl Into<IpNet>) -> Option<RouteEntry> {
-        let subnet: IpNet = subnet.into();
-        if subnet.is_ipv4() {
-            self.v4.remove(&subnet)
+    pub fn remove(&mut self, key: RouteKey) -> Option<RouteEntry> {
+        let table = self.tables.get_mut(&key.table_id)?;
+        if key.subnet.is_ipv4() {
+            table.v4.remove(&key.subnet)
         } else {
-            self.v6.remove(&subnet)
+            table.v6.remove(&key.subnet)
         }
+    }
+
+    /// Remove every route in routing table `table_id` from the switch, then
+    /// forget the table.  If a removal fails, the remaining routes are kept so
+    /// the delete can be retried.
+    fn delete_table(
+        &mut self,
+        ops: &dyn RouteTableOps,
+        table_id: RoutingTableId,
+    ) -> DpdResult<()> {
+        let Some(table) = self.tables.get(&table_id) else {
+            return Ok(());
+        };
+        let keys: Vec<RouteKey> = table
+            .v4
+            .keys()
+            .chain(table.v6.keys())
+            .map(|subnet| RouteKey::new(table_id, *subnet))
+            .collect();
+        for key in keys {
+            delete_route_locked(ops, self, key)?;
+        }
+        self.tables.remove(&table_id);
+        Ok(())
     }
 
     fn freemap_mut(&mut self, is_ipv4: bool) -> &mut freemap::FreeMap {
@@ -327,11 +381,11 @@ trait RouteTableOps {
     fn delete_target(&self, subnet: IpNet, idx: u16) -> DpdResult<()>;
 
     /// Install a `route_index` entry pointing at `[index, index + slots)`
-    /// of the family inferred from `subnet`.
-    fn add_index(&self, subnet: IpNet, index: u16, slots: u8) -> DpdResult<()>;
+    /// of the family inferred from `key`.
+    fn add_index(&self, key: RouteKey, index: u16, slots: u8) -> DpdResult<()>;
 
-    /// Delete the `route_index` entry for `subnet`.
-    fn delete_index(&self, subnet: IpNet) -> DpdResult<()>;
+    /// Delete the `route_index` entry for `key`.
+    fn delete_index(&self, key: RouteKey) -> DpdResult<()>;
 }
 
 impl RouteTableOps for Switch {
@@ -383,27 +437,38 @@ impl RouteTableOps for Switch {
         }
     }
 
-    fn add_index(&self, subnet: IpNet, index: u16, slots: u8) -> DpdResult<()> {
-        match subnet {
-            IpNet::V4(v4) => {
-                table::route_ipv4::add_route_index(self, &v4, index, slots)
-            }
-            IpNet::V6(v6) => {
-                table::route_ipv6::add_route_index(self, &v6, index, slots)
-            }
+    fn add_index(&self, key: RouteKey, index: u16, slots: u8) -> DpdResult<()> {
+        match key.subnet {
+            IpNet::V4(v4) => table::route_ipv4::add_route_index(
+                self,
+                key.table_id,
+                &v4,
+                index,
+                slots,
+            ),
+            IpNet::V6(v6) => table::route_ipv6::add_route_index(
+                self,
+                key.table_id,
+                &v6,
+                index,
+                slots,
+            ),
         }
     }
 
-    fn delete_index(&self, subnet: IpNet) -> DpdResult<()> {
-        match subnet {
-            IpNet::V4(v4) => table::route_ipv4::delete_route_index(self, &v4),
-            IpNet::V6(v6) => table::route_ipv6::delete_route_index(self, &v6),
+    fn delete_index(&self, key: RouteKey) -> DpdResult<()> {
+        match key.subnet {
+            IpNet::V4(v4) => {
+                table::route_ipv4::delete_route_index(self, key.table_id, &v4)
+            }
+            IpNet::V6(v6) => {
+                table::route_ipv6::delete_route_index(self, key.table_id, &v6)
+            }
         }
     }
 }
 
-// Remove all the data for a given route from both the route_data and
-// route_index tables.
+// Remove all the data for a given route from the route_data table.
 //
 // Because this may be called from the error-recovery path of a failed add-target
 // operation, not all of the target slots may yet be populated.  Thus we require
@@ -411,21 +476,16 @@ impl RouteTableOps for Switch {
 fn cleanup_route(
     ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
-    subnet: IpNet,
-    delete_index: bool,
+    key: RouteKey,
     entry: RouteEntry,
 ) -> DpdResult<()> {
-    // Remove the subnet -> index mapping first, so nobody can reach the
-    // entries we delete below.
-    if delete_index {
-        ops.delete_index(subnet)?;
-    }
-
     let all_clear = entry
         .targets
         .iter()
         .enumerate()
-        .map(|(idx, _hop)| ops.delete_target(subnet, entry.index + idx as u16))
+        .map(|(idx, _hop)| {
+            ops.delete_target(key.subnet, entry.index + idx as u16)
+        })
         .all(|rval| rval.is_ok());
 
     // If all of the entries were removed, we can release the table space back
@@ -445,17 +505,17 @@ fn cleanup_route(
 fn finalize_route(
     ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
-    subnet: IpNet,
+    key: RouteKey,
     entry: Option<RouteEntry>,
 ) -> DpdResult<()> {
     let Some(entry) = entry else { return Ok(()) };
 
-    match ops.add_index(subnet, entry.index, entry.slots) {
+    match ops.add_index(key, entry.index, entry.slots) {
         Ok(_) => {
-            route_data.insert(subnet, entry);
+            route_data.insert(key, entry);
             Ok(())
         }
-        Err(_) => cleanup_route(ops, route_data, subnet, false, entry),
+        Err(_) => cleanup_route(ops, route_data, key, entry),
     }
 }
 
@@ -529,17 +589,17 @@ fn classify_update(
 fn unhook_route(
     ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
-    subnet: IpNet,
+    key: RouteKey,
 ) -> DpdResult<Option<RouteEntry>> {
-    let Some(old) = route_data.remove(subnet) else {
+    let Some(old) = route_data.remove(key) else {
         return Ok(None);
     };
-    if let Err(e) = ops.delete_index(subnet) {
+    if let Err(e) = ops.delete_index(key) {
         debug!(
             ops.log(),
-            "unhook_route: route_index delete failed for {subnet}: {e:?}"
+            "unhook_route: route_index delete failed for {key}: {e:?}"
         );
-        route_data.insert(subnet, old);
+        route_data.insert(key, old);
         return Err(e);
     }
     Ok(Some(old))
@@ -562,37 +622,37 @@ fn unhook_route(
 fn replace_route_targets(
     ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
-    subnet: IpNet,
+    key: RouteKey,
     targets: Vec<NextHop>,
 ) -> DpdResult<()> {
-    debug!(ops.log(), "replacing targets for {subnet} with: {targets:?}");
+    debug!(ops.log(), "replacing targets for {key} with: {targets:?}");
 
     // Delete-route path: no classification needed; unhook and free.
     if targets.is_empty() {
-        let old_entry = unhook_route(ops, route_data, subnet)?;
+        let old_entry = unhook_route(ops, route_data, key)?;
         return match old_entry {
-            Some(entry) => cleanup_route(ops, route_data, subnet, false, entry),
+            Some(entry) => cleanup_route(ops, route_data, key, entry),
             None => Ok(()),
         };
     }
 
     // Classify against the current in-core entry *before* unhooking so that
     // a NoOp replace leaves the dataplane untouched (no LPM miss window).
-    match classify_update(route_data.get(subnet), &targets) {
+    match classify_update(route_data.get(key), &targets) {
         RouteTargetUpdate::NoOp => Ok(()),
         RouteTargetUpdate::ShrinkInPlace { removed } => {
-            let old = unhook_route(ops, route_data, subnet)?
+            let old = unhook_route(ops, route_data, key)?
                 .expect("subset removal requires existing route");
             // shrink_in_place reconstructs the in-core target vec from the
             // compacted ASIC layout rather than caller-supplied order (see
             // its body for why), so the caller's vec carries no useful
             // information past this point.
             drop(targets);
-            shrink_in_place(ops, route_data, subnet, old, removed)
+            shrink_in_place(ops, route_data, key, old, removed)
         }
         RouteTargetUpdate::Alloc => {
-            let old_entry = unhook_route(ops, route_data, subnet)?;
-            alloc_then_swap(ops, route_data, subnet, old_entry, targets)
+            let old_entry = unhook_route(ops, route_data, key)?;
+            alloc_then_swap(ops, route_data, key, old_entry, targets)
         }
     }
 }
@@ -605,12 +665,12 @@ fn replace_route_targets(
 fn alloc_then_swap(
     ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
-    subnet: IpNet,
+    key: RouteKey,
     old_entry: Option<RouteEntry>,
     targets: Vec<NextHop>,
 ) -> DpdResult<()> {
     let slots = targets.len() as u8;
-    let is_ipv4 = subnet.is_ipv4();
+    let is_ipv4 = key.subnet.is_ipv4();
     let mut new_entry = match route_data.freemap_mut(is_ipv4).alloc(slots) {
         Ok(index) => RouteEntry {
             is_ipv4,
@@ -625,7 +685,7 @@ fn alloc_then_swap(
             );
             // Restore the old route_index + in-core entry (or no-op if
             // there was no old entry).
-            let _ = finalize_route(ops, route_data, subnet, old_entry);
+            let _ = finalize_route(ops, route_data, key, old_entry);
             return Err(e);
         }
     };
@@ -634,10 +694,10 @@ fn alloc_then_swap(
     let mut idx = new_entry.index;
 
     for target in targets {
-        if let Err(e) = ops.add_target(subnet, idx, &target) {
+        if let Err(e) = ops.add_target(key.subnet, idx, &target) {
             debug!(ops.log(), "failed to insert {target:?} into route table");
-            let _ = cleanup_route(ops, route_data, subnet, false, new_entry);
-            let _ = finalize_route(ops, route_data, subnet, old_entry);
+            let _ = cleanup_route(ops, route_data, key, new_entry);
+            let _ = finalize_route(ops, route_data, key, old_entry);
             return Err(e);
         }
         idx += 1;
@@ -645,12 +705,12 @@ fn alloc_then_swap(
     }
 
     // Insert the new subnet->index mapping
-    match finalize_route(ops, route_data, subnet, Some(new_entry.clone())) {
+    match finalize_route(ops, route_data, key, Some(new_entry.clone())) {
         Ok(()) => {
             // Finally free all of the table space for the original set of
             // targets
             if let Some(entry) = old_entry {
-                let _ = cleanup_route(ops, route_data, subnet, false, entry);
+                let _ = cleanup_route(ops, route_data, key, entry);
             }
             Ok(())
         }
@@ -659,8 +719,8 @@ fn alloc_then_swap(
             // We failed to point at the new set of targets.  Free all of the
             // new data and update the route_index table to point at the
             // original set of targets.
-            let _ = cleanup_route(ops, route_data, subnet, false, new_entry);
-            let _ = finalize_route(ops, route_data, subnet, old_entry);
+            let _ = cleanup_route(ops, route_data, key, new_entry);
+            let _ = finalize_route(ops, route_data, key, old_entry);
             Err(e)
         }
     }
@@ -697,7 +757,7 @@ fn alloc_then_swap(
 fn shrink_in_place(
     ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
-    subnet: IpNet,
+    key: RouteKey,
     old: RouteEntry,
     removed: Vec<u16>,
 ) -> DpdResult<()> {
@@ -724,29 +784,25 @@ fn shrink_in_place(
                 .as_ref()
                 .expect("tail slot is live at this point")
                 .clone();
-            if let Err(e) = ops.delete_target(subnet, base + removed_idx) {
+            if let Err(e) = ops.delete_target(key.subnet, base + removed_idx) {
                 warn!(
                     ops.log(),
                     "shrink-in-place compact delete failed at slot {}: {e:?}",
                     base + removed_idx
                 );
-                restore_after_shrink_failure(
-                    ops, route_data, subnet, &live, old,
-                );
+                restore_after_shrink_failure(ops, route_data, key, &live, old);
                 return Err(e);
             }
             live[removed_idx as usize] = None;
             if let Err(e) =
-                ops.add_target(subnet, base + removed_idx, &tail_contents)
+                ops.add_target(key.subnet, base + removed_idx, &tail_contents)
             {
                 warn!(
                     ops.log(),
                     "shrink-in-place compact add failed at slot {}: {e:?}",
                     base + removed_idx
                 );
-                restore_after_shrink_failure(
-                    ops, route_data, subnet, &live, old,
-                );
+                restore_after_shrink_failure(ops, route_data, key, &live, old);
                 return Err(e);
             }
             live[removed_idx as usize] = Some(tail_contents);
@@ -755,12 +811,12 @@ fn shrink_in_place(
     }
 
     // Step 2: install the route_index pointing at the compacted range.
-    if let Err(e) = ops.add_index(subnet, base, new_n) {
+    if let Err(e) = ops.add_index(key, base, new_n) {
         warn!(
             ops.log(),
-            "shrink-in-place index re-add failed for {subnet}: {e:?}"
+            "shrink-in-place index re-add failed for {key}: {e:?}"
         );
-        restore_after_shrink_failure(ops, route_data, subnet, &live, old);
+        restore_after_shrink_failure(ops, route_data, key, &live, old);
         return Err(e);
     }
 
@@ -771,7 +827,7 @@ fn shrink_in_place(
     let release_count = old.slots as u16 - new_n as u16;
     let mut all_clear = true;
     for offset in 0..release_count {
-        if ops.delete_target(subnet, release_base + offset).is_err() {
+        if ops.delete_target(key.subnet, release_base + offset).is_err() {
             all_clear = false;
         }
     }
@@ -780,7 +836,7 @@ fn shrink_in_place(
     } else {
         warn!(
             ops.log(),
-            "shrink-in-place tail cleanup partially failed for {subnet}; \
+            "shrink-in-place tail cleanup partially failed for {key}; \
              leaking slots in the FreeMap's accounting"
         );
         // Skipping the free() call leaves the slots claimed in the FreeMap's
@@ -803,12 +859,12 @@ fn shrink_in_place(
         .map(|opt| opt.expect("live[0..new_n) is populated post-compaction"))
         .collect();
     let prev = route_data.insert(
-        subnet,
+        key,
         RouteEntry { is_ipv4, index: base, slots: new_n, targets: compacted },
     );
     debug_assert!(
         prev.is_none(),
-        "shrink_in_place insert for {subnet} replaced an unexpected \
+        "shrink_in_place insert for {key} replaced an unexpected \
          existing entry"
     );
     Ok(())
@@ -822,16 +878,16 @@ fn shrink_in_place(
 fn restore_after_shrink_failure(
     ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
-    subnet: IpNet,
+    key: RouteKey,
     live: &[Option<NextHop>],
     old: RouteEntry,
 ) {
-    if rollback_shrink(ops, subnet, &old, live) {
-        route_data.insert(subnet, old);
+    if rollback_shrink(ops, key, &old, live) {
+        route_data.insert(key, old);
     } else {
         error!(
             ops.log(),
-            "shrink-in-place rollback failed for {subnet}; in-core entry \
+            "shrink-in-place rollback failed for {key}; in-core entry \
              stays cleared and ASIC state may diverge until the next \
              control-plane update on this subnet rebuilds it"
         );
@@ -851,7 +907,7 @@ fn restore_after_shrink_failure(
 // negligible and the bookkeeping savings on the hot path are worth it.
 fn rollback_shrink(
     ops: &dyn RouteTableOps,
-    subnet: IpNet,
+    key: RouteKey,
     old: &RouteEntry,
     live: &[Option<NextHop>],
 ) -> bool {
@@ -864,20 +920,20 @@ fn rollback_shrink(
         }
         let slot = base + i as u16;
         if slot_live.is_some()
-            && let Err(e) = ops.delete_target(subnet, slot)
+            && let Err(e) = ops.delete_target(key.subnet, slot)
         {
             error!(ops.log(), "rollback delete failed at slot {slot}: {e:?}");
             ok = false;
         }
-        if let Err(e) = ops.add_target(subnet, slot, orig) {
+        if let Err(e) = ops.add_target(key.subnet, slot, orig) {
             error!(ops.log(), "rollback write failed at slot {slot}: {e:?}");
             ok = false;
         }
     }
-    if let Err(e) = ops.add_index(subnet, base, old.slots) {
+    if let Err(e) = ops.add_index(key, base, old.slots) {
         error!(
             ops.log(),
-            "rollback route_index re-add failed for {subnet}: {e:?}"
+            "rollback route_index re-add failed for {key}: {e:?}"
         );
         ok = false;
     }
@@ -887,18 +943,18 @@ fn rollback_shrink(
 fn add_route_locked(
     ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
-    subnet: IpNet,
+    key: RouteKey,
     route: Route,
     asic_port_id: u16,
 ) -> DpdResult<()> {
-    info!(ops.log(), "adding route {subnet} -> {:?}", route.tgt_ip);
+    info!(ops.log(), "adding route {key} -> {:?}", route.tgt_ip);
 
     let max_targets =
-        if subnet.is_ipv4() { MAX_TARGETS_IPV4 } else { MAX_TARGETS_IPV6 };
+        if key.subnet.is_ipv4() { MAX_TARGETS_IPV4 } else { MAX_TARGETS_IPV6 };
 
     // Get the old set of targets that we'll be adding to
     let mut targets =
-        route_data.get(subnet).map_or(Vec::new(), |e| e.targets.clone());
+        route_data.get(key).map_or(Vec::new(), |e| e.targets.clone());
     // Add the new target
     targets.push(NextHop { asic_port_id, route });
 
@@ -907,7 +963,7 @@ fn add_route_locked(
             "exceeded limit of {max_targets} targets for one route"
         )))
     } else {
-        replace_route_targets(ops, route_data, subnet, targets)
+        replace_route_targets(ops, route_data, key, targets)
     }
 }
 
@@ -915,6 +971,7 @@ fn add_route_locked(
 // just this single target.
 async fn add_route(
     switch: &Switch,
+    router: RouterUuid,
     subnet: IpNet,
     route: Route,
 ) -> DpdResult<()> {
@@ -922,14 +979,15 @@ async fn add_route(
         switch.link_asic_port_id(route.port_id, route.link_id)?;
 
     let mut route_data = switch.routes.lock().await;
+    let key = RouteKey::new(route_data.routers.table_id(router)?, subnet);
 
     // Adding the same route multiple times is a harmless no-op
-    if let Some(entry) = route_data.get(subnet)
+    if let Some(entry) = route_data.get(key)
         && entry.targets.iter().any(|hop| hop.route == route)
     {
         return Ok(());
     }
-    add_route_locked(switch, &mut route_data, subnet, route, asic_port_id)
+    add_route_locked(switch, &mut route_data, key, route, asic_port_id)
 }
 
 // Create a new single-path route.
@@ -940,6 +998,7 @@ async fn add_route(
 // is, it is not an error to "replace" a non- existent route.
 async fn set_route(
     switch: &Switch,
+    router: RouterUuid,
     subnet: IpNet,
     route: Route,
     replace: bool,
@@ -948,19 +1007,20 @@ async fn set_route(
         switch.link_asic_port_id(route.port_id, route.link_id)?;
 
     let mut route_data = switch.routes.lock().await;
-    if let Some(entry) = route_data.get(subnet) {
+    let key = RouteKey::new(route_data.routers.table_id(router)?, subnet);
+    if let Some(entry) = route_data.get(key) {
         // setting the same route multiple times is a harmless no-op
         if entry.targets.len() == 1 && entry.targets[0].route == route {
             Ok(())
         } else if !replace {
             Err(DpdError::Exists("route {cidr} already exists".into()))
         } else {
-            info!(switch.log, "replacing subnet {subnet}");
+            info!(switch.log, "replacing subnet {key}");
             let target = vec![NextHop { asic_port_id, route }];
-            replace_route_targets(switch, &mut route_data, subnet, target)
+            replace_route_targets(switch, &mut route_data, key, target)
         }
     } else {
-        add_route_locked(switch, &mut route_data, subnet, route, asic_port_id)
+        add_route_locked(switch, &mut route_data, key, route, asic_port_id)
     }
 }
 
@@ -972,13 +1032,13 @@ async fn set_route(
 fn delete_route_target_locked(
     ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
-    subnet: IpNet,
+    key: RouteKey,
     route: Route,
 ) -> DpdResult<()> {
-    info!(ops.log(), "deleting route {subnet} -> {}", route.tgt_ip);
+    info!(ops.log(), "deleting route {key} -> {}", route.tgt_ip);
 
     // Get set of targets remaining after we remove this entry
-    let entry = route_data.get(subnet).ok_or({
+    let entry = route_data.get(key).ok_or({
         debug!(ops.log(), "No such route");
         DpdError::Missing("no such route".into())
     })?;
@@ -992,67 +1052,75 @@ fn delete_route_target_locked(
         debug!(ops.log(), "target not found");
         Err(DpdError::Missing("no such route".into()))
     } else {
-        replace_route_targets(ops, route_data, subnet, targets)
+        replace_route_targets(ops, route_data, key, targets)
     }
 }
 
 pub async fn add_route_ipv4(
     switch: &Switch,
+    router: RouterUuid,
     subnet: Ipv4Net,
     route: Ipv4Route,
 ) -> DpdResult<()> {
-    add_route(switch, IpNet::V4(subnet), route.into()).await
+    add_route(switch, router, subnet.into(), route.into()).await
 }
 
 pub async fn add_route_ipv4_over_ipv6(
     switch: &Switch,
+    router: RouterUuid,
     subnet: Ipv4Net,
     route: Ipv6Route,
 ) -> DpdResult<()> {
-    add_route(switch, IpNet::V4(subnet), route.into()).await
+    add_route(switch, router, subnet.into(), route.into()).await
 }
 
 pub async fn add_route_ipv6(
     switch: &Switch,
+    router: RouterUuid,
     subnet: Ipv6Net,
     route: Ipv6Route,
 ) -> DpdResult<()> {
-    add_route(switch, IpNet::V6(subnet), route.into()).await
+    add_route(switch, router, subnet.into(), route.into()).await
 }
 
 pub async fn set_route_ipv4(
     switch: &Switch,
+    router: RouterUuid,
     subnet: Ipv4Net,
     route: Ipv4Route,
     replace: bool,
 ) -> DpdResult<()> {
-    set_route(switch, IpNet::V4(subnet), route.into(), replace).await
+    set_route(switch, router, subnet.into(), route.into(), replace).await
 }
 
 pub async fn set_route_ipv4_over_ipv6(
     switch: &Switch,
+    router: RouterUuid,
     subnet: Ipv4Net,
     route: Ipv6Route,
     replace: bool,
 ) -> DpdResult<()> {
-    set_route(switch, IpNet::V4(subnet), route.into(), replace).await
+    set_route(switch, router, subnet.into(), route.into(), replace).await
 }
 
 pub async fn set_route_ipv6(
     switch: &Switch,
+    router: RouterUuid,
     subnet: Ipv6Net,
     route: Ipv6Route,
     replace: bool,
 ) -> DpdResult<()> {
-    set_route(switch, IpNet::V6(subnet), route.into(), replace).await
+    set_route(switch, router, subnet.into(), route.into(), replace).await
 }
 
 pub async fn get_route_ipv4(
     switch: &Switch,
+    router: RouterUuid,
     subnet: Ipv4Net,
 ) -> DpdResult<Vec<dpd_types::route::Route>> {
     let route_data = switch.routes.lock().await;
-    match route_data.get(IpNet::V4(subnet)) {
+    let key = RouteKey::new(route_data.routers.table_id(router)?, subnet);
+    match route_data.get(key) {
         None => Err(DpdError::Missing("no such route".into())),
         Some(entry) => {
             Ok(entry.targets.iter().map(|t| (&t.route).into()).collect())
@@ -1062,10 +1130,12 @@ pub async fn get_route_ipv4(
 
 pub async fn get_route_ipv6(
     switch: &Switch,
+    router: RouterUuid,
     subnet: Ipv6Net,
 ) -> DpdResult<Vec<Ipv6Route>> {
     let route_data = switch.routes.lock().await;
-    match route_data.get(IpNet::V6(subnet)) {
+    let key = RouteKey::new(route_data.routers.table_id(router)?, subnet);
+    match route_data.get(key) {
         None => Err(DpdError::Missing("no such route".into())),
         Some(entry) => {
             Ok(entry.targets.iter().map(|t| (&t.route).into()).collect())
@@ -1073,43 +1143,59 @@ pub async fn get_route_ipv6(
     }
 }
 
+// Remove a route from the switch, then forget it.  If any switch write fails,
+// the route is kept so the delete can be retried; entries already removed by
+// an earlier attempt count as removed.
 fn delete_route_locked(
     ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
-    subnet: IpNet,
+    key: RouteKey,
 ) -> DpdResult<()> {
-    // Get set of targets remaining after we remove this entry
+    let already_gone = |r: DpdResult<()>| match r {
+        Err(DpdError::Switch(AsicError::Missing(_))) => Ok(()),
+        r => r,
+    };
     let entry = route_data
-        .remove(subnet)
+        .get(key)
+        .cloned()
         .ok_or(DpdError::Missing("no such route".into()))?;
 
-    cleanup_route(ops, route_data, subnet, true, entry)
+    already_gone(ops.delete_index(key))?;
+    for idx in 0..entry.targets.len() as u16 {
+        already_gone(ops.delete_target(key.subnet, entry.index + idx))?;
+    }
+    route_data.remove(key);
+    route_data.freemap_mut(entry.is_ipv4).free(entry.index, entry.slots as u16);
+    Ok(())
 }
 
 // Delete a route and all of its targets
 pub async fn delete_route_ipv4(
     switch: &Switch,
+    router: RouterUuid,
     subnet: Ipv4Net,
 ) -> DpdResult<()> {
     let mut route_data = switch.routes.lock().await;
-
-    delete_route_locked(switch, &mut route_data, IpNet::V4(subnet))
+    let key = RouteKey::new(route_data.routers.table_id(router)?, subnet);
+    delete_route_locked(switch, &mut route_data, key)
 }
 
 // Delete a route and all of its targets
 pub async fn delete_route_ipv6(
     switch: &Switch,
+    router: RouterUuid,
     subnet: Ipv6Net,
 ) -> DpdResult<()> {
     let mut route_data = switch.routes.lock().await;
-
-    delete_route_locked(switch, &mut route_data, IpNet::V6(subnet))
+    let key = RouteKey::new(route_data.routers.table_id(router)?, subnet);
+    delete_route_locked(switch, &mut route_data, key)
 }
 
 // Delete a specific target from a route, removing the route if this is the last
 // target.
 pub async fn delete_route_target_ipv4(
     switch: &Switch,
+    router: RouterUuid,
     subnet: Ipv4Net,
     port_id: PortId,
     link_id: LinkId,
@@ -1119,18 +1205,15 @@ pub async fn delete_route_target_ipv4(
         Route { tag: String::new(), port_id, link_id, tgt_ip, vlan_id: None };
 
     let mut route_data = switch.routes.lock().await;
-    delete_route_target_locked(
-        switch,
-        &mut route_data,
-        IpNet::V4(subnet),
-        route,
-    )
+    let key = RouteKey::new(route_data.routers.table_id(router)?, subnet);
+    delete_route_target_locked(switch, &mut route_data, key, route)
 }
 
 // Delete a specific target from a route, removing the route if this is the last
 // target.
 pub async fn delete_route_target_ipv6(
     switch: &Switch,
+    router: RouterUuid,
     subnet: Ipv6Net,
     port_id: PortId,
     link_id: LinkId,
@@ -1145,27 +1228,28 @@ pub async fn delete_route_target_ipv6(
     };
 
     let mut route_data = switch.routes.lock().await;
-    delete_route_target_locked(
-        switch,
-        &mut route_data,
-        IpNet::V6(subnet),
-        route,
-    )
+    let key = RouteKey::new(route_data.routers.table_id(router)?, subnet);
+    delete_route_target_locked(switch, &mut route_data, key, route)
 }
 
 pub async fn get_range_ipv4(
     switch: &Switch,
+    router: RouterUuid,
     last: Option<Ipv4Net>,
     max: u32,
 ) -> DpdResult<Vec<dpd_types::route::Ipv4Routes>> {
     let route_data = switch.routes.lock().await;
+    let table_id = route_data.routers.table_id(router)?;
+    let Some(table) = route_data.tables.get(&table_id) else {
+        return Ok(Vec::new());
+    };
     let lower = match last {
         None => Bound::Unbounded,
         Some(last) => Bound::Excluded(IpNet::V4(last)),
     };
 
     let mut routes = Vec::new();
-    for (subnet, target_list) in route_data
+    for (subnet, target_list) in table
         .v4
         .range((lower, Bound::Unbounded))
         .take(usize::try_from(max).expect("invalid usize"))
@@ -1188,17 +1272,22 @@ pub async fn get_range_ipv4(
 
 pub async fn get_range_ipv6(
     switch: &Switch,
+    router: RouterUuid,
     last: Option<Ipv6Net>,
     max: u32,
 ) -> DpdResult<Vec<dpd_types::route::Ipv6Routes>> {
     let route_data = switch.routes.lock().await;
+    let table_id = route_data.routers.table_id(router)?;
+    let Some(table) = route_data.tables.get(&table_id) else {
+        return Ok(Vec::new());
+    };
     let lower = match last {
         None => Bound::Unbounded,
         Some(last) => Bound::Excluded(IpNet::V6(last)),
     };
 
     let mut routes = Vec::new();
-    for (subnet, target_list) in route_data
+    for (subnet, target_list) in table
         .v6
         .range((lower, Bound::Unbounded))
         .take(usize::try_from(max).expect("invalid usize"))
@@ -1230,22 +1319,25 @@ async fn reset_tag(switch: &Switch, tag: &str, ipv4: bool) {
     // perform any updates after scanning everything to avoid updating the
     // route_data BTreeMap while we're iterating over it.
     let mut to_replace = BTreeMap::new();
-    let data = if ipv4 { &route_data.v4 } else { &route_data.v6 };
-    for (subnet, entry) in data {
-        let new_targets: Vec<NextHop> = entry
-            .targets
-            .iter()
-            .filter(|t| t.route.tag != tag)
-            .cloned()
-            .collect();
-        if new_targets.len() != entry.targets.len() {
-            to_replace.insert(*subnet, new_targets);
+    for (table_id, table) in route_data.tables.iter() {
+        let data = if ipv4 { &table.v4 } else { &table.v6 };
+        for (subnet, entry) in data {
+            let new_targets: Vec<NextHop> = entry
+                .targets
+                .iter()
+                .filter(|t| t.route.tag != tag)
+                .cloned()
+                .collect();
+            if new_targets.len() != entry.targets.len() {
+                to_replace
+                    .insert(RouteKey::new(*table_id, *subnet), new_targets);
+            }
         }
     }
 
-    for (subnet, targets) in to_replace {
-        debug!(switch.log, "new subnets for {subnet}: {targets:?}");
-        let _ = replace_route_targets(switch, &mut route_data, subnet, targets);
+    for (key, targets) in to_replace {
+        debug!(switch.log, "new subnets for {key}: {targets:?}");
+        let _ = replace_route_targets(switch, &mut route_data, key, targets);
     }
 }
 
@@ -1257,23 +1349,29 @@ pub async fn reset_ipv6_tag(switch: &Switch, tag: &str) {
     reset_tag(switch, tag, false).await
 }
 
+/// Delete every route in routing table `table_id`.
+pub fn delete_table(
+    switch: &Switch,
+    route_data: &mut RouteData,
+    table_id: RoutingTableId,
+) -> DpdResult<()> {
+    route_data.delete_table(switch, table_id)
+}
+
 pub async fn reset(switch: &Switch) -> DpdResult<()> {
     let mut route_data = switch.routes.lock().await;
-    route_data.v4 = BTreeMap::new();
+    route_data.tables.clear();
     route_data.v4_freemap.reset();
-    table::route_ipv4::reset(switch)?;
-
-    route_data.v6 = BTreeMap::new();
     route_data.v6_freemap.reset();
+    table::route_ipv4::reset(switch)?;
     table::route_ipv6::reset(switch)?;
-
     Ok(())
 }
 
 pub fn init(log: &slog::Logger) -> RouteData {
     RouteData {
-        v4: BTreeMap::new(),
-        v6: BTreeMap::new(),
+        routers: Routers::default(),
+        tables: BTreeMap::new(),
         v4_freemap: freemap::FreeMap::new(log, "route_ipv4"),
         v6_freemap: freemap::FreeMap::new(log, "route_ipv6"),
     }
@@ -1302,6 +1400,10 @@ mod tests {
         common::ports::RearPort::new(0).unwrap().into()
     }
 
+    fn default_router_key(subnet: impl Into<IpNet>) -> RouteKey {
+        RouteKey::new(RoutingTableId::default(), subnet)
+    }
+
     fn make_route(tgt_ip: IpAddr) -> Route {
         Route {
             tag: "test".into(),
@@ -1312,8 +1414,8 @@ mod tests {
         }
     }
 
-    use aal::AsicError;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
+    use std::collections::BTreeSet;
 
     /// Total size to use for the per-family FreeMap in tests that exercise
     /// "table full" / "table fragmented" behavior.  Small enough to keep
@@ -1331,9 +1433,11 @@ mod tests {
     }
 
     /// In-process implementation of `RouteTableOps` used by the route tests.
-    /// Every on-chip operation is a no-op (returning `Ok`) unless the
-    /// corresponding failpoint has been armed via [`TestOps::arm`], in which
-    /// case the configured call returns a synthetic `Switch(SdeError)` and
+    /// It records which entries are on the fake switch: adding an entry that
+    /// is already there returns `Exists`, and deleting one that isn't
+    /// returns `Missing`, as the ASIC does.  If the failpoint for an
+    /// operation has been armed via [`TestOps::arm`], the configured call
+    /// instead returns a synthetic `Switch(SdeError)`, changes nothing, and
     /// the failpoint disarms.  This lets the route state machine run
     /// without any ASIC or P4-runtime presence.
     struct TestOps {
@@ -1342,6 +1446,28 @@ mod tests {
         del_target_fail: Cell<Option<u32>>,
         add_index_fail: Cell<Option<u32>>,
         del_index_fail: Cell<Option<u32>>,
+        /// Installed `route_target` slots, by (is_ipv4, slot).
+        targets: RefCell<BTreeSet<(bool, u16)>>,
+        indexes: RefCell<BTreeSet<RouteKey>>,
+    }
+
+    fn add_entry<T: Ord>(set: &RefCell<BTreeSet<T>>, key: T) -> DpdResult<()> {
+        if set.borrow_mut().insert(key) {
+            Ok(())
+        } else {
+            Err(DpdError::Switch(AsicError::Exists))
+        }
+    }
+
+    fn delete_entry<T: Ord>(
+        set: &RefCell<BTreeSet<T>>,
+        key: &T,
+    ) -> DpdResult<()> {
+        if set.borrow_mut().remove(key) {
+            Ok(())
+        } else {
+            Err(DpdError::Switch(AsicError::Missing("not installed".into())))
+        }
     }
 
     impl TestOps {
@@ -1358,6 +1484,8 @@ mod tests {
                 del_target_fail: Cell::new(None),
                 add_index_fail: Cell::new(None),
                 del_index_fail: Cell::new(None),
+                targets: RefCell::default(),
+                indexes: RefCell::default(),
             }
         }
 
@@ -1403,28 +1531,32 @@ mod tests {
 
         fn add_target(
             &self,
-            _subnet: IpNet,
-            _idx: u16,
+            subnet: IpNet,
+            idx: u16,
             _target: &NextHop,
         ) -> DpdResult<()> {
-            self.check(Op::AddTarget)
+            self.check(Op::AddTarget)?;
+            add_entry(&self.targets, (subnet.is_ipv4(), idx))
         }
 
-        fn delete_target(&self, _subnet: IpNet, _idx: u16) -> DpdResult<()> {
-            self.check(Op::DelTarget)
+        fn delete_target(&self, subnet: IpNet, idx: u16) -> DpdResult<()> {
+            self.check(Op::DelTarget)?;
+            delete_entry(&self.targets, &(subnet.is_ipv4(), idx))
         }
 
         fn add_index(
             &self,
-            _subnet: IpNet,
+            key: RouteKey,
             _index: u16,
             _slots: u8,
         ) -> DpdResult<()> {
-            self.check(Op::AddIndex)
+            self.check(Op::AddIndex)?;
+            add_entry(&self.indexes, key)
         }
 
-        fn delete_index(&self, _subnet: IpNet) -> DpdResult<()> {
-            self.check(Op::DelIndex)
+        fn delete_index(&self, key: RouteKey) -> DpdResult<()> {
+            self.check(Op::DelIndex)?;
+            delete_entry(&self.indexes, &key)
         }
     }
 
@@ -1444,7 +1576,7 @@ mod tests {
     fn install_victim(
         ops: &dyn RouteTableOps,
         rd: &mut RouteData,
-        victim: IpNet,
+        victim: RouteKey,
         targets: impl IntoIterator<Item = IpAddr>,
     ) {
         for tgt in targets {
@@ -1468,7 +1600,7 @@ mod tests {
             match add_route_locked(
                 ops,
                 rd,
-                cidr,
+                default_router_key(cidr),
                 make_route(filler),
                 FAKE_ASIC_PORT,
             ) {
@@ -1494,7 +1626,8 @@ mod tests {
             fillers.len(),
         );
         for f in fillers.iter().step_by(2) {
-            delete_route_locked(ops, rd, *f).expect("delete filler");
+            delete_route_locked(ops, rd, default_router_key(*f))
+                .expect("delete filler");
         }
     }
 
@@ -1504,7 +1637,7 @@ mod tests {
     /// "shared tgt_ip with one survivor" multi-target scenario.
     struct FamilyFixtures {
         is_ipv4: bool,
-        victim: IpNet,
+        victim: RouteKey,
         targets: [IpAddr; 4],
         filler: IpAddr,
         filler_cidr: fn(u32) -> IpNet,
@@ -1513,7 +1646,9 @@ mod tests {
     fn fixtures_v6() -> FamilyFixtures {
         FamilyFixtures {
             is_ipv4: false,
-            victim: "3fff:dead::/64".parse::<Ipv6Net>().unwrap().into(),
+            victim: default_router_key(
+                "3fff:dead::/64".parse::<Ipv6Net>().unwrap(),
+            ),
             targets: [
                 "2001:db8::55:1".parse::<Ipv6Addr>().unwrap().into(),
                 "2001:db8::55:2".parse::<Ipv6Addr>().unwrap().into(),
@@ -1528,7 +1663,9 @@ mod tests {
     fn fixtures_v4() -> FamilyFixtures {
         FamilyFixtures {
             is_ipv4: true,
-            victim: "172.16.0.0/32".parse::<Ipv4Net>().unwrap().into(),
+            victim: default_router_key(
+                "172.16.0.0/32".parse::<Ipv4Net>().unwrap(),
+            ),
             targets: [
                 Ipv4Addr::new(10, 0, 0, 1).into(),
                 Ipv4Addr::new(10, 0, 0, 2).into(),
@@ -1570,13 +1707,13 @@ mod tests {
     /// should treat it as a terminal assertion.
     fn assert_post_shrink(
         rd: &mut RouteData,
-        subnet: IpNet,
+        key: RouteKey,
         is_ipv4: bool,
         expected: &[IpAddr],
         freed_slots: u16,
     ) {
         use std::collections::BTreeSet;
-        let entry = rd.get(subnet).expect("victim must still exist");
+        let entry = rd.get(key).expect("victim must still exist");
         let observed: BTreeSet<IpAddr> =
             entry.targets.iter().map(|t| t.route.tgt_ip).collect();
         let expected_set: BTreeSet<IpAddr> = expected.iter().copied().collect();
@@ -1850,6 +1987,100 @@ mod tests {
     fn identity_replace_is_noop() {
         identity_replace_is_noop_scenario(fixtures_v6());
         identity_replace_is_noop_scenario(fixtures_v4());
+    }
+
+    /// Deleting a routing table removes its routes from the switch and from
+    /// soft state, and leaves other tables' entries for the same prefixes
+    /// alone.
+    #[test]
+    fn delete_table_leaves_other_tables() {
+        let (ops, mut rd) = make_test_ctx();
+        let doomed = RoutingTableId::from(1);
+        let other = RoutingTableId::from(2);
+        let v4: Ipv4Net = "192.168.1.0/24".parse().unwrap();
+        let v6: Ipv6Net = "fd00:1::/64".parse().unwrap();
+        let gw4: IpAddr = "10.0.0.1".parse().unwrap();
+        let gw6: IpAddr = "fd00::1".parse().unwrap();
+        for table_id in [RoutingTableId::default(), doomed, other] {
+            install_victim(&ops, &mut rd, RouteKey::new(table_id, v4), [gw4]);
+            install_victim(&ops, &mut rd, RouteKey::new(table_id, v6), [gw6]);
+        }
+
+        rd.delete_table(&ops, doomed).unwrap();
+        assert!(!rd.tables.contains_key(&doomed));
+        for subnet in [IpNet::from(v4), IpNet::from(v6)] {
+            let gone = RouteKey::new(doomed, subnet);
+            assert!(!ops.indexes.borrow().contains(&gone));
+            for table_id in [RoutingTableId::default(), other] {
+                let key = RouteKey::new(table_id, subnet);
+                assert!(rd.get(key).is_some());
+                assert!(ops.indexes.borrow().contains(&key));
+            }
+        }
+
+        // Deleting it again does nothing.
+        rd.delete_table(&ops, doomed).unwrap();
+    }
+
+    fn install_route(
+        rd: &mut RouteData,
+        ops: &TestOps,
+        table_id: RoutingTableId,
+    ) {
+        let v4: Ipv4Net = "192.168.1.0/24".parse().unwrap();
+        let gw: IpAddr = "10.0.0.1".parse().unwrap();
+        let gw2: IpAddr = "10.0.0.2".parse().unwrap();
+        install_victim(ops, rd, RouteKey::new(table_id, v4), [gw, gw2]);
+    }
+
+    /// A failed index delete keeps the route, and a retry removes it.
+    #[test]
+    fn delete_table_keeps_route_when_index_delete_fails() {
+        let (ops, mut rd) = make_test_ctx();
+        let table_id = RoutingTableId::from(1);
+        install_route(&mut rd, &ops, table_id);
+        let key = RouteKey::new(
+            table_id,
+            "192.168.1.0/24".parse::<Ipv4Net>().unwrap(),
+        );
+
+        ops.arm(Op::DelIndex, 0);
+        assert!(rd.delete_table(&ops, table_id).is_err());
+        assert!(rd.get(key).is_some(), "route must be kept for a retry");
+
+        rd.delete_table(&ops, table_id).expect("retry must succeed");
+        assert!(!rd.tables.contains_key(&table_id));
+        assert!(ops.indexes.borrow().is_empty());
+        assert!(ops.targets.borrow().is_empty());
+    }
+
+    /// The first attempt removes the index and one target before failing,
+    /// so the retry only succeeds if it treats those as already removed.
+    #[test]
+    fn delete_table_keeps_route_when_target_delete_fails() {
+        let (ops, mut rd) = make_test_ctx();
+        let table_id = RoutingTableId::from(1);
+        install_route(&mut rd, &ops, table_id);
+        let key = RouteKey::new(
+            table_id,
+            "192.168.1.0/24".parse::<Ipv4Net>().unwrap(),
+        );
+        let entry = rd.get(key).unwrap().clone();
+
+        ops.arm(Op::DelTarget, 1);
+        assert!(rd.delete_table(&ops, table_id).is_err());
+        assert_eq!(rd.get(key), Some(&entry), "route must be kept for a retry");
+        assert!(!ops.indexes.borrow().contains(&key));
+        assert_eq!(ops.targets.borrow().len(), 1);
+
+        rd.delete_table(&ops, table_id).expect("retry must succeed");
+        assert!(!rd.tables.contains_key(&table_id));
+        assert!(ops.targets.borrow().is_empty());
+        // The slots are free again only after the retry succeeded.
+        assert_eq!(
+            rd.freemap_mut(true).alloc(entry.slots).unwrap(),
+            entry.index
+        );
     }
 
     /// A same-length, non-subset replace (one target swapped for another)

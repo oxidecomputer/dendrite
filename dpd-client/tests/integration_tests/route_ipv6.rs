@@ -67,7 +67,7 @@ async fn add_route(
     let route = router.build_route(switch);
     let route_add = build_route_add(cidr, &route);
 
-    client.route_ipv6_add(&route_add).await?;
+    client.route_ipv6_add(&DEFAULT_ROUTER, &route_add).await?;
     Ok(())
 }
 
@@ -78,14 +78,14 @@ async fn validate_routes(
     expected: &[types::Ipv6Route],
 ) -> TestResult {
     if expected.is_empty() {
-        match client.route_ipv6_get(cidr).await {
+        match client.route_ipv6_get(&DEFAULT_ROUTER, cidr).await {
             Ok(f) => {
                 Err(anyhow!("found {} targets - expected no route", f.len()))
             }
             Err(_) => Ok(()),
         }
     } else {
-        let found = client.route_ipv6_get(cidr).await?;
+        let found = client.route_ipv6_get(&DEFAULT_ROUTER, cidr).await?;
         assert_eq!(found.len(), expected.len());
         for target in expected {
             assert!(found.iter().any(|t| t == target));
@@ -187,7 +187,7 @@ async fn test_deleted_unicast_impl(switch: &Switch) -> TestResult {
     test_unicast_impl(switch, None).await?;
 
     let cidr = "fd00:1122:3344:0100::/56".parse().unwrap();
-    switch.client.route_ipv6_delete(&cidr).await.unwrap();
+    switch.client.route_ipv6_delete(&DEFAULT_ROUTER, &cidr).await.unwrap();
 
     let to_send = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0101::4", 3333)
@@ -562,7 +562,7 @@ async fn test_reset() -> TestResult {
     let limit = std::num::NonZeroU32::new(32).unwrap();
     let routes = switch
         .client
-        .route_ipv6_list(Some(limit), None)
+        .route_ipv6_list(&DEFAULT_ROUTER, Some(limit), None)
         .await
         .unwrap()
         .into_inner();
@@ -571,7 +571,7 @@ async fn test_reset() -> TestResult {
     switch.client.reset_all_tagged("failed").await.unwrap();
     let routes = switch
         .client
-        .route_ipv6_list(Some(limit), None)
+        .route_ipv6_list(&DEFAULT_ROUTER, Some(limit), None)
         .await
         .unwrap()
         .into_inner();
@@ -580,7 +580,7 @@ async fn test_reset() -> TestResult {
     switch.client.reset_all_tagged("test").await.unwrap();
     let routes = switch
         .client
-        .route_ipv6_list(Some(limit), None)
+        .route_ipv6_list(&DEFAULT_ROUTER, Some(limit), None)
         .await
         .unwrap()
         .into_inner();
@@ -617,17 +617,20 @@ async fn test_create_and_set_semantics_v6() -> TestResult {
     };
 
     // Setting a new route should work
-    client.route_ipv6_set(&route47).await?;
+    client.route_ipv6_set(&DEFAULT_ROUTER, &route47).await?;
 
     // Attempting to replace the route with "replace = false" should fail
-    client.route_ipv6_set(&route33).await.expect_err("expected conflict");
+    client
+        .route_ipv6_set(&DEFAULT_ROUTER, &route33)
+        .await
+        .expect_err("expected conflict");
     // Re-setting the existing route should succeed
-    client.route_ipv6_set(&route47).await?;
+    client.route_ipv6_set(&DEFAULT_ROUTER, &route47).await?;
     // Attempting to replace the route with "replace = true" should success
     route33.replace = true;
-    client.route_ipv6_set(&route33).await?;
+    client.route_ipv6_set(&DEFAULT_ROUTER, &route33).await?;
     // Verify that the route was replaced correctly
-    let rt = client.route_ipv6_get(&cidr).await?;
+    let rt = client.route_ipv6_get(&DEFAULT_ROUTER, &cidr).await?;
 
     assert_eq!(rt.len(), 1);
     assert_eq!(rt[0].tgt_ip, target33.tgt_ip);
@@ -670,7 +673,9 @@ async fn add_ipv6_route_target(
     cidr: Ipv6Net,
     route: &types::Ipv6Route,
 ) -> Result<(), dpd_client::Error<types::Error>> {
-    client.route_ipv6_add(&build_route_add(cidr, route)).await?;
+    client
+        .route_ipv6_add(&DEFAULT_ROUTER, &build_route_add(cidr, route))
+        .await?;
     Ok(())
 }
 
@@ -681,6 +686,7 @@ async fn delete_ipv6_route_target(
 ) -> TestResult {
     client
         .route_ipv6_delete_target(
+            &DEFAULT_ROUTER,
             cidr,
             &target.port_id,
             &target.link_id,

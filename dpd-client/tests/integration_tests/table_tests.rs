@@ -48,7 +48,7 @@ use crate::integration_tests::common::prelude::*;
 #[cfg(feature = "multicast")]
 const IPV4_LPM_SIZE: usize = 7164; // ipv4 forwarding table
 #[cfg(not(feature = "multicast"))]
-const IPV4_LPM_SIZE: usize = 8191; // ipv4 forwarding table
+const IPV4_LPM_SIZE: usize = 8190; // ipv4 forwarding table
 
 #[cfg(feature = "multicast")]
 const IPV6_LPM_SIZE: usize = 1023; // ipv6 forwarding table
@@ -412,18 +412,18 @@ impl TableTest for RouteV4 {
             }),
             replace: false,
         };
-        switch.client.route_ipv4_set(&route).await
+        switch.client.route_ipv4_set(&DEFAULT_ROUTER, &route).await
     }
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let cidr = gen_ipv4_cidr(idx);
-        switch.client.route_ipv4_delete(&cidr).await
+        switch.client.route_ipv4_delete(&DEFAULT_ROUTER, &cidr).await
     }
 
     async fn count_entries(switch: &Switch) -> usize {
         switch
             .client
-            .route_ipv4_list_stream(None)
+            .route_ipv4_list_stream(&DEFAULT_ROUTER, None)
             .try_collect::<Vec<_>>()
             .await
             .unwrap()
@@ -456,18 +456,18 @@ impl TableTest for RouteV6 {
             },
             replace: false,
         };
-        switch.client.route_ipv6_set(&route).await
+        switch.client.route_ipv6_set(&DEFAULT_ROUTER, &route).await
     }
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let cidr = gen_ipv6_cidr(idx);
-        switch.client.route_ipv6_delete(&cidr).await
+        switch.client.route_ipv6_delete(&DEFAULT_ROUTER, &cidr).await
     }
 
     async fn count_entries(switch: &Switch) -> usize {
         switch
             .client
-            .route_ipv6_list_stream(None)
+            .route_ipv6_list_stream(&DEFAULT_ROUTER, None)
             .try_collect::<Vec<_>>()
             .await
             .unwrap()

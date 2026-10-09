@@ -4,18 +4,10 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-mod attached_subnet;
-mod common;
-mod counters;
-mod geneve;
-mod icmp_ipv4;
-mod loopback;
-#[cfg(feature = "multicast")]
-mod mcast;
-mod nat;
-mod port_api;
-mod route_ipv4;
-mod route_ipv6;
-mod router;
-mod service;
-mod table_tests;
+//! Version `MULTI_ROUTER` of the DPD API.
+//!
+//! Adds routers, each with its own routes and endpoint.  Route paths move
+//! under `/router/{router_id}/...`; earlier versions act on the default
+//! router.
+
+pub mod route;
