@@ -50,6 +50,15 @@ const TEST_PCAP_TIMEOUT_MS: i32 = 1;
 pub struct PhysPort(pub u16);
 pub const NO_PORT: PhysPort = PhysPort(0xffff);
 
+/// The type of an L4 packet carried over IP
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum L4Protocol {
+    Tcp = ipv4::IPPROTO_TCP,
+    Udp = ipv4::IPPROTO_UDP,
+    Icmp = ipv4::IPPROTO_ICMP,
+}
+
 // On real hardware the "service port" is the PCI port, which doesn't have a
 // real physical port - it's just a collection of ringbufs in PCI space.  On the
 // model, we have "physical port" 33 wired to carry the traffic for "tofino
@@ -856,15 +865,23 @@ pub fn gen_udp_packet_loaded(
     Packet::generate(src, dst, udp_stack, Some(body)).unwrap()
 }
 
-// Construct a single ICMP packet with an optional payload
+// Construct a single ICMP echo request packet with an optional payload.
 pub fn gen_icmp_packet_loaded(
     src: Endpoint,
     dst: Endpoint,
     body: &[u8],
 ) -> Packet {
     let icmp_stack = match src.get_ip("src").unwrap() {
-        IpAddr::V4(_) => vec![ipv4::IPPROTO_ICMP.into(), eth::ETHER_IPV4],
-        IpAddr::V6(_) => vec![ipv6::IPPROTO_ICMPV6.into(), eth::ETHER_IPV6],
+        IpAddr::V4(_) => vec![
+            u16::from(icmp::ICMP_ECHO) << 8,
+            ipv4::IPPROTO_ICMP.into(),
+            eth::ETHER_IPV4,
+        ],
+        IpAddr::V6(_) => vec![
+            u16::from(icmp::ICMP6_ECHO_REQUEST) << 8,
+            ipv6::IPPROTO_ICMPV6.into(),
+            eth::ETHER_IPV6,
+        ],
     };
 
     Packet::generate(src, dst, icmp_stack, Some(body)).unwrap()
@@ -1441,8 +1458,63 @@ pub fn gen_arp_reply(src: Endpoint, tgt: Endpoint) -> Packet {
         .unwrap()
 }
 
+/// Compute an identical flow hash to the `FlowHash` control in ingress
+/// processing.
+///
+/// This value is currently used in encap header generation and ECMP nexthop
+/// selection.
+pub fn tofino_flow_hash(
+    src: Endpoint,
+    dst: Endpoint,
+    ip_proto: L4Protocol,
+) -> u16 {
+    let Ok(src_ip) = src.get_ip("src") else {
+        return 0;
+    };
+    let Ok(dst_ip) = dst.get_ip("dst") else {
+        return 0;
+    };
+
+    let crc = crc::Crc::<u16>::new(&crc::CRC_16_ARC);
+    let mut digest = crc.digest();
+
+    let proto = match (dst_ip, src_ip) {
+        (IpAddr::V6(dip), IpAddr::V6(sip)) => {
+            digest.update(&dip.octets());
+            digest.update(&sip.octets());
+            if ip_proto == L4Protocol::Icmp {
+                ipv6::IPPROTO_ICMPV6
+            } else {
+                ip_proto as u8
+            }
+        }
+        (IpAddr::V4(dip), IpAddr::V4(sip)) => {
+            digest.update(&dip.octets());
+            digest.update(&sip.octets());
+            ip_proto as u8
+        }
+        _ => panic!("mismatched src/dst address families"),
+    };
+
+    // Ingress processing will compute an L3 hash when no ports
+    // are available.
+    let dst_port = dst.get_port("dst").unwrap_or(0);
+    let src_port = if ip_proto == L4Protocol::Icmp {
+        // The parser leaves l4_src_port at 0 for ICMP echo.
+        0
+    } else {
+        src.get_port("src").unwrap_or(0)
+    };
+
+    digest.update(&[proto]);
+    digest.update(&dst_port.to_be_bytes());
+    digest.update(&src_port.to_be_bytes());
+    digest.finalize()
+}
+
 pub mod prelude {
     pub use super::ADMIN_LOCAL_MULTICAST_PREFIX;
+    pub use super::L4Protocol;
     pub use super::NO_PORT;
     pub use super::PhysPort;
     pub use super::SERVICE_PORT;
