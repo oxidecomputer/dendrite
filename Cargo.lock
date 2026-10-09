@@ -4722,11 +4722,12 @@ checksum = "d211803b9b6b570f68772237e415a029d5a50c65d382910b879fb19d3271f94d"
 
 [[package]]
 name = "oxide-tokio-rt"
-version = "0.1.2"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84bd87abf37c68d414e4df90a545857542140e07206f75039b8f63b244da87b8"
+checksum = "da86bc49f57aaf4d5af349241ee12e8cef5bc1d22c12d6ef60e3779e9102d5b5"
 dependencies = [
  "anyhow",
+ "nix 0.31.3",
  "tokio",
  "tokio-dtrace",
 ]
