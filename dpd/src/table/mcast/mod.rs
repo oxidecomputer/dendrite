@@ -9,17 +9,48 @@
 use std::{
     convert::TryInto,
     fmt,
+    hash::Hash,
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use aal::MatchParse;
+use aal::{ActionParse, MatchParse};
 use aal_macros::*;
+use common::table::TableType;
+use slog::debug;
+
+use crate::{Switch, types::DpdResult};
 
 pub(crate) mod mcast_egress;
 pub(crate) mod mcast_nat;
 pub(crate) mod mcast_replication;
 pub(crate) mod mcast_route;
 pub(crate) mod mcast_src_filter;
+
+/// Delete every entry in `table` whose key satisfies the `matches` check.
+///
+/// All table keys are collected before deletion occurs to prevent the table
+/// lock from being held across `table_entry_del`.
+fn del_entries_where<M, A>(
+    s: &Switch,
+    table: TableType,
+    matches: impl Fn(&M) -> bool,
+) -> DpdResult<()>
+where
+    M: MatchParse + Hash + fmt::Display,
+    A: ActionParse,
+{
+    let keys: Vec<M> = s
+        .table_get(table)?
+        .get_entries::<M, A>(&s.asic_hdl, false)?
+        .into_iter()
+        .filter_map(|(key, _)| matches(&key).then_some(key))
+        .collect();
+
+    keys.iter().try_for_each(|key| {
+        debug!(s.log, "delete {table} entry {key}");
+        s.table_entry_del(table, key)
+    })
+}
 
 #[derive(MatchParse, Hash)]
 struct Ipv4MatchKey {

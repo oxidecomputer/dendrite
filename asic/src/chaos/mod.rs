@@ -57,7 +57,7 @@ impl Chaos {
 
     /// Return a chaos error according to the underlying probability value.
     pub fn unfurled(&self, log: &Logger, message: &str) -> AsicResult<()> {
-        if self.value >= random() {
+        if self.value > random() {
             slog::error!(log, "chaos error: {}", message);
             return Err(AsicError::Synthetic(message.into()));
         }
@@ -143,7 +143,7 @@ impl TableChaos {
         message: &str,
     ) -> AsicResult<()> {
         if let Some(value) = self.values.get(&id)
-            && *value >= random()
+            && *value > random()
         {
             slog::error!(log, "chaos table error: {}", message);
             return Err(AsicError::Synthetic(message.into()));
@@ -407,7 +407,7 @@ impl AsicMulticastOps for Handle {
         _level1_excl_id: u16,
     ) -> AsicResult<()> {
         unfurl_mc!(self, mc_port_add);
-        Err(AsicError::OperationUnsupported)
+        Ok(())
     }
 
     fn mc_port_remove(&self, _group_id: u16, _port: u16) -> AsicResult<()> {
@@ -417,7 +417,7 @@ impl AsicMulticastOps for Handle {
 
     fn mc_group_create(&self, _group_id: u16) -> AsicResult<()> {
         unfurl_mc!(self, mc_group_create);
-        Err(AsicError::OperationUnsupported)
+        Ok(())
     }
 
     fn mc_group_destroy(&self, _group_id: u16) -> AsicResult<()> {
@@ -552,7 +552,7 @@ impl AsicOps for Handle {
         // and use it as before.
         let port_hdl = PortHdl::new(connector, 0);
         if ports.contains_key(&port_hdl) {
-            return Err(AsicError::Exists);
+            return Err(AsicError::Exists(format!("port {port_hdl} exists")));
         }
         ports.insert(port_hdl, Port { enabled: true });
         self.port_to_asic_id(port_hdl).map(|id| (port_hdl, id))

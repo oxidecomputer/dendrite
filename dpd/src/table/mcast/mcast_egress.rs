@@ -6,15 +6,14 @@
 
 //! Table operations for multicast egress entries.
 
-use dpd_types::table;
 use std::fmt;
-
-use crate::{Switch, table::*};
 
 use aal::{ActionParse, MatchParse};
 use aal_macros::*;
-use dpd_types::mcast::MulticastGroupId;
+use dpd_types::{mcast::MulticastGroupId, table};
 use slog::debug;
+
+use crate::{Switch, table::*};
 
 #[derive(MatchParse, Hash)]
 struct MatchKeyDecapPorts {
@@ -265,9 +264,15 @@ pub(crate) fn port_mapping_counter_fetch(
 }
 
 /// 256-port bitmap (8 × 32-bit) for multicast egress decapsulation filtering.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PortBitmap {
     ports: [u32; 8],
+}
+
+impl From<[u32; 8]> for PortBitmap {
+    fn from(ports: [u32; 8]) -> Self {
+        Self { ports }
+    }
 }
 
 impl PortBitmap {
