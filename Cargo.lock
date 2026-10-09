@@ -7344,6 +7344,7 @@ dependencies = [
  "colored",
  "common 0.1.0",
  "dpd-client 0.1.0",
+ "dpd-types",
  "expectorate",
  "futures",
  "humantime",
