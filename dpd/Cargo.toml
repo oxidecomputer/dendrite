@@ -18,7 +18,7 @@ interrupts = ["asic/interrupts"]
 anyhow = "1.0"
 
 [build-dependencies.vergen]
-version = "8.3"
+version = "10.0"
 features = [ "cargo", "git", "git2", "rustc" ]
 
 [dependencies]
