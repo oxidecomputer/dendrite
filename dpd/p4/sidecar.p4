@@ -1829,7 +1829,7 @@ control MulticastIngress (
 		} else if (hdr.geneve.isValid() && hdr.inner_ipv6.isValid()) {
 			// Check if the inner destination address is an IPv6 multicast
 			// address (ff00::/8). Apply source filtering for both SSM
-			// (ff3x::/16) and ASM ranges.
+			// (ff3x::/32) and ASM ranges.
 			if (hdr.inner_ipv6.dst_addr[127:120] == 8w0xff) {
 				mcast_source_filter_ipv6.apply();
 			} else {
@@ -2325,9 +2325,9 @@ control Egress(
 		bool is_egress_rid_mcast = eg_intr_md.egress_rid > 0;
 		// We track IPv6 multicast packets separately for counters.
 		bool is_link_local_ipv6_mcast = false;
-		if (hdr.ipv6.isValid()) {
-			bit<16> ipv6_prefix = (bit<16>)hdr.ipv6.dst_addr[127:112];
-			is_link_local_ipv6_mcast = (ipv6_prefix == IPV6_LINK_LOCAL_16);
+		if (hdr.ipv6.isValid() &&
+		    hdr.ipv6.dst_addr[127:112] == IPV6_LINK_LOCAL_16) {
+			is_link_local_ipv6_mcast = true;
 		}
 		bool is_mcast = is_egress_rid_mcast || is_link_local_ipv6_mcast;
 
@@ -2359,14 +2359,36 @@ control Egress(
 			if (is_mcast == true) {
 				mcast_ctr.count(eg_intr_md.egress_port);
 
-				if (is_link_local_ipv6_mcast) {
-					link_local_mcast_ctr.count(eg_intr_md.egress_port);
-				} else if (hdr.geneve.isValid()) {
-					external_mcast_ctr.count(eg_intr_md.egress_port);
-				} else if (hdr.geneve.isValid() &&
-				           hdr.geneve_opts.oxg_mcast.isValid() &&
-				           hdr.geneve_opts.oxg_mcast.mcast_tag == MULTICAST_TAG_UNDERLAY) {
+				// Per-type counters:
+				//
+				// - link-local (ff02::/16 outer dst) -> always
+				//   forwarded without PRE (Packet Replication Engine)
+				//   replication, arriving with egress_rid == 0.
+				// - egress_rid > 0 with a valid Geneve header -> an
+				//   underlay replica, still encapsulated.
+				// - egress_rid > 0 without a valid Geneve header -> an
+				//   external replica, decapped at ingress (external-only
+				//   groups) or by mcast_egress above (bifurcated groups).
+				//
+				// Geneve validity separates the two replica cases.
+				// Underlay replicas stay encapsulated whether or not the
+				// group is bifurcated, meaning that we can skip an
+				// mcast_tag check.
+				//
+				// This chain branches on egress_rid first. Within
+				// the scope of is_mcast, a zero rid already implies
+				// link-local, making the last branch avoid a test of
+				// is_link_local_ipv6_mcast. Scope 2 groups are rejected
+				// at the time of creation, meaning that no PRE replica
+				// would carry a link-local outer destination at this
+				// point.
+
+				if (is_egress_rid_mcast && hdr.geneve.isValid()) {
 					underlay_mcast_ctr.count(eg_intr_md.egress_port);
+				} else if (is_egress_rid_mcast) {
+					external_mcast_ctr.count(eg_intr_md.egress_port);
+				} else {
+					link_local_mcast_ctr.count(eg_intr_md.egress_port);
 				}
 			} else {
 				unicast_ctr.count(eg_intr_md.egress_port);
