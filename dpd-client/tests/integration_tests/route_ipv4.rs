@@ -65,7 +65,7 @@ async fn add_route(
     let route = router.build_route(switch);
     let route_add = build_route_update(cidr, &route, false);
 
-    client.route_ipv4_add(&route_add).await?;
+    client.route_ipv4_add(&DEFAULT_ROUTER, &route_add).await?;
     Ok(())
 }
 
@@ -88,7 +88,7 @@ async fn validate_routes(
     expected: &[types::Ipv4Route],
 ) -> TestResult {
     if expected.is_empty() {
-        match client.route_ipv4_get(&cidr).await {
+        match client.route_ipv4_get(&DEFAULT_ROUTER, cidr).await {
             Ok(f) => {
                 Err(anyhow!("found {} targets - expected no route", f.len()))
             }
@@ -96,7 +96,7 @@ async fn validate_routes(
         }
     } else {
         // Verify that the set of routes on the switch match those we just set
-        let found = client.route_ipv4_get(&cidr).await?;
+        let found = client.route_ipv4_get(&DEFAULT_ROUTER, cidr).await?;
         assert_eq!(found.len(), expected.len());
         for target in expected {
             assert!(
@@ -146,7 +146,7 @@ async fn test_deleted_route_ipv4_impl(switch: &Switch) -> TestResult {
     // Delete that route entry, and check that we cannot send out the egress
     // port.
     let cidr = "10.10.10.0/24".parse().unwrap();
-    switch.client.route_ipv4_delete(&cidr).await.unwrap();
+    switch.client.route_ipv4_delete(&DEFAULT_ROUTER, &cidr).await.unwrap();
 
     let to_send = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
@@ -348,7 +348,7 @@ async fn test_reset() -> TestResult {
     let limit = std::num::NonZeroU32::new(32).unwrap();
     let routes = switch
         .client
-        .route_ipv4_list(Some(limit), None)
+        .route_ipv4_list(&DEFAULT_ROUTER, Some(limit), None)
         .await
         .unwrap()
         .into_inner();
@@ -357,7 +357,7 @@ async fn test_reset() -> TestResult {
     switch.client.reset_all_tagged("failed").await.unwrap();
     let routes = switch
         .client
-        .route_ipv4_list(Some(limit), None)
+        .route_ipv4_list(&DEFAULT_ROUTER, Some(limit), None)
         .await
         .unwrap()
         .into_inner();
@@ -366,7 +366,7 @@ async fn test_reset() -> TestResult {
     switch.client.reset_all_tagged("test").await.unwrap();
     let routes = switch
         .client
-        .route_ipv4_list(Some(limit), None)
+        .route_ipv4_list(&DEFAULT_ROUTER, Some(limit), None)
         .await
         .unwrap()
         .into_inner();
@@ -390,15 +390,18 @@ async fn test_create_and_set_semantics_v4() -> TestResult {
     let route_set_33 = build_route_update(cidr, &route_33, false);
 
     // Setting a new route should work
-    client.route_ipv4_set(&route_set_47).await?;
+    client.route_ipv4_set(&DEFAULT_ROUTER, &route_set_47).await?;
     // Attempting to replace the route with "replace = false" should fail
-    client.route_ipv4_set(&route_set_33).await.expect_err("expected conflict");
+    client
+        .route_ipv4_set(&DEFAULT_ROUTER, &route_set_33)
+        .await
+        .expect_err("expected conflict");
     // Re-setting the existing route should succeed
-    client.route_ipv4_set(&route_set_47).await?;
+    client.route_ipv4_set(&DEFAULT_ROUTER, &route_set_47).await?;
 
     // Attempting to replace the route with "replace = true" should succeed
     let route_set_33 = build_route_update(cidr, &route_33, true);
-    client.route_ipv4_set(&route_set_33).await?;
+    client.route_ipv4_set(&DEFAULT_ROUTER, &route_set_33).await?;
     // Verify that the route was replaced correctly
     validate_routes(client, &cidr, &[route_33]).await
 }
@@ -464,6 +467,7 @@ async fn delete_ipv4_route_target(
     let tgt_ip: std::net::IpAddr = target.tgt_ip.into();
     client
         .route_ipv4_delete_target(
+            &DEFAULT_ROUTER,
             cidr,
             &target.port_id,
             &target.link_id,
@@ -517,7 +521,12 @@ async fn add_ipv4_route_target(
     cidr: Ipv4Net,
     route: &types::Ipv4Route,
 ) -> Result<(), dpd_client::Error<types::Error>> {
-    client.route_ipv4_add(&build_route_update(cidr, route, false)).await?;
+    client
+        .route_ipv4_add(
+            &DEFAULT_ROUTER,
+            &build_route_update(cidr, route, false),
+        )
+        .await?;
     Ok(())
 }
 
@@ -527,11 +536,14 @@ async fn add_ipv4_over_ipv6_route_target(
     route: &types::Ipv6Route,
 ) -> Result<(), dpd_client::Error<types::Error>> {
     client
-        .route_ipv4_add(&types::Ipv4RouteUpdate {
-            cidr,
-            target: types::RouteTarget::V6(route.clone()),
-            replace: false,
-        })
+        .route_ipv4_add(
+            &DEFAULT_ROUTER,
+            &types::Ipv4RouteUpdate {
+                cidr,
+                target: types::RouteTarget::V6(route.clone()),
+                replace: false,
+            },
+        )
         .await?;
     Ok(())
 }
@@ -764,7 +776,7 @@ async fn test_add_target_succeeds_when_table_fragmented_v4_over_v6()
     add_ipv4_over_ipv6_route_target(client, victim_cidr, &new_target).await?;
     victim_routes.push(new_target);
 
-    let found = client.route_ipv4_get(&victim_cidr).await?;
+    let found = client.route_ipv4_get(&DEFAULT_ROUTER, &victim_cidr).await?;
     assert_eq!(found.len(), victim_routes.len());
     for route in &victim_routes {
         assert!(found.contains(&types::Route::V6(route.clone())));
@@ -930,11 +942,17 @@ async fn test_v4_over_v6() -> TestResult {
     let tgt_ip: std::net::IpAddr = gw.into();
     switch
         .client
-        .route_ipv4_delete_target(&cidr, &port_id, &link_id, &tgt_ip)
+        .route_ipv4_delete_target(
+            &DEFAULT_ROUTER,
+            &cidr,
+            &port_id,
+            &link_id,
+            &tgt_ip,
+        )
         .await?;
     switch
         .client
-        .route_ipv4_get(&cidr)
+        .route_ipv4_get(&DEFAULT_ROUTER, &cidr)
         .await
         .expect_err("route should be gone after deleting its only target");
 
@@ -967,10 +985,10 @@ async fn test_v4_over_v6() -> TestResult {
     switch.packet_test(vec![send], vec![expected])?;
 
     // Delete the entire prefix and verify it is gone.
-    switch.client.route_ipv4_delete(&cidr).await?;
+    switch.client.route_ipv4_delete(&DEFAULT_ROUTER, &cidr).await?;
     switch
         .client
-        .route_ipv4_get(&cidr)
+        .route_ipv4_get(&DEFAULT_ROUTER, &cidr)
         .await
         .expect_err("route should be gone after deleting the prefix");
 
@@ -1039,16 +1057,15 @@ async fn test_multipath_mixed_delete() -> TestResult {
         types::RouteTarget::V6(v6_d.clone()),
     ] {
         client
-            .route_ipv4_add(&types::Ipv4RouteUpdate {
-                cidr,
-                target,
-                replace: false,
-            })
+            .route_ipv4_add(
+                &DEFAULT_ROUTER,
+                &types::Ipv4RouteUpdate { cidr, target, replace: false },
+            )
             .await?;
     }
 
     // Verify all four targets are present.
-    let found = client.route_ipv4_get(&cidr).await?;
+    let found = client.route_ipv4_get(&DEFAULT_ROUTER, &cidr).await?;
     assert_eq!(found.len(), 4);
     assert!(found.contains(&types::Route::V4(v4_a.clone())));
     assert!(found.contains(&types::Route::V6(v6_b.clone())));
@@ -1058,9 +1075,15 @@ async fn test_multipath_mixed_delete() -> TestResult {
     // Delete v6 target B — the two v4 targets and v6 target D should remain.
     let tgt_ip: IpAddr = v6_b.tgt_ip.into();
     client
-        .route_ipv4_delete_target(&cidr, &v6_b.port_id, &v6_b.link_id, &tgt_ip)
+        .route_ipv4_delete_target(
+            &DEFAULT_ROUTER,
+            &cidr,
+            &v6_b.port_id,
+            &v6_b.link_id,
+            &tgt_ip,
+        )
         .await?;
-    let found = client.route_ipv4_get(&cidr).await?;
+    let found = client.route_ipv4_get(&DEFAULT_ROUTER, &cidr).await?;
     assert_eq!(found.len(), 3);
     assert!(found.contains(&types::Route::V4(v4_a.clone())));
     assert!(found.contains(&types::Route::V4(v4_c.clone())));
@@ -1069,9 +1092,15 @@ async fn test_multipath_mixed_delete() -> TestResult {
     // Delete v4 target A — v4 target C and v6 target D should remain.
     let tgt_ip: IpAddr = v4_a.tgt_ip.into();
     client
-        .route_ipv4_delete_target(&cidr, &v4_a.port_id, &v4_a.link_id, &tgt_ip)
+        .route_ipv4_delete_target(
+            &DEFAULT_ROUTER,
+            &cidr,
+            &v4_a.port_id,
+            &v4_a.link_id,
+            &tgt_ip,
+        )
         .await?;
-    let found = client.route_ipv4_get(&cidr).await?;
+    let found = client.route_ipv4_get(&DEFAULT_ROUTER, &cidr).await?;
     assert_eq!(found.len(), 2);
     assert!(found.contains(&types::Route::V4(v4_c.clone())));
     assert!(found.contains(&types::Route::V6(v6_d.clone())));
@@ -1079,19 +1108,31 @@ async fn test_multipath_mixed_delete() -> TestResult {
     // Delete v6 target D — only v4 target C should remain.
     let tgt_ip: IpAddr = v6_d.tgt_ip.into();
     client
-        .route_ipv4_delete_target(&cidr, &v6_d.port_id, &v6_d.link_id, &tgt_ip)
+        .route_ipv4_delete_target(
+            &DEFAULT_ROUTER,
+            &cidr,
+            &v6_d.port_id,
+            &v6_d.link_id,
+            &tgt_ip,
+        )
         .await?;
-    let found = client.route_ipv4_get(&cidr).await?;
+    let found = client.route_ipv4_get(&DEFAULT_ROUTER, &cidr).await?;
     assert_eq!(found.len(), 1);
     assert!(found.contains(&types::Route::V4(v4_c.clone())));
 
     // Delete the last v4 target C — the route should be completely gone.
     let tgt_ip: IpAddr = v4_c.tgt_ip.into();
     client
-        .route_ipv4_delete_target(&cidr, &v4_c.port_id, &v4_c.link_id, &tgt_ip)
+        .route_ipv4_delete_target(
+            &DEFAULT_ROUTER,
+            &cidr,
+            &v4_c.port_id,
+            &v4_c.link_id,
+            &tgt_ip,
+        )
         .await?;
     client
-        .route_ipv4_get(&cidr)
+        .route_ipv4_get(&DEFAULT_ROUTER, &cidr)
         .await
         .expect_err("route should be gone after deleting all targets");
 

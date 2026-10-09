@@ -338,7 +338,7 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
         },
         replace: false,
     };
-    switch.client.route_ipv6_set(&route).await.unwrap();
+    switch.client.route_ipv6_set(&DEFAULT_ROUTER, &route).await.unwrap();
     common::add_neighbor_ipv6(switch, &test.gimlet_ip, gimlet_mac).await?;
 
     let load = vec![0xaau8, 0xbb, 0xcc, 0xdd, 0xee];

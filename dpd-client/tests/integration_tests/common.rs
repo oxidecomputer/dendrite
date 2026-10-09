@@ -23,6 +23,7 @@ use dpd_client::Client;
 use dpd_client::ClientInfo;
 use dpd_client::ClientState;
 use dpd_client::types;
+pub use dpd_types::route::DEFAULT_ROUTER;
 use packet::Endpoint;
 use packet::Packet;
 use packet::arp;
@@ -1107,13 +1108,13 @@ async fn set_route_ipv6_common(
     };
     switch
         .client
-        .route_ipv6_set(&route)
+        .route_ipv6_set(&DEFAULT_ROUTER, &route)
         .await
         .expect("Failed to add IPv6 route entry");
 
     let route = switch
         .client
-        .route_ipv6_get(&cidr)
+        .route_ipv6_get(&DEFAULT_ROUTER, &cidr)
         .await
         .expect("Failed to get just-added IPv6 route entry")
         .into_inner();
@@ -1201,13 +1202,13 @@ async fn set_route_ipv4_common(
     };
     switch
         .client
-        .route_ipv4_set(&route)
+        .route_ipv4_set(&DEFAULT_ROUTER, &route)
         .await
         .expect("Failed to add IPv4 route entry");
 
     let route = switch
         .client
-        .route_ipv4_get(&cidr)
+        .route_ipv4_get(&DEFAULT_ROUTER, &cidr)
         .await
         .expect("failed to get just-added IPv4 route entry")
         .into_inner();
@@ -1256,13 +1257,13 @@ async fn set_route_ipv4_over_ipv6_common(
     };
     switch
         .client
-        .route_ipv4_set(&route)
+        .route_ipv4_set(&DEFAULT_ROUTER, &route)
         .await
         .expect("Failed to add IPv4 route entry");
 
     let route = switch
         .client
-        .route_ipv4_get(&cidr)
+        .route_ipv4_get(&DEFAULT_ROUTER, &cidr)
         .await
         .expect("failed to get just-added IPv4 route entry")
         .into_inner();
@@ -1443,6 +1444,7 @@ pub fn gen_arp_reply(src: Endpoint, tgt: Endpoint) -> Packet {
 
 pub mod prelude {
     pub use super::ADMIN_LOCAL_MULTICAST_PREFIX;
+    pub use super::DEFAULT_ROUTER;
     pub use super::NO_PORT;
     pub use super::PhysPort;
     pub use super::SERVICE_PORT;

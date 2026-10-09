@@ -7,3 +7,4 @@ edition = "2024"
 dpd-types-versions.workspace = true
 dropshot.workspace = true
 dropshot-api-manager-types.workspace = true
+uuid.workspace = true

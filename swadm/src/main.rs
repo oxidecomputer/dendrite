@@ -11,6 +11,7 @@ use std::str::FromStr;
 use anyhow::Context;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use uuid::Uuid;
 
 use dpd_client::Client;
 use dpd_client::ClientState;
@@ -25,6 +26,7 @@ mod counters;
 mod link;
 mod nat;
 mod route;
+mod router;
 mod snapshot;
 mod switchport;
 mod table;
@@ -55,12 +57,19 @@ enum Commands {
         cmd: arp::Arp,
     },
     Route {
+        /// router to operate on (nil uuid = default)
+        #[clap(long, global = true, default_value_t = Uuid::nil())]
+        router_id: Uuid,
         #[command(subcommand)]
         cmd: route::Route,
     },
     Addr {
         #[command(subcommand)]
         cmd: addr::Addr,
+    },
+    Router {
+        #[command(subcommand)]
+        cmd: router::Router,
     },
     Nat {
         #[command(subcommand)]
@@ -237,8 +246,11 @@ async fn main_impl() -> anyhow::Result<()> {
     match opts.cmd {
         Commands::DpdBuildInfo => build_info(&client).await,
         Commands::Arp { cmd: a } => arp::arp_cmd(&client, a).await,
-        Commands::Route { cmd: r } => route::route_cmd(&client, r).await,
+        Commands::Route { router_id, cmd: r } => {
+            route::route_cmd(&client, router_id, r).await
+        }
         Commands::Addr { cmd: p } => addr::addr_cmd(&client, p).await,
+        Commands::Router { cmd } => router::router_cmd(&client, cmd).await,
         Commands::AttachedSubnet { cmd: p } => {
             attached::attsub_cmd(&client, p).await
         }

@@ -54,7 +54,7 @@ use dpd_types::route::{
     AttachedSubnetToken, Ipv4RouteToken, Ipv4RouteUpdate, Ipv4Routes,
     Ipv6Route, Ipv6RouteToken, Ipv6RouteUpdate, Ipv6Routes, Route, RoutePathV4,
     RoutePathV6, RouteTarget, RouteTargetIpv4Path, RouteTargetIpv6Path,
-    SubnetPath,
+    RouterPath, SubnetPath,
 };
 use dpd_types::serdes::{
     AnLtStatus, Ber, DfeAdaptationState, EncSpeed, LaneMap, RxSigInfo,
@@ -104,10 +104,12 @@ use crate::counters;
 use crate::mcast;
 use crate::nat;
 use crate::oxstats;
+use crate::router::RouterUuid;
+use crate::router::RoutingTableId;
 use crate::rpw::Task;
 use crate::switch_port::FixedSideDevice;
 use crate::types::DpdError;
-use crate::{Switch, arp, loopback, ports, route};
+use crate::{Switch, arp, loopback, ports, route, router};
 use common::attached_subnet::AttachedSubnetEntry;
 use common::nat::{Ipv4Nat, Ipv6Nat};
 use common::network::{InstanceTarget, MacAddr, NatTarget};
@@ -115,6 +117,7 @@ use common::ports::PortId;
 use common::ports::QsfpPort;
 use common::ports::{Ipv4Entry, Ipv6Entry, PortPrbsMode};
 use dpd_api::*;
+use uuid::Uuid;
 
 type ApiServer = dropshot::HttpServer<Arc<Switch>>;
 
@@ -331,9 +334,11 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv6_list(
         rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
         query: Query<PaginationParams<EmptyScanParams, Ipv6RouteToken>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv6Routes>>, HttpError> {
         let switch: &Switch = rqctx.context();
+        let router = RouterUuid::from(path.into_inner().router_id);
         let pag_params = query.into_inner();
         let max = rqctx.page_limit(&pag_params)?.get();
 
@@ -342,7 +347,7 @@ impl DpdApi for DpdApiImpl {
             WhichPage::Next(Ipv6RouteToken { cidr }) => Some(*cidr),
         };
 
-        route::get_range_ipv6(switch, previous, max)
+        route::get_range_ipv6(switch, router, previous, max)
             .await
             .map_err(HttpError::from)
             .and_then(|entries| {
@@ -360,8 +365,8 @@ impl DpdApi for DpdApiImpl {
         path: Path<RoutePathV6>,
     ) -> Result<HttpResponseOk<Vec<Ipv6Route>>, HttpError> {
         let switch: &Switch = rqctx.context();
-        let cidr = path.into_inner().cidr;
-        route::get_route_ipv6(switch, cidr)
+        let path = path.into_inner();
+        route::get_route_ipv6(switch, path.router_id.into(), path.cidr)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -369,11 +374,13 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv6_add(
         rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
         update: TypedBody<Ipv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
+        let router = RouterUuid::from(path.into_inner().router_id);
         let route = update.into_inner();
-        route::add_route_ipv6(switch, route.cidr, route.target)
+        route::add_route_ipv6(switch, router, route.cidr, route.target)
             .await
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(HttpError::from)
@@ -381,14 +388,22 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv6_set(
         rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
         update: TypedBody<Ipv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
+        let router = RouterUuid::from(path.into_inner().router_id);
         let route = update.into_inner();
-        route::set_route_ipv6(switch, route.cidr, route.target, route.replace)
-            .await
-            .map(|_| HttpResponseUpdatedNoContent())
-            .map_err(HttpError::from)
+        route::set_route_ipv6(
+            switch,
+            router,
+            route.cidr,
+            route.target,
+            route.replace,
+        )
+        .await
+        .map(|_| HttpResponseUpdatedNoContent())
+        .map_err(HttpError::from)
     }
 
     async fn route_ipv6_delete(
@@ -396,8 +411,8 @@ impl DpdApi for DpdApiImpl {
         path: Path<RoutePathV6>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
-        let cidr = path.into_inner().cidr;
-        route::delete_route_ipv6(switch, cidr)
+        let path = path.into_inner();
+        route::delete_route_ipv6(switch, path.router_id.into(), path.cidr)
             .await
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
@@ -414,7 +429,12 @@ impl DpdApi for DpdApiImpl {
         let link_id = path.link_id;
         let tgt_ip = path.tgt_ip;
         route::delete_route_target_ipv6(
-            switch, subnet, port_id, link_id, tgt_ip,
+            switch,
+            path.router_id.into(),
+            subnet,
+            port_id,
+            link_id,
+            tgt_ip,
         )
         .await
         .map(|_| HttpResponseDeleted())
@@ -423,9 +443,11 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv4_list(
         rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
         query: Query<PaginationParams<EmptyScanParams, Ipv4RouteToken>>,
     ) -> Result<HttpResponseOk<ResultsPage<Ipv4Routes>>, HttpError> {
         let switch: &Switch = rqctx.context();
+        let router = RouterUuid::from(path.into_inner().router_id);
         let pag_params = query.into_inner();
         let max = rqctx.page_limit(&pag_params)?.get();
 
@@ -434,7 +456,7 @@ impl DpdApi for DpdApiImpl {
             WhichPage::Next(Ipv4RouteToken { cidr }) => Some(*cidr),
         };
 
-        route::get_range_ipv4(switch, previous, max)
+        route::get_range_ipv4(switch, router, previous, max)
             .await
             .map_err(HttpError::from)
             .and_then(|entries| {
@@ -452,8 +474,8 @@ impl DpdApi for DpdApiImpl {
         path: Path<RoutePathV4>,
     ) -> Result<HttpResponseOk<Vec<Route>>, HttpError> {
         let switch: &Switch = rqctx.context();
-        let cidr = path.into_inner().cidr;
-        route::get_route_ipv4(switch, cidr)
+        let path = path.into_inner();
+        route::get_route_ipv4(switch, path.router_id.into(), path.cidr)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -461,17 +483,21 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv4_add(
         rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
         update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
+        let router = RouterUuid::from(path.into_inner().router_id);
         let route = update.into_inner();
         match route.target {
             RouteTarget::V4(target) => {
-                route::add_route_ipv4(switch, route.cidr, target).await
+                route::add_route_ipv4(switch, router, route.cidr, target).await
             }
             RouteTarget::V6(target) => {
-                route::add_route_ipv4_over_ipv6(switch, route.cidr, target)
-                    .await
+                route::add_route_ipv4_over_ipv6(
+                    switch, router, route.cidr, target,
+                )
+                .await
             }
         }
         .map(|_| HttpResponseUpdatedNoContent())
@@ -480,18 +506,27 @@ impl DpdApi for DpdApiImpl {
 
     async fn route_ipv4_set(
         rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
         update: TypedBody<Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
+        let router = RouterUuid::from(path.into_inner().router_id);
         let route = update.into_inner();
         match route.target {
             RouteTarget::V4(target) => {
-                route::set_route_ipv4(switch, route.cidr, target, route.replace)
-                    .await
+                route::set_route_ipv4(
+                    switch,
+                    router,
+                    route.cidr,
+                    target,
+                    route.replace,
+                )
+                .await
             }
             RouteTarget::V6(target) => {
                 route::set_route_ipv4_over_ipv6(
                     switch,
+                    router,
                     route.cidr,
                     target,
                     route.replace,
@@ -508,8 +543,8 @@ impl DpdApi for DpdApiImpl {
         path: Path<RoutePathV4>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
-        let cidr = path.into_inner().cidr;
-        route::delete_route_ipv4(switch, cidr)
+        let path = path.into_inner();
+        route::delete_route_ipv4(switch, path.router_id.into(), path.cidr)
             .await
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
@@ -523,6 +558,7 @@ impl DpdApi for DpdApiImpl {
         let path = path.into_inner();
         route::delete_route_target_ipv4(
             switch,
+            path.router_id.into(),
             path.cidr,
             path.port_id,
             path.link_id,
@@ -1388,8 +1424,10 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let addr = val.into_inner();
-
-        loopback::add_loopback_ipv6(switch, &addr)?;
+        // We refuse loopbacks that are already taken by routers.
+        let route_data = switch.routes.lock().await;
+        route_data.routers.check_not_endpoint(addr.addr)?;
+        loopback::add_loopback_ipv6(switch, &addr, RoutingTableId::default())?;
 
         Ok(HttpResponseUpdatedNoContent {})
     }
@@ -1400,9 +1438,62 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
         let addr = path.into_inner();
+        // A router's endpoint is only removed when deleting the router.
+        let route_data = switch.routes.lock().await;
+        route_data.routers.check_not_endpoint(addr.ipv6)?;
         loopback::delete_loopback_ipv6(switch, &addr.ipv6)
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
+    }
+
+    async fn router_list(
+        rqctx: RequestContext<Arc<Switch>>,
+    ) -> Result<HttpResponseOk<BTreeMap<Uuid, Ipv6Addr>>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        Ok(HttpResponseOk(switch.routes.lock().await.routers.list()))
+    }
+
+    async fn router_get(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
+    ) -> Result<HttpResponseOk<Ipv6Addr>, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let route_data = switch.routes.lock().await;
+        route_data
+            .routers
+            .endpoint(path.into_inner().router_id.into())
+            .map(HttpResponseOk)
+            .map_err(HttpError::from)
+    }
+
+    async fn router_create(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
+        endpoint: TypedBody<Ipv6Addr>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let router = RouterUuid::from(path.into_inner().router_id);
+        let mut route_data = switch.routes.lock().await;
+        route_data
+            .routers
+            .create(switch, router, endpoint.into_inner())
+            .map(|_| HttpResponseUpdatedNoContent())
+            .map_err(HttpError::from)
+    }
+
+    async fn router_delete(
+        rqctx: RequestContext<Arc<Switch>>,
+        path: Path<RouterPath>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        let switch: &Switch = rqctx.context();
+        let mut route_data = switch.routes.lock().await;
+        router::delete(
+            switch,
+            &mut route_data,
+            path.into_inner().router_id.into(),
+        )
+        .map(|_| HttpResponseDeleted())
+        .map_err(HttpError::from)
     }
 
     async fn nat_ipv6_addresses_list(
@@ -1728,6 +1819,11 @@ impl DpdApi for DpdApiImpl {
         }
         if let Err(e) = arp::reset_ipv6(switch) {
             error!(switch.log, "failed to reset ipv6 arp table: {:?}", e);
+            err = Some(e);
+        }
+        if let Err(e) = router::reset(switch, &mut *switch.routes.lock().await)
+        {
+            error!(switch.log, "failed to reset routers: {:?}", e);
             err = Some(e);
         }
         if let Err(e) = route::reset(switch).await {

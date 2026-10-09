@@ -16,5 +16,6 @@ mod nat;
 mod port_api;
 mod route_ipv4;
 mod route_ipv6;
+mod router;
 mod service;
 mod table_tests;

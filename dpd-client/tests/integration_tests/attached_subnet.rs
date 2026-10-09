@@ -226,7 +226,7 @@ async fn test_ingress(switch: &Switch, test: &ExternalTest) -> TestResult {
 
     // Add the route to the gimlet over the backplane, and populate the neighbor
     // table with its mac address.
-    switch.client.route_ipv6_set(&route).await.unwrap();
+    switch.client.route_ipv6_set(&DEFAULT_ROUTER, &route).await.unwrap();
     common::add_neighbor_ipv6(switch, &test.gimlet_ip, gimlet_mac).await?;
 
     // Set up an external subnet owned by an instance on the test gimlet
