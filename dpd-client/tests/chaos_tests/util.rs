@@ -18,6 +18,31 @@ use dpd_client::Client;
 use dpd_client::types::Ipv4Entry;
 use dpd_client::types::Ipv6Entry;
 
+/// Returns a string of the calling function's name without
+/// any parent path.
+#[macro_export]
+macro_rules! fname {
+    () => {{
+        fn f() {}
+        let path = ::std::any::type_name_of_val(&f);
+        path.rsplit("::")
+            .filter(|name| *name != "{{closure}}")
+            .nth(1)
+            .expect("fname must be called inside a function")
+    }};
+}
+
+/// Hashes the name of this function into a u64.
+#[macro_export]
+macro_rules! fname_hash {
+    () => {{
+        let mut hasher = ::std::hash::DefaultHasher::new();
+        let name = $crate::fname!();
+        ::std::hash::Hash::hash(&name, &mut hasher);
+        ::std::hash::Hasher::finish(&hasher)
+    }};
+}
+
 pub(crate) async fn link_list_ipv4(
     client: &Client,
     port: &str,
@@ -169,5 +194,35 @@ mod util_tests {
         let one = rng.unique_ipv6();
         let two = rng.unique_ipv6();
         assert_ne!(one, two);
+    }
+
+    /// Verifies [`this_fn`] correctly extracts the calling function's name.
+    #[test]
+    fn test_fname() {
+        assert_eq!(fname!(), "test_fname");
+        let test_closure = || {
+            assert_eq!(fname!(), "test_fname");
+        };
+        test_closure();
+    }
+
+    /// Verifies [`fname_hash`] stably hashes to unique values.
+    #[test]
+    fn test_fname_hash() {
+        fn one() -> u64 {
+            fname_hash!()
+        }
+
+        fn two() -> u64 {
+            fname_hash!()
+        }
+
+        fn three() -> u64 {
+            fname_hash!()
+        }
+
+        assert_ne!(one(), two());
+        assert_ne!(one(), three());
+        assert_ne!(two(), three());
     }
 }

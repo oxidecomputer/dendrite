@@ -14,6 +14,7 @@ use crate::chaos_tests::util::HttpResponseCheck;
 use crate::chaos_tests::util::IpRng;
 use crate::chaos_tests::util::retry;
 use crate::chaos_tests::util::retry::ReturnCode;
+use crate::{fname, fname_hash};
 
 use anyhow::Context;
 use asic::chaos::{AsicConfig, Chaos, TableChaos};
@@ -28,7 +29,7 @@ use http::status::StatusCode;
 use pretty_assertions::{Comparison, assert_eq};
 use rand::Rng;
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -69,7 +70,7 @@ async fn test_basic_autoneg_chaos() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    let (_guard, client) = init_harness("autoneg", &config);
+    let (_guard, client) = init_harness(fname!(), &config);
 
     let err = client
         .link_create(&QSFP0, &LINK_CREATE)
@@ -93,7 +94,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    let (_guard, client) = init_harness("addr-fail-1", &config);
+    let (_guard, client) = init_harness(fname!(), &config);
 
     let mut settings = PortSettings { links: HashMap::new() };
 
@@ -123,7 +124,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
 async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
     let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
 
-    let (_guard, client) = init_harness("addr-success", &config);
+    let (_guard, client) = init_harness(fname!(), &config);
 
     let mut settings = PortSettings { links: HashMap::new() };
 
@@ -148,7 +149,7 @@ async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
-    let (_guard, client) = init_harness("addr-success-multi", &config);
+    let (_guard, client) = init_harness(fname!(), &config);
 
     // Start with a link that has one IPv4 address.
 
@@ -266,7 +267,7 @@ const OPERATION_FAILURE_RATE: f64 = 0.1;
 #[tokio::test]
 async fn test_port_settings_txn_sweep() -> anyhow::Result<()> {
     let config = AsicConfig::uniform_set(TESTING_RADIX, OPERATION_FAILURE_RATE);
-    let (_guard, client) = init_harness("txn-sweep", &config);
+    let (_guard, client) = init_harness(fname!(), &config);
 
     let mut success = 0;
     let mut fail = 0;
@@ -464,9 +465,8 @@ fn random_port_settings() -> PortSettings {
 #[tokio::test]
 async fn settings_eventually_reconcile() -> anyhow::Result<()> {
     let config = AsicConfig::uniform_set(TESTING_RADIX, 0.4);
-    let (_guard, client) =
-        harness::init_harness("settings_eventually_reconcile", &config);
-    let mut rng = IpRng::new(1046);
+    let (_guard, client) = harness::init_harness(fname!(), &config);
+    let mut rng = IpRng::new(fname_hash!());
 
     let settings = PortSettings {
         links: [(
@@ -547,10 +547,9 @@ Reconciliation retries:
 #[tokio::test]
 async fn settings_apply_respects_tags() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
-    let (_guard, client) =
-        harness::init_harness("settings_apply_respects_tags", &no_failures);
+    let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
-    let mut rng = IpRng::new(12345);
+    let mut rng = IpRng::new(fname_hash!());
     let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
 
     let cxt = TestContext::new(&client, QSFP0.clone(), link_id);
@@ -586,7 +585,7 @@ async fn settings_rollback_respects_tags() -> anyhow::Result<()> {
     ];
 
     let (_guard, client) = harness::init_harness(
-        "settings_rollback_respects_tags",
+        fname!(),
         &AsicConfig {
             radix: TESTING_RADIX,
             table_entry_add: table_fail.clone(),
@@ -595,7 +594,7 @@ async fn settings_rollback_respects_tags() -> anyhow::Result<()> {
         },
     );
 
-    let mut rng = IpRng::new(1308);
+    let mut rng = IpRng::new(fname_hash!());
     let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
 
     let cxt = TestContext::new(&client, QSFP0.clone(), link_id);
@@ -722,10 +721,9 @@ impl AddrCheck {
 #[tokio::test]
 async fn address_cmds_respect_tags() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
-    let (_guard, client) =
-        harness::init_harness("address_cmds_respect_tags", &no_failures);
+    let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
-    let mut rng = IpRng::new(54321);
+    let mut rng = IpRng::new(fname_hash!());
 
     let cxt = TestContext::new(&client, QSFP0.clone(), LINK0);
     let tag1 = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
@@ -774,10 +772,9 @@ async fn address_cmds_respect_tags() -> anyhow::Result<()> {
 #[tokio::test]
 async fn settings_clear_ignores_tags() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
-    let (_guard, client) =
-        harness::init_harness("settings_clear_ignores_tags", &no_failures);
+    let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
-    let mut rng = IpRng::new(1010101);
+    let mut rng = IpRng::new(fname_hash!());
     let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
 
     let cxt = TestContext::new(&client, QSFP0.clone(), link_id);
@@ -808,9 +805,8 @@ async fn settings_clear_ignores_tags() -> anyhow::Result<()> {
 #[tokio::test]
 async fn create_addr_rejects_theft() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
-    let (_guard, client) =
-        harness::init_harness("create_addr_rejects_theft", &no_failures);
-    let mut rng = IpRng::new(1433);
+    let (_guard, client) = harness::init_harness(fname!(), &no_failures);
+    let mut rng = IpRng::new(fname_hash!());
     let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
 
     let cxt = TestContext::new(&client, QSFP0.clone(), link_id);
@@ -874,9 +870,8 @@ async fn create_addr_rejects_theft() -> anyhow::Result<()> {
 #[tokio::test]
 async fn deleted_address_must_exist() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
-    let (_guard, client) =
-        harness::init_harness("delete_addr_conflicts", &no_failures);
-    let mut rng = IpRng::new(1516);
+    let (_guard, client) = harness::init_harness(fname!(), &no_failures);
+    let mut rng = IpRng::new(fname_hash!());
 
     let cxt = TestContext::new(&client, QSFP0.clone(), LINK0);
     let tag1 = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
@@ -915,9 +910,8 @@ async fn deleted_address_must_exist() -> anyhow::Result<()> {
 #[tokio::test]
 async fn apply_implicit_delete() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
-    let (_guard, client) =
-        harness::init_harness("apply_implicit_delete", &no_failures);
-    let mut rng = IpRng::new(1548);
+    let (_guard, client) = harness::init_harness(fname!(), &no_failures);
+    let mut rng = IpRng::new(fname_hash!());
 
     let cxt1 = TestContext::new(&client, QSFP0.clone(), LinkId(1));
     let cxt2 = TestContext::new(&client, QSFP0.clone(), LinkId(2));
@@ -944,9 +938,8 @@ async fn apply_implicit_delete() -> anyhow::Result<()> {
 #[tokio::test]
 async fn apply_allows_multiple_tags() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
-    let (_guard, client) =
-        harness::init_harness("apply_tag_conflict", &no_failures);
-    let mut rng = IpRng::new(1616);
+    let (_guard, client) = harness::init_harness(fname!(), &no_failures);
+    let mut rng = IpRng::new(fname_hash!());
 
     let cxt = TestContext::new(&client, QSFP0.clone(), LINK0);
     let tag1 = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
@@ -1013,9 +1006,8 @@ async fn partial_failures_are_recoverable() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    let (_guard, client) =
-        harness::init_harness("partial_failures_are_recoverable", &conf);
-    let mut rng = IpRng::new(731);
+    let (_guard, client) = harness::init_harness(fname!(), &conf);
+    let mut rng = IpRng::new(fname_hash!());
 
     let cxt = TestContext::new(&client, QSFP0.clone(), LINK0);
     let addrs = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
@@ -1074,7 +1066,7 @@ async fn link_init_recovers() -> anyhow::Result<()> {
         table_entry_add: table_chaos!((TableType::McastEgressPortMapping, 0.8)),
         ..Default::default()
     };
-    let (_guard, client) = harness::init_harness("link_init_recovers", &conf);
+    let (_guard, client) = harness::init_harness(fname!(), &conf);
 
     let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
 
@@ -1104,9 +1096,8 @@ async fn link_init_recovers() -> anyhow::Result<()> {
 #[tokio::test]
 async fn link_addrs_are_isolated() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
-    let (_guard, client) =
-        harness::init_harness("link_addrs_are_isolated", &no_failures);
-    let mut rng = IpRng::new(2238);
+    let (_guard, client) = harness::init_harness(fname!(), &no_failures);
+    let mut rng = IpRng::new(fname_hash!());
 
     let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
 
@@ -1134,9 +1125,8 @@ async fn link_addrs_are_isolated() -> anyhow::Result<()> {
 #[tokio::test]
 async fn loopback_addrs_are_isolated() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
-    let (_guard, client) =
-        harness::init_harness("loopback_addrs_are_isolated", &no_failures);
-    let mut rng = IpRng::new(2250);
+    let (_guard, client) = harness::init_harness(fname!(), &no_failures);
+    let mut rng = IpRng::new(fname_hash!());
 
     let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
 
@@ -1185,9 +1175,8 @@ async fn deletion_doesnt_leak_table_entries() -> anyhow::Result<()> {
         table_entry_del: table_chaos!((TableType::PortAddrIpv4, 1.0)),
         ..Default::default()
     };
-    let (_guard, client) =
-        harness::init_harness("deletion_doesnt_leak_table_entries", &config);
-    let mut rng = IpRng::new(1227);
+    let (_guard, client) = harness::init_harness(fname!(), &config);
+    let mut rng = IpRng::new(fname_hash!());
 
     let cxt = TestContext::new(&client, QSFP0.clone(), LINK0);
     let tag1 = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
@@ -1228,8 +1217,8 @@ async fn deletion_prevails() -> anyhow::Result<()> {
         ],
         ..Default::default()
     };
-    let (_guard, client) = harness::init_harness("deletion_prevails", &config);
-    let mut rng = IpRng::new(1227);
+    let (_guard, client) = harness::init_harness(fname!(), &config);
+    let mut rng = IpRng::new(fname_hash!());
 
     let cxt = TestContext::new(&client, QSFP0.clone(), LINK0);
     let tag1 = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
@@ -1283,12 +1272,11 @@ async fn deletion_prevails() -> anyhow::Result<()> {
 #[tokio::test]
 async fn loopback_cannot_steal_addrs() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
-    let (_guard, client) =
-        harness::init_harness("loopback_cannot_steal_addrs", &no_failures);
+    let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let port1: PortId = "qsfp0".parse()?;
     let port2: PortId = "qsfp1".parse()?;
-    let mut rng = IpRng::new(1404);
+    let mut rng = IpRng::new(fname_hash!());
 
     let cxt1 = TestContext::new(&client, port1.clone(), LINK0);
     let cxt2 = TestContext::new(&client, port2.clone(), LINK0);
@@ -1355,19 +1343,89 @@ async fn loopback_cannot_steal_addrs() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Verifies CRUD actions with multiple tags on a single address.
+#[tokio::test]
+async fn basic_multiple_tag_crud() -> anyhow::Result<()> {
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let (_guard, client) = harness::init_harness(fname!(), &no_failures);
+
+    let mut rng = IpRng::new(fname_hash!());
+    let v4 = rng.unique_ipv4();
+    let v6 = rng.unique_ipv6();
+    let tags: [Cow<'static, str>; 10] =
+        std::array::from_fn(|idx| format!("chaos{idx}").into());
+
+    let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?;
+    let cxt = TestContext::new(&client, QSFP0.clone(), LINK0);
+    let mut registered = BTreeSet::new();
+
+    for tag in tags {
+        let v4_entry = Ipv4Entry { addr: v4, tag: tag.as_ref().to_string() };
+        let v6_entry = Ipv6Entry { addr: v6, tag: tag.as_ref().to_string() };
+
+        client.link_ipv4_create(&QSFP0, &link_id, &v4_entry).await?;
+        client
+            .link_ipv4_create(&QSFP0, &link_id, &v4_entry)
+            .await
+            .expect_err("duplicate v4 reg should fail")
+            .expect_status(StatusCode::CONFLICT);
+
+        client.link_ipv6_create(&QSFP0, &link_id, &v6_entry).await?;
+        client
+            .link_ipv6_create(&QSFP0, &link_id, &v6_entry)
+            .await
+            .expect_err("duplicate v6 reg should fail")
+            .expect_status(StatusCode::CONFLICT);
+
+        registered.insert((tag.clone(), v4.into()));
+        registered.insert((tag, v6.into()));
+
+        let fetched = cxt.fetch_all_addrs().await?;
+        assert_eq!(
+            registered, fetched,
+            "fetched addrs should match what was registered"
+        );
+
+        // TODO::cory: revive this once dpd api supports tags in page tokens
+        // Verify pagination works identically.
+        // let one = NonZeroU32::new(1).unwrap();
+        // let mut fetched_stream: BTreeSet<(Cow<'static, str>, IpAddr)> = cxt
+        //     .client
+        //     .link_ipv4_list_stream(&cxt.port_id, &cxt.link_id, Some(one))
+        //     .map_ok(|entry| (entry.tag.into(), entry.addr.into()))
+        //     .try_collect()
+        //     .await?;
+
+        // let mut v6s = cxt.client.link_ipv6_list_stream(
+        //     &cxt.port_id,
+        //     &cxt.link_id,
+        //     Some(one),
+        // );
+        // while let Some(entry) = v6s.next().await {
+        //     let entry = entry?;
+        //     fetched_stream.insert((entry.tag.into(), entry.addr.into()));
+        // }
+        // assert_eq!(
+        //     fetched, fetched_stream,
+        //     "addr fetch must be identical with and without stream"
+        // );
+    }
+
+    // TODO::cory: finish this once we support tagged deletion.
+
+    Ok(())
+}
+
 /// Verifies that one link with one tag cannot register an
 /// address belonging to another link with another tag.
 #[tokio::test]
 async fn links_cannot_steal_addrs_across_tags() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
-    let (_guard, client) = harness::init_harness(
-        "links_cannot_steal_addrs_across_tags",
-        &no_failures,
-    );
+    let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let port1: PortId = "qsfp0".parse()?;
     let port2: PortId = "qsfp1".parse()?;
-    let mut rng = IpRng::new(1404);
+    let mut rng = IpRng::new(fname_hash!());
 
     let cxt1 = TestContext::new(&client, port1, LINK0);
     let cxt2 = TestContext::new(&client, port2, LINK0);
@@ -1394,8 +1452,7 @@ async fn link_state_sanity_check_err() -> anyhow::Result<()> {
         port_enable_set: Chaos::new(1.),
         ..Default::default()
     };
-    let (_guard, client) =
-        harness::init_harness("link_state_sanity_check_err", &fail_enable);
+    let (_guard, client) = harness::init_harness(fname!(), &fail_enable);
 
     self::link_state_sanity_check(&client, |state| match state {
         LinkState::ConfigError(_) => Ok(()),
@@ -1413,8 +1470,7 @@ async fn link_state_sanity_check_err() -> anyhow::Result<()> {
 #[tokio::test]
 async fn link_state_sanity_check_ok() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
-    let (_guard, client) =
-        harness::init_harness("link_state_sanity_check_ok", &no_failures);
+    let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     self::link_state_sanity_check(&client, |state| match state {
         LinkState::Up => Ok(()),
@@ -1434,7 +1490,7 @@ async fn link_state_sanity_check(
     client: &Client,
     check_link: impl Fn(&LinkState) -> Result<(), retry::ReturnCode>,
 ) -> anyhow::Result<()> {
-    let mut rng = IpRng::new(1606);
+    let mut rng = IpRng::new(fname_hash!());
 
     let cxt = TestContext::new(client, QSFP0.clone(), LINK0);
     let cmd = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
@@ -1488,8 +1544,8 @@ expected: {expected:#?}"
     /// Returns all addresses belonging to this link regardless of tag.
     async fn fetch_all_addrs(
         &self,
-    ) -> anyhow::Result<HashSet<(Cow<'static, str>, IpAddr)>> {
-        let mut fetched: HashSet<_> = self
+    ) -> anyhow::Result<BTreeSet<(Cow<'static, str>, IpAddr)>> {
+        let mut fetched: BTreeSet<_> = self
             .client
             .link_ipv4_list(&self.port_id, &self.link_id, None, None)
             .await?
