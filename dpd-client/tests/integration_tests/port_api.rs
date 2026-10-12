@@ -7,8 +7,13 @@
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
+use std::sync::LazyLock;
 
 use anyhow::anyhow;
+use dpd_client::types::LinkCreate;
+use dpd_client::types::LinkId;
+use dpd_client::types::PortFec;
+use dpd_client::types::PortSpeed;
 use futures::TryStreamExt;
 use reqwest::StatusCode;
 

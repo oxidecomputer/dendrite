@@ -42,7 +42,7 @@ fn set_ingress_uplink(s: &Switch, port: u16) -> DpdResult<()> {
     let match_key = IngressMatchKey { in_port: port };
     let action_data = IngressAction::UplinkPort;
 
-    match s.table_entry_add(TableType::UplinkIngress, &match_key, &action_data)
+    match s.table_entry_set(TableType::UplinkIngress, &match_key, &action_data)
     {
         Ok(_) => {
             info!(s.log, "set uplink on {}", port);
@@ -58,7 +58,7 @@ fn set_ingress_uplink(s: &Switch, port: u16) -> DpdResult<()> {
 fn clear_ingress_uplink(s: &Switch, port: u16) -> DpdResult<()> {
     let match_key = IngressMatchKey { in_port: port };
 
-    match s.table_entry_del(TableType::UplinkIngress, &match_key) {
+    match s.table_entry_clear(TableType::UplinkIngress, &match_key) {
         Ok(_) => {
             info!(s.log, "cleared uplink on {}", port);
             Ok(())
@@ -77,7 +77,7 @@ pub fn uplink_set(s: &Switch, port: u16) -> DpdResult<()> {
     let match_key = EgressMatchKey { out_port: port };
     let action_data = EgressAction::Allowed;
 
-    match s.table_entry_add(TableType::UplinkEgress, &match_key, &action_data) {
+    match s.table_entry_set(TableType::UplinkEgress, &match_key, &action_data) {
         Ok(_) => {
             info!(s.log, "set guest_traffic_allowed on {}", port);
             Ok(())
@@ -94,11 +94,12 @@ pub fn uplink_set(s: &Switch, port: u16) -> DpdResult<()> {
 }
 
 /// Remove an entry from the uplink tables.
+/// Returns Ok if the entry was not found.
 pub fn uplink_clear(s: &Switch, port: u16) -> DpdResult<()> {
     clear_ingress_uplink(s, port)?;
 
     let match_key = EgressMatchKey { out_port: port };
-    match s.table_entry_del(TableType::UplinkEgress, &match_key) {
+    match s.table_entry_clear(TableType::UplinkEgress, &match_key) {
         Ok(_) => {
             info!(s.log, "cleared guest_traffic_allowed on {}", port);
             Ok(())
