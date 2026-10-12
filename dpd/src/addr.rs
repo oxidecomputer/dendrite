@@ -6,7 +6,6 @@
 
 use std::collections::BTreeSet;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::collections::hash_map;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
@@ -25,11 +24,7 @@ use crate::DpdResult;
 use crate::Switch;
 use crate::table::port_ip;
 
-// TODO::cory: allow multiple tags to claim a link.
-// - Test: Register, get, register, get, delete, get, delete, get
-// - Test: List returns all (addr, tag) tuples
-// - Proptest
-// - Test that exposes link_ipv*_list dropping entries partially with multiple tags
+// TODO::cory: proptest
 
 /// A helper trait for converting to and from [`std::net::IpAddr`].
 pub trait IpAddrLike: Sized + Copy + Into<IpAddr> {
@@ -238,7 +233,7 @@ impl AddrMap {
     pub fn iter_by_iface<'a, A: IpAddrLike + 'a>(
         &'a self,
         iface: AsicAddrIface,
-    ) -> impl Iterator<Item = (&'a A, &'a HashSet<String>)> + 'a {
+    ) -> impl Iterator<Item = (&'a A, &'a BTreeSet<String>)> + 'a {
         let iface_id = iface.into();
         self.iface_to_addr
             .get(&iface_id)
@@ -325,7 +320,7 @@ impl AddrMap {
         &'a self,
         iface: AsicAddrIface,
         bounds: impl RangeBounds<IpAddr> + 'a,
-    ) -> impl Iterator<Item = (&'a IpAddr, &'a HashSet<String>)> + 'a {
+    ) -> impl Iterator<Item = (&'a IpAddr, &'a BTreeSet<String>)> + 'a {
         self.iface_to_addr
             .get(&iface.into())
             .map(|set| set.range(bounds))
@@ -416,7 +411,7 @@ impl AddrMap {
 #[derive(PartialEq, Eq, Debug)]
 struct AddrSpec {
     interface: AddrIface,
-    tags: HashSet<String>,
+    tags: BTreeSet<String>,
 }
 
 /// The switch entity to which an IP address uniquely belongs.

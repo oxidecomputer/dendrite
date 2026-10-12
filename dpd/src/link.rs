@@ -1074,19 +1074,24 @@ impl Switch {
         limit: usize,
         convert: impl Fn(&A, &str) -> T,
     ) -> DpdResult<Vec<T>> {
-        self.link_fetch(port_id, link_id, |link| {
-            let bounds = if let Some(addr) = last_address {
-                (std::ops::Bound::Excluded(addr), std::ops::Bound::Unbounded)
-            } else {
-                (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
-            };
+        let addr_bounds = if let Some(addr) = last_address {
+            (std::ops::Bound::Excluded(addr), std::ops::Bound::Unbounded)
+        } else {
+            (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
+        };
 
+        // TODO::cory: include tag in API pagination params and use it here.
+        let tag_bounds: (std::ops::Bound<&String>, std::ops::Bound<&String>) =
+            (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded);
+
+        self.link_fetch(port_id, link_id, |link| {
             self.addrs
                 .read()
                 .unwrap()
-                .iface_addr_range(link.asic_addr_id(), bounds)
-                .flat_map(|(addr, tags)| {
-                    tags.iter().map(move |t| (addr, t.as_str()))
+                .iface_addr_range(link.asic_addr_id(), addr_bounds)
+                .flat_map(move |(addr, tags)| {
+                    tags.range::<String, _>(tag_bounds)
+                        .map(move |t| (addr, t.as_str()))
                 })
                 .filter_map(|(addr, tag)| Some(convert(A::from_ip(addr)?, tag)))
                 .take(limit)

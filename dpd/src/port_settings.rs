@@ -25,7 +25,6 @@ use slog::trace;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -98,9 +97,9 @@ struct LinkSpec {
     pub autoneg: bool,
     pub kr: bool,
     pub delete_me: bool,
-    // BTreeMap so address asic ops follow a consistent order, which
+    // BTree* so operations follow a consistent order, which
     // makes failures easier to reproduce and understand.
-    pub addrs: BTreeMap<IpAddr, HashSet<String>>,
+    pub addrs: BTreeMap<IpAddr, BTreeSet<String>>,
     pub tx_eq: Option<TxEq>,
     pub allow_ddm_traffic: bool,
 }
