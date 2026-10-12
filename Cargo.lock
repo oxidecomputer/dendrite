@@ -1748,6 +1748,7 @@ dependencies = [
  "pcap",
  "pretty_assertions",
  "progenitor 0.15.1",
+ "progenitor-extras",
  "rand 0.9.3",
  "regress 0.11.1",
  "reqwest 0.13.5",
@@ -5519,6 +5520,17 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+]
+
+[[package]]
+name = "progenitor-extras"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fea8ab690a2c33f34256e93127c01803c3db4bdd6533572b5d68b937b973068"
+dependencies = [
+ "progenitor-client 0.15.1",
+ "reqwest 0.13.5",
+ "slog",
 ]
 
 [[package]]

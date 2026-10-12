@@ -28,6 +28,7 @@ uuid.workspace = true
 
 common.workspace = true
 progenitor.workspace = true
+progenitor-extras = { workspace = true, features = ["slog"] }
 
 [dev-dependencies]
 packet = { path = "../packet" }
