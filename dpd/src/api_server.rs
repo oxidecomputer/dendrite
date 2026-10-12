@@ -1355,7 +1355,10 @@ impl DpdApi for DpdApiImpl {
             .read()
             .unwrap()
             .iter_by_iface(AsicAddrIface::Loopback)
-            .map(|(addr, tag)| Ipv4Entry { addr: *addr, tag: tag.to_string() })
+            .flat_map(|(addr, tags)| {
+                tags.iter()
+                    .map(|tag| Ipv4Entry { addr: *addr, tag: tag.to_string() })
+            })
             .collect();
 
         Ok(HttpResponseOk(addrs))
@@ -1394,7 +1397,10 @@ impl DpdApi for DpdApiImpl {
             .read()
             .unwrap()
             .iter_by_iface(AsicAddrIface::Loopback)
-            .map(|(addr, tag)| Ipv6Entry { addr: *addr, tag: tag.to_string() })
+            .flat_map(|(addr, tags)| {
+                tags.iter()
+                    .map(|tag| Ipv6Entry { addr: *addr, tag: tag.to_string() })
+            })
             .collect();
 
         Ok(HttpResponseOk(addrs))
@@ -2976,7 +2982,7 @@ impl crate::link::Link {
             .read()
             .unwrap()
             .iter_by_iface(self.asic_addr_id())
-            .filter(|(_, t)| *t == tag)
+            .filter(|(_, tags)| tags.contains(tag))
             .map(|(addr, _)| *addr)
             .collect();
 

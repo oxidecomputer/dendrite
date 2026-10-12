@@ -25,6 +25,7 @@ use slog::trace;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -97,8 +98,9 @@ struct LinkSpec {
     pub autoneg: bool,
     pub kr: bool,
     pub delete_me: bool,
-    // (address, owner tag)
-    pub addrs: BTreeMap<IpAddr, String>,
+    // BTreeMap so address asic ops follow a consistent order, which
+    // makes failures easier to reproduce and understand.
+    pub addrs: BTreeMap<IpAddr, HashSet<String>>,
     pub tx_eq: Option<TxEq>,
     pub allow_ddm_traffic: bool,
 }
@@ -110,7 +112,7 @@ impl LinkSpec {
             .read()
             .unwrap()
             .iter_by_iface(p.asic_addr_id())
-            .map(|(ip, tag)| (*ip, tag.to_string()))
+            .map(|(ip, tags)| (*ip, tags.clone()))
             .collect();
 
         Self {
@@ -137,25 +139,14 @@ impl LinkSpec {
         tag: &str,
         current: Option<&LinkSpec>,
     ) -> DpdResult<Self> {
-        let mut addrs = BTreeMap::new();
-
-        if let Some(current) = current {
-            addrs.extend(
-                current
-                    .addrs
-                    .iter()
-                    .filter(|(_, entry_tag)| entry_tag.as_str() != tag)
-                    .map(|(addr, entry_tag)| (*addr, entry_tag.to_string())),
-            );
-        }
+        let mut addrs = current.map(|c| c.addrs.clone()).unwrap_or_default();
+        addrs.retain(|_, tags| {
+            tags.remove(tag);
+            !tags.is_empty()
+        });
 
         for addr in &l.addrs {
-            if let Some(owner) = addrs.insert(*addr, tag.to_string()) {
-                return Err(DpdError::AddrTagConflict {
-                    addr: *addr,
-                    tag: owner,
-                });
-            }
+            addrs.entry(*addr).or_default().insert(tag.to_string());
         }
 
         Ok(Self {
@@ -379,8 +370,10 @@ impl PortSettingsDiff {
         });
 
         let mut link = link_lock.lock().unwrap();
-        for (addr, tag) in &spec.addrs {
-            Self::addr_set(ctx, &mut link, rb, *addr, tag.clone())?;
+        for (addr, tags) in &spec.addrs {
+            for tag in tags.iter() {
+                Self::addr_set(ctx, &mut link, rb, *addr, tag.clone())?;
+            }
         }
 
         Ok(())
@@ -404,8 +397,10 @@ impl PortSettingsDiff {
             Ok(())
         });
 
-        for (addr, tag) in &spec.addrs {
-            Self::addr_clear(ctx, &mut link, rb, *addr, tag.clone())?;
+        for (addr, tags) in &spec.addrs {
+            for tag in tags.iter() {
+                Self::addr_clear(ctx, &mut link, rb, *addr, tag.clone())?;
+            }
         }
 
         Ok(())
@@ -487,15 +482,19 @@ impl PortSettingsDiff {
             Ok(())
         });
 
-        for (addr, tag) in addrs_after {
-            if !addrs_before.contains_key(addr) {
-                Self::addr_set(ctx, &mut link, rb, *addr, tag.clone())?;
+        for (addr, tags) in addrs_after {
+            for tag in tags.iter() {
+                if !addrs_before.get(addr).is_some_and(|t| t.contains(tag)) {
+                    Self::addr_set(ctx, &mut link, rb, *addr, tag.clone())?;
+                }
             }
         }
 
-        for (addr, tag) in addrs_before {
-            if !addrs_after.contains_key(addr) {
-                Self::addr_clear(ctx, &mut link, rb, *addr, tag.clone())?;
+        for (addr, tags) in addrs_before {
+            for tag in tags.iter() {
+                if !addrs_after.get(addr).is_some_and(|t| t.contains(tag)) {
+                    Self::addr_clear(ctx, &mut link, rb, *addr, tag.clone())?;
+                }
             }
         }
 

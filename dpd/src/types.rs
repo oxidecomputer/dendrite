@@ -88,14 +88,11 @@ pub enum DpdError {
     ResourceExhausted(String),
     #[error("Tag is required for idempotent validation")]
     MissingTag,
-    #[error("Address {addr} exists, but it is owned by another tag: {tag}")]
-    AddrTagConflict {
+    #[error("Address {addr} is already in use by {interface}")]
+    AddrIfaceConflict {
         addr: IpAddr,
-        /// The tag that currently owns the address.
-        tag: String,
+        interface: std::borrow::Cow<'static, str>,
     },
-    #[error("Address {addr} is already in use by {owner}")]
-    AddrOwnerConflict { addr: IpAddr, owner: std::borrow::Cow<'static, str> },
     #[error("These IP addresses could not be deleted: {0:?}")]
     AddrClear(Vec<(crate::addr::AsicAddrIface, IpAddr, DpdError)>),
 }
@@ -297,8 +294,7 @@ impl convert::From<DpdError> for dropshot::HttpError {
             e @ DpdError::MissingTag => {
                 dropshot::HttpError::for_bad_request(None, format!("{e}"))
             }
-            e @ (DpdError::AddrTagConflict { .. }
-            | DpdError::AddrOwnerConflict { .. }) => dropshot::HttpError {
+            e @ DpdError::AddrIfaceConflict { .. } => dropshot::HttpError {
                 status_code: dropshot::ErrorStatusCode::CONFLICT,
                 error_code: None,
                 internal_message: e.to_string(),

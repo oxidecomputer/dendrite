@@ -513,7 +513,7 @@ impl Link {
         switch: &Switch,
         tag: Option<&str>,
     ) -> DpdResult<()> {
-        switch.addrs.write().unwrap().try_retain_by_owner::<A>(
+        switch.addrs.write().unwrap().try_retain_by_iface::<A>(
             switch,
             self.asic_addr_id(),
             |_addr, entry_tag| tag.is_some_and(|t| t != entry_tag),
@@ -1084,7 +1084,10 @@ impl Switch {
             self.addrs
                 .read()
                 .unwrap()
-                .owner_addr_range(link.asic_addr_id(), bounds)
+                .iface_addr_range(link.asic_addr_id(), bounds)
+                .flat_map(|(addr, tags)| {
+                    tags.iter().map(move |t| (addr, t.as_str()))
+                })
                 .filter_map(|(addr, tag)| Some(convert(A::from_ip(addr)?, tag)))
                 .take(limit)
                 .collect()
@@ -1100,7 +1103,7 @@ impl Switch {
         link_id: LinkId,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            self.addrs.write().unwrap().try_retain_by_owner::<A>(
+            self.addrs.write().unwrap().try_retain_by_iface::<A>(
                 self,
                 link.asic_addr_id(),
                 |_, _| false,
