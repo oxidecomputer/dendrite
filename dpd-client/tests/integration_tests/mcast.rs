@@ -2889,23 +2889,13 @@ async fn run_bifurcated_inner_ttl_test(
     let test_pkt =
         TestPacket { packet: Arc::new(geneve_pkt.clone()), port: ingress };
 
-    let underlay_pkt = prepare_expected_pkt(
-        switch,
-        &geneve_pkt,
-        None,
-        None,
-        Some(egress_underlay),
-    );
+    let underlay_pkt =
+        prepare_expected_pkt(switch, &geneve_pkt, None, None, egress_underlay);
 
     let mut expected_pkts = Vec::new();
     if drop_label.is_none() {
-        let external_pkt = prepare_expected_pkt(
-            switch,
-            &og_pkt,
-            vlan,
-            None,
-            Some(egress_external),
-        );
+        let external_pkt =
+            prepare_expected_pkt(switch, &og_pkt, vlan, None, egress_external);
         expected_pkts.push(TestPacket {
             packet: Arc::new(external_pkt),
             port: egress_external,
@@ -3161,21 +3151,13 @@ async fn run_external_only_inner_ttl_test(
         vec![
             TestPacket {
                 packet: Arc::new(prepare_expected_pkt(
-                    switch,
-                    &og_pkt,
-                    vlan,
-                    None,
-                    Some(egress1),
+                    switch, &og_pkt, vlan, None, egress1,
                 )),
                 port: egress1,
             },
             TestPacket {
                 packet: Arc::new(prepare_expected_pkt(
-                    switch,
-                    &og_pkt,
-                    vlan,
-                    None,
-                    Some(egress2),
+                    switch, &og_pkt, vlan, None, egress2,
                 )),
                 port: egress2,
             },
