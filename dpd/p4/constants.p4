@@ -96,5 +96,9 @@ const bit<8> DROP_GENEVE_OPTIONS_TOO_LONG       = 0x18;
 const bit<8> DROP_GENEVE_OPTION_MALFORMED       = 0x19;
 const bit<8> DROP_GENEVE_OPTION_UNKNOWN         = 0x1A;
 const bit<8> DROP_SCTP                          = 0x1B;
+// No Time Exceeded for multicast
+// (see RFC 1812 §4.3.2.7, §5.3.1;
+// RFC 4443 §2.4(e.3))
+const bit<8> DROP_MULTICAST_TTL_EXCEEDED        = 0x1C;
 // MAX(DROP_xxx) + 1
-const bit<32> DROP_REASON_MAX                   = 0x1C;
+const bit<32> DROP_REASON_MAX                   = 0x1D;
