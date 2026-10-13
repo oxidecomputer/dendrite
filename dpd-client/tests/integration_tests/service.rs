@@ -260,7 +260,7 @@ async fn test_ttl_exceeded() -> TestResult {
         switch,
         &mut recv_pkt,
         ingress,
-        SERVICE_PORT,
+        NO_PORT,
         icmp::ICMP_TIME_EXCEEDED,
         0,
     );
