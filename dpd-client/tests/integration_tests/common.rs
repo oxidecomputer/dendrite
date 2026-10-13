@@ -681,9 +681,18 @@ impl Switch {
 
     pub fn packet_test(
         &self,
+        send: Vec<TestPacket>,
+        expect: Vec<TestPacket>,
+    ) -> TestResult {
+        self.packet_test_matched(send, expect)?;
+        Ok(())
+    }
+
+    pub fn packet_test_matched(
+        &self,
         mut send: Vec<TestPacket>,
         mut expect: Vec<TestPacket>,
-    ) -> TestResult {
+    ) -> anyhow::Result<Vec<TestPacket>> {
         // NOTE: This timeout is critical.
         //
         // The tests are normally run against the Tofino simulator, a software
@@ -745,11 +754,12 @@ impl Switch {
         }
 
         // We should also see the packets we expected to see
+        let mut matched = Vec::with_capacity(expect.len());
         for (e, expected) in expect.iter().enumerate() {
             for (g, got) in captured.iter().enumerate() {
                 if expected == got {
                     found.push(e);
-                    captured.remove(g);
+                    matched.push(captured.remove(g));
                     break;
                 }
             }
@@ -790,7 +800,7 @@ impl Switch {
         }
 
         match errors.len() {
-            0 => Ok(()),
+            0 => Ok(matched),
             _ => Err(anyhow!(
                 errors
                     .iter()
