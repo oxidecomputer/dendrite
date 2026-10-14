@@ -719,7 +719,11 @@ control NatIngress (
 		// Note: This whole conditional could be simpler as a set of */
 		// `const entries`, but apply (on tables) cannot be called from actions
 #ifdef MULTICAST
-		if (hdr.ipv4.isValid()) {
+		if (
+			hdr.ipv4.isValid() &&
+			hdr.ipv4.frag_offset == 13w0 &&
+			hdr.ipv4.flags[0:0] == 1w0 // More Fragments bit is 0
+		) {
 			if (meta.is_mcast) {
 				ingress_ipv4_mcast.apply();
 			} else if (!meta.encap_needed) {
@@ -735,7 +739,11 @@ control NatIngress (
 			}
 		}
 #else /* MULTICAST */
-		if (hdr.ipv4.isValid())  {
+		if (
+			hdr.ipv4.isValid() &&
+			hdr.ipv4.frag_offset == 13w0 &&
+			hdr.ipv4.flags[0:0] == 1w0
+		) {
 			if (!meta.encap_needed) {
 				ingress_ipv4.apply();
 			}

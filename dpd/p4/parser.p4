@@ -224,11 +224,11 @@ parser IngressParser(
 	}
 
 	state goto_proto_ipv4 {
-		transition select(hdr.ipv4.protocol) {
-			IPPROTO_ICMP: parse_icmp;
-			IPPROTO_TCP: parse_tcp;
-			IPPROTO_UDP: parse_udp;
-			IPPROTO_SCTP: drop_sctp;
+		transition select(hdr.ipv4.protocol, hdr.ipv4.frag_offset) {
+			(IPPROTO_ICMP, 13w0): parse_icmp;
+			(IPPROTO_TCP, 13w0): parse_tcp;
+			(IPPROTO_UDP, 13w0): parse_udp;
+			(IPPROTO_SCTP, 13w0): drop_sctp;
 			default: accept;
 		}
 	}
