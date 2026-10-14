@@ -25,6 +25,8 @@ use packet::eth;
 use packet::geneve;
 use packet::icmp;
 use packet::ipv4;
+use packet::ipv4::Ipv4Hdr;
+use packet::ipv4::OptBuf;
 use packet::ipv6;
 use packet::tcp;
 use packet::udp;
@@ -252,10 +254,10 @@ async fn test_nat_egress(switch: &Switch, test: &NatTest) -> TestResult {
     // responsibility, then this needs to be done on the 'expected' packet
     // rather than the 'to_send' packet.
     let inner = {
-        if let Some(mut ipv4) = payload_pkt.hdrs.ipv4_hdr {
+        if let Some(ipv4) = &mut payload_pkt.hdrs.ipv4_hdr {
             ipv4.ipv4_src_ip = test.uplink_port_external.parse()?;
             Ok(eth::ETHER_IPV4)
-        } else if let Some(mut ipv6) = payload_pkt.hdrs.ipv6_hdr {
+        } else if let Some(ipv6) = &mut payload_pkt.hdrs.ipv6_hdr {
             ipv6.ipv6_src_ip = test.uplink_port_external.parse()?;
             Ok(eth::ETHER_IPV6)
         } else {
@@ -734,17 +736,23 @@ async fn nat_drops_ipv4_fragments() -> anyhow::Result<()> {
 
     for sled in [&sled1, &sled2] {
         let nat_dst = sled.nat_dst(switch, uplink)?;
-        let (inner, encap) =
-            sled.ingress_pkt(switch, external_src, nat_dst, PAYLOAD)?;
-        send.push(TestPacket { packet: Arc::new(inner), port: uplink });
+        let (from_ext, encap) = sled.ingress_ipv4_pkt(
+            switch,
+            external_src,
+            nat_dst,
+            OptBuf::new(),
+            PAYLOAD,
+        )?;
+        send.push(TestPacket { packet: Arc::new(from_ext), port: uplink });
         expect.push(TestPacket { packet: Arc::new(encap), port: sled.port });
     }
 
     // Send two fragments, both of which should be dropped.
-    let (mut frag1, _) = sled1.ingress_pkt(
+    let (mut frag1, _) = sled1.ingress_ipv4_pkt(
         switch,
         external_src,
         sled1.nat_dst(switch, uplink)?,
+        OptBuf::new(),
         PAYLOAD,
     )?;
     self::set_ipv4_fragment(&mut frag1, 0, false)?;
@@ -759,10 +767,11 @@ async fn nat_drops_ipv4_fragments() -> anyhow::Result<()> {
     //
     // offset is two because the first message contains two eight-byte
     // segments: the UDP header and [`PAYLOAD`].
-    let (mut frag2, _) = sled2.ingress_pkt(
+    let (mut frag2, _) = sled2.ingress_ipv4_pkt(
         switch,
         external_src,
         sled2.nat_dst(switch, uplink)?,
+        OptBuf::new(),
         PAYLOAD,
     )?;
     self::set_ipv4_fragment(&mut frag2, 2, true)?;
@@ -797,6 +806,44 @@ async fn nat_drops_ipv4_fragments() -> anyhow::Result<()> {
     .context("timed out waiting for NAT counters to update")??;
 
     Ok(())
+}
+
+/// IPv4 options change the shape of a packet header. We don't care
+/// if the switch acts on these options, but a packet with options
+/// should still be routed properly through NAT.
+#[tokio::test]
+#[ignore]
+async fn nat_ignores_ipv4_options() -> anyhow::Result<()> {
+    const PAYLOAD: &[u8] = &[0xcc; 8];
+
+    let switch = &*get_switch().await;
+
+    let sled1 = Sled::try_from_seed(1)?;
+    sled1.init(switch).await?;
+
+    let uplink = PhysPort(10);
+    let external_src =
+        Endpoint::parse("02:aa:bb:cc:dd:ee", "10.10.10.10", 4444)?;
+
+    // These are not valid IPv4 options, but we could test that someday.
+    // The switch's policy is to ignore options, and this at least
+    // verifies it can work around a full buffer of them.
+    let options = OptBuf::from_array([0xcc; 40]);
+    let (from_ext, encap) = sled1.ingress_ipv4_pkt(
+        switch,
+        external_src,
+        sled1.nat_dst(switch, uplink)?,
+        options,
+        PAYLOAD,
+    )?;
+
+    switch.set_uplink(uplink, true).await;
+    let result = switch.packet_test(
+        vec![TestPacket { port: uplink, packet: Arc::new(from_ext) }],
+        vec![TestPacket { port: sled1.port, packet: Arc::new(encap) }],
+    );
+    switch.set_uplink(uplink, false).await;
+    result
 }
 
 /// Marks an IPv4 packet as a fragment with the given offset.
@@ -946,14 +993,16 @@ impl Sled {
     /// guest behind the NAT.
     ///
     /// Returns both the inner packet and the geneve-encapsulated one.
-    fn ingress_pkt(
+    fn ingress_ipv4_pkt(
         &self,
         switch: &Switch,
         src: Endpoint,
         dst: Endpoint,
+        options: ipv4::OptBuf,
         body: &[u8],
     ) -> anyhow::Result<(Packet, Packet)> {
-        let user_pkt = common::gen_udp_packet_loaded(src, dst, body);
+        let mut user_pkt = common::gen_udp_packet_loaded(src, dst, body);
+        Ipv4Hdr::set_options(&mut user_pkt, options)?;
 
         let inner = {
             let mut inner = user_pkt.clone();

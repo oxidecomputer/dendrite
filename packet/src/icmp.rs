@@ -288,6 +288,7 @@ fn test_v4_checksum() {
         ipv4_sum: 0,
         ipv4_src_ip: std::net::Ipv4Addr::new(0, 0, 0, 0),
         ipv4_dst_ip: std::net::Ipv4Addr::new(0, 0, 0, 0),
+        ipv4_options: ipv4::OptBuf::new(),
     });
 
     IcmpHdr::update_checksum(&mut pkt);
