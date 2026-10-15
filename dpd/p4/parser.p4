@@ -241,7 +241,7 @@ parser IngressParser(
 		meta.ipv4_checksum_err = ipv4_checksum.verify();
 
 		transition select(hdr.ipv4.ihl) {
-			4w0 .. 4w4: invalidate_ihl; // TODO::cory
+			4w0 .. 4w4: invalidate_ihl;
 			default: goto_proto_ipv4;
 		}
 	}

@@ -44,6 +44,20 @@ const bit<9> USER_SPACE_SERVICE_PORT = 192;
     meta.l4_length,         \
     hdr.inner_ipv4
 
+// The hdr fields included in an IPv4 checksum without options.
+#define IPV4_CHECKSUM_FIELDS \
+	hdr.ipv4.version, \
+	hdr.ipv4.ihl, \
+	hdr.ipv4.diffserv, \
+	hdr.ipv4.total_len, \
+	hdr.ipv4.identification, \
+	hdr.ipv4.flags, \
+	hdr.ipv4.frag_offset, \
+	hdr.ipv4.ttl, \
+	hdr.ipv4.protocol, \
+	hdr.ipv4.src_addr, \
+	hdr.ipv4.dst_addr
+
 // Includes the inner ipv6 header
 #define IPV6_FIELDS         \
     hdr.inner_ipv6
@@ -719,11 +733,7 @@ control NatIngress (
 		// Note: This whole conditional could be simpler as a set of */
 		// `const entries`, but apply (on tables) cannot be called from actions
 #ifdef MULTICAST
-		if (
-			hdr.ipv4.isValid() &&
-			hdr.ipv4.frag_offset == 13w0 &&
-			hdr.ipv4.flags[0:0] == 1w0 // More Fragments bit is 0
-		) {
+		if (hdr.ipv4.isValid()) {
 			if (meta.is_mcast) {
 				ingress_ipv4_mcast.apply();
 			} else if (!meta.encap_needed) {
@@ -739,11 +749,7 @@ control NatIngress (
 			}
 		}
 #else /* MULTICAST */
-		if (
-			hdr.ipv4.isValid() &&
-			hdr.ipv4.frag_offset == 13w0 &&
-			hdr.ipv4.flags[0:0] == 1w0
-		) {
+		if (hdr.ipv4.isValid()) {
 			if (!meta.encap_needed) {
 				ingress_ipv4.apply();
 			}
@@ -753,7 +759,15 @@ control NatIngress (
 #endif /* MULTICAST */
 
 		if (ingress_hit.apply().hit) {
-			if (hdr.ipv4.isValid()) {
+			if (hdr.ipv4.isValid() && 
+				(hdr.ipv4.frag_offset != 13w0 || hdr.ipv4.flags[0:0] != 1w0)
+			) {
+				meta.drop_reason = DROP_NAT_IPV4_FRAGMENT;
+				meta.dropped = true;
+			} else if (hdr.ipv4.isValid() && hdr.ipv4.ihl != 4w5) {
+				meta.drop_reason = DROP_NAT_IPV4_OPTIONS;
+				meta.dropped = true;
+			} else if (hdr.ipv4.isValid()) {
 				CalculateIPv4Len.apply(hdr, meta);
 				encap_ipv4();
 			} else if (hdr.ipv6.isValid()) {
@@ -917,7 +931,17 @@ control NatEgress (
 
 	apply {
 		if (meta.nat_egress_hit) {
-			nat_egress.apply();
+			if (hdr.inner_ipv4.isValid() && 
+				(hdr.inner_ipv4.frag_offset != 13w0 || hdr.inner_ipv4.flags[0:0] != 1w0)
+			) {
+				meta.drop_reason = DROP_NAT_IPV4_FRAGMENT;
+				meta.dropped = true;
+			} else if (hdr.inner_ipv4.isValid() && hdr.inner_ipv4.ihl != 4w5) {
+				meta.drop_reason = DROP_NAT_IPV4_OPTIONS;
+				meta.dropped = true;
+			} else {
+				nat_egress.apply();
+			}
 		}
 	}
 }
@@ -2305,15 +2329,17 @@ control IngressDeparser(packet_out pkt,
 		 */
 
 		if (hdr.ipv4.isValid()) {
-			hdr.ipv4.hdr_checksum = ipv4_checksum.update({
-				hdr.ipv4.version, hdr.ipv4.ihl, hdr.ipv4.diffserv,
-				hdr.ipv4.total_len,
-				hdr.ipv4.identification,
-				hdr.ipv4.flags, hdr.ipv4.frag_offset,
-				hdr.ipv4.ttl, hdr.ipv4.protocol,
-				hdr.ipv4.src_addr,
-				hdr.ipv4.dst_addr
-			});
+			if (hdr.ipv4_opts.isValid()) {
+				hdr.ipv4.hdr_checksum = ipv4_checksum.update({
+					IPV4_CHECKSUM_FIELDS,
+					hdr.ipv4_opts
+				});
+			} else {
+				hdr.ipv4.hdr_checksum = ipv4_checksum.update({
+					IPV4_CHECKSUM_FIELDS
+				});
+
+			}
 		}
 
 		if (hdr.icmp.isValid() && meta.icmp_recalc) {
