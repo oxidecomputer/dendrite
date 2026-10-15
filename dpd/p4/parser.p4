@@ -125,7 +125,6 @@ parser IngressParser(
 		ipv4_checksum.add(hdr.ipv4);
 		meta.orig_src_ipv4 = hdr.ipv4.src_addr;
 		meta.orig_dst_ipv4 = hdr.ipv4.dst_addr;
-		meta.ipv4_checksum_err = ipv4_checksum.verify();
 		meta.pkt_type = meta.pkt_type | PKT_IPV4;
 
 		// This subtracts most of the pseudo header from the checksum.
@@ -149,7 +148,7 @@ parser IngressParser(
 	state validate_ttl {
 		transition select(hdr.ipv4.ttl) {
 			8w0: invalidate_ttl;
-			default: goto_proto_ipv4;
+			default: handle_ipv4_fragments;
 		}
 	}
 
@@ -202,7 +201,7 @@ parser IngressParser(
 		transition select(hdr.ipv4.ttl) {
 			8w0: invalidate_ttl;
 			8w1: invalidate_ttl;
-			default: goto_proto_ipv4;
+			default: handle_ipv4_fragments;
 		}
 	}
 
@@ -223,12 +222,42 @@ parser IngressParser(
 		transition accept;
 	}
 
+	state handle_ipv4_fragments {
+		transition select(hdr.ipv4.frag_offset) {
+			13w0: validate_ipv4_options;
+			default: checksum_and_accept;
+		}
+	}
+
+	state checksum_and_accept {
+		meta.ipv4_checksum_err = ipv4_checksum.verify();
+		transition accept;
+	}
+
+	state validate_ipv4_options {
+		pkt.extract(hdr.ipv4_opts,
+                	(bit<32>)(((bit<16>)hdr.ipv4.ihl |-| 5) * 32));
+		ipv4_checksum.add(hdr.ipv4_opts);
+		meta.ipv4_checksum_err = ipv4_checksum.verify();
+
+		transition select(hdr.ipv4.ihl) {
+			4w0 .. 4w4: invalidate_ihl; // TODO::cory
+			default: goto_proto_ipv4;
+		}
+	}
+
+	state invalidate_ihl {
+		meta.drop_reason = DROP_IPV4_IHL_INVALID;
+		meta.dropped = true;
+		transition accept;
+	}
+
 	state goto_proto_ipv4 {
-		transition select(hdr.ipv4.protocol, hdr.ipv4.frag_offset) {
-			(IPPROTO_ICMP, 13w0): parse_icmp;
-			(IPPROTO_TCP, 13w0): parse_tcp;
-			(IPPROTO_UDP, 13w0): parse_udp;
-			(IPPROTO_SCTP, 13w0): drop_sctp;
+		transition select(hdr.ipv4.protocol) {
+			IPPROTO_ICMP: parse_icmp;
+			IPPROTO_TCP: parse_tcp;
+			IPPROTO_UDP: parse_udp;
+			IPPROTO_SCTP: drop_sctp;
 			default: accept;
 		}
 	}

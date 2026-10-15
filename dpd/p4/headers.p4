@@ -105,6 +105,10 @@ header ipv4_h {
 	ipv4_addr_t	dst_addr;
 }
 
+header ipv4_opts_h {
+	varbit<320> opts;
+}
+
 header ipv6_h {
 	bit<4>		version;
 	bit<8>		traffic_class;
@@ -218,6 +222,7 @@ struct sidecar_headers_t {
 	dot1q_h		vlan;
 	arp_h		arp;
 	ipv4_h		ipv4;
+	ipv4_opts_h     ipv4_opts;
 	ipv6_h		ipv6;
 	icmp_h		icmp;
 	tcp_h		tcp;
