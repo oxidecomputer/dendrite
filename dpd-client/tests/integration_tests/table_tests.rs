@@ -42,11 +42,11 @@ use crate::integration_tests::common::prelude::*;
 // investigating. If it only changes by an entry or two, it's fine to just
 // adjust the constant below to match the observed result.
 //
-// TODO: Multicast drops IPv4 LPM capacity to 7164 (from 8187) due to
-// ingress TCAM pressure. Investigate moving MulticastRouter4/6 into the
-// egress pipeline to reclaim capacity.
+// TODO: Multicast loses some IPv4 LPM capacity due to ingress TCAM pressure.
+// Investigate moving MulticastRouter4/6 into the egress pipeline to reclaim
+// capacity.
 #[cfg(feature = "multicast")]
-const IPV4_LPM_SIZE: usize = 7164; // ipv4 forwarding table
+const IPV4_LPM_SIZE: usize = 8145; // ipv4 forwarding table
 #[cfg(not(feature = "multicast"))]
 const IPV4_LPM_SIZE: usize = 8191; // ipv4 forwarding table
 

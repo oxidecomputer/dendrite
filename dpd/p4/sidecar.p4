@@ -511,8 +511,12 @@ control NatIngress (
 		hdr.inner_eth.ether_type = hdr.ethernet.ether_type;
 
 		// 8 bytes
+		// The Geneve specification suggests that the UDP source port
+		// SHOULD be calculated as a hash of the inner 5-tuple
+		// (RFC 8926, §3.3). This is fairly crucial for NICs to split
+		// encapsulated flows across hardware rings.
 		hdr.udp.setValid();
-		hdr.udp.src_port = GENEVE_UDP_PORT;
+		hdr.udp.src_port = meta.flow_hash;
 		hdr.udp.dst_port = GENEVE_UDP_PORT;
 		hdr.udp.hdr_length = udp_len;
 		hdr.udp.checksum = 0;
@@ -648,30 +652,6 @@ control NatIngress (
 	}
 #endif /* MULTICAST */
 
-	action set_icmp_dst_port() {
-		meta.l4_dst_port = hdr.icmp.data[31:16];
-	}
-
-	table icmp_dst_port {
-		key = {
-			hdr.icmp.isValid(): ternary;
-			hdr.icmp.type: ternary;
-		}
-
-		actions = {
-			set_icmp_dst_port;
-		}
-
-		const entries = {
-			( true, ICMP_ECHO ) : set_icmp_dst_port;
-			( true, ICMP_ECHOREPLY ) : set_icmp_dst_port;
-			( true, ICMP6_ECHO ) : set_icmp_dst_port;
-			( true, ICMP6_ECHOREPLY ) : set_icmp_dst_port;
-		}
-
-		const size = 4;
-	}
-
 	action set_inner_tcp() {
 		hdr.inner_tcp = hdr.tcp;
 		hdr.inner_tcp.setValid();
@@ -714,8 +694,6 @@ control NatIngress (
 	}
 
 	apply {
-		icmp_dst_port.apply();
-
 		// Note: This whole conditional could be simpler as a set of */
 		// `const entries`, but apply (on tables) cannot be called from actions
 #ifdef MULTICAST
@@ -1233,7 +1211,6 @@ control Router4 (
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
 	RouterLookupIndex4() lookup_idx;
-	Hash<bit<8>>(HashAlgorithm_t.CRC8) index_hash;
 
 	action icmp_error(bit<8> type, bit<8> code) {
 		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
@@ -1259,14 +1236,9 @@ control Router4 (
 		fwd.slot = 0;
 		// Our route selection table is 11 bits wide, and we need 5 bits
 		// of that for our "slot count" index.  Thus, we only need 6
-		// bits of the 8-bit hash calculated here to complete the 11-bit
-		// index.
-		fwd.ecmp_hash = index_hash.get({
-			hdr.ipv4.dst_addr,
-			hdr.ipv4.src_addr,
-			meta.l4_dst_port,
-			meta.l4_src_port
-		}) & 0x3f;
+		// bits of the 16-bit hash calculated earlier to complete the
+		// 11-bit index.
+		fwd.ecmp_hash = 2w0 ++ meta.flow_hash[5:0];
 
 		lookup_idx.apply(hdr, fwd);
 
@@ -1380,7 +1352,6 @@ control Router6 (
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
 	RouterLookupIndex6() lookup_idx;
-	Hash<bit<8>>(HashAlgorithm_t.CRC8) index_hash;
 
 	action icmp_error(bit<8> type, bit<8> code) {
 		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
@@ -1404,14 +1375,9 @@ control Router6 (
 		fwd.slot = 0;
 		// Our route selection table is 11 bits wide, and we need 5 bits
 		// of that for our "slot count" index.  Thus, we only need 6
-		// bits of the 8-bit hash calculated here to complete the 11-bit
-		// index.
-		fwd.ecmp_hash = index_hash.get({
-			hdr.ipv6.dst_addr,
-			hdr.ipv6.src_addr,
-			meta.l4_dst_port,
-			meta.l4_src_port
-		}) & 0x3f;
+		// bits of the 16-bit hash calculated earlier to complete the
+		// 11-bit index.
+		fwd.ecmp_hash = 2w0 ++ meta.flow_hash[5:0];
 
 		lookup_idx.apply(hdr, fwd);
 
@@ -1687,9 +1653,6 @@ control MulticastIngress (
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv4_ssm_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv6_ssm_ctr;
 
-	Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv6_level1;
-	Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv6_level2;
-
 	// Drop action for IPv4 multicast packets with no group.
 	//
 	// At this point, We should only allow replication for IPv6 packets that
@@ -1760,20 +1723,11 @@ control MulticastIngress (
 		ig_tm_md.level1_exclusion_id = level1_excl_id;
 		ig_tm_md.level2_exclusion_id = level2_excl_id;
 
-		// Set multicast hash based on IPv6 packet fields
-		ig_tm_md.level1_mcast_hash = (bit<13>)mcast_hashv6_level1.get({
-			hdr.ipv6.src_addr,
-			hdr.ipv6.dst_addr,
-			hdr.ipv6.next_hdr,
-			meta.l4_src_port,
-			meta.l4_dst_port
-		});
-
-		// Set secondary multicast hash based on IPv6 packet fields
-		ig_tm_md.level2_mcast_hash = (bit<13>)mcast_hashv6_level2.get({
-			hdr.ipv6.flow_label,
-			ig_intr_md.ingress_port
-		});
+		// Set L3/ECMP and L2/LAG multicast hashes using the packet's
+		// flow hash. This will include entropy from the inner flow, see
+		// the commentary on FlowHash.
+		ig_tm_md.level1_mcast_hash = meta.flow_hash[12:0];
+		ig_tm_md.level2_mcast_hash = meta.flow_hash[15:3];
 
 		mcast_ipv6_ctr.count();
 	}
@@ -2112,6 +2066,50 @@ control MulticastEgress (
 }
 #endif /* MULTICAST */
 
+/*
+ * Compute the flowhash of any (non-filtered) packet on ingress.
+ *
+ * Hashes are used for two purposes in the datapath:
+ * - ECMP nexthop selection in the Router4/Router6 tables.
+ * - Providing flow entropy in generated Geneve headers, so that
+ *   destination NICs and transit switches can correctly fanout
+ *   flows over rings and ports.
+ *
+ * While this is run at the head of packet processing, this is always
+ * derived from the inner flow 5-tuple, such that we don't need to re-hash
+ * the packet after NatEgress processing. OPTE (and other switches in a
+ * multirack world) store the inner flow hash in the UDP source port of
+ * encap headers, and as a result the outer flow hash will include that
+ * entropy.
+ */
+control FlowHash(
+	in sidecar_headers_t hdr,
+	inout sidecar_ingress_meta_t meta)
+{
+	Hash<bit<16>>(HashAlgorithm_t.CRC16) v4_hash;
+	Hash<bit<16>>(HashAlgorithm_t.CRC16) v6_hash;
+
+	apply {
+		if (hdr.ipv4.isValid()) {
+			meta.flow_hash = v4_hash.get({
+				hdr.ipv4.dst_addr,
+				hdr.ipv4.src_addr,
+				hdr.ipv4.protocol,
+				meta.l4_dst_port,
+				meta.l4_src_port
+			});
+		} else if (hdr.ipv6.isValid()) {
+			meta.flow_hash = v6_hash.get({
+				hdr.ipv6.dst_addr,
+				hdr.ipv6.src_addr,
+				hdr.ipv6.next_hdr,
+				meta.l4_dst_port,
+				meta.l4_src_port
+			});
+		}
+	}
+}
+
 control Ingress(
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
@@ -2131,6 +2129,7 @@ control Ingress(
 	MulticastIngress() mcast_ingress;
 #endif /* MULTICAST */
 	MacRewrite() mac_rewrite;
+	FlowHash() flow_hash;
 
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) ingress_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) egress_ctr;
@@ -2151,6 +2150,8 @@ control Ingress(
 			// accordingly.
 			filter.apply(hdr, meta, ig_intr_md);
 		}
+
+		flow_hash.apply(hdr, meta);
 
 		if (!meta.is_mcast || meta.is_link_local_mcastv6) {
 			attached_subnet_ingress.apply(hdr, meta);
