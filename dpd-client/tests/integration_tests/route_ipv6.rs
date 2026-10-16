@@ -16,6 +16,7 @@ use packet::{Endpoint, ipv6, sidecar};
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
+use crate::integration_tests::counters::one_counted_test;
 use packet::eth::EthQHdr;
 
 use dpd_client::types;
@@ -201,7 +202,12 @@ async fn test_deleted_unicast_impl(switch: &Switch) -> TestResult {
 
     common::set_icmp6_unreachable(switch, &mut to_recv, ingress);
     let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
-    switch.packet_test(vec![send], vec![expected])
+    assert!(
+        one_counted_test(switch, send, Some(expected), "ipv6_unrouteable")
+            .await?
+    );
+
+    Ok(())
 }
 
 #[tokio::test]
@@ -279,8 +285,12 @@ async fn test_unrouteable() -> TestResult {
 
     common::set_icmp6_unreachable(switch, &mut to_recv, ingress);
     let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
+    assert!(
+        one_counted_test(switch, send, Some(expected), "ipv6_unrouteable")
+            .await?
+    );
 
-    switch.packet_test(vec![send], vec![expected])
+    Ok(())
 }
 
 // Define two routes, one with a 56-bit prefix and one with a 64-bit prefix.

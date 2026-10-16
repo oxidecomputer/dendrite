@@ -14,6 +14,7 @@ use reqwest::StatusCode;
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
+use crate::integration_tests::counters::one_counted_test;
 use packet::Endpoint;
 use packet::eth::EthQHdr;
 
@@ -159,7 +160,12 @@ async fn test_deleted_route_ipv4_impl(switch: &Switch) -> TestResult {
     common::set_icmp_unreachable(switch, &mut to_recv, ingress);
     let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
 
-    switch.packet_test(vec![send], vec![expected])
+    assert!(
+        one_counted_test(switch, send, Some(expected), "ipv4_unrouteable")
+            .await?
+    );
+
+    Ok(())
 }
 
 #[tokio::test]
@@ -262,7 +268,12 @@ async fn test_route_ipv4_unrouteable() -> TestResult {
     common::set_icmp_unreachable(switch, &mut to_recv, ingress);
     let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
 
-    switch.packet_test(vec![send], vec![expected])
+    assert!(
+        one_counted_test(switch, send, Some(expected), "ipv4_unrouteable")
+            .await?
+    );
+
+    Ok(())
 }
 
 #[tokio::test]
@@ -934,6 +945,7 @@ async fn test_v4_over_v6() -> TestResult {
         .expect_err("route should be gone after deleting its only target");
 
     // Verify that packets to the deleted route produce ICMP unreachable.
+    // This must *also* increment the relevant drop counter.
     let to_send = common::gen_udp_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
         Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444).unwrap(),
@@ -943,7 +955,11 @@ async fn test_v4_over_v6() -> TestResult {
 
     let send = TestPacket { packet: Arc::new(to_send), port: ingress };
     let expected = TestPacket { packet: Arc::new(to_recv), port: SERVICE_PORT };
-    switch.packet_test(vec![send], vec![expected])?;
+
+    assert!(
+        one_counted_test(switch, send, Some(expected), "ipv4_unrouteable")
+            .await?
+    );
 
     // Re-add the route and verify forwarding works again.
     common::set_route_ipv4_over_ipv6(
@@ -979,7 +995,12 @@ async fn test_v4_over_v6() -> TestResult {
 
     let send = TestPacket { packet: Arc::new(to_send), port: ingress };
     let expected = TestPacket { packet: Arc::new(to_recv), port: SERVICE_PORT };
-    switch.packet_test(vec![send], vec![expected])
+    assert!(
+        one_counted_test(switch, send, Some(expected), "ipv4_unrouteable")
+            .await?
+    );
+
+    Ok(())
 }
 
 /// Test that individual v4 and v6 targets can be deleted from a mixed
