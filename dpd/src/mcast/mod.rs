@@ -1144,6 +1144,18 @@ pub(crate) fn reset_tag(s: &Switch, tag: &str) -> DpdResult<()> {
 pub(crate) fn reset(s: &Switch) -> DpdResult<()> {
     let mut mcast = s.mcast.lock().unwrap();
 
+    // Remove each known group's entries before the table clears below, as
+    // SoftNPU's `clear` cannot empty its tables.
+    for group in mcast.groups.values() {
+        if let Err(e) = delete_group_tables(s, group, &mut Vec::new()) {
+            error!(
+                s.log,
+                "failed to delete table entries for multicast group {}: {e:?}",
+                group.ip()
+            );
+        }
+    }
+
     // Destroy ASIC groups
     let group_ids = s.asic_hdl.mc_domains();
     for group_id in group_ids {

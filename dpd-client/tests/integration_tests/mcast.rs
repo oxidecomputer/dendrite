@@ -2238,6 +2238,14 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
 
     let ctr_baseline_ingress =
         switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
+    let ctr_baseline_mcast_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast"))
+        .await
+        .unwrap();
+    let ctr_baseline_mcast_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast"))
+        .await
+        .unwrap();
     let ctr_baseline_external_egress1 = switch
         .get_counter(&port_label_egress1, Some("multicast_external"))
         .await
@@ -2263,6 +2271,26 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
         ctr_baseline_ingress,
         1,
         Some("ingress"),
+    )
+    .await
+    .unwrap();
+
+    // One decapped replica should be counted per external member port.
+    check_counter_incremented(
+        switch,
+        &port_label_egress1,
+        ctr_baseline_mcast_egress1,
+        1,
+        Some("multicast"),
+    )
+    .await
+    .unwrap();
+    check_counter_incremented(
+        switch,
+        &port_label_egress2,
+        ctr_baseline_mcast_egress2,
+        1,
+        Some("multicast"),
     )
     .await
     .unwrap();
@@ -2622,6 +2650,22 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
 
     let ctr_baseline_ingress =
         switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
+    let ctr_baseline_mcast_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast"))
+        .await
+        .unwrap();
+    let ctr_baseline_mcast_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast"))
+        .await
+        .unwrap();
+    let ctr_baseline_mcast_egress3 = switch
+        .get_counter(&port_label_egress3, Some("multicast"))
+        .await
+        .unwrap();
+    let ctr_baseline_mcast_egress4 = switch
+        .get_counter(&port_label_egress4, Some("multicast"))
+        .await
+        .unwrap();
     let ctr_baseline_underlay_egress1 = switch
         .get_counter(&port_label_egress1, Some("multicast_underlay"))
         .await
@@ -2666,6 +2710,24 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     )
     .await
     .unwrap();
+
+    // One replica should be counted per member port, external & underlay alike.
+    for (label, baseline) in [
+        (&port_label_egress1, ctr_baseline_mcast_egress1),
+        (&port_label_egress2, ctr_baseline_mcast_egress2),
+        (&port_label_egress3, ctr_baseline_mcast_egress3),
+        (&port_label_egress4, ctr_baseline_mcast_egress4),
+    ] {
+        check_counter_incremented(
+            switch,
+            label,
+            baseline,
+            1,
+            Some("multicast"),
+        )
+        .await
+        .unwrap();
+    }
 
     // Still-encapsulated replicas to underlay members count as underlay,
     // not external, for UNDERLAY_EXTERNAL tagged groups.
@@ -7623,6 +7685,98 @@ async fn test_source_filter_update_to_any() -> TestResult {
         after_update_table.entries.len(),
         baseline_count + 1,
         "After update with Any, should have only 1 entry (the /0)"
+    );
+
+    // Narrow to specific sources for (*,G) -> (S,G) transitions, which is
+    // exercised below with `sources: None`.
+    let narrow_entry = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
+        sources: Some(vec![
+            types::IpSrc::Exact("192.168.1.1".parse().unwrap()),
+            types::IpSrc::Exact("192.168.1.2".parse().unwrap()),
+        ]),
+    };
+
+    let narrowed = switch
+        .client
+        .multicast_group_update_external(
+            &external_group_ip.try_into().unwrap(),
+            &make_tag(TEST_TAG),
+            &narrow_entry,
+        )
+        .await
+        .expect("Should narrow external group sources")
+        .into_inner();
+
+    assert_eq!(
+        narrowed.sources.as_deref().map(<[_]>::len),
+        Some(2),
+        "Narrowing should restore 2 specific sources"
+    );
+
+    let after_narrowed_table = switch
+        .client
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
+        .await
+        .expect("Should dump table after narrowing");
+
+    assert_eq!(
+        after_narrowed_table.entries.len(),
+        baseline_count + 2,
+        "Narrowing should restore 2 specific entries"
+    );
+
+    let keep_entry = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
+        sources: None,
+    };
+
+    let kept = switch
+        .client
+        .multicast_group_update_external(
+            &external_group_ip.try_into().unwrap(),
+            &make_tag(TEST_TAG),
+            &keep_entry,
+        )
+        .await
+        .expect("Should update external group with sources: None")
+        .into_inner();
+
+    assert_eq!(
+        kept.sources, narrowed.sources,
+        "sources: None must preserve the current filter"
+    );
+
+    // Round-trip via GET to confirm the stored representation matches.
+    let fetched = switch
+        .client
+        .multicast_group_get(&external_group_ip)
+        .await
+        .expect("Should get external group")
+        .into_inner();
+
+    assert_eq!(
+        get_sources(&fetched),
+        kept.sources,
+        "GET after sources: None must agree with the update response"
+    );
+
+    let after_keep_table = switch
+        .client
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
+        .await
+        .expect("Should dump table after sources: None");
+
+    assert_eq!(
+        after_keep_table.entries.len(),
+        baseline_count + 2,
+        "sources: None must keep the 2 specific entries"
     );
 
     // Cleanup in correct order: external first, then internal
