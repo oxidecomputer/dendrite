@@ -12,6 +12,7 @@ use std::{
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
+use ::common::counters::SERVICE_PORT_LABEL;
 use ::common::network::MacAddr;
 use anyhow::anyhow;
 use dpd_client::{Error, types};
@@ -2709,6 +2710,62 @@ async fn test_link_local_multicast_counter_attribution() -> TestResult {
         ctr_underlay, ctr_baseline_underlay,
         "link-local replicas must not hit the underlay counter"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_link_local_multicast_inbound_counter_attribution() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let ingress = PhysPort(10);
+
+    let src =
+        Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0101::4", 3333)
+            .unwrap();
+    let dst = Endpoint::parse("33:33:00:00:00:01", "ff02::1", 4444).unwrap();
+
+    let send = TestPacket {
+        packet: Arc::new(common::gen_udp_packet(src, dst)),
+        port: ingress,
+    };
+    let mut recv = common::gen_udp_packet(src, dst);
+    common::add_sidecar_hdr(
+        switch,
+        &mut recv,
+        sidecar::SC_FWD_TO_USERSPACE,
+        ingress,
+        NO_PORT,
+        None,
+    );
+    let expected_pkts =
+        vec![TestPacket { packet: Arc::new(recv), port: SERVICE_PORT }];
+
+    let ctr_baseline_link_local = switch
+        .get_counter(SERVICE_PORT_LABEL, Some("multicast_link_local"))
+        .await?;
+    let ctr_baseline_unicast =
+        switch.get_counter(SERVICE_PORT_LABEL, Some("unicast")).await?;
+
+    switch.packet_test(vec![send], expected_pkts)?;
+
+    check_counter_incremented(
+        switch,
+        SERVICE_PORT_LABEL,
+        ctr_baseline_link_local,
+        1,
+        Some("multicast_link_local"),
+    )
+    .await?;
+    check_counter_incremented(
+        switch,
+        SERVICE_PORT_LABEL,
+        ctr_baseline_unicast,
+        0,
+        Some("unicast"),
+    )
+    .await?;
 
     Ok(())
 }

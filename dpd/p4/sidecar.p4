@@ -2139,6 +2139,8 @@ control Ingress(
 			if (meta.nat_egress_hit && !meta.service_routed) {
 				meta.bridge_hdr.nat_egress_hit = true;
 			}
+		} else if (meta.is_link_local_mcastv6) {
+			meta.bridge_hdr.is_link_local_mcastv6 = true;
 		}
 
 		if (meta.encap_needed) {
@@ -2324,11 +2326,8 @@ control Egress(
 		// Check multicast egress packets by checking that RID is not 0.
 		bool is_egress_rid_mcast = eg_intr_md.egress_rid > 0;
 		// We track IPv6 multicast packets separately for counters.
-		bool is_link_local_ipv6_mcast = false;
-		if (hdr.ipv6.isValid() &&
-		    hdr.ipv6.dst_addr[127:112] == IPV6_LINK_LOCAL_16) {
-			is_link_local_ipv6_mcast = true;
-		}
+		bool is_link_local_ipv6_mcast =
+		    meta.bridge_hdr.is_link_local_mcastv6;
 		bool is_mcast = is_egress_rid_mcast || is_link_local_ipv6_mcast;
 
 		if (is_egress_rid_mcast == true) {
