@@ -139,11 +139,25 @@ impl Routers {
         }
         if let Some(r) = self.0.get(&router) {
             if r.endpoint == endpoint {
-                return Ok(());
+                // A failed delete may have removed the endpoint; reinstall it.
+                let entry =
+                    Ipv6Entry { tag: router.to_string(), addr: endpoint };
+                return match loopback::add_loopback_ipv6(
+                    switch, &entry, r.table_id,
+                ) {
+                    Ok(()) | Err(DpdError::Exists(_)) => Ok(()),
+                    Err(e) => Err(e),
+                };
             }
             return Err(DpdError::Exists(format!(
                 "router {router} already has endpoint {}",
                 r.endpoint
+            )));
+        }
+        // An endpoint needs to map to a single router.
+        if self.0.values().any(|r| r.endpoint == endpoint) {
+            return Err(DpdError::Exists(format!(
+                "{endpoint} is already taken"
             )));
         }
         let table_id = (1..=u8::MAX)
@@ -163,8 +177,8 @@ impl Routers {
 ///
 /// The router is forgotten only once everything under it has been removed,
 /// so its table is never given to another router while entries for it
-/// remain.  If a removal fails, the router still exists and the delete can be
-/// retried.
+/// remain.  If a removal fails, the router still exists; the delete can be
+/// retried or a PUT with the same endpoint can restore it.
 pub fn delete(
     switch: &Switch,
     route_data: &mut RouteData,
