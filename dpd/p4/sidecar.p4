@@ -132,17 +132,11 @@ control Filter(
 		ipv4_ctr.count();
 	}
 
-	action claimv6() {
-		meta.is_switch_address = true;
-		ipv6_ctr.count();
-	}
-
-	action claimv6_rid(bit<8> routing_table_id) {
+	action claimv6(bit<8> routing_table_id) {
 		meta.is_switch_address = true;
 		meta.routing_table_id = routing_table_id;
 		ipv6_ctr.count();
 	}
-
 
 	// Table of the IPv4 addresses assigned to ports on the switch.
 	table switch_ipv4_addr {
@@ -162,7 +156,7 @@ control Filter(
 			hdr.ipv6.dst_addr : exact;
 			ig_intr_md.ingress_port : ternary;
 		}
-		actions = { claimv6; claimv6_rid; dropv6; }
+		actions = { claimv6; dropv6; }
 
 		const size = SWITCH_IPV6_ADDRS_SIZE;
 		counters = ipv6_ctr;

@@ -119,14 +119,15 @@ impl TableOps<Handle> for Table {
             action_data.action.as_str(),
         ) {
             // TODO: implement mappings for natv6 actions
-            (TableType::PortAddrIpv4, "claimv4") => ("local", Vec::new()),
-            (TableType::PortAddrIpv6, "claimv6") => ("local", Vec::new()),
-            (TableType::PortAddrIpv6, "claimv6_rid") => {
+            // sidecar-lite's local action carries the routing table id;
+            // IPv4 switch addresses belong to the default table.
+            (TableType::PortAddrIpv4, "claimv4") => ("local", vec![0]),
+            (TableType::PortAddrIpv6, "claimv6") => {
                 let table_id = u8::try_from(
                     &action_data.arg_by_name("routing_table_id")?.value,
                 )
                 .map_err(|e| AsicError::InvalidArg(e.into()))?;
-                ("local_rid", vec![table_id])
+                ("local", vec![table_id])
             }
             (TableType::RouteIdxIpv4, "index") => {
                 let mut params = Vec::new();

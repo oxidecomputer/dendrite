@@ -46,9 +46,7 @@ enum ActionV4 {
 #[derive(ActionParse)]
 enum ActionV6 {
     #[action_xlate(name = "claimv6")]
-    ClaimIpv6,
-    #[action_xlate(name = "claimv6_rid")]
-    ClaimIpv6Rid { routing_table_id: u8 },
+    ClaimIpv6 { routing_table_id: u8 },
     #[action_xlate(name = "dropv6")]
     DropIpv6,
 }
@@ -132,8 +130,7 @@ pub fn loopback_ipv6_add(
         in_port: MatchMask { val: 0u16.into(), mask: 0u16.into() },
     };
 
-    let action =
-        ActionV6::ClaimIpv6Rid { routing_table_id: u8::from(table_id) };
+    let action = ActionV6::ClaimIpv6 { routing_table_id: table_id.into() };
 
     s.table_entry_add(TableType::PortAddrIpv6, &claim_key, &action)
         .map(|_| {
@@ -268,7 +265,9 @@ fn ipv6_add_work(s: &Switch, port: u16, ipv6: Ipv6Addr) -> DpdResult<()> {
     s.table_entry_add(
         TableType::PortAddrIpv6,
         &claim_key,
-        &ActionV6::ClaimIpv6,
+        &ActionV6::ClaimIpv6 {
+            routing_table_id: RoutingTableId::default().into(),
+        },
     )?;
     s.table_entry_add(TableType::PortAddrIpv6, &drop_key, &ActionV6::DropIpv6)
         .inspect_err(|_| {
@@ -308,7 +307,9 @@ fn ipv6_delete_work(s: &Switch, port: u16, ipv6: Ipv6Addr) -> DpdResult<()> {
                 s.table_entry_add(
                     TableType::PortAddrIpv6,
                     &claim_key,
-                    &ActionV6::ClaimIpv6,
+                    &ActionV6::ClaimIpv6 {
+                        routing_table_id: RoutingTableId::default().into(),
+                    },
                 )
             },
         );
