@@ -132,11 +132,11 @@ control Filter(
 		ipv4_ctr.count();
 	}
 
-	action claimv6() {
+	action claimv6(bit<8> routing_table_id) {
 		meta.is_switch_address = true;
+		meta.routing_table_id = routing_table_id;
 		ipv6_ctr.count();
 	}
-
 
 	// Table of the IPv4 addresses assigned to ports on the switch.
 	table switch_ipv4_addr {
@@ -916,6 +916,7 @@ control NatEgress (
 
 control RouterLookupIndex6(
 	inout sidecar_headers_t hdr,
+	in sidecar_ingress_meta_t meta,
 	inout route6_result_t res
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) index_ctr;
@@ -984,7 +985,10 @@ control RouterLookupIndex6(
 	}
 
 	table lookup {
-		key             = { hdr.ipv6.dst_addr: lpm; }
+		key             = {
+			meta.routing_table_id: exact;
+			hdr.ipv6.dst_addr: lpm;
+		}
 		actions         = { index; unreachable; }
 		default_action  = unreachable;
 		// The table size is incremented by one here just to allow the
@@ -1014,6 +1018,7 @@ control RouterLookupIndex6(
 
 control RouterLookupIndex4(
 	inout sidecar_headers_t hdr,
+	in sidecar_ingress_meta_t meta,
 	inout route4_result_t res
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) index_ctr;
@@ -1105,7 +1110,10 @@ control RouterLookupIndex4(
 	}
 
 	table lookup {
-		key             = { hdr.ipv4.dst_addr: lpm; }
+		key             = {
+			meta.routing_table_id: exact;
+			hdr.ipv4.dst_addr: lpm;
+		}
 		actions         = { index; unreachable; }
 		default_action  = unreachable;
 		const size      = IPV4_LPM_SIZE;
@@ -1268,7 +1276,7 @@ control Router4 (
 			meta.l4_src_port
 		}) & 0x3f;
 
-		lookup_idx.apply(hdr, fwd);
+		lookup_idx.apply(hdr, meta, fwd);
 
 		if (!fwd.is_hit) {
 			icmp_error(ICMP_DEST_UNREACH, ICMP_DST_UNREACH_NET);
@@ -1413,7 +1421,7 @@ control Router6 (
 			meta.l4_src_port
 		}) & 0x3f;
 
-		lookup_idx.apply(hdr, fwd);
+		lookup_idx.apply(hdr, meta, fwd);
 
 		if (!fwd.is_hit) {
 			icmp_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);

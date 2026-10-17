@@ -9,6 +9,7 @@ use std::convert::TryInto;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 
+use crate::router::RoutingTableId;
 use slog::error;
 use slog::info;
 
@@ -45,7 +46,7 @@ enum ActionV4 {
 #[derive(ActionParse)]
 enum ActionV6 {
     #[action_xlate(name = "claimv6")]
-    ClaimIpv6,
+    ClaimIpv6 { routing_table_id: u8 },
     #[action_xlate(name = "dropv6")]
     DropIpv6,
 }
@@ -119,16 +120,28 @@ pub fn loopback_ipv4_delete(s: &Switch, ipv4: Ipv4Addr) -> DpdResult<()> {
         })
 }
 
-pub fn loopback_ipv6_add(s: &Switch, ipv6: Ipv6Addr) -> DpdResult<()> {
+pub fn loopback_ipv6_add(
+    s: &Switch,
+    ipv6: Ipv6Addr,
+    table_id: RoutingTableId,
+) -> DpdResult<()> {
     let claim_key = Ipv6MatchKey {
         dst_addr: ipv6,
         in_port: MatchMask { val: 0u16.into(), mask: 0u16.into() },
     };
-    s.table_entry_add(TableType::PortAddrIpv6, &claim_key, &ActionV6::ClaimIpv6)
-        .map(|_| info!(s.log, "added ipv6 loopback"; "addr" => %ipv6))
+
+    let action = ActionV6::ClaimIpv6 { routing_table_id: table_id.into() };
+
+    s.table_entry_add(TableType::PortAddrIpv6, &claim_key, &action)
+        .map(|_| {
+            info!(s.log, "added ipv6 loopback";
+		"addr" => %ipv6,
+		"routing_table_id" => %table_id)
+        })
         .inspect_err(|e| {
             error!(s.log, "failed to add ipv6 loopback";
 		"addr" => %ipv6,
+		"routing_table_id" => %table_id,
 		"error" => %e);
         })
 }
@@ -252,7 +265,9 @@ fn ipv6_add_work(s: &Switch, port: u16, ipv6: Ipv6Addr) -> DpdResult<()> {
     s.table_entry_add(
         TableType::PortAddrIpv6,
         &claim_key,
-        &ActionV6::ClaimIpv6,
+        &ActionV6::ClaimIpv6 {
+            routing_table_id: RoutingTableId::default().into(),
+        },
     )?;
     s.table_entry_add(TableType::PortAddrIpv6, &drop_key, &ActionV6::DropIpv6)
         .inspect_err(|_| {
@@ -292,7 +307,9 @@ fn ipv6_delete_work(s: &Switch, port: u16, ipv6: Ipv6Addr) -> DpdResult<()> {
                 s.table_entry_add(
                     TableType::PortAddrIpv6,
                     &claim_key,
-                    &ActionV6::ClaimIpv6,
+                    &ActionV6::ClaimIpv6 {
+                        routing_table_id: RoutingTableId::default().into(),
+                    },
                 )
             },
         );

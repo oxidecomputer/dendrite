@@ -7,7 +7,7 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "13.0.0"
+    "version": "14.0.0"
   },
   "paths": {
     "/all-settings": {
@@ -4829,8 +4829,8 @@
     },
     "/route/ipv4": {
       "get": {
-        "summary": "Fetch the configured IPv4 routes, mapping IPv4 CIDR blocks to the switch port",
-        "description": "used for sending out that traffic, and optionally a gateway.",
+        "summary": "Fetch the IPv4 routes configured on the default routing table, mapping",
+        "description": "IPv4 CIDR blocks to the switch port used for sending out that traffic, and optionally a gateway.",
         "operationId": "route_ipv4_list",
         "parameters": [
           {
@@ -4877,8 +4877,8 @@
         }
       },
       "put": {
-        "summary": "Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).",
-        "description": "This call can be used to create a new single-path route or to replace any existing routes with a new single-path route.",
+        "summary": "Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6) on",
+        "description": "the default routing table.\n\nThis call can be used to create a new single-path route or to replace any existing routes with a new single-path route.",
         "operationId": "route_ipv4_set",
         "requestBody": {
           "content": {
@@ -4903,8 +4903,8 @@
         }
       },
       "post": {
-        "summary": "Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).",
-        "description": "This call can be used to create a new single-path route or to add new targets to a multipath route.",
+        "summary": "Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6) on",
+        "description": "the default routing table.\n\nThis call can be used to create a new single-path route or to add new targets to a multipath route.",
         "operationId": "route_ipv4_add",
         "requestBody": {
           "content": {
@@ -4931,7 +4931,8 @@
     },
     "/route/ipv4/{cidr}": {
       "get": {
-        "summary": "Get the configured route for the given IPv4 subnet.",
+        "summary": "Get the configured route for the given IPv4 subnet on the default routing",
+        "description": "table.",
         "operationId": "route_ipv4_get",
         "parameters": [
           {
@@ -4968,7 +4969,7 @@
         }
       },
       "delete": {
-        "summary": "Remove all targets for the given subnet",
+        "summary": "Remove all targets for the given subnet on the default routing table",
         "operationId": "route_ipv4_delete",
         "parameters": [
           {
@@ -4996,7 +4997,8 @@
     },
     "/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}": {
       "delete": {
-        "summary": "Remove a single target for the given IPv4 subnet (IPv4 or IPv6 next hop)",
+        "summary": "Remove a single target for the given IPv4 subnet on the default routing",
+        "description": "table (IPv4 or IPv6 next hop)",
         "operationId": "route_ipv4_delete_target",
         "parameters": [
           {
@@ -5052,8 +5054,8 @@
     },
     "/route/ipv6": {
       "get": {
-        "summary": "Fetch the configured IPv6 routes, mapping IPv6 CIDR blocks to the switch port",
-        "description": "used for sending out that traffic, and optionally a gateway.",
+        "summary": "Fetch the IPv6 routes configured on the default routing table, mapping",
+        "description": "IPv6 CIDR blocks to the switch port used for sending out that traffic, and optionally a gateway.",
         "operationId": "route_ipv6_list",
         "parameters": [
           {
@@ -5100,8 +5102,8 @@
         }
       },
       "put": {
-        "summary": "Route an IPv6 subnet to a link and a nexthop gateway.",
-        "description": "This call can be used to create a new single-path route or to replace any existing routes with a new single-path route.",
+        "summary": "Route an IPv6 subnet to a link and a nexthop gateway on the default",
+        "description": "routing table.\n\nThis call can be used to create a new single-path route or to replace any existing routes with a new single-path route.",
         "operationId": "route_ipv6_set",
         "requestBody": {
           "content": {
@@ -5126,8 +5128,8 @@
         }
       },
       "post": {
-        "summary": "Route an IPv6 subnet to a link and a nexthop gateway.",
-        "description": "This call can be used to create a new single-path route or to add new targets to a multipath route.",
+        "summary": "Route an IPv6 subnet to a link and a nexthop gateway on the default",
+        "description": "routing table.\n\nThis call can be used to create a new single-path route or to add new targets to a multipath route.",
         "operationId": "route_ipv6_add",
         "requestBody": {
           "content": {
@@ -5154,7 +5156,8 @@
     },
     "/route/ipv6/{cidr}": {
       "get": {
-        "summary": "Get a single IPv6 route, by its IPv6 CIDR block.",
+        "summary": "Get a single IPv6 route on the default routing table, by its IPv6 CIDR",
+        "description": "block.",
         "operationId": "route_ipv6_get",
         "parameters": [
           {
@@ -5191,7 +5194,8 @@
         }
       },
       "delete": {
-        "summary": "Remove an IPv6 route, by its IPv6 CIDR block.",
+        "summary": "Remove an IPv6 route on the default routing table, by its IPv6 CIDR",
+        "description": "block.",
         "operationId": "route_ipv6_delete",
         "parameters": [
           {
@@ -5219,7 +5223,8 @@
     },
     "/route/ipv6/{cidr}/{port_id}/{link_id}/{tgt_ip}": {
       "delete": {
-        "summary": "Remove a single target for the given IPv6 subnet",
+        "summary": "Remove a single target for the given IPv6 subnet on the default routing",
+        "description": "table",
         "operationId": "route_ipv6_delete_target",
         "parameters": [
           {
@@ -5253,6 +5258,716 @@
             "in": "path",
             "name": "tgt_ip",
             "description": "The next hop in the IPv4 route",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "ipv6"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/router": {
+      "get": {
+        "summary": "List the routers with their endpoints.",
+        "operationId": "router_list",
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Map_of_ipv6",
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string",
+                    "format": "ipv6"
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/router/{router_id}": {
+      "get": {
+        "summary": "Get a router's endpoint.",
+        "operationId": "router_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "ipv6",
+                  "type": "string",
+                  "format": "ipv6"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "summary": "Create a router with the given endpoint.  An address can be the",
+        "description": "endpoint of only one router, and a router's endpoint can't be changed. The default router's uuid names table 0 and can't be used.",
+        "operationId": "router_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "ipv6",
+                "type": "string",
+                "format": "ipv6"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a router, along with its endpoint and routes.  The default",
+        "description": "router's uuid names table 0 and can't be used.",
+        "operationId": "router_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/router/{router_id}/route/ipv4": {
+      "get": {
+        "summary": "Fetch the IPv4 routes configured on the given router, mapping IPv4",
+        "description": "CIDR blocks to the switch port used for sending out that traffic, and optionally a gateway.",
+        "operationId": "router_route_ipv4_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "description": "Maximum number of items returned by a single call",
+            "schema": {
+              "nullable": true,
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "description": "Token returned by previous call to retrieve the subsequent page",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ipv4RoutesResultsPage"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-dropshot-pagination": {
+          "required": []
+        }
+      },
+      "put": {
+        "summary": "Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6) on",
+        "description": "the given router.\n\nThis call can be used to create a new single-path route or to replace any existing routes with a new single-path route.",
+        "operationId": "router_route_ipv4_set",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Ipv4RouteUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6) on",
+        "description": "the given router.\n\nThis call can be used to create a new single-path route or to add new targets to a multipath route.",
+        "operationId": "router_route_ipv4_add",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Ipv4RouteUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/router/{router_id}/route/ipv4/{cidr}": {
+      "get": {
+        "summary": "Get the configured route for the given IPv4 subnet on the given router.",
+        "operationId": "router_route_ipv4_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cidr",
+            "description": "The IPv4 subnet in CIDR notation whose route entry is returned.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Ipv4Net"
+            }
+          },
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Array_of_Route",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Route"
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove all targets for the given subnet on the given router.",
+        "operationId": "router_route_ipv4_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cidr",
+            "description": "The IPv4 subnet in CIDR notation whose route entry is returned.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Ipv4Net"
+            }
+          },
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/router/{router_id}/route/ipv4/{cidr}/{port_id}/{link_id}/{tgt_ip}": {
+      "delete": {
+        "summary": "Remove a single target for the given IPv4 subnet on the given router",
+        "description": "(IPv4 or IPv6 next hop).",
+        "operationId": "router_route_ipv4_delete_target",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cidr",
+            "description": "The subnet being routed",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Ipv4Net"
+            }
+          },
+          {
+            "in": "path",
+            "name": "link_id",
+            "description": "The link to which packets should be sent",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LinkId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port to which packets should be sent",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "path",
+            "name": "tgt_ip",
+            "description": "The next hop in the route (IPv4 or IPv6)",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "ip"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/router/{router_id}/route/ipv6": {
+      "get": {
+        "summary": "Fetch the IPv6 routes configured on the given router, mapping IPv6",
+        "description": "CIDR blocks to the switch port used for sending out that traffic, and optionally a gateway.",
+        "operationId": "router_route_ipv6_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "description": "Maximum number of items returned by a single call",
+            "schema": {
+              "nullable": true,
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "description": "Token returned by previous call to retrieve the subsequent page",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ipv6RoutesResultsPage"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-dropshot-pagination": {
+          "required": []
+        }
+      },
+      "put": {
+        "summary": "Route an IPv6 subnet to a link and a nexthop gateway on the given",
+        "description": "router.\n\nThis call can be used to create a new single-path route or to replace any existing routes with a new single-path route.",
+        "operationId": "router_route_ipv6_set",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Ipv6RouteUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Route an IPv6 subnet to a link and a nexthop gateway on the given",
+        "description": "router.\n\nThis call can be used to create a new single-path route or to add new targets to a multipath route.",
+        "operationId": "router_route_ipv6_add",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Ipv6RouteUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "resource updated"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/router/{router_id}/route/ipv6/{cidr}": {
+      "get": {
+        "summary": "Get a single IPv6 route on the given router, by its IPv6 CIDR block.",
+        "operationId": "router_route_ipv6_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cidr",
+            "description": "The IPv6 subnet in CIDR notation whose route entry is returned.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Ipv6Net"
+            }
+          },
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Array_of_Ipv6Route",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Ipv6Route"
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove an IPv6 route on the given router, by its IPv6 CIDR block.",
+        "operationId": "router_route_ipv6_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cidr",
+            "description": "The IPv6 subnet in CIDR notation whose route entry is returned.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Ipv6Net"
+            }
+          },
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/router/{router_id}/route/ipv6/{cidr}/{port_id}/{link_id}/{tgt_ip}": {
+      "delete": {
+        "summary": "Remove a single target for the given IPv6 subnet on the given router.",
+        "operationId": "router_route_ipv6_delete_target",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cidr",
+            "description": "The subnet being routed",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Ipv6Net"
+            }
+          },
+          {
+            "in": "path",
+            "name": "link_id",
+            "description": "The link to which packets should be sent",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LinkId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port to which packets should be sent",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          },
+          {
+            "in": "path",
+            "name": "router_id",
+            "description": "The router being addressed.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "path",
+            "name": "tgt_ip",
+            "description": "The next hop in the IPv6 route",
             "required": true,
             "schema": {
               "type": "string",

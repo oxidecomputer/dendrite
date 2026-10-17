@@ -171,11 +171,8 @@ pub mod route {
     pub use crate::v1::route::Ipv6RouteToken;
     pub use crate::v1::route::Ipv6RouteUpdate;
     pub use crate::v1::route::Ipv6Routes;
-    pub use crate::v1::route::RoutePathV4;
-    pub use crate::v1::route::RoutePathV6;
     pub use crate::v1::route::RouteSettingsV4;
     pub use crate::v1::route::RouteSettingsV6;
-    pub use crate::v1::route::RouteTargetIpv6Path;
 
     pub use crate::v3::route::AttachedSubnetToken;
     pub use crate::v3::route::SubnetPath;
@@ -185,7 +182,13 @@ pub mod route {
     pub use crate::v4::route::RouteTarget;
 
     pub use crate::v6::route::Ipv4RouteUpdate;
-    pub use crate::v6::route::RouteTargetIpv4Path;
+
+    pub use crate::v14::route::DEFAULT_ROUTER;
+    pub use crate::v14::route::RoutePathV4;
+    pub use crate::v14::route::RoutePathV6;
+    pub use crate::v14::route::RouteTargetIpv4Path;
+    pub use crate::v14::route::RouteTargetIpv6Path;
+    pub use crate::v14::route::RouterPath;
 }
 
 pub mod serdes {
