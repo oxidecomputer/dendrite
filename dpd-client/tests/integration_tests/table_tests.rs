@@ -412,18 +412,18 @@ impl TableTest for RouteV4 {
             }),
             replace: false,
         };
-        switch.client.route_ipv4_set(&DEFAULT_ROUTER, &route).await
+        switch.client.route_ipv4_set(&route).await
     }
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let cidr = gen_ipv4_cidr(idx);
-        switch.client.route_ipv4_delete(&DEFAULT_ROUTER, &cidr).await
+        switch.client.route_ipv4_delete(&cidr).await
     }
 
     async fn count_entries(switch: &Switch) -> usize {
         switch
             .client
-            .route_ipv4_list_stream(&DEFAULT_ROUTER, None)
+            .route_ipv4_list_stream(None)
             .try_collect::<Vec<_>>()
             .await
             .unwrap()
@@ -456,18 +456,18 @@ impl TableTest for RouteV6 {
             },
             replace: false,
         };
-        switch.client.route_ipv6_set(&DEFAULT_ROUTER, &route).await
+        switch.client.route_ipv6_set(&route).await
     }
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let cidr = gen_ipv6_cidr(idx);
-        switch.client.route_ipv6_delete(&DEFAULT_ROUTER, &cidr).await
+        switch.client.route_ipv6_delete(&cidr).await
     }
 
     async fn count_entries(switch: &Switch) -> usize {
         switch
             .client
-            .route_ipv6_list_stream(&DEFAULT_ROUTER, None)
+            .route_ipv6_list_stream(None)
             .try_collect::<Vec<_>>()
             .await
             .unwrap()

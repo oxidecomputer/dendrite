@@ -1108,13 +1108,13 @@ async fn set_route_ipv6_common(
     };
     switch
         .client
-        .route_ipv6_set(&DEFAULT_ROUTER, &route)
+        .route_ipv6_set(&route)
         .await
         .expect("Failed to add IPv6 route entry");
 
     let route = switch
         .client
-        .route_ipv6_get(&DEFAULT_ROUTER, &cidr)
+        .route_ipv6_get(&cidr)
         .await
         .expect("Failed to get just-added IPv6 route entry")
         .into_inner();
@@ -1202,13 +1202,13 @@ async fn set_route_ipv4_common(
     };
     switch
         .client
-        .route_ipv4_set(&DEFAULT_ROUTER, &route)
+        .route_ipv4_set(&route)
         .await
         .expect("Failed to add IPv4 route entry");
 
     let route = switch
         .client
-        .route_ipv4_get(&DEFAULT_ROUTER, &cidr)
+        .route_ipv4_get(&cidr)
         .await
         .expect("failed to get just-added IPv4 route entry")
         .into_inner();
@@ -1257,13 +1257,13 @@ async fn set_route_ipv4_over_ipv6_common(
     };
     switch
         .client
-        .route_ipv4_set(&DEFAULT_ROUTER, &route)
+        .route_ipv4_set(&route)
         .await
         .expect("Failed to add IPv4 route entry");
 
     let route = switch
         .client
-        .route_ipv4_get(&DEFAULT_ROUTER, &cidr)
+        .route_ipv4_get(&cidr)
         .await
         .expect("failed to get just-added IPv4 route entry")
         .into_inner();

@@ -158,7 +158,7 @@ async fn route_list(
     print_route_header(&mut tw)?;
     if v4 {
         let routes: Vec<types::Ipv4Routes> = client
-            .route_ipv4_list_stream(&router_id, None)
+            .router_route_ipv4_list_stream(&router_id, None)
             .try_collect()
             .await
             .context("failed to get IPv4 routes")?;
@@ -168,7 +168,7 @@ async fn route_list(
     }
     if v6 {
         let routes: Vec<types::Ipv6Routes> = client
-            .route_ipv6_list_stream(&router_id, None)
+            .router_route_ipv6_list_stream(&router_id, None)
             .try_collect()
             .await
             .context("failed to get IPv6 routes")?;
@@ -189,7 +189,7 @@ async fn route_get(
     match &cidr {
         IpNet::V4(c) => {
             let targets = client
-                .route_ipv4_get(&router_id, c)
+                .router_route_ipv4_get(&router_id, c)
                 .await
                 .context("failed to get IPv4 route")?
                 .into_inner();
@@ -197,7 +197,7 @@ async fn route_get(
         }
         IpNet::V6(c) => {
             let targets = client
-                .route_ipv6_get(&router_id, c)
+                .router_route_ipv6_get(&router_id, c)
                 .await
                 .context("failed to get IPv6 route")?
                 .into_inner();
@@ -238,7 +238,7 @@ async fn route_add(
                 }
             };
             client
-                .route_ipv4_add(
+                .router_route_ipv4_add(
                     &router_id,
                     &types::Ipv4RouteUpdate { cidr, target, replace: false },
                 )
@@ -247,7 +247,7 @@ async fn route_add(
                 .map(|_| ())
         }
         (IpAddr::V6(tgt_ip), IpNet::V6(cidr)) => client
-            .route_ipv6_add(
+            .router_route_ipv6_add(
                 &router_id,
                 &types::Ipv6RouteUpdate {
                     cidr,
@@ -289,13 +289,15 @@ async fn route_del(
                 let port = link_path.port_id;
                 let link = link_path.link_id;
                 client
-                    .route_ipv4_delete_target(&router_id, &c, &port, &link, &gw)
+                    .router_route_ipv4_delete_target(
+                        &router_id, &c, &port, &link, &gw,
+                    )
                     .await
                     .context("deleting IPv4 route target")
                     .map(|_| ())
             }
             None => client
-                .route_ipv4_delete(&router_id, &c)
+                .router_route_ipv4_delete(&router_id, &c)
                 .await
                 .context("deleting IPv4 route")
                 .map(|_| ()),
@@ -303,7 +305,7 @@ async fn route_del(
         IpNet::V6(c) => match gw {
             Some(_) => Err(anyhow!("not supported")),
             None => client
-                .route_ipv6_delete(&router_id, &c)
+                .router_route_ipv6_delete(&router_id, &c)
                 .await
                 .context("deleting IPv6 route")
                 .map(|_| ()),

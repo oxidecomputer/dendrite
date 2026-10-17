@@ -59,17 +59,17 @@ async fn test_same_prefix_two_routers() -> TestResult {
     let router_target = ipv4_route(switch, 14, "10.10.14.1");
 
     client.router_create(&router, &ipv6("fd00:201::1")).await?;
+    client.route_ipv4_add(&route_update(cidr, &default_target)).await?;
     client
-        .route_ipv4_add(&DEFAULT_ROUTER, &route_update(cidr, &default_target))
+        .router_route_ipv4_add(&router, &route_update(cidr, &router_target))
         .await?;
-    client.route_ipv4_add(&router, &route_update(cidr, &router_target)).await?;
 
-    let found = client.route_ipv4_get(&DEFAULT_ROUTER, &cidr).await?;
+    let found = client.route_ipv4_get(&cidr).await?;
     assert_eq!(*found, vec![types::Route::V4(default_target)]);
-    let found = client.route_ipv4_get(&router, &cidr).await?;
+    let found = client.router_route_ipv4_get(&router, &cidr).await?;
     assert_eq!(*found, vec![types::Route::V4(router_target)]);
 
-    client.route_ipv4_delete(&DEFAULT_ROUTER, &cidr).await?;
+    client.route_ipv4_delete(&cidr).await?;
     client.router_delete(&router).await?;
     Ok(())
 }
@@ -87,22 +87,21 @@ async fn test_router_delete() -> TestResult {
     let endpoint = ipv6("fd00:202::2");
 
     client.router_create(&router, &endpoint).await?;
-    for r in [DEFAULT_ROUTER, router] {
-        client.route_ipv4_add(&r, &route_update(cidr, &target)).await?;
-    }
+    client.route_ipv4_add(&route_update(cidr, &target)).await?;
+    client.router_route_ipv4_add(&router, &route_update(cidr, &target)).await?;
 
     client.router_delete(&router).await?;
 
     assert!(!client.router_list().await?.contains_key(&router.to_string()));
-    let err = client.route_ipv4_get(&router, &cidr).await.unwrap_err();
+    let err = client.router_route_ipv4_get(&router, &cidr).await.unwrap_err();
     assert_eq!(err.status(), Some(StatusCode::NOT_FOUND));
-    assert_eq!(client.route_ipv4_get(&DEFAULT_ROUTER, &cidr).await?.len(), 1);
+    assert_eq!(client.route_ipv4_get(&cidr).await?.len(), 1);
 
     // The deleted router's endpoint is free to be claimed again.
     let again = Uuid::new_v4();
     client.router_create(&again, &endpoint).await?;
 
-    client.route_ipv4_delete(&DEFAULT_ROUTER, &cidr).await?;
+    client.route_ipv4_delete(&cidr).await?;
     client.router_delete(&again).await?;
     Ok(())
 }
@@ -119,14 +118,14 @@ async fn test_uncreated_router() -> TestResult {
     let target = ipv4_route(switch, 10, "10.10.10.1");
 
     let statuses = [
-        client.route_ipv4_list(&router, None, None).await.map(|_| ()),
-        client.route_ipv4_get(&router, &cidr).await.map(|_| ()),
+        client.router_route_ipv4_list(&router, None, None).await.map(|_| ()),
+        client.router_route_ipv4_get(&router, &cidr).await.map(|_| ()),
         client
-            .route_ipv4_add(&router, &route_update(cidr, &target))
+            .router_route_ipv4_add(&router, &route_update(cidr, &target))
             .await
             .map(|_| ()),
-        client.route_ipv4_delete(&router, &cidr).await.map(|_| ()),
-        client.route_ipv6_list(&router, None, None).await.map(|_| ()),
+        client.router_route_ipv4_delete(&router, &cidr).await.map(|_| ()),
+        client.router_route_ipv6_list(&router, None, None).await.map(|_| ()),
         client.router_get(&router).await.map(|_| ()),
     ]
     .map(|r| r.unwrap_err().status());
@@ -239,9 +238,7 @@ async fn test_default_router_is_not_a_router() -> TestResult {
     let cidr: Ipv4Net = "10.206.0.0/24".parse().unwrap();
     let target = ipv4_route(switch, 10, "10.10.10.1");
 
-    client
-        .route_ipv4_add(&DEFAULT_ROUTER, &route_update(cidr, &target))
-        .await?;
+    client.route_ipv4_add(&route_update(cidr, &target)).await?;
 
     let err = client.router_get(&DEFAULT_ROUTER).await.unwrap_err();
     assert_eq!(err.status(), Some(StatusCode::NOT_FOUND));
@@ -253,13 +250,13 @@ async fn test_default_router_is_not_a_router() -> TestResult {
     let err = client.router_delete(&DEFAULT_ROUTER).await.unwrap_err();
     assert_eq!(err.status(), Some(StatusCode::BAD_REQUEST));
     assert!(client.router_list().await?.is_empty());
-    assert_eq!(client.route_ipv4_get(&DEFAULT_ROUTER, &cidr).await?.len(), 1);
+    assert_eq!(client.route_ipv4_get(&cidr).await?.len(), 1);
 
-    client.route_ipv4_delete(&DEFAULT_ROUTER, &cidr).await?;
+    client.route_ipv4_delete(&cidr).await?;
     Ok(())
 }
 
-/// A route added by an API v13 client uses the default router.
+/// v13 and v14 clients reach the same table through `/route/*`.
 #[tokio::test]
 #[ignore]
 async fn test_legacy_route_uses_default_router() -> TestResult {
@@ -276,11 +273,11 @@ async fn test_legacy_route_uses_default_router() -> TestResult {
         .await?;
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-    let routes = client.route_ipv4_list(&DEFAULT_ROUTER, None, None).await?;
+    let routes = client.route_ipv4_list(None, None).await?;
     let found = routes.items.iter().find(|r| r.cidr == cidr).unwrap();
     assert_eq!(found.targets, vec![types::Route::V4(target)]);
 
-    client.route_ipv4_delete(&DEFAULT_ROUTER, &cidr).await?;
+    client.route_ipv4_delete(&cidr).await?;
     Ok(())
 }
 
@@ -364,15 +361,19 @@ async fn test_recreated_router_has_no_routes() -> TestResult {
     // table.
     let first = Uuid::new_v4();
     client.router_create(&first, &endpoint).await?;
-    client.route_ipv4_add(&first, &route_update(cidr, &target)).await?;
+    client.router_route_ipv4_add(&first, &route_update(cidr, &target)).await?;
     client.router_delete(&first).await?;
 
     let second = Uuid::new_v4();
     client.router_create(&second, &endpoint).await?;
     assert!(
-        client.route_ipv4_list(&second, None, None).await?.items.is_empty()
+        client
+            .router_route_ipv4_list(&second, None, None)
+            .await?
+            .items
+            .is_empty()
     );
-    let err = client.route_ipv4_get(&second, &cidr).await.unwrap_err();
+    let err = client.router_route_ipv4_get(&second, &cidr).await.unwrap_err();
     assert_eq!(err.status(), Some(StatusCode::NOT_FOUND));
 
     client.router_delete(&second).await?;
@@ -408,16 +409,19 @@ async fn add_link_addr(switch: &Switch) -> TestResult {
 /// uplink, as decapsulated packets may only leave through uplinks.
 async fn add_route(
     switch: &Switch,
-    router: Uuid,
+    router: Option<Uuid>,
     cidr: &str,
     port: u16,
 ) -> TestResult {
     let gw = format!("10.10.{port}.1");
     let target = ipv4_route(switch, port, &gw);
-    switch
-        .client
-        .route_ipv4_add(&router, &route_update(cidr.parse()?, &target))
-        .await?;
+    let update = route_update(cidr.parse()?, &target);
+    match router {
+        None => switch.client.route_ipv4_add(&update).await?,
+        Some(router) => {
+            switch.client.router_route_ipv4_add(&router, &update).await?
+        }
+    };
     common::add_arp_ipv4(switch, &gw, GW_MAC.parse()?).await?;
     switch.set_uplink(PhysPort(port), true).await;
     Ok(())
@@ -474,9 +478,9 @@ async fn test_endpoint_selects_router() -> TestResult {
     add_link_addr(switch).await?;
     let (a, b) = create_a_and_b(switch).await?;
     let cidr = "10.10.10.0/24";
-    add_route(switch, DEFAULT_ROUTER, cidr, 14).await?;
-    add_route(switch, a, cidr, 15).await?;
-    add_route(switch, b, cidr, 16).await?;
+    add_route(switch, None, cidr, 14).await?;
+    add_route(switch, Some(a), cidr, 15).await?;
+    add_route(switch, Some(b), cidr, 16).await?;
 
     let inner = inner_packet(switch, "10.10.10.32");
     for (outer_dst, port) in
@@ -497,7 +501,7 @@ async fn test_no_fallback_to_default_router() -> TestResult {
     let switch = &*get_switch().await;
     add_link_addr(switch).await?;
     create_a_and_b(switch).await?;
-    add_route(switch, DEFAULT_ROUTER, "10.10.10.0/24", 14).await?;
+    add_route(switch, None, "10.10.10.0/24", 14).await?;
 
     let inner = inner_packet(switch, "10.10.10.32");
     let mut unreachable = inner.clone();
@@ -516,8 +520,8 @@ async fn test_longest_prefix_within_router() -> TestResult {
     let switch = &*get_switch().await;
     add_link_addr(switch).await?;
     let (a, _) = create_a_and_b(switch).await?;
-    add_route(switch, DEFAULT_ROUTER, "10.0.0.0/8", 14).await?;
-    add_route(switch, a, "10.1.0.0/16", 15).await?;
+    add_route(switch, None, "10.0.0.0/8", 14).await?;
+    add_route(switch, Some(a), "10.1.0.0/16", 15).await?;
 
     let inner = inner_packet(switch, "10.1.1.1");
     switch.packet_test(
