@@ -74,20 +74,38 @@ pub mod mcast {
     pub use crate::v1::mcast::MulticastGroupMember;
 
     pub use crate::v7::mcast::IpSrc;
-    pub use crate::v7::mcast::MulticastGroupCreateExternalEntry;
 
     pub use crate::v8::mcast::Error;
     pub use crate::v8::mcast::MulticastGroupCreateUnderlayEntry;
-    pub use crate::v8::mcast::MulticastGroupExternalResponse;
-    pub use crate::v8::mcast::MulticastGroupResponse;
     pub use crate::v8::mcast::MulticastGroupTagQuery;
     pub use crate::v8::mcast::MulticastGroupUnderlayResponse;
-    pub use crate::v8::mcast::MulticastGroupUpdateExternalEntry;
     pub use crate::v8::mcast::MulticastGroupUpdateUnderlayEntry;
     pub use crate::v8::mcast::MulticastTag;
     pub use crate::v8::mcast::MulticastTagPath;
     pub use crate::v8::mcast::MulticastUnderlayGroupIpParam;
     pub use crate::v8::mcast::UnderlayMulticastIpv6;
+
+    pub use crate::v14::mcast::AsmMulticastGroupCreate;
+    pub use crate::v14::mcast::EmbeddedIpv4;
+    pub use crate::v14::mcast::ExactSource;
+    pub use crate::v14::mcast::ExternalInternalForwarding;
+    pub use crate::v14::mcast::ExternalInternalForwardingError;
+    pub use crate::v14::mcast::ExternalMulticastIp;
+    pub use crate::v14::mcast::ExternalMulticastIpError;
+    pub use crate::v14::mcast::ExternalNatTarget;
+    pub use crate::v14::mcast::ExternalNatTargetError;
+    pub use crate::v14::mcast::InvalidMulticastSource;
+    pub use crate::v14::mcast::MulticastExternalGroupIpParam;
+    pub use crate::v14::mcast::MulticastGroupCreateExternalEntry;
+    pub use crate::v14::mcast::MulticastGroupCreateExternalError;
+    pub use crate::v14::mcast::MulticastGroupExternalResponse;
+    pub use crate::v14::mcast::MulticastGroupResponse;
+    pub use crate::v14::mcast::MulticastGroupUpdateExternalEntry;
+    pub use crate::v14::mcast::NonEmptyExactSources;
+    pub use crate::v14::mcast::SourceEntry;
+    pub use crate::v14::mcast::SourceFilter;
+    pub use crate::v14::mcast::SsmMulticastGroupCreate;
+    pub use crate::v14::mcast::SsmMulticastIp;
 
     pub use crate::impls::mcast::MAX_TAG_LENGTH;
     pub use crate::impls::mcast::MulticastTagParseError;

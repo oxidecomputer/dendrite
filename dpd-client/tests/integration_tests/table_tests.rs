@@ -17,6 +17,7 @@ use reqwest::StatusCode;
 use dpd_client::ClientInfo;
 use dpd_client::ResponseValue;
 use dpd_client::types;
+use dpd_types::mcast::UnderlayMulticastIpv6;
 
 use crate::integration_tests::common::prelude::*;
 
@@ -483,7 +484,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
 
         // Admin-local IPv6 groups are internal with replication info and members
         let internal_entry = types::MulticastGroupCreateUnderlayEntry {
-            group_ip: types::UnderlayMulticastIpv6(group_ip),
+            group_ip: UnderlayMulticastIpv6::try_from(group_ip).unwrap(),
             tag: Some(MCAST_TAG.to_string()),
             members: vec![
                 types::MulticastGroupMember {

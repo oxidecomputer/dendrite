@@ -25,6 +25,7 @@ bf_mc_mgrp_destroy
 bf_mc_mgrp_get_count
 bf_mc_node_create
 bf_mc_node_destroy
+bf_mc_node_get_association
 bf_mc_node_update
 bf_mc_associate_node
 bf_mc_dissociate_node

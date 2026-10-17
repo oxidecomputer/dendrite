@@ -109,11 +109,11 @@ pub enum AsicError {
     Synthetic(String),
     /// A general indication that a caller is trying to create something that
     /// already exists.
-    #[error("Already exists")]
-    Exists,
+    #[error("Already exists: {}", .0)]
+    Exists(String),
     /// A general indication that a caller is trying to modify something that
     /// is not present.
-    #[error("Missing")]
+    #[error("Missing: {}", .0)]
     Missing(String),
 }
 

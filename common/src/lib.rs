@@ -28,8 +28,13 @@ pub use smf::{SmfError, SmfResult, is_smf_active};
 /// The default port on which the Dendrite API server listens.
 pub const DEFAULT_DPD_PORT: u16 = 12224;
 
-/// The http error code used when a rollback failure occurs.
+/// The `error_code` sent in an HTTP error response when a rollback failure
+/// occurs.
 pub const ROLLBACK_FAILURE_ERROR_CODE: &str = "rollback failure";
+
+/// The `error_code` sent in an HTTP error response when an external multicast
+/// group's NAT target (its underlay group) is absent from the switch.
+pub const MISSING_NAT_TARGET_ERROR_CODE: &str = "missing nat target";
 
 /// Given two arrays, return two vectors containing only the unique items from each array.
 pub fn purge_common<T>(a: &[T], b: &[T]) -> (Vec<T>, Vec<T>)
