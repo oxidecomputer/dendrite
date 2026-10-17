@@ -1,0 +1,7 @@
+Group IP:           ff04::5ad:2
+Kind:               underlay
+External group ID:
+Underlay group ID:
+Tag:                swadm_multicast_test
+Members:
+  (none)

@@ -72,7 +72,16 @@ pub fn swadm_exact(
         .map(Cow::from)
         .unwrap_or_else(|_| common::DEFAULT_DPD_PORT.to_string().into());
 
+    // CI exports RUST_BACKTRACE=1, which forces anyhow to append a "Stack
+    // backtrace:" section to every error swadm prints, and stderr would
+    // differ from a local run and never match an expectation file.
+    //
+    // We still keep panic backtraces but turn off the library-level ones,
+    // just like omdb's test harness does:
+    // https://github.com/oxidecomputer/omicron/blob/654472b6368b48743f34c0744e2acfb06278f796/dev-tools/omdb/tests/test_all_output.rs#L961-L969
     let output = Command::new(self::SWADM)
+        .env("RUST_BACKTRACE", "1")
+        .env("RUST_LIB_BACKTRACE", "0")
         .args(["--host", host.as_ref(), "--port", port.as_ref()])
         .args(input)
         .output()?;
@@ -139,6 +148,11 @@ pub mod re {
     /// support nested parentheses.
     pub static PARENS: LazyLock<Pattern> =
         LazyLock::new(|| Regex::new(r"\([^)]*\)").unwrap().into());
+
+    /// A run of three or more digits between spaces or at a line's end,
+    /// i.e. allocated multicast group IDs in the `swadm multicast` output.
+    pub static GROUP_ID: LazyLock<Pattern> =
+        LazyLock::new(|| Regex::new(r"(?m) +\d{3,}( |$)").unwrap().into());
 }
 
 /// A wrapper type for regex inputs that can be
@@ -302,5 +316,6 @@ mod test {
     #[test]
     fn pattern_statics() {
         let _ = &*re::PARENS;
+        let _ = &*re::GROUP_ID;
     }
 }
