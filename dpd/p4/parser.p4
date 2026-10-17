@@ -55,6 +55,8 @@ parser IngressParser(
 
 		meta.bridge_hdr.setValid();
 		meta.bridge_hdr.ingress_port = ig_intr_md.ingress_port;
+		meta.bridge_hdr.nat_egress_hit = false;
+		meta.bridge_hdr.reserved = 0;
 
 		transition port_metadata;
 	}
@@ -246,8 +248,8 @@ parser IngressParser(
 		});
 
 		transition select(hdr.ipv6.dst_addr[127:112]) {
-			16w0xff01: drop_interface_local_mcast;
-			16w0xff02: set_link_local_mcast;
+			IPV6_INTERFACE_LOCAL_16: drop_interface_local_mcast;
+			IPV6_LINK_LOCAL_16: set_link_local_mcast;
 			default: check_ipv6_mcast;
 		}
 	}
@@ -538,7 +540,6 @@ parser EgressParser(
 
 	state meta_init {
 		meta.drop_reason = 0;
-		meta.bridge_hdr.setInvalid();
 
 		meta.decap_ports_0 = 0;
 		meta.decap_ports_1 = 0;
@@ -561,9 +562,11 @@ parser EgressParser(
 	state parse_bridge_hdr {
 		pkt.extract(bridge_hdr);
 		meta.bridge_hdr = bridge_hdr;
-		meta.bridge_hdr.setValid();
 
-		transition parse_ethernet;
+		transition select(bridge_hdr.nat_egress_hit) {
+			true: accept;
+			default: parse_ethernet;
+		}
 	}
 
 	state parse_ethernet {
@@ -587,37 +590,58 @@ parser EgressParser(
 		}
 	}
 
+	// Egress only needs L4 and Geneve for underlay multicast replicas,
+	// which are always IPv6 packets. Stopping at the IPv4 header avoids
+	// misreading options or fragments as UDP.
 	state parse_ipv4 {
 		pkt.extract(hdr.ipv4);
-
-		transition select(hdr.ipv4.protocol) {
-			IPPROTO_ICMP: parse_icmp;
-			IPPROTO_TCP: parse_tcp;
-			IPPROTO_UDP: parse_udp;
-			default: accept;
-		}
+		transition accept;
 	}
 
+	// Egress only needs Geneve parsed for underlay multicast (ff04::/64, our
+	// internal block). NAT ingress traffic gets encapsulated too, but nothing
+	// in the egress controls reads its Geneve header, and all other IPv6
+	// stops after the IPv6 header.
+	//
+	// An egress reject doesn't drop the packet (TNA 5.2.1):
+	// https://raw.githubusercontent.com/barefootnetworks/Open-Tofino/2c83863fd6665cf29dcc64381ee2c6ce8e4552d8/PUBLIC_Tofino-Native-Arch.pdf#page=20
 	state parse_ipv6 {
 		pkt.extract(hdr.ipv6);
 
-		transition select(hdr.ipv6.next_hdr) {
-			IPPROTO_TCP: parse_tcp;
-			IPPROTO_UDP: parse_udp;
+		// Tofino 2 has four 8-bit parser match registers:
+		// https://github.com/p4lang/p4c/blob/279e939673457bc09a5ae9ed3337f6e8d4d93bf4/backends/tofino/bf-p4c/specs/parde_spec.h#L591-L600
+		//
+		// This equates to 32 bits per state, which is too few for the 64-bit
+		// ff04::/64 prefix we rely on (plus the next_hdr). Instead, we check
+		// 16 bits per state, with next_hdr checked in the initial state.
+		// The later states could take 32 bits, but keeping at 16 gives them
+		// uniformity.
+		transition select(hdr.ipv6.dst_addr[127:112], hdr.ipv6.next_hdr) {
+			(IPV6_UNDERLAY_MULTICAST_PATTERN[127:112], IPPROTO_UDP):
+			    check_underlay_dst_111_96;
 			default: accept;
 		}
 	}
 
-	state parse_icmp {
-		pkt.extract(hdr.icmp);
-
-		transition accept;
+	state check_underlay_dst_111_96 {
+		transition select(hdr.ipv6.dst_addr[111:96]) {
+			IPV6_UNDERLAY_MULTICAST_PATTERN[111:96]: check_underlay_dst_95_80;
+			default: accept;
+		}
 	}
 
-	state parse_tcp {
-		pkt.extract<tcp_h>(_);
+	state check_underlay_dst_95_80 {
+		transition select(hdr.ipv6.dst_addr[95:80]) {
+			IPV6_UNDERLAY_MULTICAST_PATTERN[95:80]: check_underlay_dst_79_64;
+			default: accept;
+		}
+	}
 
-		transition accept;
+	state check_underlay_dst_79_64 {
+		transition select(hdr.ipv6.dst_addr[79:64]) {
+			IPV6_UNDERLAY_MULTICAST_PATTERN[79:64]: parse_udp;
+			default: accept;
+		}
 	}
 
 	state parse_udp {

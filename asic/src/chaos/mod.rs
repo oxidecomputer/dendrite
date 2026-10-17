@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
 
-#[cfg(feature = "multicast")]
 use aal::AsicMulticastOps;
 use aal::{
     AsicError, AsicId, AsicOps, AsicResult, Connector, PortHdl, PortUpdate,
@@ -117,7 +116,6 @@ impl TableChaos {
             ],
             v,
         );
-        #[cfg(feature = "multicast")]
         tc.add_tables(
             vec![
                 TableType::RouteIpv4Mcast,
@@ -154,7 +152,6 @@ impl TableChaos {
     }
 }
 
-#[cfg(feature = "multicast")]
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct AsicMulticastConfig {
     pub mc_port_count: Chaos,
@@ -194,7 +191,6 @@ pub struct AsicConfig {
     pub table_entry_add: TableChaos,
     pub table_entry_update: TableChaos,
     pub table_entry_del: TableChaos,
-    #[cfg(feature = "multicast")]
     pub mc_config: AsicMulticastConfig,
 }
 
@@ -228,7 +224,6 @@ impl AsicConfig {
             table_entry_add: TableChaos::uniform(v),
             table_entry_update: TableChaos::uniform(v),
             table_entry_del: TableChaos::uniform(v),
-            #[cfg(feature = "multicast")]
             mc_config: AsicMulticastConfig {
                 mc_port_count: Chaos::new(v),
                 mc_port_add: Chaos::new(v),
@@ -257,7 +252,6 @@ impl AsicConfig {
             port_enable_get: Chaos::new(v),
             connector_avail_channels: Chaos::new(v),
             get_sidecar_identifiers: Chaos::new(v),
-            #[cfg(feature = "multicast")]
             mc_config: AsicMulticastConfig {
                 mc_port_count: Chaos::new(v),
                 mc_groups_count: Chaos::new(v),
@@ -286,7 +280,6 @@ impl AsicConfig {
             table_entry_add: TableChaos::uniform(v),
             table_entry_update: TableChaos::uniform(v),
             table_entry_del: TableChaos::uniform(v),
-            #[cfg(feature = "multicast")]
             mc_config: AsicMulticastConfig {
                 mc_port_add: Chaos::new(v),
                 mc_port_remove: Chaos::new(v),
@@ -376,7 +369,6 @@ pub(crate) use unfurl;
 /// A convenience macro for unfurling multicast chaos. The $name should be a
 /// regular `Chaos` member of [`AsicMulticastConfigConfig`]. The `handle` is
 /// a [`Handle`] object.
-#[cfg(feature = "multicast")]
 macro_rules! unfurl_mc {
     ($handle:ident, $name:ident) => {
         $handle
@@ -396,7 +388,6 @@ macro_rules! table_unfurl {
 }
 pub(crate) use table_unfurl;
 
-#[cfg(feature = "multicast")]
 impl AsicMulticastOps for Handle {
     fn mc_domains(&self) -> Vec<u16> {
         let len = self.ports.lock().unwrap().len() as u16;
