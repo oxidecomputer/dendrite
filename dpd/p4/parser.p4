@@ -591,20 +591,56 @@ parser EgressParser(
 		}
 	}
 
+	// Egress only needs L4 and Geneve for underlay multicast replicas,
+	// which are always IPv6 packets. Stopping at the IPv4 header avoids
+	// misreading options or fragments as UDP.
 	state parse_ipv4 {
 		pkt.extract(hdr.ipv4);
+		transition accept;
+	}
 
-		transition select(hdr.ipv4.protocol) {
-			IPPROTO_UDP: parse_udp;
+	// Egress only needs Geneve parsed for underlay multicast (ff04::/64, our
+	// internal block). NAT ingress traffic gets encapsulated too, but nothing
+	// in the egress controls reads its Geneve header, and all other IPv6
+	// stops after the IPv6 header.
+	//
+	// An egress reject doesn't drop the packet (TNA 5.2.1):
+	// https://raw.githubusercontent.com/barefootnetworks/Open-Tofino/2c83863fd6665cf29dcc64381ee2c6ce8e4552d8/PUBLIC_Tofino-Native-Arch.pdf#page=20
+	state parse_ipv6 {
+		pkt.extract(hdr.ipv6);
+
+		// Tofino 2 has four 8-bit parser match registers:
+		// https://github.com/p4lang/p4c/blob/279e939673457bc09a5ae9ed3337f6e8d4d93bf4/backends/tofino/bf-p4c/specs/parde_spec.h#L591-L600
+		//
+		// This equates to 32 bits per state, which is too few for the 64-bit
+		// ff04::/64 prefix we rely on (plus the next_hdr). Instead, we check
+		// 16 bits per state, with next_hdr checked in the initial state.
+		// The later states could take 32 bits, but keeping at 16 gives them
+		// uniformity.
+		transition select(hdr.ipv6.dst_addr[127:112], hdr.ipv6.next_hdr) {
+			(IPV6_UNDERLAY_MULTICAST_PATTERN[127:112], IPPROTO_UDP):
+			    check_underlay_dst_111_96;
 			default: accept;
 		}
 	}
 
-	state parse_ipv6 {
-		pkt.extract(hdr.ipv6);
+	state check_underlay_dst_111_96 {
+		transition select(hdr.ipv6.dst_addr[111:96]) {
+			IPV6_UNDERLAY_MULTICAST_PATTERN[111:96]: check_underlay_dst_95_80;
+			default: accept;
+		}
+	}
 
-		transition select(hdr.ipv6.next_hdr) {
-			IPPROTO_UDP: parse_udp;
+	state check_underlay_dst_95_80 {
+		transition select(hdr.ipv6.dst_addr[95:80]) {
+			IPV6_UNDERLAY_MULTICAST_PATTERN[95:80]: check_underlay_dst_79_64;
+			default: accept;
+		}
+	}
+
+	state check_underlay_dst_79_64 {
+		transition select(hdr.ipv6.dst_addr[79:64]) {
+			IPV6_UNDERLAY_MULTICAST_PATTERN[79:64]: parse_udp;
 			default: accept;
 		}
 	}
