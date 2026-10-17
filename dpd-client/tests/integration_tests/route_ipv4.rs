@@ -9,6 +9,7 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use anyhow::anyhow;
+use anyhow::bail;
 use oxnet::Ipv4Net;
 use reqwest::StatusCode;
 
@@ -89,9 +90,7 @@ async fn validate_routes(
 ) -> TestResult {
     if expected.is_empty() {
         match client.route_ipv4_get(&cidr).await {
-            Ok(f) => {
-                Err(anyhow!("found {} targets - expected no route", f.len()))
-            }
+            Ok(f) => bail!("found {} targets - expected no route", f.len()),
             Err(_) => Ok(()),
         }
     } else {
@@ -604,7 +603,8 @@ async fn fill_until_ipv4_filler_alloc_unavailable(
             Err(e) if e.status() == Some(StatusCode::INSUFFICIENT_STORAGE) => {
                 assert!(
                     i > 0,
-                    "alloc({SHRINK_TEST_FILLER_TARGETS}) failed before any IPv4 fillers"
+                    "alloc({SHRINK_TEST_FILLER_TARGETS}) failed before any \
+                     IPv4 fillers"
                 );
                 validate_routes(
                     client,
@@ -614,20 +614,19 @@ async fn fill_until_ipv4_filler_alloc_unavailable(
                 .await?;
                 return Ok(fillers);
             }
-            Err(e) => {
-                return Err(anyhow!(
-                    "unexpected error probing IPv4 \
-                     alloc({SHRINK_TEST_FILLER_TARGETS}) availability at \
-                     filler prefix {cidr}: {e:?}"
-                ));
-            }
+            Err(e) => bail!(
+                "unexpected error probing IPv4 \
+                 alloc({SHRINK_TEST_FILLER_TARGETS}) availability at \
+                 filler prefix {cidr}: {e:?}"
+            ),
         }
     }
 
-    Err(anyhow!(
-        "IPv4 route target allocation of size {SHRINK_TEST_FILLER_TARGETS} did not fail after \
+    bail!(
+        "IPv4 route target allocation of size \
+         {SHRINK_TEST_FILLER_TARGETS} did not fail after \
          {MAX_ROUTE_TARGET_FILLERS} filler prefixes"
-    ))
+    )
 }
 
 #[tokio::test]

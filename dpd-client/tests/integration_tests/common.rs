@@ -14,6 +14,7 @@ use std::{fmt, thread};
 
 use anyhow::Context;
 use anyhow::anyhow;
+use anyhow::bail;
 use oxnet::Ipv4Net;
 use oxnet::Ipv6Net;
 use slog::Drain;
@@ -799,16 +800,10 @@ impl Switch {
             }
         }
 
-        match errors.len() {
-            0 => Ok(matched),
-            _ => Err(anyhow!(
-                errors
-                    .iter()
-                    .map(|e| e.to_string())
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            )),
+        if !errors.is_empty() {
+            bail!("{}", errors.join(", "));
         }
+        Ok(matched)
     }
 
     /// If no client_name is given, this returns the number of packets dropped
@@ -824,23 +819,20 @@ impl Switch {
         counter: &str,
         client_name: Option<&str>,
     ) -> anyhow::Result<u64> {
-        let client_name = if let Some(client_name) = client_name {
-            client_name.to_string()
-        } else {
-            "ingress_drop_reason".to_string()
-        };
+        let client_name = client_name.unwrap_or("ingress_drop_reason");
 
-        self.client
-            .counter_get(&client_name, true)
+        let entries = self
+            .client
+            .counter_get(client_name, true)
             .await
-            .map_err(|e| anyhow::anyhow!("failed to fetch counters: {e:?}"))
-            .and_then(|entries| {
-                entries
-                    .iter()
-                    .find(|e| e.keys.get("label").unwrap().as_str() == counter)
-                    .map(|e| e.data.pkts.unwrap())
-                    .ok_or(anyhow::anyhow!("no such counter: {counter}"))
-            })
+            .map_err(|e| anyhow!("failed to fetch counters: {e:?}"))?;
+        let Some(entry) = entries
+            .iter()
+            .find(|e| e.keys.get("label").unwrap().as_str() == counter)
+        else {
+            bail!("no such counter: {counter} in {client_name}");
+        };
+        Ok(entry.data.pkts.unwrap())
     }
 }
 
@@ -852,25 +844,31 @@ pub async fn check_counter_incremented(
     client_name: Option<&str>,
 ) -> anyhow::Result<u64> {
     let expected = baseline + expected_increment;
+    let table = client_name.unwrap_or("ingress_drop_reason");
+    let incr_expect = format!(
+        "counter '{counter_name}' in {table} expected to increase by \
+         {expected_increment} ({baseline} -> {expected})"
+    );
     let mut new_value = 0;
 
     // Poll for the counter value (with timeout)
     for _i in 0..COUNTER_POLL_ATTEMPTS {
         thread::sleep(COUNTER_POLL_INTERVAL);
-        new_value =
-            switch.get_counter(counter_name, client_name).await.unwrap();
+        new_value = switch.get_counter(counter_name, client_name).await?;
 
         if new_value == expected {
             return Ok(new_value);
         }
+        if new_value > expected {
+            bail!("{incr_expect}, but overshot to {new_value}");
+        }
     }
 
     // Counter didn't increment as expected
-    Err(anyhow!(
-        "Counter '{counter_name}' expected to increase by \
-         {expected_increment} (from {baseline} to {expected}), but only \
-         reached {new_value}"
-    ))
+    bail!(
+        "{incr_expect}, but reached {new_value} after \
+         {COUNTER_POLL_ATTEMPTS} polls"
+    )
 }
 
 // Construct a single TCP packet with an optional payload
