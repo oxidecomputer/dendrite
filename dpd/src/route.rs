@@ -1143,30 +1143,29 @@ pub async fn get_route_ipv6(
     }
 }
 
-// Remove a route from the switch, then forget it.  If any switch write fails,
-// the route is kept so the delete can be retried; entries already removed by
-// an earlier attempt count as removed.
+// Remove a route from the dataplane, then forget it.
+//
+// The in-core entry is kept for a retry only if deleting the on-chip
+// `route_index` fails, since that is what takes the route off the
+// dataplane.  An index that is already missing counts as deleted.  If
+// `cleanup_route` then fails to clear a target, the route's slots are
+// leaked rather than freed.
 fn delete_route_locked(
     ops: &dyn RouteTableOps,
     route_data: &mut RouteData,
     key: RouteKey,
 ) -> DpdResult<()> {
-    let already_gone = |r: DpdResult<()>| match r {
-        Err(DpdError::Switch(AsicError::Missing(_))) => Ok(()),
-        r => r,
-    };
     let entry = route_data
         .get(key)
         .cloned()
         .ok_or(DpdError::Missing("no such route".into()))?;
 
-    already_gone(ops.delete_index(key))?;
-    for idx in 0..entry.targets.len() as u16 {
-        already_gone(ops.delete_target(key.subnet, entry.index + idx))?;
+    match ops.delete_index(key) {
+        Ok(()) | Err(DpdError::Switch(AsicError::Missing(_))) => {}
+        Err(e) => return Err(e),
     }
     route_data.remove(key);
-    route_data.freemap_mut(entry.is_ipv4).free(entry.index, entry.slots as u16);
-    Ok(())
+    cleanup_route(ops, route_data, key, entry)
 }
 
 // Delete a route and all of its targets
@@ -1997,18 +1996,25 @@ mod tests {
         let (ops, mut rd) = make_test_ctx();
         let doomed = RoutingTableId::from(1);
         let other = RoutingTableId::from(2);
-        let v4: Ipv4Net = "192.168.1.0/24".parse().unwrap();
-        let v6: Ipv6Net = "fd00:1::/64".parse().unwrap();
-        let gw4: IpAddr = "10.0.0.1".parse().unwrap();
-        let gw6: IpAddr = "fd00::1".parse().unwrap();
+        let (f4, f6) = (fixtures_v4(), fixtures_v6());
         for table_id in [RoutingTableId::default(), doomed, other] {
-            install_victim(&ops, &mut rd, RouteKey::new(table_id, v4), [gw4]);
-            install_victim(&ops, &mut rd, RouteKey::new(table_id, v6), [gw6]);
+            install_victim(
+                &ops,
+                &mut rd,
+                RouteKey::new(table_id, f4.victim.subnet),
+                [f4.targets[0]],
+            );
+            install_victim(
+                &ops,
+                &mut rd,
+                RouteKey::new(table_id, f6.victim.subnet),
+                [f6.targets[0]],
+            );
         }
 
         rd.delete_table(&ops, doomed).unwrap();
         assert!(!rd.tables.contains_key(&doomed));
-        for subnet in [IpNet::from(v4), IpNet::from(v6)] {
+        for subnet in [f4.victim.subnet, f6.victim.subnet] {
             let gone = RouteKey::new(doomed, subnet);
             assert!(!ops.indexes.borrow().contains(&gone));
             for table_id in [RoutingTableId::default(), other] {
@@ -2022,27 +2028,14 @@ mod tests {
         rd.delete_table(&ops, doomed).unwrap();
     }
 
-    fn install_route(
-        rd: &mut RouteData,
-        ops: &TestOps,
-        table_id: RoutingTableId,
-    ) {
-        let v4: Ipv4Net = "192.168.1.0/24".parse().unwrap();
-        let gw: IpAddr = "10.0.0.1".parse().unwrap();
-        let gw2: IpAddr = "10.0.0.2".parse().unwrap();
-        install_victim(ops, rd, RouteKey::new(table_id, v4), [gw, gw2]);
-    }
-
     /// A failed index delete keeps the route, and a retry removes it.
     #[test]
     fn delete_table_keeps_route_when_index_delete_fails() {
         let (ops, mut rd) = make_test_ctx();
         let table_id = RoutingTableId::from(1);
-        install_route(&mut rd, &ops, table_id);
-        let key = RouteKey::new(
-            table_id,
-            "192.168.1.0/24".parse::<Ipv4Net>().unwrap(),
-        );
+        let f = fixtures_v4();
+        let key = RouteKey::new(table_id, f.victim.subnet);
+        install_victim(&ops, &mut rd, key, [f.targets[0]]);
 
         ops.arm(Op::DelIndex, 0);
         assert!(rd.delete_table(&ops, table_id).is_err());
@@ -2054,33 +2047,52 @@ mod tests {
         assert!(ops.targets.borrow().is_empty());
     }
 
-    /// The first attempt removes the index and one target before failing,
-    /// so the retry only succeeds if it treats those as already removed.
+    /// A failed target delete still forgets the route, and the slot whose
+    /// target is still installed is not handed out again.
     #[test]
-    fn delete_table_keeps_route_when_target_delete_fails() {
+    fn delete_table_forgets_route_when_target_delete_fails() {
         let (ops, mut rd) = make_test_ctx();
         let table_id = RoutingTableId::from(1);
-        install_route(&mut rd, &ops, table_id);
-        let key = RouteKey::new(
-            table_id,
-            "192.168.1.0/24".parse::<Ipv4Net>().unwrap(),
-        );
+        let f = fixtures_v4();
+        let key = RouteKey::new(table_id, f.victim.subnet);
+        install_victim(&ops, &mut rd, key, [f.targets[0], f.targets[1]]);
         let entry = rd.get(key).unwrap().clone();
 
+        // Fail the second target delete
         ops.arm(Op::DelTarget, 1);
-        assert!(rd.delete_table(&ops, table_id).is_err());
-        assert_eq!(rd.get(key), Some(&entry), "route must be kept for a retry");
-        assert!(!ops.indexes.borrow().contains(&key));
-        assert_eq!(ops.targets.borrow().len(), 1);
-
-        rd.delete_table(&ops, table_id).expect("retry must succeed");
+        rd.delete_table(&ops, table_id).expect("delete must succeed");
         assert!(!rd.tables.contains_key(&table_id));
-        assert!(ops.targets.borrow().is_empty());
-        // The slots are free again only after the retry succeeded.
-        assert_eq!(
-            rd.freemap_mut(true).alloc(entry.slots).unwrap(),
-            entry.index
-        );
+        assert!(rd.get(key).is_none());
+        assert!(!ops.indexes.borrow().contains(&key));
+
+        // The second target's delete failed, so its slot must not be handed
+        // out again.
+        let still_installed = entry.index + 1;
+        let idx = rd.freemap_mut(true).alloc(entry.slots).unwrap();
+        assert!(!(idx..idx + entry.slots as u16).contains(&still_installed));
+    }
+
+    /// After a delete whose target cleanup fails, the route is gone, so adding
+    /// it again installs a fresh index.
+    #[test]
+    fn readd_after_failed_target_delete_installs_route() {
+        let (ops, mut rd) = make_test_ctx();
+        let f = fixtures_v4();
+        install_victim(&ops, &mut rd, f.victim, [f.targets[0]]);
+
+        ops.arm(Op::DelTarget, 0);
+        let _ = delete_route_locked(&ops, &mut rd, f.victim);
+
+        add_route_locked(
+            &ops,
+            &mut rd,
+            f.victim,
+            make_route(f.targets[0]),
+            FAKE_ASIC_PORT,
+        )
+        .expect("re-add must succeed");
+        assert!(rd.get(f.victim).is_some());
+        assert!(ops.indexes.borrow().contains(&f.victim));
     }
 
     /// A same-length, non-subset replace (one target swapped for another)
