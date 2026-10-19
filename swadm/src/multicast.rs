@@ -434,7 +434,11 @@ async fn multicast_add(client: &Client, args: AddArgs) -> anyhow::Result<()> {
 
         return match rollback.await {
             Ok(_) => Err(err),
-            Err(rollback_err) => Err(err.context(format!("{rollback_err:#}"))),
+            Err(rollback_err) => Err(anyhow::anyhow!(
+                "{err:#}; rollback also failed ({rollback_err:#}), leaving \
+                 underlay group {underlay} behind; remove it with \
+                 `swadm multicast del {underlay} --underlay-only -t {tag}`"
+            )),
         };
     }
     Ok(())
@@ -459,7 +463,8 @@ fn underlay_for_delete(
 
             anyhow::ensure!(
                 group_tag == tag,
-                "tag mismatch for multicast group {group_ip}"
+                "tag mismatch for multicast group {group_ip}: given {tag}, \
+                 group has {group_tag}"
             );
 
             Ok(Some(IpAddr::from(internal_forwarding.nat_target.internal_ip)))
@@ -491,7 +496,8 @@ fn validate_underlay_for_delete(
 
     anyhow::ensure!(
         underlay_tag == tag,
-        "tag mismatch for underlay multicast group {underlay}"
+        "tag mismatch for underlay multicast group {underlay}: given {tag}, \
+         group has {underlay_tag}"
     );
     Ok(())
 }
@@ -533,8 +539,8 @@ async fn multicast_del(
             .await
             .with_context(|| {
                 format!(
-                    "failed to delete underlay group {underlay}; use \
-                     --underlay-only to retry its deletion"
+                    "failed to delete underlay group {underlay}; retry with \
+                     `swadm multicast del {underlay} --underlay-only -t {tag}`"
                 )
             })?;
     }

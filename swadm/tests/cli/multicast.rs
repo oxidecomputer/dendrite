@@ -101,7 +101,7 @@ fn multicast_list() -> anyhow::Result<()> {
             "multicast_list_tag_none.txt",
         ),
     ] {
-        cmd::swadm(args)?.strip(&*cmd::re::GROUP_ID).try_expectorate(file)?;
+        cmd::swadm(args)?.mask(&*cmd::re::GROUP_ID).try_expectorate(file)?;
     }
 
     delete_groups();
@@ -121,7 +121,7 @@ fn multicast_get() -> anyhow::Result<()> {
         (IpAddr::V6(UNDERLAY_IPV6_EMPTY), "multicast_get_underlay_empty.txt"),
     ] {
         cmd::swadm(format!("multicast get {group}"))?
-            .strip(&*cmd::re::GROUP_ID)
+            .mask(&*cmd::re::GROUP_ID)
             .try_expectorate(file)?;
     }
 
@@ -182,7 +182,7 @@ fn multicast_del_rejects_external_tag_mismatch() -> anyhow::Result<()> {
         (IpAddr::V6(UNDERLAY_IPV6), "multicast_get_underlay.txt"),
     ] {
         cmd::swadm(format!("multicast get {group}"))?
-            .strip(&*cmd::re::GROUP_ID)
+            .mask(&*cmd::re::GROUP_ID)
             .try_expectorate(file)?;
     }
 
@@ -208,7 +208,7 @@ fn multicast_del_rejects_underlay_only_external() -> anyhow::Result<()> {
         (IpAddr::V6(UNDERLAY_IPV6), "multicast_get_underlay.txt"),
     ] {
         cmd::swadm(format!("multicast get {group}"))?
-            .strip(&*cmd::re::GROUP_ID)
+            .mask(&*cmd::re::GROUP_ID)
             .try_expectorate(file)?;
     }
 
@@ -241,7 +241,7 @@ fn multicast_del_rejects_underlay() -> anyhow::Result<()> {
         (IpAddr::V6(UNDERLAY_IPV6), "multicast_get_underlay.txt"),
     ] {
         cmd::swadm(format!("multicast get {group}"))?
-            .strip(&*cmd::re::GROUP_ID)
+            .mask(&*cmd::re::GROUP_ID)
             .try_expectorate(file)?;
     }
 
@@ -275,7 +275,7 @@ fn multicast_add_rolls_back_underlay() -> anyhow::Result<()> {
         (IpAddr::V6(UNDERLAY_IPV6), "multicast_get_underlay.txt"),
     ] {
         cmd::swadm(format!("multicast get {group}"))?
-            .strip(&*cmd::re::GROUP_ID)
+            .mask(&*cmd::re::GROUP_ID)
             .try_expectorate(file)?;
     }
 
@@ -306,7 +306,7 @@ fn multicast_add_del_default_tag() -> anyhow::Result<()> {
          -m {INNER_MAC} -v {EXT_VNI}"
     ))?;
     cmd::swadm(format!("multicast get {EXT_IPV4_DEFAULT_TAG}"))?
-        .strip(&*cmd::re::GROUP_ID)
+        .mask(&*cmd::re::GROUP_ID)
         .try_expectorate("multicast_get_default_tag.txt")?;
 
     cmd::swadm(format!("multicast del {EXT_IPV4_DEFAULT_TAG}"))?;
