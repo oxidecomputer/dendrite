@@ -1858,13 +1858,13 @@ async fn test_multicast_ttl_one() -> TestResult {
     let expected_pkts = vec![];
 
     let ctr_baseline =
-        switch.get_counter("ipv4_ttl_invalid", None).await.unwrap();
+        switch.get_counter("multicast_ttl_exceeded", None).await.unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
     check_counter_incremented(
         switch,
-        "ipv4_ttl_invalid",
+        "multicast_ttl_exceeded",
         ctr_baseline,
         1,
         None,
@@ -3716,13 +3716,13 @@ async fn test_ipv6_multicast_hop_limit_one() -> TestResult {
     let expected_pkts = vec![];
 
     let ctr_baseline =
-        switch.get_counter("ipv6_ttl_invalid", None).await.unwrap();
+        switch.get_counter("multicast_ttl_exceeded", None).await.unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
     check_counter_incremented(
         switch,
-        "ipv6_ttl_invalid",
+        "multicast_ttl_exceeded",
         ctr_baseline,
         1,
         None,

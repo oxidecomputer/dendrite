@@ -726,10 +726,20 @@ control NatIngress (
 
 		if (ingress_hit.apply().hit) {
 			if (hdr.ipv4.isValid()) {
-				CalculateIPv4Len.apply(hdr, meta);
-				encap_ipv4();
+				if (hdr.ipv4.ttl == 0) {
+					meta.drop_reason = DROP_IPV4_TTL_INVALID;
+					meta.dropped = true;
+				} else {
+					CalculateIPv4Len.apply(hdr, meta);
+					encap_ipv4();
+				}
 			} else if (hdr.ipv6.isValid()) {
-				encap_ipv6();
+				if (hdr.ipv6.hop_limit == 0) {
+					meta.drop_reason = DROP_IPV6_TTL_INVALID;
+					meta.dropped = true;
+				} else {
+					encap_ipv6();
+				}
 			}
 
 			if (hdr.vlan.isValid()) {
@@ -1251,6 +1261,12 @@ control Router4 (
 	}
 
 	apply {
+		if (hdr.ipv4.ttl == 0 && !meta.nat_egress_hit) {
+			meta.dropped = true;
+			meta.drop_reason = DROP_IPV4_TTL_INVALID;
+			return;
+		}
+
 		route4_result_t fwd;
 		fwd.is_v6 = false;
 		fwd.nexthop6 = 0;
@@ -1385,6 +1401,12 @@ control Router6 (
 	}
 
 	apply {
+		if (hdr.ipv6.hop_limit == 0 && !meta.nat_egress_hit) {
+			meta.dropped = true;
+			meta.drop_reason = DROP_IPV6_TTL_INVALID;
+			return;
+		}
+
 		route6_result_t fwd;
 		fwd.nexthop = 0;
 		fwd.port = 0;
