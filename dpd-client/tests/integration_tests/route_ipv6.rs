@@ -853,23 +853,18 @@ async fn test_multipath(switch: &Switch, routers: &[Router]) -> TestResult {
     let dst_port: u16 = 4444;
 
     // Replicate the path-selection algorithm used in the sidecar p4 code
-    let mut data = [0u8; 36];
-    data[0..16].copy_from_slice(&dst_ip.parse::<Ipv6Addr>().unwrap().octets());
-    data[16..32].copy_from_slice(&src_ip.parse::<Ipv6Addr>().unwrap().octets());
-    data[32..34].copy_from_slice(&dst_port.to_be_bytes());
-    data[34..36].copy_from_slice(&src_port.to_be_bytes());
+    let src = Endpoint::parse("e0:d5:5e:67:89:ab", src_ip, src_port).unwrap();
+    let dst = Endpoint::parse("e0:d5:5e:67:89:ac", dst_ip, dst_port).unwrap();
 
-    // The tofino CRC8 implementation uses the default polynomial value of 0x07
-    let mut crc8 = crc8::Crc8::create_msb(0x07);
-    let hash = crc8.calc(&data, 36, 0);
-    let expected_egress = (hash & 0x3f) as usize % routers.len();
+    let hash = common::tofino_flow_hash(src, dst, L4Protocol::Udp);
+    let expected_egress = usize::from(hash & 0x3f) % routers.len();
 
     let (to_send, mut to_recv) = common::gen_udp_routed_pair(
         switch,
         PhysPort(routers[expected_egress].port),
         routers[expected_egress].mac,
-        Endpoint::parse("e0:d5:5e:67:89:ab", src_ip, src_port).unwrap(),
-        Endpoint::parse("e0:d5:5e:67:89:ac", dst_ip, dst_port).unwrap(),
+        src,
+        dst,
     );
 
     let send =
