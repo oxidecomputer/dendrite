@@ -16,14 +16,6 @@ use aal::{
 };
 use common::table::TableType;
 
-// Match field names used by the VLAN validity dispatch.
-const VALID_FIELD: &str = "$valid";
-const VLAN_ID_FIELD: &str = "vlan_id";
-
-// Sidecar-lite untagged table names related to VLAN dispatch.
-const MCAST_NAT_V4_UNTAGGED: &str = "ingress.nat.nat_v4_mcast_untagged";
-const MCAST_NAT_V6_UNTAGGED: &str = "ingress.nat.nat_v6_mcast_untagged";
-
 /// Represents a handle to a SoftNPU ASIC table.
 ///
 /// The `type_` member identifies the table and `softnpu_table_name()`
@@ -31,16 +23,6 @@ const MCAST_NAT_V6_UNTAGGED: &str = "ingress.nat.nat_v6_mcast_untagged";
 pub struct Table {
     type_: TableType,
     implemented: bool,
-    /// Alternate sidecar-lite table for untagged entries ([`VALID_FIELD`] is
-    /// false).
-    ///
-    /// x4c does not support `$valid` as a table key. Any table that matches
-    /// on VLAN validity splits into tagged/untagged variants per entry.
-    /// [`VLAN_ID_FIELD`] is stripped from the keyset for the untagged
-    /// table.
-    ///
-    /// Currently used by multicast NAT.
-    untagged_id: Option<&'static str>,
     size: usize,
 }
 
@@ -97,60 +79,6 @@ impl Table {
         } else {
             None
         }
-    }
-
-    /// Inspect the VLAN `$valid` match field to route entries to the
-    /// tagged or untagged sidecar-lite table.
-    ///
-    /// Returns the primary table name for tables without a VLAN split, or
-    /// `None` when the table is unimplemented.
-    fn resolve_vlan_table_id(
-        &self,
-        fields: &[MatchEntryField],
-    ) -> Option<&str> {
-        if let Some(untagged) = self.untagged_id {
-            let is_untagged = fields.iter().any(|f| {
-                f.name == VALID_FIELD
-                    && matches!(
-                        &f.value,
-                        MatchEntryValue::Value(ValueTypes::U64(0))
-                    )
-            });
-            if is_untagged {
-                return Some(untagged);
-            }
-        }
-        self.softnpu_table_name()
-    }
-
-    /// Filter match fields for sidecar-lite serialization.
-    ///
-    /// This strips the `$valid` field and strips the `vlan_id` when targeting
-    /// the untagged table.
-    fn filter_vlan_match_fields(
-        &self,
-        fields: Vec<MatchEntryField>,
-        target_table: &str,
-    ) -> Vec<MatchEntryField> {
-        if self.untagged_id.is_none() {
-            return fields;
-        }
-
-        let is_untagged = self.untagged_id == Some(target_table);
-        fields
-            .into_iter()
-            .filter(|f| {
-                // Dispatch already consumed $valid so we can drop it here.
-                if f.name == VALID_FIELD {
-                    return false;
-                }
-                // Untagged table has no vlan_id key.
-                if is_untagged && f.name == VLAN_ID_FIELD {
-                    return false;
-                }
-                true
-            })
-            .collect()
     }
 
     /// Translate a `configure_mcastv6` request into a sidecar-lite
@@ -252,7 +180,7 @@ impl TableOps<Handle> for Table {
     fn new(hdl: &Handle, type_: TableType) -> AsicResult<Table> {
         // Mapping sidecar.p4 table types onto simplified sidecar-lite.p4
         // equivalents.
-        let (implemented, untagged_id) = match type_ {
+        let implemented = match type_ {
             TableType::RouteIdxIpv4
             | TableType::RouteFwdIpv4
             | TableType::RouteIdxIpv6
@@ -265,26 +193,22 @@ impl TableOps<Handle> for Table {
             | TableType::NatIngressIpv4
             | TableType::NatIngressIpv6
             | TableType::AttachedSubnetIpv4
-            | TableType::AttachedSubnetIpv6 => (true, None),
-            TableType::McastIpv6
+            | TableType::AttachedSubnetIpv6
+            | TableType::McastIpv6
             | TableType::McastIpv4SrcFilter
             | TableType::McastIpv6SrcFilter
             | TableType::McastEgressDecapPorts
             | TableType::McastEgressPortMapping
-            | TableType::PortMacAddressMcast => (true, None),
-            TableType::NatIngressIpv4Mcast => {
-                (true, Some(MCAST_NAT_V4_UNTAGGED))
-            }
-            TableType::NatIngressIpv6Mcast => {
-                (true, Some(MCAST_NAT_V6_UNTAGGED))
-            }
+            | TableType::PortMacAddressMcast
+            | TableType::NatIngressIpv4Mcast
+            | TableType::NatIngressIpv6Mcast => true,
             x => {
                 error!(hdl.log, "table not handled: {x}");
-                (false, None)
+                false
             }
         };
 
-        Ok(Table { type_, implemented, untagged_id, size: TABLE_SIZE })
+        Ok(Table { type_, implemented, size: TABLE_SIZE })
     }
 
     fn size(&self) -> usize {
@@ -307,26 +231,18 @@ impl TableOps<Handle> for Table {
         key: &M,
         data: &A,
     ) -> AsicResult<()> {
-        let Some(default_table) = self.softnpu_table_name() else {
+        let Some(table) = self.softnpu_table_name() else {
             return Ok(());
         };
+        let table = table.to_string();
         let name = self.type_.to_string();
         let match_data = key.key_to_ir().unwrap();
         let action_data = data.action_to_ir().unwrap();
+        let fields = match_data.fields;
 
-        // For tables with VLAN dispatch, resolve which sidecar-lite table
-        // to target and filter out synthetic match fields.
-        let (table, fields) = {
-            let resolved = self
-                .resolve_vlan_table_id(&match_data.fields)
-                .unwrap_or(default_table);
-            let filtered =
-                self.filter_vlan_match_fields(match_data.fields, resolved);
-            (resolved.to_string(), filtered)
-        };
         trace!(hdl.log, "entry_add called");
         trace!(hdl.log, "table: {name}");
-        trace!(hdl.log, "match_data (filtered): {fields:#?}");
+        trace!(hdl.log, "match_data: {fields:#?}");
         trace!(hdl.log, "action_data:\n{:#?}", action_data);
 
         let keyset_data = keyset_data(fields, self.type_);
@@ -754,23 +670,17 @@ impl TableOps<Handle> for Table {
         hdl: &Handle,
         key: &M,
     ) -> AsicResult<()> {
-        let Some(default_table) = self.softnpu_table_name() else {
+        let Some(table) = self.softnpu_table_name() else {
             return Ok(());
         };
+        let table = table.to_string();
         let name = self.type_.to_string();
         let match_data = key.key_to_ir().unwrap();
+        let fields = match_data.fields;
 
-        let (table, fields) = {
-            let resolved = self
-                .resolve_vlan_table_id(&match_data.fields)
-                .unwrap_or(default_table);
-            let filtered =
-                self.filter_vlan_match_fields(match_data.fields, resolved);
-            (resolved.to_string(), filtered)
-        };
         trace!(hdl.log, "entry_del called");
         trace!(hdl.log, "table: {name}");
-        trace!(hdl.log, "match_data (filtered): {fields:#?}");
+        trace!(hdl.log, "match_data: {fields:#?}");
 
         let keyset_data = keyset_data(fields, self.type_);
 
@@ -1018,24 +928,16 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: TableType) -> Vec<u8> {
                         buf.reverse();
                         keyset_data.extend_from_slice(&buf);
                     }
-                    // Multicast NAT: dst (bit<32> or bit<128>) plus
-                    // vlan_id (bit<12>, 2 bytes) only when targeting the
-                    // tagged variant.
+                    // Multicast NAT: dst => bit<32> or bit<128>
                     TableType::NatIngressIpv4Mcast => {
                         serialize_value_type(&x, &mut data);
-                        let width = if m.name == VLAN_ID_FIELD { 2 } else { 4 };
-                        keyset_data.extend_from_slice(&data[..width]);
+                        keyset_data.extend_from_slice(&data[..4]);
                     }
                     TableType::NatIngressIpv6Mcast => {
-                        if m.name == VLAN_ID_FIELD {
-                            serialize_value_type(&x, &mut data);
-                            keyset_data.extend_from_slice(&data[..2]);
-                        } else {
-                            let mut buf = Vec::new();
-                            serialize_value_type(&x, &mut buf);
-                            buf.reverse();
-                            keyset_data.extend_from_slice(&buf);
-                        }
+                        let mut buf = Vec::new();
+                        serialize_value_type(&x, &mut buf);
+                        buf.reverse();
+                        keyset_data.extend_from_slice(&buf);
                     }
                     // Multicast egress tables: port => bit<16>
                     TableType::McastEgressDecapPorts
@@ -1153,5 +1055,28 @@ mod tests {
             port_number_param(&missing),
             Err(AsicError::InvalidArg(_))
         ));
+    }
+
+    #[test]
+    fn mcast_nat_keys_serialize_for_sidecar_lite() {
+        let v4 = vec![MatchEntryField {
+            name: "dst_addr".to_string(),
+            value: MatchEntryValue::Value(ValueTypes::U64(0xe000_0101)),
+        }];
+        assert_eq!(
+            keyset_data(v4, TableType::NatIngressIpv4Mcast),
+            vec![0x01, 0x01, 0x00, 0xe0]
+        );
+
+        let addr: std::net::Ipv6Addr = "ff0e::1:1010".parse().unwrap();
+        let v6 = vec![MatchEntryField {
+            name: "dst_addr".to_string(),
+            value: MatchEntryValue::Value(ValueTypes::Ptr(
+                addr.octets().to_vec(),
+            )),
+        }];
+        let mut expected = addr.octets().to_vec();
+        expected.reverse();
+        assert_eq!(keyset_data(v6, TableType::NatIngressIpv6Mcast), expected);
     }
 }
