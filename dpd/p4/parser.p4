@@ -122,10 +122,10 @@ parser IngressParser(
 	}
 
 	state parse_ipv4 {
-		pkt.extract(hdr.ipv4);
-		ipv4_checksum.add(hdr.ipv4);
-		meta.orig_src_ipv4 = hdr.ipv4.src_addr;
-		meta.orig_dst_ipv4 = hdr.ipv4.dst_addr;
+		pkt.extract(hdr.only_ipv4);
+		ipv4_checksum.add(hdr.only_ipv4);
+		meta.orig_src_ipv4 = hdr.only_ipv4.src_addr;
+		meta.orig_dst_ipv4 = hdr.only_ipv4.dst_addr;
 		meta.ipv4_checksum_err = ipv4_checksum.verify();
 		meta.pkt_type = meta.pkt_type | PKT_IPV4;
 
@@ -135,20 +135,20 @@ parser IngressParser(
 		// in bytes, and p4/tofino will not let us do the math required
 		// to convert between the two in the parser.
 		nat_checksum.subtract({
-			hdr.ipv4.src_addr,
-			hdr.ipv4.dst_addr,
+			hdr.only_ipv4.src_addr,
+			hdr.only_ipv4.dst_addr,
 			8w0,
-			hdr.ipv4.protocol,
+			hdr.only_ipv4.protocol,
 		});
 
-		transition select(hdr.ipv4.dst_addr[31:28]) {
+		transition select(hdr.only_ipv4.dst_addr[31:28]) {
 			4w0xe: validate_ipv4_mcast1_2;
 			default: validate_ttl;
 		}
 	}
 
 	state validate_ttl {
-		transition select(hdr.ipv4.ttl) {
+		transition select(hdr.only_ipv4.ttl) {
 			8w0: invalidate_ttl;
 			default: goto_proto_ipv4;
 		}
@@ -200,7 +200,7 @@ parser IngressParser(
 	}
 
 	state validate_mcast_ttl {
-		transition select(hdr.ipv4.ttl) {
+		transition select(hdr.only_ipv4.ttl) {
 			8w0: invalidate_ttl;
 			8w1: invalidate_ttl;
 			default: goto_proto_ipv4;
@@ -225,7 +225,7 @@ parser IngressParser(
 	}
 
 	state goto_proto_ipv4 {
-		transition select(hdr.ipv4.protocol) {
+		transition select(hdr.only_ipv4.protocol) {
 			IPPROTO_ICMP: parse_icmp;
 			IPPROTO_TCP: parse_tcp;
 			IPPROTO_UDP: parse_udp;
@@ -320,28 +320,29 @@ parser IngressParser(
 		transition select(hdr.ipv6.next_hdr) {
 			IPPROTO_ICMPV6: parse_icmp6;
 			IPPROTO_TCP: parse_tcp;
-			IPPROTO_UDP: parse_udp;
+			IPPROTO_UDP: parse_udp6;
 			IPPROTO_SCTP: drop_sctp;
 			default: accept;
 		}
 	}
 
 	state parse_icmp {
-		pkt.extract(hdr.icmp);
+		pkt.extract(hdr.only_icmp);
 		meta.pkt_type = meta.pkt_type | PKT_ICMP;
 
 		icmp_checksum.subtract({
-			hdr.icmp.hdr_checksum,
-			hdr.icmp.type, hdr.icmp.code
+			hdr.only_icmp.hdr_checksum,
+			hdr.only_icmp.type,
+			hdr.only_icmp.code
 		});
 		icmp_checksum.subtract_all_and_deposit(meta.icmp_csum);
 
-		nat_checksum.subtract(hdr.icmp);
+		nat_checksum.subtract(hdr.only_icmp);
 		nat_checksum.subtract_all_and_deposit(meta.body_checksum);
 
-		meta.l4_dst_port = hdr.icmp.data[31:16];
+		meta.l4_dst_port = hdr.only_icmp.data[31:16];
 
-		transition select(hdr.icmp.type) {
+		transition select(hdr.only_icmp.type) {
 			ICMP_ECHO: accept;
 			ICMP_ECHOREPLY: accept;
 			default: icmp_no_dst_info;
@@ -349,21 +350,22 @@ parser IngressParser(
 	}
 
 	state parse_icmp6 {
-		pkt.extract(hdr.icmp);
+		pkt.extract(hdr.only_icmp);
 		meta.pkt_type = meta.pkt_type | PKT_ICMP;
 
 		icmp_checksum.subtract({
-			hdr.icmp.hdr_checksum,
-			hdr.icmp.type, hdr.icmp.code
+			hdr.only_icmp.hdr_checksum,
+			hdr.only_icmp.type,
+			hdr.only_icmp.code
 		});
 		icmp_checksum.subtract_all_and_deposit(meta.icmp_csum);
 
-		nat_checksum.subtract(hdr.icmp);
+		nat_checksum.subtract(hdr.only_icmp);
 		nat_checksum.subtract_all_and_deposit(meta.body_checksum);
 
-		meta.l4_dst_port = hdr.icmp.data[31:16];
+		meta.l4_dst_port = hdr.only_icmp.data[31:16];
 
-		transition select(hdr.icmp.type) {
+		transition select(hdr.only_icmp.type) {
 			ICMP6_ECHO: accept;
 			ICMP6_ECHOREPLY: accept;
 			default: icmp_no_dst_info;
@@ -376,27 +378,39 @@ parser IngressParser(
 	}
 
 	state parse_tcp {
-		pkt.extract(hdr.tcp);
+		pkt.extract(hdr.only_tcp);
 		meta.pkt_type = meta.pkt_type | PKT_TCP;
 
-		nat_checksum.subtract(hdr.tcp);
+		nat_checksum.subtract(hdr.only_tcp);
 		nat_checksum.subtract_all_and_deposit(meta.body_checksum);
 
-		meta.l4_src_port = hdr.tcp.src_port;
-		meta.l4_dst_port = hdr.tcp.dst_port;
+		meta.l4_src_port = hdr.only_tcp.src_port;
+		meta.l4_dst_port = hdr.only_tcp.dst_port;
 		transition accept;
 	}
 
 	state parse_udp {
-		pkt.extract(hdr.udp);
+		pkt.extract(hdr.inner_udp);
 		meta.pkt_type = meta.pkt_type | PKT_UDP;
-		nat_checksum.subtract(hdr.udp);
+		nat_checksum.subtract(hdr.inner_udp);
 		nat_checksum.subtract_all_and_deposit(meta.body_checksum);
 
-		meta.l4_src_port = hdr.udp.src_port;
-		meta.l4_dst_port = hdr.udp.dst_port;
+		meta.l4_src_port = hdr.inner_udp.src_port;
+		meta.l4_dst_port = hdr.inner_udp.dst_port;
 
-		transition select(hdr.udp.dst_port) {
+		transition accept;
+	}
+
+	state parse_udp6 {
+		pkt.extract(hdr.udp6);
+		meta.pkt_type = meta.pkt_type | PKT_UDP;
+		nat_checksum.subtract(hdr.udp6);
+		nat_checksum.subtract_all_and_deposit(meta.body_checksum);
+
+		meta.l4_src_port = hdr.udp6.src_port;
+		meta.l4_dst_port = hdr.udp6.dst_port;
+
+		transition select(hdr.udp6.dst_port) {
 			GENEVE_UDP_PORT: parse_geneve;
 			default: accept;
 		}
@@ -519,8 +533,8 @@ parser IngressParser(
 	}
 
 	state parse_inner_ipv4 {
-		pkt.extract(hdr.inner_ipv4);
-		transition select(hdr.inner_ipv4.protocol) {
+		pkt.extract(hdr.only_ipv4);
+		transition select(hdr.only_ipv4.protocol) {
 			IPPROTO_TCP: parse_inner_tcp;
 			IPPROTO_UDP: parse_inner_udp;
 			IPPROTO_ICMP: parse_inner_icmp;
@@ -539,7 +553,7 @@ parser IngressParser(
 	}
 
 	state parse_inner_tcp {
-		pkt.extract(hdr.inner_tcp);
+		pkt.extract(hdr.only_tcp);
 		transition accept;
 	}
 
@@ -549,7 +563,7 @@ parser IngressParser(
 	}
 
 	state parse_inner_icmp {
-		pkt.extract(hdr.inner_icmp);
+		pkt.extract(hdr.only_icmp);
 		transition accept;
 	}
 }
@@ -622,9 +636,9 @@ parser EgressParser(
 	}
 
 	state parse_ipv4 {
-		pkt.extract(hdr.ipv4);
+		pkt.extract(hdr.only_ipv4);
 
-		transition select(hdr.ipv4.protocol) {
+		transition select(hdr.only_ipv4.protocol) {
 			IPPROTO_ICMP: parse_icmp;
 			IPPROTO_TCP: parse_tcp;
 			IPPROTO_UDP: parse_udp;
@@ -637,13 +651,13 @@ parser EgressParser(
 
 		transition select(hdr.ipv6.next_hdr) {
 			IPPROTO_TCP: parse_tcp;
-			IPPROTO_UDP: parse_udp;
+			IPPROTO_UDP: parse_udp6;
 			default: accept;
 		}
 	}
 
 	state parse_icmp {
-		pkt.extract(hdr.icmp);
+		pkt.extract(hdr.only_icmp);
 
 		transition accept;
 	}
@@ -655,9 +669,15 @@ parser EgressParser(
 	}
 
 	state parse_udp {
-		pkt.extract(hdr.udp);
+		pkt.extract(hdr.inner_udp);
 
-		transition select(hdr.udp.dst_port) {
+		transition accept;
+	}
+
+	state parse_udp6 {
+		pkt.extract(hdr.udp6);
+
+		transition select(hdr.udp6.dst_port) {
 			GENEVE_UDP_PORT: parse_geneve;
 			default: accept;
 		}
@@ -754,8 +774,8 @@ parser EgressParser(
 	}
 
 	state parse_inner_ipv4 {
-		pkt.extract(hdr.inner_ipv4);
-		transition select(hdr.inner_ipv4.protocol) {
+		pkt.extract(hdr.only_ipv4);
+		transition select(hdr.only_ipv4.protocol) {
 			IPPROTO_TCP: parse_inner_tcp;
 			IPPROTO_UDP: parse_inner_udp;
 			default: accept;
@@ -772,7 +792,7 @@ parser EgressParser(
 	}
 
 	state parse_inner_tcp {
-		pkt.extract(hdr.inner_tcp);
+		pkt.extract(hdr.only_tcp);
 		transition accept;
 	}
 

@@ -212,23 +212,33 @@ struct geneve_opt_headers_t {
 	geneve_opt_mss_h oxg_mss;
 }
 
+// The set of possible headers we will parse on a packet.
+//
+// IPv6 UDP may encapsulate geneve, which necessitates outer
+// and inner copies of those headers. IPv4 and other transport
+// protocols only occur once, and their placement in this struct
+// minimizes copying on encap/decap.
+//
+// During encap and decap, duplicated fields should be populated
+// according to these rules:
+// - The top-most IP header should be valid. So decapping an IPv6
+//   packet should move inner_ipv6 to v6.
+// - The bottom-most L4 header should be valid. So decapping a UDP
+//   packet should invalidate udp6 and keep inner_udp.
 struct sidecar_headers_t {
 	ethernet_h	ethernet;
 	sidecar_h	sidecar;
 	dot1q_h		vlan;
 	arp_h		arp;
-	ipv4_h		ipv4;
 	ipv6_h		ipv6;
-	icmp_h		icmp;
-	tcp_h		tcp;
-	udp_h		udp;
+	udp_h		udp6;
 
 	geneve_h	geneve;
 	geneve_opt_headers_t	geneve_opts;
 	ethernet_h	inner_eth;
-	ipv4_h		inner_ipv4;
+	ipv4_h		only_ipv4;
 	ipv6_h		inner_ipv6;
-	icmp_h		inner_icmp;
-	tcp_h		inner_tcp;
+	icmp_h		only_icmp;
+	tcp_h		only_tcp;
 	udp_h		inner_udp;
 }
