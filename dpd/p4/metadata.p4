@@ -31,6 +31,7 @@ struct sidecar_ingress_meta_t {
 	bit<8> drop_reason;		// reason a packet was dropped
 	bit<16> l4_src_port;		// tcp or udp destination port
 	bit<16> l4_dst_port;		// tcp or udp destination port
+	bit<16> flow_hash;		// hash of a packet 5-tuple for ECMP/encap
 	ipv6_addr_t nat_ingress_tgt;	// target address for NAT ingress
 	mac_addr_t nat_inner_mac;	// inner mac address for NAT ingress
 	geneve_vni_t nat_geneve_vni;	// VNI for NAT ingress
