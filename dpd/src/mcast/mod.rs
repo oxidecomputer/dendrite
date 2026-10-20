@@ -9,10 +9,10 @@
 //! This is the entrypoint for managing multicast groups, including creating,
 //! modifying, and deleting groups.
 //!
-//! An external group has an ingress NAT entry keyed by its address and an
-//! optional VLAN. On the sidecar, the NAT target fields are the action
-//! parameters. Its `internal_ip` identifies the underlay group, which owns the
-//! replication members.
+//! An external group has an ingress NAT entry keyed by just its destination
+//! address; the group's optional VLAN only tags egress packet copies. On the
+//! sidecar, the NAT target fields are the action parameters. Its `internal_ip`
+//! identifies the underlay group, which owns the replication membership.
 //!
 //! Underlay groups exist in an `ff04::/64` internal block, within the
 //! admin-local scope `ff04::/16` ([RFC 7346], [RFC 4291]). A copy to an
@@ -517,6 +517,11 @@ pub(crate) fn add_group_external(
     mcast.validate_group_exists(group_key)?;
 
     let underlay_group = mcast.get_nat_target_group(group_addr, nat_target)?;
+
+    if let Some(vlan_id) = group_info.external_forwarding().vlan_id {
+        common::network::validate_vlan(vlan_id)?;
+    }
+
     let tag = match group_info.tag() {
         Some(t) => String::from(t.parse::<MulticastTag>()?),
         None => generate_default_tag(group_addr),
@@ -551,7 +556,6 @@ pub(crate) fn add_group_external(
         group.external_group_id(),
         group.underlay_group_id(),
         &sources,
-        group_info.external_forwarding().vlan_id,
     );
 
     configure_external_tables(s, &group_info, &sources)
@@ -842,6 +846,11 @@ pub(crate) fn modify_group_external(
     let nat_target = new_group_info.internal_forwarding.nat_target;
     let new_underlay_group =
         mcast.get_nat_target_group(group_addr, nat_target)?;
+
+    if let Some(vlan_id) = new_group_info.external_forwarding.vlan_id {
+        common::network::validate_vlan(vlan_id)?;
+    }
+
     let group_entry = existing_group.clone();
 
     let old_underlay_ip: UnderlayMulticastIpv6 = old_nat_target.into();
@@ -878,7 +887,6 @@ pub(crate) fn modify_group_external(
         s,
         &group_entry,
         &new_group_info,
-        old_nat_target,
         old_sources,
         &new_sources,
         &bitmap_updates,
@@ -1496,20 +1504,19 @@ fn add_source_filters(
 /// all before an external group is created at that address.
 ///
 /// When group creation fails, a rollback failure can leave entries around
-/// that no stored group owns. The NAT key includes the VLAN, so an entry
-/// left under a different VLAN could keep translating this VLAN's traffic to
-/// a stale target. And, a leftover source filter could keep admitting sources
-/// a group should no longer allow.
+/// without stored ownership. A leftover NAT entry could keep sending this
+/// address's traffic to a stale target, and a leftover source filter could
+/// keep admitting source traffic a group should no longer allow.
 fn clear_external_entries(s: &Switch, group_ip: IpAddr) -> DpdResult<()> {
     match group_ip {
         IpAddr::V4(ipv4) => {
             table::mcast::mcast_src_filter::del_ipv4_entries(s, ipv4)?;
-            table::mcast::mcast_nat::del_ipv4_entries(s, ipv4)?;
+            ignore_missing(table::mcast::mcast_nat::del_ipv4_entry(s, ipv4))?;
             ignore_missing(table::mcast::mcast_route::del_ipv4_entry(s, ipv4))
         }
         IpAddr::V6(ipv6) => {
             table::mcast::mcast_src_filter::del_ipv6_entries(s, ipv6)?;
-            table::mcast::mcast_nat::del_ipv6_entries(s, ipv6)?;
+            ignore_missing(table::mcast::mcast_nat::del_ipv6_entry(s, ipv6))?;
             ignore_missing(table::mcast::mcast_route::del_ipv6_entry(s, ipv6))
         }
     }
@@ -1532,14 +1539,10 @@ fn configure_external_tables(
     // Add NAT entry
     match group_ip {
         IpAddr::V4(ipv4) => {
-            table::mcast::mcast_nat::add_ipv4_entry(
-                s, ipv4, nat_target, vlan_id,
-            )?;
+            table::mcast::mcast_nat::add_ipv4_entry(s, ipv4, nat_target)?;
         }
         IpAddr::V6(ipv6) => {
-            table::mcast::mcast_nat::add_ipv6_entry(
-                s, ipv6, nat_target, vlan_id,
-            )?;
+            table::mcast::mcast_nat::add_ipv6_entry(s, ipv6, nat_target)?;
         }
     }
 
@@ -1892,7 +1895,6 @@ fn update_external_tables(
     s: &Switch,
     group_entry: &MulticastGroup,
     new_group_info: &MulticastGroupUpdateExternalEntry,
-    old_nat_target: ExternalNatTarget,
     old_sources: &SourceFilter,
     new_sources: &SourceFilter,
     bitmap_updates: &[BitmapVlanUpdate<'_>],
@@ -1903,7 +1905,6 @@ fn update_external_tables(
     sync_source_filters(s, group_ip, old_sources, new_sources)
         .map_err(|failures| failures.head.1)?;
 
-    let old_vlan_id = group_entry.vlan_id();
     let new_vlan_id = new_group_info.external_forwarding.vlan_id;
 
     let new_nat_target = new_group_info.internal_forwarding.nat_target;
@@ -1926,17 +1927,8 @@ fn update_external_tables(
             ensure_bitmap_vlan(s, update.group, update.new_vlan_id)?;
         }
 
-        // Update NAT target as external groups always have NAT targets;
-        // this also handles VLAN changes since VLAN is part of the NAT match
-        // key
-        update_nat_tables(
-            s,
-            group_ip,
-            new_nat_target.into(),
-            old_nat_target.into(),
-            old_vlan_id,
-            new_vlan_id,
-        )?;
+        // Update NAT target -> external groups always have NAT targets
+        update_nat_tables(s, group_ip, new_nat_target.into())?;
         Ok(())
     })();
 
@@ -2052,15 +2044,15 @@ fn delete_group_tables(
     let group_ip = group.ip();
 
     match &group.kind {
-        GroupKind::External { sources, vlan_id, .. } => {
+        GroupKind::External { sources, .. } => {
             deleted.push(DeleteStep::SourceFilters);
             remove_source_filters(s, group_ip, sources)?;
             ignore_missing(match group_ip {
                 IpAddr::V4(ipv4) => {
-                    table::mcast::mcast_nat::del_ipv4_entry(s, ipv4, *vlan_id)
+                    table::mcast::mcast_nat::del_ipv4_entry(s, ipv4)
                 }
                 IpAddr::V6(ipv6) => {
-                    table::mcast::mcast_nat::del_ipv6_entry(s, ipv6, *vlan_id)
+                    table::mcast::mcast_nat::del_ipv6_entry(s, ipv6)
                 }
             })?;
             deleted.push(DeleteStep::Nat);
@@ -2105,29 +2097,14 @@ fn update_nat_tables(
     s: &Switch,
     group_ip: IpAddr,
     new_nat_target: NatTarget,
-    old_nat_target: NatTarget,
-    old_vlan_id: Option<u16>,
-    new_vlan_id: Option<u16>,
 ) -> DpdResult<()> {
-    // The VLAN is part of the NAT match key, which must be handled
-    // inside the table update.
     match group_ip {
-        IpAddr::V4(ipv4) => table::mcast::mcast_nat::update_ipv4_entry(
-            s,
-            ipv4,
-            new_nat_target,
-            old_nat_target,
-            old_vlan_id,
-            new_vlan_id,
-        ),
-        IpAddr::V6(ipv6) => table::mcast::mcast_nat::update_ipv6_entry(
-            s,
-            ipv6,
-            new_nat_target,
-            old_nat_target,
-            old_vlan_id,
-            new_vlan_id,
-        ),
+        IpAddr::V4(ipv4) => {
+            table::mcast::mcast_nat::update_ipv4_entry(s, ipv4, new_nat_target)
+        }
+        IpAddr::V6(ipv6) => {
+            table::mcast::mcast_nat::update_ipv6_entry(s, ipv6, new_nat_target)
+        }
     }
 }
 
