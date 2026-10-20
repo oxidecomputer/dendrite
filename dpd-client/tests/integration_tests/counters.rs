@@ -22,21 +22,20 @@ use dpd_client::ClientInfo;
 use dpd_client::types::Ipv4Entry;
 use dpd_client::types::Ipv6Entry;
 
-// Run a single drop test.  This sends a packet that we expect to be dropped,
-// and verifies that the expected drop counter is bumped by one.  If the test
-// runs to completion we return the counter evaluation as a boolean rather than
-// an Error.  This allows us to trigger the error in the test routine, which
-// gives us a more specific test failure message.
-async fn one_drop_test(
+/// Process a single packet, asserting that a given counter is incremented by
+/// one and a packet is appropriately transformed (or dropped).
+///
+/// If the test runs to completion we return the counter evaluation as a
+/// boolean rather than an Error.  This allows us to trigger the error in
+/// the test routine, which gives us a more specific test failure message
+pub async fn one_counted_test(
     switch: &Switch,
-    port: PhysPort,
-    packet: packet::Packet,
+    packet: TestPacket,
+    packet_after: Option<TestPacket>,
     counter: &str,
 ) -> anyhow::Result<bool> {
-    let send = TestPacket { packet: Arc::new(packet), port };
-
     let old = switch.get_counter(counter, None).await?;
-    switch.packet_test(vec![send], Vec::new())?;
+    switch.packet_test(vec![packet], packet_after.into_iter().collect())?;
 
     let mut new = 0;
     for _i in 0..20 {
@@ -45,7 +44,7 @@ async fn one_drop_test(
         // simulator and when that updated value is available to the SDE.  To
         // avoid a long pointless delay here, we try multiple times with a short
         // sleep rather than once with a long sleep.
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         new = switch.get_counter(counter, None).await?;
         if old + 1 == new {
             break;
@@ -53,6 +52,27 @@ async fn one_drop_test(
     }
 
     Ok(old + 1 == new)
+}
+
+/// Run a single drop test.  This sends a packet that we expect to be dropped,
+/// and verifies that the expected drop counter is bumped by one.
+///
+/// If the test runs to completion we return the counter evaluation as a
+/// boolean rather than an Error.  This allows us to trigger the error in
+/// the test routine, which gives us a more specific test failure message.
+async fn one_drop_test(
+    switch: &Switch,
+    port: PhysPort,
+    packet: packet::Packet,
+    counter: &str,
+) -> anyhow::Result<bool> {
+    one_counted_test(
+        switch,
+        TestPacket { packet: Arc::new(packet), port },
+        None,
+        counter,
+    )
+    .await
 }
 
 // Add an IPv4 address to a port on the switch
