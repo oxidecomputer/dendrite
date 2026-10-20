@@ -375,7 +375,7 @@ enum CreateRollbackKind<'a> {
     /// External creation: remove source filters and the NAT entry. The ASIC
     /// groups remain after rollback because they belong to the underlay group
     /// this external group targets.
-    External { sources: &'a SourceFilter, vlan_id: Option<u16> },
+    External { sources: &'a SourceFilter },
     /// Underlay creation: destroy the ASIC groups and, for IPv6, the egress
     /// bitmap and replication entries. No source filters or NAT entries were
     /// installed.
@@ -408,14 +408,13 @@ impl<'a> GroupCreateRollbackContext<'a> {
         external_id: MulticastGroupId,
         underlay_id: MulticastGroupId,
         sources: &'a SourceFilter,
-        vlan_id: Option<u16>,
     ) -> Self {
         Self {
             switch,
             group_ip,
             external_id,
             underlay_id,
-            kind: CreateRollbackKind::External { sources, vlan_id },
+            kind: CreateRollbackKind::External { sources },
         }
     }
 
@@ -521,8 +520,7 @@ impl<'a> GroupCreateRollbackContext<'a> {
     }
 
     fn remove_external_entries(&self) -> DpdResult<()> {
-        let CreateRollbackKind::External { sources, vlan_id } = self.kind
-        else {
+        let CreateRollbackKind::External { sources } = self.kind else {
             return Ok(());
         };
 
@@ -531,20 +529,12 @@ impl<'a> GroupCreateRollbackContext<'a> {
             IpAddr::V4(ipv4) => self.log_cleanup_error(
                 "delete IPv4 NAT entry",
                 &format!("for group {ipv4}"),
-                table::mcast::mcast_nat::del_ipv4_entry(
-                    self.switch,
-                    ipv4,
-                    vlan_id,
-                ),
+                table::mcast::mcast_nat::del_ipv4_entry(self.switch, ipv4),
             ),
             IpAddr::V6(ipv6) => self.log_cleanup_error(
                 "delete IPv6 NAT entry",
                 &format!("for group {ipv6}"),
-                table::mcast::mcast_nat::del_ipv6_entry(
-                    self.switch,
-                    ipv6,
-                    vlan_id,
-                ),
+                table::mcast::mcast_nat::del_ipv6_entry(self.switch, ipv6),
             ),
         };
 
@@ -874,9 +864,7 @@ impl<'a> GroupDeleteRollbackContext<'a> {
                     restore(DeleteStep::SourceFilters, &|| {
                         self.readd_source_filters(sources)
                     }),
-                    restore(DeleteStep::Nat, &|| {
-                        self.readd_nat(*nat_target, *vlan_id)
-                    }),
+                    restore(DeleteStep::Nat, &|| self.readd_nat(*nat_target)),
                     restore(DeleteStep::Route, &|| self.readd_route(*vlan_id)),
                 ])
             }
@@ -985,7 +973,6 @@ impl<'a> GroupDeleteRollbackContext<'a> {
     fn readd_nat(
         &self,
         nat_target: dpd_types::mcast::ExternalNatTarget,
-        vlan_id: Option<u16>,
     ) -> DpdResult<()> {
         let nat_target = nat_target.into();
         let result = match self.group_ip() {
@@ -993,17 +980,11 @@ impl<'a> GroupDeleteRollbackContext<'a> {
                 self.switch,
                 ipv4,
                 nat_target,
-                nat_target,
-                vlan_id,
-                vlan_id,
             ),
             IpAddr::V6(ipv6) => table::mcast::mcast_nat::update_ipv6_entry(
                 self.switch,
                 ipv6,
                 nat_target,
-                nat_target,
-                vlan_id,
-                vlan_id,
             ),
         };
 
@@ -1648,20 +1629,14 @@ mod chaos_tests {
     /// otherwise, the VLAN will get modified. Sources change either way, and
     /// NAT programming will fail.
     ///
-    /// A retarget keeps the NAT key and hits the injected `table_entry_update`
-    /// failure. A VLAN change attempts to delete the old key first; the injected
-    /// `table_entry_del` failure stops it there.
+    /// The NAT key is always just the destination address; both cases
+    /// update the entry in place and hit the injected `table_entry_update`
+    /// failure.
     fn external_update_failure(external_ip: IpAddr, retarget: bool) {
         let (route_table, source_table, nat_table) =
             external_tables(external_ip);
         let mut config = Config::default();
-        let failures = if retarget {
-            &mut config.asic_config.table_entry_update
-        } else {
-            &mut config.asic_config.table_entry_del
-        };
-
-        failures.values.insert(nat_table, 1.0);
+        config.asic_config.table_entry_update.values.insert(nat_table, 1.0);
 
         let (switch, logs) = chaos_switch(config);
         let (underlay_ip, underlay_key) = install_underlay_group(&switch);
@@ -1936,7 +1911,7 @@ mod chaos_tests {
             let external_ip: IpAddr = group_ip.parse().unwrap();
             let (_, _, nat_table) = external_tables(external_ip);
             let mut config = Config::default();
-            config.asic_config.table_entry_del.values.insert(nat_table, 1.0);
+            config.asic_config.table_entry_update.values.insert(nat_table, 1.0);
 
             let (switch, logs) = chaos_switch(config);
             let (underlay_ip, _) = install_underlay_group(&switch);
@@ -2006,10 +1981,7 @@ mod chaos_tests {
             match (external_ip, stale_source) {
                 (IpAddr::V4(group), IpAddr::V4(src)) => {
                     table::mcast::mcast_nat::add_ipv4_entry(
-                        &switch,
-                        group,
-                        nat_target,
-                        Some(10),
+                        &switch, group, nat_target,
                     )
                     .unwrap();
                     table::mcast::mcast_src_filter::add_ipv4_entry(
@@ -2027,10 +1999,7 @@ mod chaos_tests {
                 }
                 (IpAddr::V6(group), IpAddr::V6(src)) => {
                     table::mcast::mcast_nat::add_ipv6_entry(
-                        &switch,
-                        group,
-                        nat_target,
-                        Some(10),
+                        &switch, group, nat_target,
                     )
                     .unwrap();
                     table::mcast::mcast_src_filter::add_ipv6_entry(
@@ -2085,8 +2054,8 @@ mod chaos_tests {
             .unwrap();
             assert_eq!(nat_dump.entries.len(), 1);
             assert_eq!(
-                nat_dump.entries[0].keys.get("vlan_id").map(String::as_str),
-                Some("20")
+                route_action(&switch, external_ip),
+                Some(("forward_vlan".to_string(), Some("20".to_string())))
             );
             assert!(logs.entries.lock().unwrap().is_empty());
         }
@@ -2329,86 +2298,6 @@ mod chaos_tests {
                 underlay_tag_and_members(&switch, underlay_key).1,
                 members
             );
-        }
-    }
-
-    fn nat_vlan_change_failure(
-        group_ip: IpAddr,
-        restore_fails: bool,
-    ) -> (Switch, TableType, DpdError) {
-        let (switch, _logs) = chaos_switch(Config::default());
-        let (_, _, nat_table) = external_tables(group_ip);
-        let tgt = external_nat_target(group_ip, "ff04::123".parse().unwrap());
-        let (old_vlan, new_vlan) = (Some(10), Some(4095));
-
-        match group_ip {
-            IpAddr::V4(ip) => {
-                mcast_nat::add_ipv4_entry(&switch, ip, tgt, old_vlan)
-            }
-            IpAddr::V6(ip) => {
-                mcast_nat::add_ipv6_entry(&switch, ip, tgt, old_vlan)
-            }
-        }
-        .unwrap();
-
-        if restore_fails {
-            switch.table_get(nat_table).unwrap().usage.size = 0;
-        }
-
-        let err = match group_ip {
-            IpAddr::V4(ip) => mcast_nat::update_ipv4_entry(
-                &switch, ip, tgt, tgt, old_vlan, new_vlan,
-            ),
-            IpAddr::V6(ip) => mcast_nat::update_ipv6_entry(
-                &switch, ip, tgt, tgt, old_vlan, new_vlan,
-            ),
-        }
-        .unwrap_err();
-
-        (switch, nat_table, err)
-    }
-
-    #[test]
-    fn test_nat_vlan_change_failure_restores_entry() {
-        for group_ip in ["224.1.2.3", "ff0e::1"] {
-            let group_ip: IpAddr = group_ip.parse().unwrap();
-            let (switch, nat_table, err) =
-                nat_vlan_change_failure(group_ip, false);
-
-            assert!(!matches!(err, DpdError::Unwind { .. }), "{err:?}");
-            assert_eq!(table_usage(&switch, nat_table), (1, 2, 1, 0));
-
-            let dump = match group_ip {
-                IpAddr::V4(_) => mcast_nat::ipv4_table_dump(&switch, false),
-                IpAddr::V6(_) => mcast_nat::ipv6_table_dump(&switch, false),
-            }
-            .unwrap();
-            assert_eq!(dump.entries.len(), 1);
-            assert_eq!(
-                dump.entries[0].keys.get("vlan_id").map(String::as_str),
-                Some("10"),
-                "{:?}",
-                dump.entries[0].keys
-            );
-        }
-    }
-
-    #[test]
-    fn test_nat_vlan_change_failure_reports_lost_entry() {
-        for group_ip in ["224.1.2.3", "ff0e::1"] {
-            let (switch, nat_table, err) =
-                nat_vlan_change_failure(group_ip.parse().unwrap(), true);
-
-            assert!(
-                matches!(
-                    err,
-                    DpdError::Unwind { ref unwind, .. }
-                        if unwind.len() == 1
-                            && matches!(unwind.head, DpdError::TableFull(_))
-                ),
-                "{err:?}"
-            );
-            assert_eq!(table_usage(&switch, nat_table), (0, 1, 1, 0));
         }
     }
 
@@ -2806,7 +2695,7 @@ mod chaos_tests {
         let (underlay_ip, underlay_key) = install_underlay_group(&switch);
         let nat_target = external_nat_target(external_ip, underlay_ip);
         let IpAddr::V4(ipv4) = external_ip else { unreachable!() };
-        mcast_nat::add_ipv4_entry(&switch, ipv4, nat_target, None).unwrap();
+        mcast_nat::add_ipv4_entry(&switch, ipv4, nat_target).unwrap();
         table::mcast::mcast_route::add_ipv4_entry(&switch, ipv4, None).unwrap();
 
         let tag = "external-del-restore-failure-test";
@@ -3438,10 +3327,8 @@ mod chaos_tests {
                     match external_ip {
                         IpAddr::V4(ipv4) => {
                             if remove_nat {
-                                mcast_nat::del_ipv4_entry(
-                                    &switch, ipv4, vlan_id,
-                                )
-                                .unwrap();
+                                mcast_nat::del_ipv4_entry(&switch, ipv4)
+                                    .unwrap();
                             }
                             if remove_route {
                                 table::mcast::mcast_route::del_ipv4_entry(
@@ -3452,10 +3339,8 @@ mod chaos_tests {
                         }
                         IpAddr::V6(ipv6) => {
                             if remove_nat {
-                                mcast_nat::del_ipv6_entry(
-                                    &switch, ipv6, vlan_id,
-                                )
-                                .unwrap();
+                                mcast_nat::del_ipv6_entry(&switch, ipv6)
+                                    .unwrap();
                             }
                             if remove_route {
                                 table::mcast::mcast_route::del_ipv6_entry(
