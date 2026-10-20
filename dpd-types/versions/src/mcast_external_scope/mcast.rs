@@ -177,7 +177,7 @@ impl fmt::Display for ExternalMulticastIp {
 }
 
 /// Errors returned when parsing or validating an [`ExternalMulticastIp`].
-#[derive(Clone, Debug, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ExternalMulticastIpError {
     /// The address is not a multicast address.
     #[error("Address {0} is not a multicast address")]
@@ -238,9 +238,9 @@ pub enum ExternalMulticastIpError {
         addr: IpAddr,
     },
 
-    /// The embedded-Rendezvous (RP) R flag is set with an invalid flag
-    /// combination, prefix length, RP interface ID, or a derived RP address
-    /// (RFC 7371 §4.2.2, §4.2.3; RFC 3956 §4, §6.3, §10).
+    /// The embedded rendezvous point (RP) R flag is set with an invalid flag
+    /// combination, prefix length, RP interface ID, or derived RP address.
+    /// [`InvalidEmbeddedRp`] names the rule that failed.
     #[error(
         "Address {addr} sets the R flag, but {reason} (RFC 3956, RFC 7371)"
     )]
@@ -248,7 +248,7 @@ pub enum ExternalMulticastIpError {
         /// The rejected group address.
         addr: IpAddr,
         /// The embedded-RP rule that failed.
-        reason: &'static str,
+        reason: InvalidEmbeddedRp,
     },
 
     /// The given string does not parse as an IP address.
@@ -258,7 +258,7 @@ pub enum ExternalMulticastIpError {
 
 /// Errors returned when validating an external multicast group creation
 /// request.
-#[derive(Clone, Debug, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum MulticastGroupCreateExternalError {
     /// The group IP failed external multicast address validation, returning an
     /// [`ExternalMulticastIpError`].
@@ -348,8 +348,8 @@ pub enum MulticastGroupCreateExternalError {
 
 /// The reason an address cannot serve as a multicast (S,G) source.
 ///
-/// The rules are validated in variant order; an address caught by more
-/// than one invalid rule only reports the first hit.
+/// The rules are validated in variant order. An address that breaks more
+/// than one rule only reports the first hit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InvalidMulticastSource {
     /// `0.0.0.0` or `::`.
@@ -398,6 +398,55 @@ impl fmt::Display for InvalidMulticastSource {
             Self::Reserved => {
                 write!(f, "is in the reserved class E block (240.0.0.0/4)")
             }
+        }
+    }
+}
+
+/// The reason an IPv6 group address with the R flag set cannot embed a
+/// rendezvous point (RP) address ([RFC 7371] §4.2.2, §4.2.3; [RFC 3956] §4,
+/// §6.3, §10).
+///
+/// The rules are validated in variant order. An address that breaks more
+/// than one rule only reports the first hit.
+///
+/// [RFC 3956]: https://www.rfc-editor.org/rfc/rfc3956.html
+/// [RFC 7371]: https://www.rfc-editor.org/rfc/rfc7371.html
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvalidEmbeddedRp {
+    /// The P flag is not set ([RFC 7371] §4.2.2, §4.2.3).
+    RequiresPrefixBased,
+    /// The T flag is not set ([RFC 7371] §4.2.2, §4.2.3).
+    RequiresTransient,
+    /// The prefix length, carried here, is zero or greater than 64
+    /// ([RFC 3956] §4).
+    PrefixLengthOutOfRange(u8),
+    /// The RP interface ID is zero ([RFC 3956] §6.3).
+    ZeroInterfaceId,
+    /// The derived RP address, carried here, is in `::/16`, link-local, or
+    /// multicast space ([RFC 3956] §4, §10).
+    ///
+    /// The address is built from the group's network prefix and RP interface
+    /// ID.
+    UnusableAddress(Ipv6Addr),
+}
+
+impl fmt::Display for InvalidEmbeddedRp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RequiresPrefixBased => write!(f, "the P flag is required"),
+            Self::RequiresTransient => write!(f, "the T flag is required"),
+            Self::PrefixLengthOutOfRange(plen) => write!(
+                f,
+                "the prefix length {plen} is outside the range 1 through 64"
+            ),
+            Self::ZeroInterfaceId => {
+                write!(f, "the RP interface ID must be nonzero")
+            }
+            Self::UnusableAddress(rp) => write!(
+                f,
+                "the derived RP address {rp} is in ::/16, link-local, or \
+                 multicast space"
+            ),
         }
     }
 }
@@ -461,9 +510,10 @@ pub struct SsmMulticastIp(ExternalMulticastIp);
 /// IPv6 loopback, unspecified, link-local, IPv4-mapped (RFC 4291 §2.5.5.2),
 /// and IPv4-compatible (RFC 4291 §2.5.5.1) addresses are rejected as sources.
 /// A link-local source is never forwarded off-link (RFC 3927 §2.7, RFC 4291
-/// §2.5.6), and `0.0.0.0/8` is marked as not forwardable in the IANA
-/// special-purpose registry (RFC 6890, per RFC 1812 §5.3.7), which means
-/// that neither of these could ever match a source filter.
+/// §2.5.6). `0.0.0.0/8` is marked as not forwardable in the IANA
+/// special-purpose registry (RFC 6890), and a router SHOULD NOT forward a
+/// source on network 0 (RFC 1812 §5.3.7). Neither could ever match a source
+/// filter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExactSource(IpAddr);
 
@@ -566,7 +616,7 @@ pub struct ExternalNatTarget {
 }
 
 /// Errors from constructing an [`ExternalNatTarget`].
-#[derive(Clone, Debug, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ExternalNatTargetError {
     /// The inner MAC is not multicast.
     #[error("NAT target inner MAC address {0} is not a multicast MAC address")]
@@ -580,7 +630,7 @@ pub enum ExternalNatTargetError {
 }
 
 /// Errors from converting the older optional forwarding shape.
-#[derive(Clone, Debug, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ExternalInternalForwardingError {
     /// The request omitted its NAT target.
     #[error("External multicast groups require a NAT target")]
