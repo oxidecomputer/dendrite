@@ -94,6 +94,7 @@ pub mod mcast {
     pub use crate::v14::mcast::ExternalMulticastIpError;
     pub use crate::v14::mcast::ExternalNatTarget;
     pub use crate::v14::mcast::ExternalNatTargetError;
+    pub use crate::v14::mcast::InvalidEmbeddedRp;
     pub use crate::v14::mcast::InvalidMulticastSource;
     pub use crate::v14::mcast::MulticastExternalGroupIpParam;
     pub use crate::v14::mcast::MulticastGroupCreateExternalEntry;

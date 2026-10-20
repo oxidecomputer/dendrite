@@ -151,9 +151,22 @@ parser IngressParser(
 
 	state validate_ttl {
 		transition select(hdr.ipv4.ttl) {
-			8w0: invalidate_ttl;
+			8w0: defer_ttl_drop;
 			default: goto_proto_ipv4;
 		}
+	}
+
+	// Records the TTL drop reason without setting `meta.dropped`. A packet
+	// addressed to the switch must still be received (RFC 1812 §4.2.2.9), and
+	// whether the destination is a switch address depends on Filter's switch
+	// address tables, which run after the parser.
+	//
+	// NatIngress and Router4/Router6 drop on the forwarding paths, although
+	// the NAT egress (Geneve decap) path is exempt from a Router4/Router6 drop
+	// and still punts for an inner TTL of 0.
+	state defer_ttl_drop {
+		meta.drop_reason = DROP_IPV4_TTL_INVALID;
+		transition goto_proto_ipv4;
 	}
 
 	// IPv4 Multicast Address Validation (RFC 1112, RFC 7042).
@@ -204,7 +217,7 @@ parser IngressParser(
 	state validate_mcast_ttl {
 		transition select(hdr.ipv4.ttl) {
 			8w0: invalidate_ttl;
-			8w1: invalidate_ttl;
+			8w1: mcast_ttl_exceeded;
 			default: goto_proto_ipv4;
 		}
 	}
@@ -214,6 +227,12 @@ parser IngressParser(
 		meta.dropped = true;
 
 		// We don't reject here because we want to update our stats and reason
+		transition accept;
+	}
+
+	state mcast_ttl_exceeded {
+		meta.drop_reason = DROP_MULTICAST_TTL_EXCEEDED;
+		meta.dropped = true;
 		transition accept;
 	}
 
@@ -267,7 +286,7 @@ parser IngressParser(
 	state set_link_local_mcast {
 		meta.is_link_local_mcastv6 = true;
 		meta.is_mcast = true;
-		transition validate_mcast_link_local_hop_limit;
+		transition validate_hop_limit;
 	}
 
 	state check_ipv6_mcast {
@@ -281,26 +300,21 @@ parser IngressParser(
 
 	state validate_hop_limit {
 		transition select(hdr.ipv6.hop_limit) {
-			8w0: invalidate_hop_limit;
+			8w0: defer_hop_limit_drop;
 			default: goto_proto_ipv6;
 		}
 	}
 
-	state validate_mcast_link_local_hop_limit {
-		// For link-local multicast, we allow a hop limit of 1.
-		// This is to ensure that link-local multicast packets
-		// are not forwarded beyond the local link.
-		transition select(hdr.ipv6.hop_limit) {
-			8w0: invalidate_hop_limit;
-			8w1: goto_proto_ipv6;
-			default: goto_proto_ipv6;
-		}
+	// Similar to `defer_ttl_drop`, but for IPv6 (RFC 8200 §3).
+	state defer_hop_limit_drop {
+		meta.drop_reason = DROP_IPV6_TTL_INVALID;
+		transition goto_proto_ipv6;
 	}
 
 	state validate_mcast_hop_limit {
 		transition select(hdr.ipv6.hop_limit) {
 			8w0: invalidate_hop_limit;
-			8w1: invalidate_hop_limit;
+			8w1: mcast_ttl_exceeded;
 			default: goto_proto_ipv6;
 		}
 	}

@@ -38,7 +38,7 @@ use omicron_common::address::{IPV4_SSM_SUBNET, UNDERLAY_MULTICAST_SUBNET};
 use crate::latest::mcast::{
     AsmMulticastGroupCreate, EmbeddedIpv4, Error, ExactSource,
     ExternalForwarding, ExternalInternalForwarding, ExternalMulticastIp,
-    ExternalMulticastIpError, InvalidMulticastSource, IpSrc,
+    ExternalMulticastIpError, InvalidEmbeddedRp, InvalidMulticastSource, IpSrc,
     MulticastGroupCreateExternalEntry, MulticastGroupCreateExternalError,
     MulticastGroupResponse, MulticastTag, NonEmptyExactSources, SourceEntry,
     SourceFilter, SsmMulticastGroupCreate, SsmMulticastIp,
@@ -120,27 +120,17 @@ const IPV6_SCOPE_INTERFACE_LOCAL: u16 = 0x1;
 const IPV6_SCOPE_LINK_LOCAL: u16 = 0x2;
 
 // Flags field: the nibble above scope (RFC 4291 §2.7).
-
 const IPV6_FLAGS_SHIFT: u16 = 4;
 const IPV6_FLAGS_MASK: u16 = 0xf;
 const IPV6_FLAG_TRANSIENT: u16 = 0x1;
 const IPV6_FLAG_PREFIX_BASED: u16 = 0x2;
 const IPV6_FLAG_EMBEDDED_RP: u16 = 0x4;
+
+// RIID and prefix length in the second segment (RFC 3956 §3, RFC 3306 §4).
 const IPV6_RIID_SHIFT: u16 = 8;
 const IPV6_RIID_MASK: u16 = 0xf;
 const IPV6_PREFIX_BASED_PLEN_MASK: u16 = 0xff;
 const IPV6_PREFIX_BASED_MAX_PLEN: u16 = 64;
-
-// Reasons an embedded-Rendezvous Point (RP) address gets rejected
-// (RFC 7371 §4.2.2, §4.2.3; RFC 3956 §4, §6.3, §10).
-
-const RP_REQUIRES_PREFIX_BASED: &str = "the P flag is required";
-const RP_REQUIRES_TRANSIENT: &str = "the T flag is required";
-const RP_PLEN_OUT_OF_RANGE: &str =
-    "the prefix length must be from 1 through 64";
-const RP_RIID_ZERO: &str = "the RP interface ID must be nonzero";
-const RP_UNUSABLE_ADDRESS: &str =
-    "the derived RP address is in ::/16, link-local, or multicast space";
 
 // SSM flag pattern: R=0, P=T=1 (RFC 7371 §4.1.2).
 const IPV6_SSM_PREFIX: u16 = 0xff30;
@@ -191,6 +181,9 @@ pub(crate) fn validate_external_multicast_ip(
     }
 
     if let IpAddr::V6(ipv6) = addr {
+        // We classify on just the scope nibble. A /16 prefix comparison
+        // encodes flags=0 and would accept, e.g., ff11::1 despite its
+        // interface-local scope.
         let segs = ipv6.segments();
         match segs[0] & IPV6_SCOPE_MASK {
             IPV6_SCOPE_RESERVED_ZERO => {
@@ -226,21 +219,22 @@ pub(crate) fn validate_external_multicast_ip(
             };
 
             if flags & IPV6_FLAG_PREFIX_BASED == 0 {
-                return malformed(RP_REQUIRES_PREFIX_BASED);
+                return malformed(InvalidEmbeddedRp::RequiresPrefixBased);
             }
             if flags & IPV6_FLAG_TRANSIENT == 0 {
-                return malformed(RP_REQUIRES_TRANSIENT);
+                return malformed(InvalidEmbeddedRp::RequiresTransient);
             }
             if plen == 0 || plen > IPV6_PREFIX_BASED_MAX_PLEN {
-                return malformed(RP_PLEN_OUT_OF_RANGE);
+                return malformed(InvalidEmbeddedRp::PrefixLengthOutOfRange(
+                    plen as u8,
+                ));
             }
             if riid == 0 {
-                return malformed(RP_RIID_ZERO);
+                return malformed(InvalidEmbeddedRp::ZeroInterfaceId);
             }
-            if !is_usable_rendezvous_point_address(
-                embedded_rendezvous_point_address(segs, plen, riid),
-            ) {
-                return malformed(RP_UNUSABLE_ADDRESS);
+            let rp = embedded_rendezvous_point_address(segs, plen, riid);
+            if !is_usable_rendezvous_point_address(rp) {
+                return malformed(InvalidEmbeddedRp::UnusableAddress(rp));
             }
         } else if flags & IPV6_FLAG_PREFIX_BASED != 0
             && flags & IPV6_FLAG_TRANSIENT == 0
@@ -789,11 +783,11 @@ mod tests {
     #[test]
     fn rejects_non_multicast() {
         for addr in ["10.0.0.1", "192.168.1.1", "2001:db8::1", "::1"] {
-            assert!(
-                matches!(
-                    addr.parse::<ExternalMulticastIp>(),
-                    Err(ExternalMulticastIpError::NotMulticast(_))
-                ),
+            assert_eq!(
+                addr.parse::<ExternalMulticastIp>(),
+                Err(ExternalMulticastIpError::NotMulticast(
+                    addr.parse::<IpAddr>().unwrap()
+                )),
                 "{addr} should be rejected as non-multicast"
             );
         }
@@ -820,20 +814,20 @@ mod tests {
         }
 
         for addr in ["ff01::1", "ff02::1", "ff11::1", "ff32::4000:1"] {
-            assert!(
-                matches!(
-                    addr.parse::<ExternalMulticastIp>(),
-                    Err(ExternalMulticastIpError::LocalIpv6Scope(_))
-                ),
+            assert_eq!(
+                addr.parse::<ExternalMulticastIp>(),
+                Err(ExternalMulticastIpError::LocalIpv6Scope(
+                    addr.parse::<IpAddr>().unwrap()
+                )),
                 "{addr} should be rejected as an unforwardable scope"
             );
         }
 
-        assert!(
-            matches!(
-                "ff00::1".parse::<ExternalMulticastIp>(),
-                Err(ExternalMulticastIpError::ReservedIpv6Scope(_))
-            ),
+        assert_eq!(
+            "ff00::1".parse::<ExternalMulticastIp>(),
+            Err(ExternalMulticastIpError::ReservedIpv6Scope(
+                "ff00::1".parse::<IpAddr>().unwrap()
+            )),
             "ff00::1 should be rejected as reserved scope 0"
         );
     }
@@ -841,11 +835,11 @@ mod tests {
     #[test]
     fn rejects_underlay_subnet() {
         for addr in ["ff04::1", "ff04::ffff:ffff:ffff:ffff"] {
-            assert!(
-                matches!(
-                    addr.parse::<ExternalMulticastIp>(),
-                    Err(ExternalMulticastIpError::ReservedUnderlaySubnet(_))
-                ),
+            assert_eq!(
+                addr.parse::<ExternalMulticastIp>(),
+                Err(ExternalMulticastIpError::ReservedUnderlaySubnet(
+                    addr.parse::<IpAddr>().unwrap()
+                )),
                 "{addr} should be rejected as underlay"
             );
         }
@@ -853,11 +847,11 @@ mod tests {
 
     #[test]
     fn rejects_reserved_ssm_null() {
-        assert!(
-            matches!(
-                "232.0.0.0".parse::<ExternalMulticastIp>(),
-                Err(ExternalMulticastIpError::ReservedSsmNull(_))
-            ),
+        assert_eq!(
+            "232.0.0.0".parse::<ExternalMulticastIp>(),
+            Err(ExternalMulticastIpError::ReservedSsmNull(
+                "232.0.0.0".parse::<IpAddr>().unwrap()
+            )),
             "232.0.0.0 should be rejected as reserved"
         );
         for addr in ["232.0.0.1", "232.0.0.255", "232.0.1.0"] {
@@ -871,28 +865,47 @@ mod tests {
     #[test]
     fn rejects_malformed_embedded_rendezvous_point() {
         for (addr, expected) in [
-            ("ff5e:140:2001:db8::1", RP_REQUIRES_PREFIX_BASED),
-            ("ff6e:140:2001:db8::1", RP_REQUIRES_TRANSIENT),
-            ("ff7e:100:2001:db8::1", RP_PLEN_OUT_OF_RANGE),
-            ("ff7e:180:2001:db8::1", RP_PLEN_OUT_OF_RANGE),
-            ("ff7e:40:2001:db8::1", RP_RIID_ZERO),
-            ("ff7e:140::1", RP_UNUSABLE_ADDRESS),
-            ("ff7e:140:fe80::1", RP_UNUSABLE_ADDRESS),
-            ("ff7e:140:ff00::1", RP_UNUSABLE_ADDRESS),
+            ("ff5e:140:2001:db8::1", InvalidEmbeddedRp::RequiresPrefixBased),
+            ("ff6e:140:2001:db8::1", InvalidEmbeddedRp::RequiresTransient),
+            (
+                "ff7e:100:2001:db8::1",
+                InvalidEmbeddedRp::PrefixLengthOutOfRange(0),
+            ),
+            (
+                "ff7e:180:2001:db8::1",
+                InvalidEmbeddedRp::PrefixLengthOutOfRange(128),
+            ),
+            ("ff7e:40:2001:db8::1", InvalidEmbeddedRp::ZeroInterfaceId),
+            ("ff4e::1", InvalidEmbeddedRp::RequiresPrefixBased),
+            (
+                "ff7e:140::1",
+                InvalidEmbeddedRp::UnusableAddress(Ipv6Addr::LOCALHOST),
+            ),
+            (
+                "ff7e:140:fe80::1",
+                InvalidEmbeddedRp::UnusableAddress("fe80::1".parse().unwrap()),
+            ),
+            (
+                "ff7e:140:ff00::1",
+                InvalidEmbeddedRp::UnusableAddress("ff00::1".parse().unwrap()),
+            ),
+            (
+                "ff7e:104:fff::1",
+                InvalidEmbeddedRp::UnusableAddress(Ipv6Addr::LOCALHOST),
+            ),
+            (
+                "ff7e:108:ff12::1",
+                InvalidEmbeddedRp::UnusableAddress("ff00::1".parse().unwrap()),
+            ),
         ] {
-            match addr.parse::<ExternalMulticastIp>() {
+            assert_eq!(
+                addr.parse::<ExternalMulticastIp>(),
                 Err(ExternalMulticastIpError::MalformedEmbeddedRp {
-                    reason,
-                    ..
-                }) => assert_eq!(
-                    reason, expected,
-                    "{addr} rejected for the wrong reason"
-                ),
-                other => panic!(
-                    "{addr} should be rejected as malformed embedded-RP, \
-                     got {other:?}"
-                ),
-            }
+                    addr: addr.parse::<IpAddr>().unwrap(),
+                    reason: expected,
+                }),
+                "{addr} should be rejected as {expected:?}"
+            );
         }
     }
 
@@ -967,11 +980,11 @@ mod tests {
     #[test]
     fn rejects_invalid_ipv6_ssm_group_ids() {
         for addr in ["ff3e::4000:0", "ff3e:f000::4000:0"] {
-            assert!(
-                matches!(
-                    addr.parse::<ExternalMulticastIp>(),
-                    Err(ExternalMulticastIpError::InvalidIpv6Ssm(_))
-                ),
+            assert_eq!(
+                addr.parse::<ExternalMulticastIp>(),
+                Err(ExternalMulticastIpError::InvalidIpv6Ssm(
+                    addr.parse::<IpAddr>().unwrap()
+                )),
                 "{addr} should be rejected as invalid SSM"
             );
         }
@@ -1090,12 +1103,15 @@ mod tests {
     fn ssm_requires_sources() {
         for sources in [None, Some(vec![])] {
             for group in ["232.1.2.3", "ff3e::4000:1", "ff35::4000:1"] {
-                assert!(matches!(
-                    entry(group, sources.clone()),
-                    Err(MulticastGroupCreateExternalError::SsmRequiresSources(
-                        _
-                    ))
-                ));
+                assert_eq!(
+                    entry(group, sources.clone()).err(),
+                    Some(
+                        MulticastGroupCreateExternalError::SsmRequiresSources(
+                            group.parse::<IpAddr>().unwrap()
+                        )
+                    ),
+                    "{group} with sources {sources:?} should be rejected"
+                );
             }
         }
     }
@@ -1106,14 +1122,15 @@ mod tests {
             [("232.1.2.3", "10.1.1.1"), ("ff35::4000:1", "2001:db8::1")]
         {
             for sources in [vec![IpSrc::Any], vec![exact(source), IpSrc::Any]] {
-                assert!(matches!(
-                    entry(group, Some(sources)),
-                    Err(
+                assert_eq!(
+                    entry(group, Some(sources.clone())).err(),
+                    Some(
                         MulticastGroupCreateExternalError::SsmRejectsAnySource(
-                            _
+                            group.parse::<IpAddr>().unwrap()
                         )
-                    )
-                ));
+                    ),
+                    "{group} with sources {sources:?} should be rejected"
+                );
             }
         }
     }
@@ -1171,13 +1188,12 @@ mod tests {
             ("224.1.2.3", "2001:db8::1"),
             ("ff0e::1", "10.1.1.1"),
         ] {
-            assert!(
-                matches!(
-                    entry(group_ip, Some(vec![exact(source)])),
-                    Err(
-                        MulticastGroupCreateExternalError::SourceFamilyMismatch { .. }
-                    )
-                ),
+            assert_eq!(
+                entry(group_ip, Some(vec![exact(source)])).err(),
+                Some(MulticastGroupCreateExternalError::SourceFamilyMismatch {
+                    source_ip: source.parse::<IpAddr>().unwrap(),
+                    group: group_ip.parse::<IpAddr>().unwrap(),
+                }),
                 "{source} for {group_ip} should be rejected"
             );
         }
@@ -1185,14 +1201,18 @@ mod tests {
 
     #[test]
     fn rejects_invalid_exact_sources() {
-        assert!(matches!(
-            entry("224.1.2.3", Some(vec![exact("224.9.9.9")])),
-            Err(MulticastGroupCreateExternalError::SourceNotUnicast(_))
-        ));
-        assert!(matches!(
-            entry("ff0e::1", Some(vec![exact("ff0e::2")])),
-            Err(MulticastGroupCreateExternalError::SourceNotUnicast(_))
-        ));
+        assert_eq!(
+            entry("224.1.2.3", Some(vec![exact("224.9.9.9")])).err(),
+            Some(MulticastGroupCreateExternalError::SourceNotUnicast(
+                "224.9.9.9".parse::<IpAddr>().unwrap()
+            ))
+        );
+        assert_eq!(
+            entry("ff0e::1", Some(vec![exact("ff0e::2")])).err(),
+            Some(MulticastGroupCreateExternalError::SourceNotUnicast(
+                "ff0e::2".parse::<IpAddr>().unwrap()
+            ))
+        );
 
         for (source, expected) in [
             ("127.0.0.1", InvalidMulticastSource::Loopback),
@@ -1203,14 +1223,12 @@ mod tests {
             ("240.0.0.1", InvalidMulticastSource::Reserved),
             ("255.255.255.254", InvalidMulticastSource::Reserved),
         ] {
-            assert!(
-                matches!(
-                    entry("232.1.2.3", Some(vec![exact(source)])),
-                    Err(MulticastGroupCreateExternalError::InvalidIpv4Source {
-                        reason,
-                        ..
-                    }) if reason == expected
-                ),
+            assert_eq!(
+                entry("232.1.2.3", Some(vec![exact(source)])).err(),
+                Some(MulticastGroupCreateExternalError::InvalidIpv4Source {
+                    addr: source.parse::<Ipv4Addr>().unwrap(),
+                    reason: expected,
+                }),
                 "{source} should be rejected as {expected:?}"
             );
         }
@@ -1221,14 +1239,12 @@ mod tests {
             ("fe80::1", InvalidMulticastSource::LinkLocal),
             ("febf:ffff::1", InvalidMulticastSource::LinkLocal),
         ] {
-            assert!(
-                matches!(
-                    entry("ff0e::1", Some(vec![exact(source)])),
-                    Err(MulticastGroupCreateExternalError::InvalidIpv6Source {
-                        reason,
-                        ..
-                    }) if reason == expected
-                ),
+            assert_eq!(
+                entry("ff0e::1", Some(vec![exact(source)])).err(),
+                Some(MulticastGroupCreateExternalError::InvalidIpv6Source {
+                    addr: source.parse::<Ipv6Addr>().unwrap(),
+                    reason: expected,
+                }),
                 "{source} should be rejected as {expected:?}"
             );
         }
@@ -1244,14 +1260,12 @@ mod tests {
             ("::ffff:192.0.2.1", EmbeddedIpv4::Mapped),
             ("::192.0.2.1", EmbeddedIpv4::Compatible),
         ] {
-            assert!(
-                matches!(
-                    entry("ff0e::1", Some(vec![exact(source)])),
-                    Err(MulticastGroupCreateExternalError::Ipv4EmbeddedSource {
-                        form,
-                        ..
-                    }) if form == expected
-                ),
+            assert_eq!(
+                entry("ff0e::1", Some(vec![exact(source)])).err(),
+                Some(MulticastGroupCreateExternalError::Ipv4EmbeddedSource {
+                    addr: source.parse::<Ipv6Addr>().unwrap(),
+                    form: expected,
+                }),
                 "{source} should be rejected as {expected:?}"
             );
         }
@@ -1381,11 +1395,11 @@ mod tests {
     #[test]
     fn rejects_malformed_rfc3306_prefix_based() {
         for addr in ["ff2e:20:2001:db8::1", "ff2e::1"] {
-            assert!(
-                matches!(
-                    addr.parse::<ExternalMulticastIp>(),
-                    Err(ExternalMulticastIpError::MalformedPrefixBased { .. })
-                ),
+            assert_eq!(
+                addr.parse::<ExternalMulticastIp>(),
+                Err(ExternalMulticastIpError::MalformedPrefixBased {
+                    addr: addr.parse::<IpAddr>().unwrap(),
+                }),
                 "{addr} should be rejected as malformed prefix-based"
             );
         }
@@ -1439,11 +1453,11 @@ mod tests {
     #[test]
     fn rejects_only_reserved_base_addresses() {
         for addr in ["224.0.0.0", "ff03::", "ff05::", "ff0e::", "ff0f::"] {
-            assert!(
-                matches!(
-                    addr.parse::<ExternalMulticastIp>(),
-                    Err(ExternalMulticastIpError::ReservedBaseAddress(_))
-                ),
+            assert_eq!(
+                addr.parse::<ExternalMulticastIp>(),
+                Err(ExternalMulticastIpError::ReservedBaseAddress(
+                    addr.parse::<IpAddr>().unwrap()
+                )),
                 "{addr} should be rejected as a reserved base address"
             );
         }
@@ -1457,13 +1471,13 @@ mod tests {
 
     #[test]
     fn source_validation_precedes_family_mismatch() {
-        assert!(matches!(
-            entry("232.1.2.3", Some(vec![exact("::1")])),
-            Err(MulticastGroupCreateExternalError::InvalidIpv6Source {
+        assert_eq!(
+            entry("232.1.2.3", Some(vec![exact("::1")])).err(),
+            Some(MulticastGroupCreateExternalError::InvalidIpv6Source {
+                addr: Ipv6Addr::LOCALHOST,
                 reason: InvalidMulticastSource::Loopback,
-                ..
             })
-        ));
+        );
     }
 
     #[test]
