@@ -219,12 +219,10 @@ struct geneve_opt_headers_t {
 // protocols only occur once, and their placement in this struct
 // minimizes copying on encap/decap.
 //
-// During encap and decap, duplicated fields should be populated
-// according to these rules:
-// - The top-most IP header should be valid. So decapping an IPv6
-//   packet should move inner_ipv6 to v6.
-// - The bottom-most L4 header should be valid. So decapping a UDP
-//   packet should invalidate udp6 and keep inner_udp.
+// Invariants:
+// - When one IPv6 header is present, it's always `ipv6` (not inner_).
+// - IPv4 parses UDP into inner_udp. IPv6 parses UDP into udp6 even
+//   if that's the only UDP header in the packet.
 struct sidecar_headers_t {
 	ethernet_h	ethernet;
 	sidecar_h	sidecar;
