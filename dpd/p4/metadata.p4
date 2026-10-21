@@ -73,6 +73,15 @@ struct sidecar_egress_meta_t {
 	bool ipv4_checksum_recalc; 	// recalc checksum for IPv4
 	bit<12> vlan_id;		// VLAN ID for the packet
 	bit<8> port_number; 		// Port number for the outgoing port (0-255)
+	// Both of these are used for IPv4 incremental checksum
+	// in EgressDeparser.
+	// They're known at the point of use and are only here because
+	// "Currently only zero-constants and metadata/headers or their
+	// fields are supported as entries" in checksums.
+	// This is the one's compliment of the inner IPv4 header's
+	// previous checksum.
+	bit<16> inner_hc;
+	bit<16> ttl_checksum_const; // Defined in constants.p4
 }
 
 struct route4_result_t {

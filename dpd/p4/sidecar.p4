@@ -48,6 +48,20 @@ const bit<9> USER_SPACE_SERVICE_PORT = 192;
 #define IPV6_FIELDS         \
     hdr.inner_ipv6
 
+// Fields in an outer IPv4 header checksum without options.
+#define IPV4_CHECKSUM_FIELDS     \
+	hdr.ipv4.version,        \
+	hdr.ipv4.ihl,            \
+	hdr.ipv4.diffserv,       \
+	hdr.ipv4.total_len,      \
+	hdr.ipv4.identification, \
+	hdr.ipv4.flags,          \
+	hdr.ipv4.frag_offset,    \
+	hdr.ipv4.ttl,            \
+	hdr.ipv4.protocol,       \
+	hdr.ipv4.src_addr,       \
+	hdr.ipv4.dst_addr
+
 // This control handles the calculation of Layer 4 payload length
 // by subtracting the IPv4 header length from the total packet length.
 //
@@ -543,6 +557,12 @@ control NatIngress (
 		hdr.inner_ipv4.setValid();
 		hdr.ipv4.setInvalid();
 
+		// We drop packets with options before getting here.
+		// If passing options through NAT is ever required, one
+		// clean solution is to implement varbit assignment in
+		// the tofino p4 compiler and to handle them here like
+		// any other header.
+
 		add_encap_headers(payload_len);
 	}
 
@@ -723,7 +743,10 @@ control NatIngress (
 #endif /* MULTICAST */
 
 		if (ingress_hit.apply().hit) {
-			if (hdr.ipv4.isValid()) {
+			if (hdr.ipv4_opts.isValid()) {
+				meta.drop_reason = DROP_NAT_IPV4_OPTIONS;
+				meta.dropped = true;
+			} else if (hdr.ipv4.isValid()) {
 				CalculateIPv4Len.apply(hdr, meta);
 				encap_ipv4();
 			} else if (hdr.ipv6.isValid()) {
@@ -771,6 +794,7 @@ control NatEgress (
 		hdr.sidecar.setInvalid();
 		hdr.vlan.setInvalid();
 		hdr.ipv4.setInvalid();
+		hdr.ipv4_opts.setInvalid();
 		hdr.ipv6.setInvalid();
 		hdr.udp.setInvalid();
 		hdr.tcp.setInvalid();
@@ -886,7 +910,12 @@ control NatEgress (
 	}
 
 	apply {
-		if (meta.nat_egress_hit) {
+		if (meta.nat_egress_hit &&
+			hdr.inner_ipv4_opts.isValid()
+		) {
+			meta.drop_reason = DROP_NAT_IPV4_OPTIONS;
+			meta.dropped = true;
+		} else if (meta.nat_egress_hit) {
 			nat_egress.apply();
 		}
 	}
@@ -1959,6 +1988,7 @@ control MulticastEgress (
 	action strip_outer_header() {
 		hdr.inner_eth.setInvalid();
 		hdr.ipv4.setInvalid();
+		hdr.ipv4_opts.setInvalid();
 		hdr.ipv6.setInvalid();
 		hdr.tcp.setInvalid();
 		hdr.udp.setInvalid();
@@ -1978,6 +2008,9 @@ control MulticastEgress (
 
 	action decrement_ttl() {
 		hdr.inner_ipv4.ttl = hdr.inner_ipv4.ttl - 1;
+		meta.ipv4_checksum_recalc = true;
+		meta.inner_hc = ~hdr.inner_ipv4.hdr_checksum;
+		meta.ttl_checksum_const = ONEC_IPV4_TTL_DIFF;
 	}
 
 	action decrement_hop_limit() {
@@ -2057,7 +2090,6 @@ control MulticastEgress (
 					port_bitmap_check.apply();
 				}
 				if (meta.bitmap_result != 0) {
-					meta.ipv4_checksum_recalc = true;
 					modify_hdr.apply();
 				}
 			}
@@ -2262,6 +2294,9 @@ control IngressDeparser(packet_out pkt,
 		// checksum engine, exceeding the hardware's limit.  Rewriting
 		// the logic as seen below somehow makes the independence
 		// apparent to the compiler.
+
+		// IPv4 options are ignored here because we currently drop
+		// optioned packets requiring encapsulation.
 		if (meta.encap_needed && hdr.inner_ipv4.isValid() &&
 		    hdr.inner_udp.isValid()) {
 			hdr.udp.checksum = nat_checksum.update({
@@ -2303,15 +2338,16 @@ control IngressDeparser(packet_out pkt,
 		 *
 		 */
 
-		if (hdr.ipv4.isValid()) {
+		if (hdr.ipv4.isValid() && !hdr.ipv4_opts.isValid()) {
 			hdr.ipv4.hdr_checksum = ipv4_checksum.update({
-				hdr.ipv4.version, hdr.ipv4.ihl, hdr.ipv4.diffserv,
-				hdr.ipv4.total_len,
-				hdr.ipv4.identification,
-				hdr.ipv4.flags, hdr.ipv4.frag_offset,
-				hdr.ipv4.ttl, hdr.ipv4.protocol,
-				hdr.ipv4.src_addr,
-				hdr.ipv4.dst_addr
+				IPV4_CHECKSUM_FIELDS
+			});
+		}
+
+		if (hdr.ipv4.isValid() && hdr.ipv4_opts.isValid()) {
+			hdr.ipv4.hdr_checksum = ipv4_checksum.update({
+				IPV4_CHECKSUM_FIELDS,
+				hdr.ipv4_opts
 			});
 		}
 
@@ -2415,15 +2451,18 @@ control EgressDeparser(
 		// underlay multicast ports, as the TTL and hop limit
 		// are decremented if packets headed toward external multicast
 		// subscribers are decapped/stripped.
+		//
+		// We do not have enough checksum units to handle packets with
+		// and without IPv4 options here. Since this is only reached
+		// by TTL decr, we can use an RFC 1624 incremental checksum
+		// instead.
+		//
+		// Warning: If the input checksum is bad, the output checksum
+		//          will also be bad.
 		if (meta.ipv4_checksum_recalc && hdr.inner_ipv4.isValid()) {
 			hdr.inner_ipv4.hdr_checksum = ipv4_checksum.update({
-				hdr.inner_ipv4.version, hdr.inner_ipv4.ihl, hdr.inner_ipv4.diffserv,
-				hdr.inner_ipv4.total_len,
-				hdr.inner_ipv4.identification,
-				hdr.inner_ipv4.flags, hdr.inner_ipv4.frag_offset,
-				hdr.inner_ipv4.ttl, hdr.inner_ipv4.protocol,
-				hdr.inner_ipv4.src_addr,
-				hdr.inner_ipv4.dst_addr
+				meta.inner_hc,
+				meta.ttl_checksum_const
 			});
 		}
 		pkt.emit(hdr);
