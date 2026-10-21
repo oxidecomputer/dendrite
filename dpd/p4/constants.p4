@@ -68,6 +68,23 @@ const bit<16> IPV6_LINK_LOCAL_16 = 0xff02;        // ff02::/16
 const bit<128> IPV6_UNDERLAY_MASK = 0xffffffffffffffff0000000000000000;  // /64 prefix mask
 const bit<128> IPV6_UNDERLAY_MULTICAST_PATTERN = 0xff040000000000000000000000000000;  // ff04::/64
 
+// For IPv4 checksum on a TTL decrement, this is equal to
+// `~m + m'` from RFC 1624.
+//
+// IPv4 TTL shares a 16-bit word with "Protocol".
+// A TTL decrement subtracts 1 << 8 from the 16-bit word.
+// Consider the following in one's compliment.
+//
+// Let x = (TTL << 8) + Protocol
+// ~m + m'
+// 	= -x + (x - 0x0100)
+// 	= -0x0100
+// 	= 0xFEFF
+//
+// Negating this transitions back into checksum space, which
+// matches the 0x100 addition in the page 1 example of RFC 1141.
+const bit<16> ONEC_IPV4_TTL_DIFF                = 0xFEFF;
+
 /* Reasons a packet may be dropped by the p4 pipeline */
 const bit<8> DROP_IPV4_SWITCH_ADDR_MISS         = 0x01;
 const bit<8> DROP_IPV6_SWITCH_ADDR_MISS         = 0x02;
@@ -96,5 +113,7 @@ const bit<8> DROP_GENEVE_OPTIONS_TOO_LONG       = 0x18;
 const bit<8> DROP_GENEVE_OPTION_MALFORMED       = 0x19;
 const bit<8> DROP_GENEVE_OPTION_UNKNOWN         = 0x1A;
 const bit<8> DROP_SCTP                          = 0x1B;
+const bit<8> DROP_IPV4_IHL_INVALID              = 0x1C;
+const bit<8> DROP_NAT_IPV4_OPTIONS              = 0x1D;
 // MAX(DROP_xxx) + 1
-const bit<32> DROP_REASON_MAX                   = 0x1C;
+const bit<32> DROP_REASON_MAX                   = 0x1E;
