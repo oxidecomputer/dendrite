@@ -108,9 +108,23 @@ async fn simnet_process(g: &Global) -> anyhow::Result<()> {
                 continue;
             }
         };
-        // ensure the link for the tfport exists
+        // ensure the link for the tfport exists and is enabled
         match g.client.link_get(&port_id, &link_id).await {
-            Ok(_) => {}
+            Ok(link) => {
+                if !link.enabled {
+                    if let Err(e) = g
+                        .client
+                        .link_enabled_set(&port_id, &link_id, true)
+                        .await
+                    {
+                        error!(
+                            g.log,
+                            "failed to enable existing link for tfport \
+                             {port_name}: {e}"
+                        );
+                    }
+                }
+            }
             Err(_) => {
                 // this is for softnpu environments which do not currently care
                 // about these parameters, so just pick some
@@ -123,11 +137,27 @@ async fn simnet_process(g: &Global) -> anyhow::Result<()> {
                     tx_eq: None,
                     allow_ddm_traffic: false,
                 };
-                if let Err(e) = g.client.link_create(&port_id, &params).await {
-                    error!(
-                        g.log,
-                        "failed to create link for tfport {port_name}: {e}"
-                    );
+                match g.client.link_create(&port_id, &params).await {
+                    Ok(created) => {
+                        // softnpu does not enable front ports on creation.
+                        if let Err(e) = g
+                            .client
+                            .link_enabled_set(&port_id, &created, true)
+                            .await
+                        {
+                            error!(
+                                g.log,
+                                "failed to enable link for tfport \
+                                 {port_name}: {e}"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        error!(
+                            g.log,
+                            "failed to create link for tfport {port_name}: {e}"
+                        );
+                    }
                 }
             }
         };
