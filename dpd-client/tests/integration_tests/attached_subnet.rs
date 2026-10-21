@@ -64,13 +64,6 @@ async fn test_api() -> TestResult {
 }
 
 #[derive(Debug)]
-enum L4Protocol {
-    Tcp,
-    Udp,
-    Icmp,
-}
-
-#[derive(Debug)]
 struct ExternalTest {
     // packet source/destination from the vm client's perspective
     pkt_src_ip: String,
@@ -246,17 +239,25 @@ async fn test_ingress(switch: &Switch, test: &ExternalTest) -> TestResult {
     // external subnet.
     let load = vec![0xaau8, 0xbb, 0xcc, 0xdd, 0xee];
     let switch_mac = switch.get_port_mac(test.uplink_port).unwrap().to_string();
-    let ingress_pkt = common::gen_udp_packet_loaded(
-        Endpoint::parse(
-            &test.upstream_router_mac,
-            &test.pkt_src_ip,
-            test.pkt_src_port,
-        )
-        .unwrap(),
-        Endpoint::parse(&switch_mac, &test.pkt_dst_ip, test.pkt_dst_port)
-            .unwrap(),
-        &load,
-    );
+    let src = Endpoint::parse(
+        &test.upstream_router_mac,
+        &test.pkt_src_ip,
+        test.pkt_src_port,
+    )
+    .unwrap();
+    let dst = Endpoint::parse(&switch_mac, &test.pkt_dst_ip, test.pkt_dst_port)
+        .unwrap();
+    let (ingress_pkt, csum_generated) = match test.l4_protocol {
+        L4Protocol::Tcp => {
+            (common::gen_tcp_packet_loaded(src, dst, &load), true)
+        }
+        L4Protocol::Udp => {
+            (common::gen_udp_packet_loaded(src, dst, &load), true)
+        }
+        L4Protocol::Icmp => {
+            (common::gen_icmp_packet_loaded(src, dst, &load), false)
+        }
+    };
 
     // Convert the packet into a binary payload that will be encapsulated into a
     // geneve packet.  We also rewrite the destination mac of the packet to
@@ -283,7 +284,7 @@ async fn test_ingress(switch: &Switch, test: &ExternalTest) -> TestResult {
         Endpoint::parse(
             &backplane_port_mac,
             switch_port_ip,
-            geneve::GENEVE_UDP_PORT,
+            common::tofino_flow_hash(src, dst, test.l4_protocol),
         )
         .unwrap(),
         Endpoint::parse(
@@ -299,7 +300,11 @@ async fn test_ingress(switch: &Switch, test: &ExternalTest) -> TestResult {
 
     /* Adjust for transition from switch port to gimlet port */
     ipv6::Ipv6Hdr::adjust_hlim(&mut forward_pkt, -1);
-    udp::UdpHdr::update_checksum(&mut forward_pkt);
+    if csum_generated {
+        udp::UdpHdr::update_checksum(&mut forward_pkt);
+    } else {
+        forward_pkt.hdrs.udp_hdr.as_mut().unwrap().udp_sum = 0;
+    }
 
     let send = vec![TestPacket {
         packet: Arc::new(ingress_pkt),
