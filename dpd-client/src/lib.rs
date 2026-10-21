@@ -33,16 +33,7 @@ progenitor::generate_api!(
     spec = "../openapi/dpd/dpd-latest.json",
     interface = Positional,
     inner_type = crate::ClientState,
-    pre_hook = (|state: &crate::ClientState, request: &reqwest::Request| {
-        slog::trace!(state.log, "client request";
-            "method" => %request.method(),
-            "uri" => %request.url(),
-            "body" => ?&request.body(),
-        );
-    }),
-    post_hook = (|state: &crate::ClientState, result: &Result<_, _>| {
-        slog::trace!(state.log, "client response"; "result" => ?result);
-    }),
+    hooks = Expected,
     derives = [ PartialEq ],
     patch = {
         PortId = {derives = [PartialOrd, Ord, PartialEq, Eq, Hash, Clone] },
@@ -58,6 +49,34 @@ progenitor::generate_api!(
         UnderlayMulticastIpv6 = dpd_types_versions::latest::mcast::UnderlayMulticastIpv6,
     },
 );
+
+impl progenitor::progenitor_client::ClientHooks<ClientState> for Client {
+    async fn pre<E>(
+        &self,
+        request: &mut reqwest::Request,
+        info: &progenitor::progenitor_client::OperationInfo,
+    ) -> Result<(), progenitor::progenitor_client::Error<E>> {
+        progenitor_extras::slog_hooks::log_request!(
+            &self.inner().log,
+            request,
+            info
+        );
+        Ok(())
+    }
+
+    async fn post<E>(
+        &self,
+        result: &reqwest::Result<reqwest::Response>,
+        info: &progenitor::progenitor_client::OperationInfo,
+    ) -> Result<(), progenitor::progenitor_client::Error<E>> {
+        progenitor_extras::slog_hooks::log_response!(
+            &self.inner().log,
+            result,
+            info
+        );
+        Ok(())
+    }
+}
 
 impl Client {
     /// Helper to create an `Ipv4Entry` from an address, using the client's tag.
