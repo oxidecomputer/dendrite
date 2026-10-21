@@ -41,6 +41,7 @@ parser IngressParser(
 		meta.icmp_csum = 0;
 		meta.l4_src_port = 0;
 		meta.l4_dst_port = 0;
+		meta.flow_hash = 0;
 		meta.l4_length = 0;
 		meta.body_checksum = 0;
 		meta.nexthop_ipv4 = 0;
@@ -143,7 +144,7 @@ parser IngressParser(
 		});
 
 		transition select(hdr.ipv4.dst_addr[31:28]) {
-			4w0xe: validate_ipv4_mcast1_2;
+			4w0xe: set_mcast_ipv4;
 			default: validate_ttl;
 		}
 	}
@@ -152,46 +153,6 @@ parser IngressParser(
 		transition select(hdr.ipv4.ttl) {
 			8w0: invalidate_ttl;
 			default: goto_proto_ipv4;
-		}
-	}
-
-	// IPv4 Multicast Address Validation (RFC 1112, RFC 7042).
-	//
-	// This validates that IPv4 multicast packets (224.0.0.0/4) use the proper
-	// MAC address format:
-	//
-	// - First byte:  Must be 0x01 (IANA-assigned OUI format)
-	// - Second byte: Must be 0x00 (with first bit of second byte being 0)
-	// - Third byte:  Must be 0x5e
-	// - Last 3 bytes: Must contain the lower 23 bits of the IPv4 multicast
-	//   address (with the 24th bit set to 0)
-	state validate_ipv4_mcast1_2 {
-		// Extract the first byte of the MAC address
-		bit<8> mac_byte1 = hdr.ethernet.dst_mac[47:40]; // First byte must be 0x01
-		// Extract the second byte of the MAC address
-		bit<8> mac_byte2 = hdr.ethernet.dst_mac[39:32]; // Second byte must be 0x00
-
-		transition select(mac_byte1, mac_byte2) {
-			(8w0x01, 8w0x00): validate_ipv4_mcast_3;
-			default: invalidate_ipv4_mcast;
-		}
-	}
-
-	// IPv4 Multicast Third Byte Validation
-	//
-	// Following the IANA mapping rules for IPv4 multicast MAC addresses:
-	//
-	// - The third byte must always be 0x5e
-	// - This completes the IANA OUI prefix (01:00:5e)
-	// - After this validation, the remaining 23 bits of the MAC will be
-	//   verified against the multicast IPv4 address in the `Filter` control
-	state validate_ipv4_mcast_3 {
-		// Extract the 3rd byte of the MAC address
-		bit<8> mac_byte3 = hdr.ethernet.dst_mac[31:24]; // Third byte must be 0x5e
-
-		transition select(mac_byte3) {
-			8w0x5e: set_mcast_ipv4;
-			default: invalidate_ipv4_mcast;
 		}
 	}
 
@@ -210,15 +171,6 @@ parser IngressParser(
 
 	state invalidate_ttl {
 		meta.drop_reason = DROP_IPV4_TTL_INVALID;
-		meta.dropped = true;
-
-		// We don't reject here because we want to update our stats and reason
-		transition accept;
-	}
-
-	state invalidate_ipv4_mcast {
-		meta.is_mcast = true;
-		meta.drop_reason = DROP_MULTICAST_INVALID_MAC;
 		meta.dropped = true;
 
 		// We don't reject here because we want to update our stats and reason
@@ -319,7 +271,7 @@ parser IngressParser(
 
 	state goto_proto_ipv6 {
 		transition select(hdr.ipv6.next_hdr) {
-			IPPROTO_ICMPV6: parse_icmp;
+			IPPROTO_ICMPV6: parse_icmp6;
 			IPPROTO_TCP: parse_tcp;
 			IPPROTO_UDP: parse_udp;
 			IPPROTO_SCTP: drop_sctp;
@@ -340,6 +292,39 @@ parser IngressParser(
 		nat_checksum.subtract(hdr.icmp);
 		nat_checksum.subtract_all_and_deposit(meta.body_checksum);
 
+		meta.l4_dst_port = hdr.icmp.data[31:16];
+
+		transition select(hdr.icmp.type) {
+			ICMP_ECHO: accept;
+			ICMP_ECHOREPLY: accept;
+			default: icmp_no_dst_info;
+		}
+	}
+
+	state parse_icmp6 {
+		pkt.extract(hdr.icmp);
+		meta.pkt_type = meta.pkt_type | PKT_ICMP;
+
+		icmp_checksum.subtract({
+			hdr.icmp.hdr_checksum,
+			hdr.icmp.type, hdr.icmp.code
+		});
+		icmp_checksum.subtract_all_and_deposit(meta.icmp_csum);
+
+		nat_checksum.subtract(hdr.icmp);
+		nat_checksum.subtract_all_and_deposit(meta.body_checksum);
+
+		meta.l4_dst_port = hdr.icmp.data[31:16];
+
+		transition select(hdr.icmp.type) {
+			ICMP6_ECHO: accept;
+			ICMP6_ECHOREPLY: accept;
+			default: icmp_no_dst_info;
+		}
+	}
+
+	state icmp_no_dst_info {
+		meta.l4_dst_port = 0;
 		transition accept;
 	}
 

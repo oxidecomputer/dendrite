@@ -434,7 +434,11 @@ fn prepare_expected_pkt(
                 Endpoint::parse(
                     &switch_port_mac,
                     "::0",
-                    geneve::GENEVE_UDP_PORT,
+                    common::tofino_flow_hash(
+                        send_pkt.src().unwrap(),
+                        send_pkt.dst().unwrap(),
+                        L4Protocol::Udp,
+                    ),
                 )
                 .unwrap(),
                 Endpoint::parse(
