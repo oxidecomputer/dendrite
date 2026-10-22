@@ -6,9 +6,11 @@
 
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
+use std::ops::RangeInclusive;
 use std::sync::Arc;
 
 use anyhow::anyhow;
+use anyhow::bail;
 use oxnet::Ipv6Net;
 
 use ::common::network::MacAddr;
@@ -16,10 +18,14 @@ use ::common::network::Vni;
 use dpd_client::ClientInfo;
 use dpd_client::types;
 use packet::Endpoint;
+use packet::L4Endpoint;
+use packet::Packet;
 use packet::eth;
 use packet::geneve;
 use packet::icmp;
 use packet::ipv4;
+use packet::ipv4::Ipv4Hdr;
+use packet::ipv4::OptBuf;
 use packet::ipv6;
 use packet::tcp;
 use packet::udp;
@@ -671,4 +677,373 @@ async fn test_ingress_ipv6_tcp() -> TestResult {
 async fn test_ingress_ipv6_icmp() -> TestResult {
     let switch = &*get_switch().await;
     test_ingress_ipv6(switch, L4Protocol::Icmp).await
+}
+
+// Encapsulated traffic between instances allows IPv4 options
+// when decap is not required.
+#[tokio::test]
+#[ignore]
+async fn encap_carries_ipv4_opts() -> anyhow::Result<()> {
+    const PAYLOAD: &[u8] = &[0xcc; 8];
+
+    let switch = &*get_switch().await;
+
+    let sled1 = Sled::builder().id(1).build()?;
+    sled1.init(switch).await?;
+
+    let sled2 = Sled::builder().id(2).build()?;
+    sled2.init(switch).await?;
+
+    let ipv4_opts = OptBuf::from_slice(&[0x3; 7]).expect("options should fit");
+    let (tx, rx) = sled1.routed_ipv4_pkt(switch, &sled2, ipv4_opts, PAYLOAD)?;
+
+    switch.packet_test(
+        vec![TestPacket { port: sled1.port, packet: Arc::new(tx) }],
+        vec![TestPacket { port: sled2.port, packet: Arc::new(rx) }],
+    )
+}
+
+/*
+#[tokio::test]
+#[ignore]
+async fn nat_ignores_ipv4_options() -> anyhow::Result<()> {
+    const PAYLOAD: &[u8] = &[0xcc; 8];
+
+    let switch = &*get_switch().await;
+
+    let sled1 = Sled::builder().id(1)?;
+    sled1.init(switch).await?;
+
+    let uplink = PhysPort(10);
+    let external_src =
+        Endpoint::parse("02:aa:bb:cc:dd:ee", "10.10.10.10", 4444)?;
+
+    // These are not valid IPv4 options, but we could test that someday.
+    // The switch's policy is to ignore options, and this at least
+    // verifies it can work around a full buffer of them.
+    let options = OptBuf::from_array([0xcc; 40]);
+    let (from_ext, encap) = sled1.ingress_ipv4_pkt(
+        switch,
+        external_src,
+        sled1.nat_dst(switch, uplink)?,
+        options,
+        PAYLOAD,
+    )?;
+
+    switch.set_uplink(uplink, true).await;
+    let result = switch.packet_test(
+        vec![TestPacket { port: uplink, packet: Arc::new(from_ext) }],
+        vec![TestPacket { port: sled1.port, packet: Arc::new(encap) }],
+    );
+    switch.set_uplink(uplink, false).await;
+    result
+}
+
+/// Marks an IPv4 packet as a fragment with the given offset.
+/// Use `last == true` only if this is the final fragment you
+/// intend to send.
+fn set_ipv4_fragment(
+    pkt: &mut Packet,
+    offset: u16,
+    last: bool,
+) -> anyhow::Result<()> {
+    // By default, use a const IPv4 fragment ID in tests.
+    const ID: u16 = 0x1234;
+
+    let Some(frag) = &mut pkt.hdrs.ipv4_hdr else {
+        bail!("cannot fragment, packet is missing an IPv4 header");
+    };
+    frag.ipv4_id = ID;
+    frag.ipv4_df = false;
+    frag.ipv4_mf = !last;
+    frag.ipv4_frag_offset = offset;
+    ipv4::Ipv4Hdr::update_checksum(pkt);
+
+    Ok(())
+}
+*/
+
+/// Config for sending traffic from the switch to a sled's guest
+/// behind a NAT range.
+struct Sled {
+    /// Physical switch port neighboring this sled.
+    port: PhysPort,
+    /// Switch's underlay IP address for the link neighboring this sled.
+    port_underlay_ip: Ipv6Addr,
+    /// Underlay IP address of this sled.
+    sled_underlay_ip: Ipv6Addr,
+    /// Underlay MAC address of this sled.
+    sled_underlay_mac: MacAddr,
+    /// MAC address for the guest to which we are sending.
+    guest_mac: MacAddr,
+    /// VNI for the guest's VPC.
+    guest_vni: u32,
+    /// The NAT IP address.
+    nat_ip: Ipv4Addr,
+    /// The NAT address' ports belonging to this sled.
+    nat_ports: RangeInclusive<u16>,
+    /// The NAT port to which we will actually send traffic.
+    nat_port: u16,
+}
+
+struct SledBuilder {
+    /// An ID used to separate sleds across distinct /64 address groups.
+    subnet: u8,
+    /// An ID used to separate sleds within the same /64 address group.
+    id: u8,
+    /// Which tofino port this sled should live behind.
+    port_offset: u16,
+}
+
+impl Default for SledBuilder {
+    fn default() -> Self {
+        SledBuilder { subnet: 1, id: 1, port_offset: 0 }
+    }
+}
+
+impl SledBuilder {
+    /// Define a subnet ID this sled lives in.
+    /// Differentiates /64 address groups.
+    fn subnet(mut self, seed: u8) -> Self {
+        self.subnet = seed;
+        self
+    }
+
+    /// Define an instance ID to distinguish this sled among others
+    /// in the same /64.
+    fn id(mut self, seed: u8) -> Self {
+        self.id = seed;
+        self
+    }
+
+    /// Used to pin sleds to different tofino ports.
+    fn port_offset(mut self, seed: u16) -> Self {
+        self.port_offset = seed;
+        self
+    }
+
+    fn build(self) -> anyhow::Result<Sled> {
+        // L4 ports
+        let start_port = 1024 + (self.subnet as u16 * 128);
+        let end_port = start_port + 127;
+
+        // switch port
+        let switch_port = PhysPort(10 + self.port_offset as u16);
+
+        // As of writing, port idx 8 through 24 in the switch definition
+        // have a veth defined, which we want for these tests.
+        //
+        // https://github.com/oxidecomputer/dendrite/blob/e577a94678bf0a8d64d719acd3e19edd965f66a3/dpd-client/tests/integration_tests/common.rs#L263-L468
+        anyhow::ensure!(
+            (8..=24u16).contains(&switch_port.0),
+            "Choose a switch port for which a veth is defined"
+        );
+
+        Ok(Sled {
+            port: switch_port,
+            port_underlay_ip: format!(
+                "fd00:1111:1111:{:x}::{:x}",
+                self.subnet, self.id
+            )
+            .parse()?,
+            sled_underlay_ip: format!(
+                "fd00:2222:2222:{:x}::{:x}",
+                self.subnet, self.id
+            )
+            .parse()?,
+            sled_underlay_mac: format!(
+                "11:11:11:11:{:x}:{:x}",
+                self.subnet, self.id
+            )
+            .parse()?,
+            guest_mac: format!("22:22:22:22:{:x}:{:x}", self.subnet, self.id)
+                .parse()?,
+            guest_vni: self.subnet.into(),
+            nat_ip: "192.168.1.1".parse()?,
+            nat_ports: start_port..=end_port,
+            nat_port: start_port,
+        })
+    }
+}
+
+impl Sled {
+    /// Constructs a builder for the `Sled` type. Config parameters
+    /// define how sleds are physically and logically related.
+    fn builder() -> SledBuilder {
+        SledBuilder::default()
+    }
+
+    async fn init(&self, switch: &Switch) -> anyhow::Result<()> {
+        let tag = switch.client.inner().tag.clone();
+        let Some((port_id, link_id)) = switch.link_id(self.port) else {
+            bail!("Link id not found for port {:?}", self.port);
+        };
+
+        let entry =
+            types::Ipv6Entry { addr: self.port_underlay_ip, tag: tag.clone() };
+        switch.client.link_ipv6_create(&port_id, &link_id, &entry).await?;
+
+        let route = types::Ipv6RouteUpdate {
+            cidr: Ipv6Net::new(self.sled_underlay_ip, 64)?,
+            replace: false,
+            target: types::Ipv6Route {
+                tag: tag.clone(),
+                port_id,
+                link_id,
+                tgt_ip: self.sled_underlay_ip,
+                vlan_id: None,
+            },
+        };
+        switch.client.route_ipv6_set(&route).await?;
+
+        common::add_neighbor_ipv6(
+            switch,
+            &self.sled_underlay_ip.to_string(),
+            self.sled_underlay_mac,
+        )
+        .await?;
+
+        let nat = types::NatTarget {
+            internal_ip: self.sled_underlay_ip,
+            inner_mac: self.guest_mac.into(),
+            vni: types::Vni(self.guest_vni),
+        };
+        switch
+            .client
+            .nat_ipv4_create(
+                &self.nat_ip,
+                *self.nat_ports.start(),
+                *self.nat_ports.end(),
+                &nat,
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    /// Creates an [`Endpoint`] for the NAT address via this uplink
+    /// switch port.
+    fn nat_dst(
+        &self,
+        switch: &Switch,
+        uplink: PhysPort,
+    ) -> anyhow::Result<Endpoint> {
+        Ok(Endpoint::L4(L4Endpoint {
+            mac: switch.get_port_mac(uplink).map_err(|e| anyhow!(e))?,
+            ip: self.nat_ip.into(),
+            port: self.nat_port,
+        }))
+    }
+
+    /// Returns an encapsulated packet sent from self to the dst sled.
+    fn routed_ipv4_pkt(
+        &self,
+        switch: &Switch,
+        dst: &Sled,
+        options: ipv4::OptBuf,
+        body: &[u8],
+    ) -> anyhow::Result<(Packet, Packet)> {
+        // Inner packet is immaterial. We just need bytes to send.
+        let src_ip = "10.0.0.1".parse::<Ipv4Addr>()?;
+        let src_mac = "c:c:c:c:c:1".parse::<MacAddr>()?;
+        let dst_ip = "10.0.0.2".parse::<Ipv4Addr>()?;
+        let dst_mac = "c:c:c:c:c:2".parse::<MacAddr>()?;
+        let port = 12345;
+
+        let inner_src =
+            Endpoint::L4(L4Endpoint { mac: src_mac, ip: src_ip.into(), port });
+        let inner_dst =
+            Endpoint::L4(L4Endpoint { mac: dst_mac, ip: dst_ip.into(), port });
+
+        let mut inner_pkt =
+            common::gen_udp_packet_loaded(inner_src, inner_dst, body);
+        Ipv4Hdr::set_options(&mut inner_pkt, options)?;
+
+        let inner = {
+            let mut inner = inner_pkt.clone();
+            let eth = inner.hdrs.eth_hdr.as_mut().ok_or_else(|| {
+                anyhow!("gen_udp_packet_loaded should set an ethernet header")
+            })?;
+            eth.eth_smac = MacAddr::ZERO;
+            eth.eth_dmac = self.guest_mac;
+            inner.deparse()?.to_vec()
+        };
+
+        let encap_src = Endpoint::L4(L4Endpoint {
+            mac: self.sled_underlay_mac,
+            ip: self.sled_underlay_ip.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        });
+        let encap_dst = Endpoint::L4(L4Endpoint {
+            mac: dst.sled_underlay_mac,
+            ip: dst.sled_underlay_ip.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        });
+
+        let send_pkt = common::gen_external_geneve_packet(
+            encap_src,
+            encap_dst,
+            eth::ETHER_ETHER,
+            self.guest_vni,
+            &inner,
+        );
+        let mut recv_pkt = send_pkt.clone();
+
+        ipv6::Ipv6Hdr::adjust_hlim(&mut recv_pkt, -1);
+        udp::UdpHdr::update_checksum(&mut recv_pkt);
+
+        Ok((send_pkt, recv_pkt))
+    }
+
+    /// Creates an ingress packet with the given body and source.
+    ///
+    /// Geneve encap targets the guest behind the NAT config.
+    ///
+    /// Returns both the inner packet and the geneve-encapsulated one.
+    fn ingress_ipv4_pkt(
+        &self,
+        switch: &Switch,
+        src: Endpoint,
+        dst: Endpoint,
+        options: ipv4::OptBuf,
+        body: &[u8],
+    ) -> anyhow::Result<(Packet, Packet)> {
+        let mut user_pkt = common::gen_udp_packet_loaded(src, dst, body);
+        Ipv4Hdr::set_options(&mut user_pkt, options)?;
+
+        let inner = {
+            let mut inner = user_pkt.clone();
+            let eth = inner.hdrs.eth_hdr.as_mut().ok_or_else(|| {
+                anyhow!("gen_udp_packet_loaded should set an ethernet header")
+            })?;
+            eth.eth_smac = MacAddr::ZERO;
+            eth.eth_dmac = self.guest_mac;
+            inner.deparse()?.to_vec()
+        };
+
+        let port_mac =
+            switch.get_port_mac(self.port).map_err(|e| anyhow!(e))?;
+        let encap_src = Endpoint::L4(L4Endpoint {
+            mac: port_mac,
+            ip: Ipv6Addr::UNSPECIFIED.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        });
+        let encap_dst = Endpoint::L4(L4Endpoint {
+            mac: self.sled_underlay_mac,
+            ip: self.sled_underlay_ip.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        });
+        let mut encap_pkt = common::gen_external_geneve_packet(
+            encap_src,
+            encap_dst,
+            eth::ETHER_ETHER,
+            self.guest_vni,
+            &inner,
+        );
+
+        ipv6::Ipv6Hdr::adjust_hlim(&mut encap_pkt, -1);
+        udp::UdpHdr::update_checksum(&mut encap_pkt);
+
+        Ok((user_pkt, encap_pkt))
+    }
 }
