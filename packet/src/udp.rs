@@ -15,7 +15,8 @@ use crate::PacketResult;
 use crate::{Endpoint, Headers, L4Endpoint, Packet};
 use crate::{geneve, ipv4, ipv6};
 
-const UDP_HDR_SZ: usize = 8;
+/// Bytes in a UDP header.
+pub const UDP_HDR_SZ: usize = 8;
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub struct UdpHdr {

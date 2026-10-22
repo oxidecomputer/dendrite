@@ -241,7 +241,7 @@ async fn test_nat_egress(switch: &Switch, test: &NatTest) -> TestResult {
     // responsibility, then this needs to be done on the 'expected' packet
     // rather than the 'to_send' packet.
     let inner = {
-        if let Some(mut ipv4) = payload_pkt.hdrs.ipv4_hdr {
+        if let Some(ipv4) = &mut payload_pkt.hdrs.ipv4_hdr {
             ipv4.ipv4_src_ip = test.uplink_port_external.parse()?;
             Ok(eth::ETHER_IPV4)
         } else if let Some(mut ipv6) = payload_pkt.hdrs.ipv6_hdr {

@@ -10,6 +10,9 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 use oxnet::Ipv4Net;
+use packet::Packet;
+use packet::ipv4::Ipv4Hdr;
+use packet::ipv4::OptBuf;
 use reqwest::StatusCode;
 
 use crate::integration_tests::common;
@@ -75,7 +78,7 @@ fn build_route_update(
     replace: bool,
 ) -> types::Ipv4RouteUpdate {
     types::Ipv4RouteUpdate {
-        cidr: subnet.into(),
+        cidr: subnet,
         target: types::RouteTarget::V4(target.clone()),
         replace,
     }
@@ -88,7 +91,7 @@ async fn validate_routes(
     expected: &[types::Ipv4Route],
 ) -> TestResult {
     if expected.is_empty() {
-        match client.route_ipv4_get(&cidr).await {
+        match client.route_ipv4_get(cidr).await {
             Ok(f) => {
                 Err(anyhow!("found {} targets - expected no route", f.len()))
             }
@@ -96,7 +99,7 @@ async fn validate_routes(
         }
     } else {
         // Verify that the set of routes on the switch match those we just set
-        let found = client.route_ipv4_get(&cidr).await?;
+        let found = client.route_ipv4_get(cidr).await?;
         assert_eq!(found.len(), expected.len());
         for target in expected {
             assert!(
@@ -107,7 +110,17 @@ async fn validate_routes(
     }
 }
 
-async fn test_route_ipv4_unicast_impl(switch: &Switch) -> TestResult {
+/// No-op for tests that don't want to mutate a packet.
+fn no_change(_: &mut Packet, _: &mut Packet) -> TestResult {
+    Ok(())
+}
+
+/// The modify closure optionally mutates the (to_send, to_recv) packets
+/// before they're tested.
+async fn test_route_ipv4_unicast_impl(
+    switch: &Switch,
+    modify: impl FnOnce(&mut Packet, &mut Packet) -> TestResult,
+) -> TestResult {
     let ingress = PhysPort(10);
     let egress = PhysPort(14);
 
@@ -116,13 +129,14 @@ async fn test_route_ipv4_unicast_impl(switch: &Switch) -> TestResult {
     common::set_route_ipv4(switch, "10.10.10.0/24", egress, &router.ip).await?;
     common::add_arp_ipv4(switch, &router.ip, router.mac).await?;
 
-    let (to_send, to_recv) = common::gen_udp_routed_pair(
+    let (mut to_send, mut to_recv) = common::gen_udp_routed_pair(
         switch,
         egress,
         router.mac,
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
         Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444).unwrap(),
     );
+    modify(&mut to_send, &mut to_recv)?;
 
     let send = TestPacket { packet: Arc::new(to_send), port: ingress };
     let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
@@ -133,7 +147,7 @@ async fn test_route_ipv4_unicast_impl(switch: &Switch) -> TestResult {
 #[ignore]
 async fn test_route_ipv4_unicast() -> TestResult {
     let switch = &*get_switch().await;
-    test_route_ipv4_unicast_impl(switch).await
+    test_route_ipv4_unicast_impl(switch, no_change).await
 }
 
 async fn test_deleted_route_ipv4_impl(switch: &Switch) -> TestResult {
@@ -141,7 +155,7 @@ async fn test_deleted_route_ipv4_impl(switch: &Switch) -> TestResult {
     let egress = SERVICE_PORT;
 
     // Verify that we can still unicast via the correctly set-up route.
-    test_route_ipv4_unicast_impl(switch).await?;
+    test_route_ipv4_unicast_impl(switch, no_change).await?;
 
     // Delete that route entry, and check that we cannot send out the egress
     // port.
@@ -490,8 +504,7 @@ fn shrink_test_route(
         tag: "testing".into(),
         port_id,
         link_id,
-        tgt_ip: Ipv4Addr::new(ip_prefix.0, ip_prefix.1, ip_prefix.2, target)
-            .into(),
+        tgt_ip: Ipv4Addr::new(ip_prefix.0, ip_prefix.1, ip_prefix.2, target),
         vlan_id: None,
     }
 }
@@ -1091,4 +1104,18 @@ async fn test_multipath_mixed_delete() -> TestResult {
         .expect_err("route should be gone after deleting all targets");
 
     Ok(())
+}
+
+// Send an IPv4 packet with options. It should arrive with options.
+#[ignore]
+#[tokio::test]
+async fn ipv4_options() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+    test_route_ipv4_unicast_impl(switch, |to_send, to_recv| {
+        let opts = OptBuf::from_array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        Ipv4Hdr::set_options(to_send, opts.clone())?;
+        Ipv4Hdr::set_options(to_recv, opts)?;
+        Ok(())
+    })
+    .await
 }
