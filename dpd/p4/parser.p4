@@ -178,9 +178,9 @@ parser IngressParser(
 
 	state eval_ipv4_opts {
 		transition select(hdr.ipv4.ihl) {
+			4w0 .. 4w4: invalidate_ihl;
 			4w5: goto_proto_ipv4;
-			4w6 .. 4w15: extract_ipv4_opts;
-			default: invalidate_ihl;
+			default: extract_ipv4_opts;
 		}
 	}
 
@@ -295,7 +295,7 @@ parser IngressParser(
 		transition select(hdr.ipv6.next_hdr) {
 			IPPROTO_ICMPV6: parse_icmp6;
 			IPPROTO_TCP: parse_tcp;
-			IPPROTO_UDP: parse_udp;
+			IPPROTO_UDP: parse_udp6;
 			IPPROTO_SCTP: drop_sctp;
 			default: accept;
 		}
@@ -362,7 +362,21 @@ parser IngressParser(
 		transition accept;
 	}
 
+	// IPv4 parser for UDP. Oxide Geneve is only ever carried
+	// in IPv6, so we can stop parsing after the L4 header in IPv4.
 	state parse_udp {
+		pkt.extract(hdr.udp);
+		meta.pkt_type = meta.pkt_type | PKT_UDP;
+		nat_checksum.subtract(hdr.udp);
+		nat_checksum.subtract_all_and_deposit(meta.body_checksum);
+
+		meta.l4_src_port = hdr.udp.src_port;
+		meta.l4_dst_port = hdr.udp.dst_port;
+
+		transition accept;
+	}
+
+	state parse_udp6 {
 		pkt.extract(hdr.udp);
 		meta.pkt_type = meta.pkt_type | PKT_UDP;
 		nat_checksum.subtract(hdr.udp);
@@ -496,9 +510,9 @@ parser IngressParser(
 	state parse_inner_ipv4 {
 		pkt.extract(hdr.inner_ipv4);
 		transition select(hdr.inner_ipv4.ihl) {
+			4w0 .. 4w4: accept;
 			4w5: goto_inner_proto_ipv4;
-			4w6 .. 4w15: extract_inner_ipv4_opts;
-			default: accept;
+			default: extract_inner_ipv4_opts;
 		}
 	}
 
@@ -624,13 +638,13 @@ parser EgressParser(
 	}
 
 	state extract_ipv4_opts {
-		// We have no real reason to parse this. However, NOT parsing
-		// this seems to use much more PHV and causes a compilation
-		// failure. I suspect the compiler tucks full varbits deep
-		// in the bowels of tofino memory, which is why they're
-		// basically unusable after init. Whereas a rogue unset
-		// varbit needs a close pair of eyes at all times. It might
-		// explode or something.
+		// We have no real reason to parse this. However, as of
+		// writing, NOT parsing this seems to use much more PHV
+		// and causes a compilation failure.
+		// I suspect the compiler tucks full varbits deep in the
+		// bowels of tofino memory, which is why they're basically
+		// unusable after init. Whereas a rogue unset varbit needs a
+		// keen pair of eyes at all times. It might explode or something.
 		pkt.extract(hdr.ipv4_opts,
 			(bit<32>)(((bit<16>)hdr.ipv4.ihl |-| 5) * 32));
 		transition accept;
@@ -783,43 +797,11 @@ parser EgressParser(
 
 	state parse_inner_ipv4 {
 		pkt.extract(hdr.inner_ipv4);
-		transition select(hdr.inner_ipv4.ihl) {
-			4w5: goto_inner_proto_ipv4;
-			4w6 .. 4w15: extract_inner_ipv4_opts;
-			default: accept;
-		}
-	}
-
-	state extract_inner_ipv4_opts {
-		pkt.extract(hdr.inner_ipv4_opts,
-			(bit<32>)(((bit<16>)hdr.inner_ipv4.ihl |-| 5) * 32));
-		transition goto_inner_proto_ipv4;
-	}
-
-	state goto_inner_proto_ipv4 {
-		transition select(hdr.inner_ipv4.protocol) {
-			IPPROTO_TCP: parse_inner_tcp;
-			IPPROTO_UDP: parse_inner_udp;
-			default: accept;
-		}
+		transition accept;
 	}
 
 	state parse_inner_ipv6 {
 		pkt.extract(hdr.inner_ipv6);
-		transition select(hdr.inner_ipv6.next_hdr) {
-			IPPROTO_TCP: parse_inner_tcp;
-			IPPROTO_UDP: parse_inner_udp;
-			default: accept;
-		}
-	}
-
-	state parse_inner_tcp {
-		pkt.extract(hdr.inner_tcp);
-		transition accept;
-	}
-
-	state parse_inner_udp {
-		pkt.extract(hdr.inner_udp);
 		transition accept;
 	}
 }
