@@ -12,7 +12,6 @@ use common::SmfError;
 use common::ports::PortId;
 use common::ports::QsfpPort;
 use dpd_types::link::LinkId;
-use slog::error;
 use std::{convert, net::IpAddr};
 use transceiver_controller::Error as TransceiverError;
 
@@ -315,7 +314,6 @@ impl convert::From<common::network::VlanError> for DpdError {
     }
 }
 
-#[cfg(feature = "multicast")]
 impl convert::From<dpd_types::mcast::Error> for DpdError {
     fn from(err: dpd_types::mcast::Error) -> Self {
         DpdError::Invalid(err.to_string())

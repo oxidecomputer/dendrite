@@ -12,11 +12,7 @@ use crate::cmd;
 #[serial]
 #[ignore]
 fn counters_list() -> anyhow::Result<()> {
-    #[cfg(not(feature = "multicast"))]
     const DIFF_FILE: &str = "counters.txt";
-
-    #[cfg(feature = "multicast")]
-    const DIFF_FILE: &str = "counters_multicast.txt";
 
     cmd::swadm("counters list")?.try_expectorate(DIFF_FILE)
 }
