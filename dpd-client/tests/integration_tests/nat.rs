@@ -688,10 +688,10 @@ async fn encap_carries_ipv4_opts() -> anyhow::Result<()> {
 
     let switch = &*get_switch().await;
 
-    let sled1 = Sled::builder().id(1).build()?;
+    let sled1 = Sled::try_new(1)?;
     sled1.init(switch).await?;
 
-    let sled2 = Sled::builder().id(2).build()?;
+    let sled2 = Sled::try_new(1)?;
     sled2.init(switch).await?;
 
     let ipv4_opts = OptBuf::from_slice(&[0x3; 7]).expect("options should fit");
@@ -786,49 +786,18 @@ struct Sled {
     nat_port: u16,
 }
 
-struct SledBuilder {
-    /// An ID used to separate sleds across distinct /64 address groups.
-    subnet: u8,
-    /// An ID used to separate sleds within the same /64 address group.
-    id: u8,
-    /// Which tofino port this sled should live behind.
-    port_offset: u16,
-}
-
-impl Default for SledBuilder {
-    fn default() -> Self {
-        SledBuilder { subnet: 1, id: 1, port_offset: 0 }
-    }
-}
-
-impl SledBuilder {
-    /// Define a subnet ID this sled lives in.
-    /// Differentiates /64 address groups.
-    fn subnet(mut self, seed: u8) -> Self {
-        self.subnet = seed;
-        self
-    }
-
-    /// Define an instance ID to distinguish this sled among others
-    /// in the same /64.
-    fn id(mut self, seed: u8) -> Self {
-        self.id = seed;
-        self
-    }
-
-    /// Used to pin sleds to different tofino ports.
-    fn port_offset(mut self, seed: u16) -> Self {
-        self.port_offset = seed;
-        self
-    }
-
-    fn build(self) -> anyhow::Result<Sled> {
+impl Sled {
+    /// Constructs a new Sled instance, which can be used for generating
+    /// and exchanging packets.
+    /// `seed` is just a small offset used to differentiate different
+    /// sleds in the same test.
+    fn try_new(seed: u8) -> anyhow::Result<Self> {
         // L4 ports
-        let start_port = 1024 + (self.subnet as u16 * 128);
+        let start_port = 1024 + (seed as u16 * 128);
         let end_port = start_port + 127;
 
         // switch port
-        let switch_port = PhysPort(10 + self.port_offset as u16);
+        let switch_port = PhysPort(10 + seed as u16);
 
         // As of writing, port idx 8 through 24 in the switch definition
         // have a veth defined, which we want for these tests.
@@ -841,36 +810,15 @@ impl SledBuilder {
 
         Ok(Sled {
             port: switch_port,
-            port_underlay_ip: format!(
-                "fd00:1111:1111:{:x}::{:x}",
-                self.subnet, self.id
-            )
-            .parse()?,
-            sled_underlay_ip: format!(
-                "fd00:2222:2222:{:x}::{:x}",
-                self.subnet, self.id
-            )
-            .parse()?,
-            sled_underlay_mac: format!(
-                "11:11:11:11:{:x}:{:x}",
-                self.subnet, self.id
-            )
-            .parse()?,
-            guest_mac: format!("22:22:22:22:{:x}:{:x}", self.subnet, self.id)
-                .parse()?,
-            guest_vni: self.subnet.into(),
+            port_underlay_ip: format!("fd00:1111:1111:{seed:x}::1").parse()?,
+            sled_underlay_ip: format!("fd00:2222:2222:{seed:x}::1").parse()?,
+            sled_underlay_mac: format!("11:11:11:11:11:{seed:x}",).parse()?,
+            guest_mac: format!("22:22:22:22:22:{seed:x}").parse()?,
+            guest_vni: seed.into(),
             nat_ip: "192.168.1.1".parse()?,
             nat_ports: start_port..=end_port,
             nat_port: start_port,
         })
-    }
-}
-
-impl Sled {
-    /// Constructs a builder for the `Sled` type. Config parameters
-    /// define how sleds are physically and logically related.
-    fn builder() -> SledBuilder {
-        SledBuilder::default()
     }
 
     async fn init(&self, switch: &Switch) -> anyhow::Result<()> {
@@ -987,10 +935,7 @@ impl Sled {
             self.guest_vni,
             &inner,
         );
-        let mut recv_pkt = send_pkt.clone();
-
-        ipv6::Ipv6Hdr::adjust_hlim(&mut recv_pkt, -1);
-        udp::UdpHdr::update_checksum(&mut recv_pkt);
+        let recv_pkt = common::gen_packet_routed(switch, dst.port, &send_pkt);
 
         Ok((send_pkt, recv_pkt))
     }
