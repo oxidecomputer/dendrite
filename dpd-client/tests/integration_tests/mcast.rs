@@ -808,8 +808,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
 
     // Verify IPv4 route table has one entry for the VLAN group.
     // Route tables use simple destination address matching with
-    // forward_vlan(vlan_id) action. VLAN isolation (preventing translation) is
-    // handled by NAT ingress tables.
+    // forward_vlan(vlan_id) action.
     let route_table = switch
         .client
         .table_dump("Ingress.l3_router.MulticastRouter4.tbl", false)
@@ -836,9 +835,8 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
         "Route entry should have forward_vlan(42) action"
     );
 
-    // Verify NAT ingress table has a single entry with exact VLAN match.
-    // Decapsulated Geneve never reaches this table due to the
-    // !hdr.geneve.isValid() guard, so one entry per group suffices.
+    // Verify NAT ingress table has a single entry keyed on the destination
+    // address, regardless of the group's VLAN.
     let nat_table = switch
         .client
         .table_dump("Ingress.nat_ingress.ingress_ipv4_mcast", false)
@@ -848,7 +846,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
     assert_eq!(
         count_entries_for_ip(&nat_table.entries, "224.1.2.3"),
         1,
-        "NAT table should have 1 entry with exact VLAN match"
+        "NAT table should have 1 entry per group (dst_addr only)"
     );
 
     // Verify the admin-scoped group now has access to the VLAN via NAT target
@@ -948,7 +946,7 @@ async fn test_group_api_lifecycle() {
         "Route table should have 1 entry per group (dst_addr only)"
     );
 
-    // NAT table: 1 entry per group with exact VLAN match
+    // NAT table: 1 entry per group (dst_addr only)
     let nat_table = switch
         .client
         .table_dump("Ingress.nat_ingress.ingress_ipv4_mcast", false)
@@ -963,7 +961,7 @@ async fn test_group_api_lifecycle() {
     assert_eq!(
         nat_entries.len(),
         1,
-        "NAT table should have 1 entry with exact VLAN match"
+        "NAT table should have 1 entry per group (dst_addr only)"
     );
 
     // Get all groups and verify our group is included
@@ -1986,13 +1984,19 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
     let src_port = 3333;
     let dst_port = 4444;
 
+    // The ingress VLAN (20) differs from the group's (10). NAT ingress
+    // matches on the destination IP, meaning that the packet is still
+    // admitted, and the ingress tag isn't preserved into the encapsulated
+    // frame.
+    //
+    // See oxidecomputer/sidecar-lite#152 (discussion_r4317211007).
     let to_send = create_ipv4_multicast_packet(
         multicast_ip,
         src_mac,
         src_ip,
         src_port,
         dst_port,
-        Some(10),
+        Some(20),
     );
 
     let to_recv1 = prepare_expected_pkt(
@@ -2745,13 +2749,19 @@ async fn test_ipv6_multicast_basic_replication_nat_ingress() -> TestResult {
 
     let src_mac = switch.get_port_mac(ingress).unwrap();
 
+    // The ingress VLAN (20) differs from the group's (10). NAT ingress
+    // matches on the destination IP, meaning that the packet is still
+    // admitted, and the ingress tag isn't preserved into the encapsulated
+    // frame.
+    //
+    // See oxidecomputer/sidecar-lite#152 (discussion_r4317211007).
     let to_send = create_ipv6_multicast_packet(
         multicast_ip,
         src_mac,
         "2001:db8::1",
         3333,
         4444,
-        Some(10),
+        Some(20),
     );
 
     let to_recv1 = prepare_expected_pkt(
@@ -3878,73 +3888,6 @@ async fn test_multicast_reset_all_tables() -> TestResult {
         );
     }
     Ok(())
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_multicast_vlan_translation_not_possible() -> TestResult {
-    let switch = &*get_switch().await;
-
-    // Define test ports
-    let ingress = PhysPort(10);
-
-    //  Create admin-scoped IPv6 underlay group that will handle actual replication
-    let egress1 = PhysPort(15);
-    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
-    create_test_multicast_group(
-        switch,
-        internal_multicast_ip,
-        Some(TEST_TAG),
-        &[(egress1, types::Direction::External)],
-        types::InternalForwarding { nat_target: None },
-        types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
-        None,
-    )
-    .await;
-
-    // Create external group with VLAN
-    let multicast_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
-    let output_vlan = Some(20);
-
-    let created_group = create_test_multicast_group(
-        switch,
-        multicast_ip,
-        Some(TEST_TAG),
-        &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        }, // Create NAT target
-        types::ExternalForwarding { vlan_id: output_vlan },
-        None,
-    )
-    .await;
-
-    let src_mac = switch.get_port_mac(ingress).unwrap();
-
-    // Create test packet with input VLAN 10, which differs from the
-    // group's configured VLAN 20.
-    let input_vlan = 10;
-    let to_send = create_ipv4_multicast_packet(
-        multicast_ip,
-        src_mac,
-        "192.168.1.20",
-        4444,
-        5555,
-        Some(input_vlan),
-    );
-
-    let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
-
-    // Expect NO packets - this test demonstrates that VLAN translation
-    // is not possible for multicast packets
-    let expected_pkts = vec![];
-
-    switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
-
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
-        .await
-        .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
 }
 
 #[tokio::test]
