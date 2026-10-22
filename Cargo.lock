@@ -5016,7 +5016,7 @@ dependencies = [
 [[package]]
 name = "p4rs"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/p4?branch=main#c13435444832c28e0fb19bc65eaa8b431583a1cf"
+source = "git+https://github.com/oxidecomputer/p4?branch=main#c8b190f46901d4c1b8eef1ca35be243b18653471"
 dependencies = [
  "bitvec",
  "num",
@@ -7221,7 +7221,7 @@ dependencies = [
 [[package]]
 name = "softnpu"
 version = "0.2.0"
-source = "git+https://github.com/oxidecomputer/softnpu?branch=main#7e015d167a914777bc21434d1c61f205f22993b1"
+source = "git+https://github.com/oxidecomputer/softnpu?branch=main#e19bb5f09ee8d108bc53b80585238796cd3bf272"
 dependencies = [
  "p4rs",
  "serde",

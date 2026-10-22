@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use slog::{Logger, o};
+use slog::{Logger, debug, o};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -27,6 +27,7 @@ use common::ports::{
 
 use softnpu_lib::ManagementRequest;
 
+pub mod mcast;
 pub mod mgmt;
 pub mod table;
 
@@ -102,8 +103,8 @@ pub struct Handle {
     log: Logger,
     ports: Mutex<HashMap<PortHdl, Port>>,
     pub mgmt_config: mgmt::ManagementConfig,
-
     update_tx: Mutex<Option<mpsc::UnboundedSender<PortUpdate>>>,
+    mc_data: Mutex<mcast::McGroupData>,
 }
 
 impl Handle {
@@ -129,6 +130,7 @@ impl Handle {
             ports: Mutex::new(HashMap::new()),
             mgmt_config,
             update_tx: Mutex::new(None),
+            mc_data: Mutex::new(mcast::McGroupData::default()),
         })
     }
 
@@ -142,50 +144,130 @@ impl Handle {
     }
 
     pub fn fini(&self) {}
+
+    /// Rewrite the replication entries refreshed after a membership change.
+    ///
+    /// SoftNPU fixes each entry's port bitmaps at write time and has no
+    /// in-place table update. Each affected entry is removed and re-added with
+    /// the recomputed bitmaps.
+    fn rewrite_replication_entries(
+        &self,
+        entries: Vec<mcast::RefreshedReplEntry>,
+    ) {
+        use softnpu_lib::{TableAdd, TableRemove};
+
+        for entry in entries {
+            // Logged at debug, not trace, to keep the recomputed membership
+            // visible in a release build. The bitmaps are the post-refresh
+            // output ports; an empty one means that the group has no members
+            // in it to replicate to.
+            debug!(
+                self.log,
+                "refreshing mcast replication entry: \
+                 external_bitmap={:#x} underlay_bitmap={:#x} rid={}",
+                entry.external_bitmap,
+                entry.underlay_bitmap,
+                entry.rid
+            );
+
+            let remove = ManagementRequest::TableRemove(TableRemove {
+                keyset_data: entry.keyset.clone(),
+                table: mcast::MCAST_REPLICATION_V6_TABLE.to_string(),
+            });
+            mgmt::write(remove, &self.mgmt_config);
+
+            let parameter_data = [
+                entry.external_bitmap.to_le_bytes().as_slice(),
+                entry.underlay_bitmap.to_le_bytes().as_slice(),
+                entry.rid.to_le_bytes().as_slice(),
+            ]
+            .concat();
+
+            let add = ManagementRequest::TableAdd(TableAdd {
+                table: mcast::MCAST_REPLICATION_V6_TABLE.to_string(),
+                action: mcast::SET_PORT_BITMAP_ACTION.to_string(),
+                keyset_data: entry.keyset,
+                parameter_data,
+            });
+            mgmt::write(add, &self.mgmt_config);
+        }
+    }
 }
 
 impl AsicMulticastOps for Handle {
     fn mc_domains(&self) -> Vec<u16> {
-        let len = self.ports.lock().unwrap().len() as u16;
-        (0..len).collect()
+        let mc_data = self.mc_data.lock().unwrap();
+        mc_data.domains()
     }
 
-    fn mc_port_count(&self, _group_id: u16) -> AsicResult<usize> {
-        Ok(self.ports.lock().unwrap().len())
+    fn mc_port_count(&self, group_id: u16) -> AsicResult<usize> {
+        let mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_count(group_id)
     }
 
     fn mc_port_add(
         &self,
-        _group_id: u16,
-        _port: u16,
-        _rid: u16,
-        _level1_excl_id: u16,
+        group_id: u16,
+        port: u16,
+        rid: u16,
+        level1_excl_id: u16,
     ) -> AsicResult<()> {
-        Err(AsicError::OperationUnsupported)
-    }
-
-    fn mc_port_remove(&self, _group_id: u16, _port: u16) -> AsicResult<()> {
+        slog::info!(
+            self.log,
+            "adding port {port} to multicast group {group_id}"
+        );
+        // Hold the lock across the refresh and rewrite for the
+        // recomputation of the bitmap snapshot and its table writes are atomic
+        // concerning concurrent membership change(s). The rewrite touches only
+        // `mgmt_config`, not `mc_data`; therefore, no re-entrant lock.
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_add(group_id, port, rid, level1_excl_id)?;
+        let refreshed = mc_data.refresh_params_for_group(group_id);
+        self.rewrite_replication_entries(refreshed);
         Ok(())
     }
 
-    fn mc_group_create(&self, _group_id: u16) -> AsicResult<()> {
-        Err(AsicError::OperationUnsupported)
+    fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
+        slog::info!(
+            self.log,
+            "removing port {port} from multicast group {group_id}"
+        );
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_remove(group_id, port)?;
+        let refreshed = mc_data.refresh_params_for_group(group_id);
+        self.rewrite_replication_entries(refreshed);
+        Ok(())
     }
 
-    fn mc_group_destroy(&self, _group_id: u16) -> AsicResult<()> {
-        Ok(())
+    fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
+        slog::info!(self.log, "creating multicast group {group_id}");
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_create(group_id)
+    }
+
+    fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()> {
+        slog::info!(self.log, "destroying multicast group {group_id}");
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_destroy(group_id)
     }
 
     fn mc_groups_count(&self) -> AsicResult<usize> {
-        Ok(self.ports.lock().unwrap().len())
+        let mc_data = self.mc_data.lock().unwrap();
+        Ok(mc_data.domains_count())
     }
 
     fn mc_set_max_nodes(
         &self,
-        _max_nodes: u32,
-        _max_link_aggregated_nodes: u32,
+        max_nodes: u32,
+        max_link_aggregated_nodes: u32,
     ) -> AsicResult<()> {
-        Ok(())
+        slog::info!(
+            self.log,
+            "setting max nodes to {max_nodes}, \
+             max link aggregated nodes to {max_link_aggregated_nodes}"
+        );
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.set_max_nodes(max_nodes, max_link_aggregated_nodes)
     }
 }
 
@@ -241,7 +323,7 @@ impl AsicOps for Handle {
         let asic_port_id = self.port_to_asic_id(port_hdl)?;
         let tx = self.update_tx.lock().unwrap();
         if let Some(tx) = tx.as_ref() {
-            // When a port is enabled in softnpu, it automatically comes online.
+            // When a port is enabled in SoftNPU, it automatically comes online.
             // When switching between enabled and disabled, we send the main body
             // of dpd the PortUpdate events we would expect to see on real hardware.
             let present =
@@ -267,7 +349,7 @@ impl AsicOps for Handle {
                 }
             }
         } else {
-            slog::debug!(self.log, "no PortUpdate handler registered");
+            debug!(self.log, "no PortUpdate handler registered");
         }
         Ok(())
     }
