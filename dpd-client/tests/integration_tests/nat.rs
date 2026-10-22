@@ -691,7 +691,7 @@ async fn encap_carries_ipv4_opts() -> anyhow::Result<()> {
     let sled1 = Sled::try_new(1)?;
     sled1.init(switch).await?;
 
-    let sled2 = Sled::try_new(1)?;
+    let sled2 = Sled::try_new(2)?;
     sled2.init(switch).await?;
 
     let ipv4_opts = OptBuf::from_slice(&[0x3; 7]).expect("options should fit");
