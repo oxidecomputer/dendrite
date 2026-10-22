@@ -683,7 +683,7 @@ async fn test_ingress_ipv6_icmp() -> TestResult {
 // when decap is not required.
 #[tokio::test]
 #[ignore]
-async fn encap_carries_ipv4_opts() -> anyhow::Result<()> {
+async fn routed_encap_carries_ipv4_opts() -> anyhow::Result<()> {
     const PAYLOAD: &[u8] = &[0xcc; 8];
 
     let switch = &*get_switch().await;
@@ -701,6 +701,52 @@ async fn encap_carries_ipv4_opts() -> anyhow::Result<()> {
         vec![TestPacket { port: sled1.port, packet: Arc::new(tx) }],
         vec![TestPacket { port: sled2.port, packet: Arc::new(rx) }],
     )
+}
+
+// IPv4 optioned traffic is dropped where decap *is* required.
+#[tokio::test]
+#[ignore]
+async fn encap_drops_ipv4_ops() -> anyhow::Result<()> {
+    const PAYLOAD: &[u8] = &[0xcc; 8];
+
+    let switch = &*get_switch().await;
+
+    let sled1 = Sled::try_new(1)?;
+    sled1.init(switch).await?;
+
+    let uplink = PhysPort(10);
+    let external_src =
+        Endpoint::parse("02:aa:bb:cc:dd:ee", "10.10.10.10", 4444)?;
+
+    let options = OptBuf::from_array([0xcc; 9]);
+    let (from_ext, _) = sled1.ingress_ipv4_pkt(
+        switch,
+        external_src,
+        sled1.nat_dst(switch, uplink)?,
+        options,
+        PAYLOAD,
+    )?;
+
+    let before = switch.get_counter("nat_ipv4_options", None).await?;
+
+    switch.set_uplink(uplink, true).await;
+    let result = switch.packet_test(
+        vec![TestPacket { port: uplink, packet: Arc::new(from_ext) }],
+        vec![],
+    );
+    switch.set_uplink(uplink, false).await;
+    result?;
+
+    common::check_counter_incremented(
+        switch,
+        "nat_ipv4_options",
+        before,
+        1,
+        None,
+    )
+    .await?;
+
+    Ok(())
 }
 
 /*
