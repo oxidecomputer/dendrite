@@ -100,7 +100,7 @@ fn build_route_add(
     target: &types::Ipv6Route,
 ) -> types::Ipv6RouteUpdate {
     types::Ipv6RouteUpdate {
-        cidr: subnet.into(),
+        cidr: subnet,
         target: target.clone(),
         replace: false,
     }

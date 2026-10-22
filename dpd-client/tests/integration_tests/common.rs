@@ -631,21 +631,26 @@ impl Switch {
         tx: mpsc::Sender<TestPacket>,
     ) {
         loop {
-            match hdl.next_owned() {
+            let data = match hdl.next_owned() {
                 pcap::Ternary::None => break,
                 pcap::Ternary::Err(e) => {
                     println!("port {port} got pcap error: {e}");
                     break;
                 }
-                pcap::Ternary::Ok(data) => {
-                    let packet = packet::Packet::parse(&data).unwrap();
-                    let copy =
-                        Packet { hdrs: packet.hdrs.clone(), body: packet.body };
+                pcap::Ternary::Ok(d) => d,
+            };
 
-                    let cap = TestPacket { port, packet: Arc::new(copy) };
-                    tx.send(cap).unwrap();
-                }
-            }
+            let Ok(packet) = packet::Packet::parse(&data).inspect_err(|e| {
+                eprintln!(
+                    "Test harness drop, packet could not be parsed: {e:?}"
+                )
+            }) else {
+                continue;
+            };
+
+            let copy = Packet { hdrs: packet.hdrs, body: packet.body };
+            let cap = TestPacket { port, packet: Arc::new(copy) };
+            tx.send(cap).unwrap();
         }
     }
 
