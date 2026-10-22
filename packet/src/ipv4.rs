@@ -4,18 +4,26 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::fmt::{self};
+use std::fmt;
 use std::net::Ipv4Addr;
 
 use bytes::{Buf, BufMut, BytesMut};
 
-use crate::PacketResult;
 use crate::{Endpoint, Headers, Packet, Protocol};
+use crate::{PacketError, PacketResult};
 use crate::{eth, icmp, sidecar, tcp, udp};
 
 const IPV4_HDR_SZ: usize = 5 * 4; // 5 words with no options
 
-#[derive(Eq, PartialEq, Copy, Clone, Debug)]
+/// A container used to track options on an IPv4 header.
+///
+/// Max 40 bytes: RFC 791 Page 22
+//
+// Using a u32 here forces the caller to handle padding, which
+// simplifies this code.
+pub type OptBuf = heapless::Vec<u32, 10, u8>;
+
+#[derive(Eq, PartialEq, Clone, Debug)]
 pub struct Ipv4Hdr {
     pub ipv4_version: u8, // must be 4
     pub ipv4_hdr_len: u8,
@@ -32,7 +40,7 @@ pub struct Ipv4Hdr {
     pub ipv4_sum: u16,
     pub ipv4_src_ip: Ipv4Addr,
     pub ipv4_dst_ip: Ipv4Addr,
-    // ignore options for now
+    pub ipv4_options: OptBuf,
 }
 
 pub const IPPROTO_ICMP: u8 = 1u8;
@@ -50,6 +58,28 @@ impl Ipv4Hdr {
         v.put_u8(proto);
         v.put_u16(len);
         v
+    }
+
+    /// Writes the given IPv4 option bytes to this packet and updates
+    /// metadata accordingly. Fails if this isn't an IPv4 packet.
+    pub fn set_options(pkt: &mut Packet, opts: OptBuf) -> PacketResult<()> {
+        let hdr = pkt.hdrs.ipv4_hdr.as_mut().ok_or_else(|| {
+            PacketError::Invalid(
+                "Packet does not have an IPv4 header".to_string(),
+            )
+        })?;
+
+        let payload_len = hdr
+            .ipv4_total_len
+            .checked_sub(hdr.ipv4_hdr_len as u16 * 4)
+            .ok_or_else(|| PacketError::Invalid("Sanity check failed: total length should be >= header length".to_string()))?;
+        hdr.ipv4_hdr_len = opts.len() as u8 + 5;
+        hdr.ipv4_total_len = hdr.ipv4_hdr_len as u16 * 4 + payload_len;
+        hdr.ipv4_options = opts;
+
+        Self::update_checksum(pkt);
+
+        Ok(())
     }
 
     fn deparse_into(
@@ -71,13 +101,21 @@ impl Ipv4Hdr {
         v.put_u16(ipv4_hdr.ipv4_sum);
         v.put_u32(ipv4_hdr.ipv4_src_ip.into());
         v.put_u32(ipv4_hdr.ipv4_dst_ip.into());
+        v.extend(
+            ipv4_hdr
+                .ipv4_options
+                .iter()
+                .copied()
+                .flat_map(|b32| b32.to_be_bytes().into_iter()),
+        );
         v
     }
 
     fn checksum(pkt: &Packet) -> u16 {
         let hdr = pkt.hdrs.ipv4_hdr.as_ref().unwrap();
 
-        let mut v = bytes::BytesMut::with_capacity(hdr.ipv4_hdr_len as usize);
+        let mut v =
+            bytes::BytesMut::with_capacity(hdr.ipv4_hdr_len as usize * 4);
         v = Ipv4Hdr::deparse_into(hdr, v);
         let mut f = v.freeze();
 
@@ -121,14 +159,14 @@ impl Protocol for Ipv4Hdr {
             ));
         }
         let hdr_len = pb.get_bits(4)? as u8;
-        if hdr_len < 5 {
+        let Some(opt_32s) = hdr_len.checked_sub(5) else {
             return Err(crate::parse_error(
                 pb,
                 format!("invalid header len {hdr_len} in ipv4 header"),
             ));
-        }
+        };
 
-        let hdr = Ipv4Hdr {
+        let mut hdr = Ipv4Hdr {
             ipv4_version: version,
             ipv4_hdr_len: hdr_len,
             ipv4_dscp: pb.get_bits(6)? as u8,
@@ -144,15 +182,16 @@ impl Protocol for Ipv4Hdr {
             ipv4_sum: pb.get_u16()?,
             ipv4_src_ip: pb.get_ipv4()?,
             ipv4_dst_ip: pb.get_ipv4()?,
+            ipv4_options: OptBuf::new(),
         };
-        if hdr.ipv4_mbz {
-            return Err(crate::parse_error(pb, "must-be-zero bit is not zero"));
+
+        for _ in 0..opt_32s {
+            hdr.ipv4_options.push(pb.get_u32()?)
+                .expect("four bit IHL should be incapable of exceeding the buf's capacity")
         }
 
-        // skip over any options
-        let optlen = ((hdr.ipv4_hdr_len - 5) * 4) as usize;
-        if optlen > 0 {
-            pb.advance_bytes(optlen);
+        if hdr.ipv4_mbz {
+            return Err(crate::parse_error(pb, "must-be-zero bit is not zero"));
         }
 
         let mut hdrs = match hdr.ipv4_proto {
@@ -187,18 +226,15 @@ impl Protocol for Ipv4Hdr {
             }
         };
 
-        let ipv4_hdr_sz = IPV4_HDR_SZ;
-        // XXX: handle options here
-
-        pkt.hdrs.bytes += ipv4_hdr_sz;
+        // Options can be added later with `Ipv4Hdr::set_options`.
+        pkt.hdrs.bytes += IPV4_HDR_SZ;
         let mut ipv4_total_len = pkt.hdrs.bytes;
         if let Some(b) = &pkt.body {
             ipv4_total_len += b.len();
         }
-
         pkt.hdrs.ipv4_hdr = Some(Ipv4Hdr {
             ipv4_version: 4,
-            ipv4_hdr_len: (ipv4_hdr_sz / 4) as u8, // header size in words
+            ipv4_hdr_len: 5, // IHL for a header without options
             ipv4_dscp: 0,
             ipv4_ecn: 0,
             ipv4_total_len: ipv4_total_len as u16,
@@ -212,8 +248,8 @@ impl Protocol for Ipv4Hdr {
             ipv4_sum: 0,
             ipv4_src_ip: src.get_ipv4("src")?,
             ipv4_dst_ip: dst.get_ipv4("dst")?,
+            ipv4_options: OptBuf::new(),
         });
-        pkt.hdrs.bytes += ipv4_hdr_sz;
         Ipv4Hdr::update_checksum(&mut pkt);
 
         match proto {
@@ -242,11 +278,12 @@ impl Protocol for Ipv4Hdr {
     }
 
     fn header_size(packet: &Packet) -> usize {
-        match packet.hdrs.ipv4_hdr {
-            // Will need to be adjusted to handle options
-            Some(_) => 20,
-            None => 0,
-        }
+        packet
+            .hdrs
+            .ipv4_hdr
+            .as_ref()
+            .map(|hdr| hdr.ipv4_hdr_len * 4)
+            .unwrap_or_default() as usize
     }
 
     fn doc(&self) -> (Option<String>, Option<String>, Option<String>) {
@@ -272,5 +309,64 @@ impl fmt::Display for Ipv4Hdr {
             self.ipv4_proto,
             self.ipv4_total_len
         )
+    }
+}
+
+#[cfg(test)]
+mod ipv4_tests {
+    use std::net::Ipv4Addr;
+
+    use crate::{
+        Headers, Packet,
+        ipv4::{self, IPV4_HDR_SZ, Ipv4Hdr, OptBuf},
+        udp,
+    };
+
+    /// A zero-payload IPv4 header intended for a UDP message.
+    const V4_UDP: Ipv4Hdr = Ipv4Hdr {
+        ipv4_version: 4,
+        ipv4_hdr_len: (IPV4_HDR_SZ / 4) as u8,
+        ipv4_dscp: 0,
+        ipv4_ecn: 0,
+        ipv4_total_len: IPV4_HDR_SZ as u16 + udp::UDP_HDR_SZ as u16,
+        ipv4_id: 0,
+        ipv4_mbz: false,
+        ipv4_df: true,
+        ipv4_mf: false,
+        ipv4_frag_offset: 0,
+        ipv4_ttl: 255,
+        ipv4_proto: ipv4::IPPROTO_UDP,
+        ipv4_sum: 0,
+        ipv4_src_ip: Ipv4Addr::UNSPECIFIED,
+        ipv4_dst_ip: Ipv4Addr::UNSPECIFIED,
+        ipv4_options: OptBuf::new(),
+    };
+
+    /// Basic sanity check after modifying a packet's IPv4 options bits.
+    #[test]
+    fn options() {
+        let mut pkt = Packet {
+            hdrs: Headers { ipv4_hdr: Some(V4_UDP), ..Headers::new() },
+            body: None,
+        };
+        Ipv4Hdr::update_checksum(&mut pkt);
+        let init_sum = pkt.hdrs.ipv4_hdr.as_ref().unwrap().ipv4_sum;
+
+        for optlen in (0..=10u32).rev() {
+            let opts = OptBuf::from_slice(&vec![optlen; optlen as usize])
+                .expect("buf should have enough capacity");
+            Ipv4Hdr::set_options(&mut pkt, opts)
+                .expect("Should be able to set options on an IPv4 pkt");
+            Ipv4Hdr::update_checksum(&mut pkt);
+            let expect_len =
+                optlen as usize * 4 + IPV4_HDR_SZ + udp::UDP_HDR_SZ;
+            assert_eq!(
+                pkt.hdrs.ipv4_hdr.as_ref().unwrap().ipv4_total_len,
+                expect_len as u16
+            );
+        }
+
+        let final_sum = pkt.hdrs.ipv4_hdr.unwrap().ipv4_sum;
+        assert_eq!(init_sum, final_sum);
     }
 }
