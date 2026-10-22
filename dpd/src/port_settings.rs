@@ -4,11 +4,11 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use crate::DpdError;
 use crate::DpdResult;
 use crate::Switch;
 use crate::link::Link;
 use crate::link::LinkParams;
+use crate::types::after_unwind;
 use aal::AsicOps;
 use common::ports::Ipv4Entry;
 use common::ports::Ipv6Entry;
@@ -245,10 +245,7 @@ impl PortSettingsDiff {
                     );
                     // If there is an unwind error, send back a more specific
                     // error, containing the initial error and the unwind error.
-                    return Err(DpdError::Unwind {
-                        initial: Box::new(e),
-                        unwind: Box::new(ue),
-                    });
+                    return Err(after_unwind(e, Err(ue)));
                 }
                 Ok(_) => return Err(e),
             }

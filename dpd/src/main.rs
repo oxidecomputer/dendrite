@@ -31,6 +31,7 @@ use signal_hook_tokio::Signals;
 use slog::debug;
 use slog::error;
 use slog::info;
+use slog::warn;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::time::Duration;
 use tokio::time::sleep;
@@ -386,13 +387,25 @@ impl Switch {
         key: &M,
     ) -> DpdResult<()> {
         let mut t = self.table_get(table_type)?;
-        t.entry_del(&self.asic_hdl, key).map_err(|e| {
-            debug!(
-                self.log,
-                "failed to delete entry from {:?}: {:?}", table_type, e
-            );
-            e
-        })
+        let untracked = t.usage.occupancy == 0;
+
+        t.entry_del(&self.asic_hdl, key)
+            .inspect(|()| {
+                if untracked {
+                    warn!(
+                        self.log,
+                        "deleted entry from table with no tracked entries";
+                        "table" => %table_type,
+                    );
+                }
+            })
+            .map_err(|e| {
+                debug!(
+                    self.log,
+                    "failed to delete entry from {table_type:?}: {e:?}"
+                );
+                e
+            })
     }
 
     /// Fetch all of the entries in a P4 table and return them

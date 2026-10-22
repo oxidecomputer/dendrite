@@ -69,7 +69,7 @@ fn mac_clear_common(s: &Switch, type_: TableType, port: u16) -> DpdResult<()> {
 
 /// Add a new entry to the MAC table.
 ///
-/// An error is returned if the entry already exists. Use `mac_update` instead.
+/// An error is returned if the entry already exists.
 pub fn mac_set(s: &Switch, port: u16, mac: MacAddr) -> DpdResult<()> {
     mac_set_common(s, TableType::PortMacAddress, port, mac)
 }
@@ -101,7 +101,7 @@ pub fn reset(s: &Switch) -> DpdResult<()> {
 
 /// Add a new entry to the MAC table.
 ///
-/// An error is returned if the entry already exists. Use `mac_update` instead.
+/// An error is returned if the entry already exists.
 pub fn mcast_mac_set(s: &Switch, port: u16, mac: MacAddr) -> DpdResult<()> {
     mac_set_common(s, TableType::PortMacAddressMcast, port, mac)
 }

@@ -9,6 +9,7 @@ use super::harness::{
     new_dpd_client, run_dpd,
 };
 use super::util::{link_list_ipv4, link_list_ipv6};
+use anyhow::Context;
 use asic::chaos::{AsicConfig, Chaos, TableChaos};
 use asic::table_chaos;
 use common::table::TableType;
@@ -395,7 +396,13 @@ async fn test_port_settings_txn_sweep() -> anyhow::Result<()> {
                         }
                     }
                 })
-                .await?;
+                .await
+                .with_context(|| {
+                    format!(
+                        "after {success} applied, {fail} failed, \
+                         {rollback_fail} rollback-failed iterations"
+                    )
+                })?;
                 print!("operation succeeded, settings changed as expected");
                 success += 1;
             }
@@ -483,15 +490,11 @@ async fn test_port_settings_txn_par_sweep() -> anyhow::Result<()> {
 }
 
 fn is_rollback_error(e: &dpd_client::Error<dpd_client::types::Error>) -> bool {
-    if e.status() != Some(StatusCode::INTERNAL_SERVER_ERROR) {
-        return false;
-    }
-    if let dpd_client::Error::ErrorResponse(err) = e
-        && err.error_code == Some(ROLLBACK_FAILURE_ERROR_CODE.into())
-    {
-        return true;
-    }
-    false
+    matches!(
+        e,
+        dpd_client::Error::ErrorResponse(err)
+            if err.error_code.as_deref() == Some(ROLLBACK_FAILURE_ERROR_CODE)
+    )
 }
 
 async fn current_port_settings(

@@ -11,7 +11,8 @@ use slog::{error, info};
 
 use crate::Switch;
 use crate::table::*;
-use aal::{ActionParse, MatchParse};
+use crate::types::{DpdError, after_unwind, ignore_missing};
+use aal::{ActionParse, AsicError, MatchParse};
 use aal_macros::*;
 
 #[derive(MatchParse, Debug, Hash)]
@@ -87,18 +88,22 @@ pub fn uplink_set(s: &Switch, port: u16) -> DpdResult<()> {
                 s.log,
                 "set guest_traffic_allowed on {} failed: {:?}", port, e
             );
-            let _ = clear_ingress_uplink(s, port);
-            Err(e)
+            Err(after_unwind(e, clear_ingress_uplink(s, port)))
         }
     }
 }
 
 /// Remove an entry from the uplink tables.
 pub fn uplink_clear(s: &Switch, port: u16) -> DpdResult<()> {
-    clear_ingress_uplink(s, port)?;
+    let ingress_cleared = match clear_ingress_uplink(s, port) {
+        Ok(()) => true,
+        Err(DpdError::Switch(AsicError::Missing(_))) => false,
+        Err(e) => return Err(e),
+    };
 
     let match_key = EgressMatchKey { out_port: port };
-    match s.table_entry_del(TableType::UplinkEgress, &match_key) {
+    match ignore_missing(s.table_entry_del(TableType::UplinkEgress, &match_key))
+    {
         Ok(_) => {
             info!(s.log, "cleared guest_traffic_allowed on {}", port);
             Ok(())
@@ -108,8 +113,12 @@ pub fn uplink_clear(s: &Switch, port: u16) -> DpdResult<()> {
                 s.log,
                 "clear guest_traffic_allowed on {} failed: {:?}", port, e
             );
-            set_ingress_uplink(s, port)?;
-            Err(e)
+
+            if ingress_cleared {
+                Err(after_unwind(e, set_ingress_uplink(s, port)))
+            } else {
+                Err(e)
+            }
         }
     }
 }

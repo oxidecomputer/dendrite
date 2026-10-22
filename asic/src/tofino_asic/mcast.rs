@@ -18,7 +18,12 @@ use aal::{AsicError, AsicResult};
 pub struct DomainState {
     id: u16,
     mgrp_hdl: bf_mc_mgrp_hdl_t,
+    /// Ports whose node is associated with the `mgrp_hdl`, i.e. a port still
+    /// available for replication.
     ports: HashMap<u16, MulticastState>,
+    /// Nodes that are dissociated (or were never associated) but failed to
+    /// destroy. `destroy_detached_nodes` retries them.
+    detached_nodes: Vec<bf_mc_node_hdl_t>,
 }
 
 /*
@@ -120,11 +125,38 @@ fn dissociate_node(
     mgrp_hdl: bf_mc_mgrp_hdl_t,
     node_hdl: bf_mc_node_hdl_t,
 ) -> AsicResult<()> {
-    unsafe {
+    let res = unsafe {
         bf_mc_dissociate_node(mcast_hdl, dev_id, mgrp_hdl, node_hdl)
-            .check_error("dissociating multicast node from group")?;
+            .check_error("dissociating multicast node from group")
+    };
+
+    if let Err(AsicError::Exists(_)) = &res
+        && !node_is_associated(mcast_hdl, dev_id, node_hdl)?
+    {
+        return Ok(());
     }
-    Ok(())
+    res
+}
+
+fn node_is_associated(
+    mcast_hdl: bf_mc_session_hdl_t,
+    dev_id: bf_dev_id_t,
+    node_hdl: bf_mc_node_hdl_t,
+) -> AsicResult<bool> {
+    let mut is_associated = false;
+    unsafe {
+        bf_mc_node_get_association(
+            mcast_hdl,
+            dev_id,
+            node_hdl,
+            &mut is_associated,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+        .check_error("getting multicast node association")?;
+    }
+    Ok(is_associated)
 }
 
 fn node_create(
@@ -162,21 +194,60 @@ fn node_destroy(
     Ok(())
 }
 
-fn cleanup_node(
+/// Dissociate the `node_hdl` from `mgrp_hdl` and destroy it.
+///
+/// A dissociation error can leave the node attached or detached. The caller
+/// retains its handle for retry or re-association.
+///
+/// Once the node is detached, a failed destroy on the underlying ASIC retains
+/// the handle in `detached_nodes` and still returns a non-error result because
+/// the port no longer replicates to subscribers.
+fn detach_node(
+    log: &slog::Logger,
     bf: &BfCommon,
-    mgrp_hdl: Option<bf_mc_mgrp_hdl_t>,
-    port_state: &MulticastState,
+    mgrp_hdl: bf_mc_mgrp_hdl_t,
+    node_hdl: bf_mc_node_hdl_t,
+    detached_nodes: &mut Vec<bf_mc_node_hdl_t>,
 ) -> AsicResult<()> {
-    if let Some(mgrp_hdl) = mgrp_hdl {
-        dissociate_node(
-            bf.mcast_hdl,
-            bf.dev_id,
-            mgrp_hdl,
-            port_state.node_hdl,
-        )?;
+    match dissociate_node(bf.mcast_hdl, bf.dev_id, mgrp_hdl, node_hdl) {
+        Ok(()) | Err(AsicError::Missing(_)) => {}
+        Err(e) => return Err(e),
     }
 
-    node_destroy(bf.mcast_hdl, bf.dev_id, port_state.node_hdl)
+    if let Err(e) = node_destroy(bf.mcast_hdl, bf.dev_id, node_hdl) {
+        error!(
+            log,
+            "multicast node {:#x} detached but not destroyed: {:?}",
+            node_hdl,
+            e
+        );
+        detached_nodes.push(node_hdl);
+    }
+    Ok(())
+}
+
+/// Retry destroying the handles in `detached_nodes` within the domain state,
+/// keeping any that remain in a failing state, and returning the first failure.
+fn destroy_detached_nodes(
+    log: &slog::Logger,
+    bf: &BfCommon,
+    domain: &mut DomainState,
+) -> Option<AsicError> {
+    let mut first_error = None;
+    for node_hdl in std::mem::take(&mut domain.detached_nodes) {
+        if let Err(e) = node_destroy(bf.mcast_hdl, bf.dev_id, node_hdl) {
+            error!(
+                log,
+                "destroying detached multicast node {:#x} in domain {}: {:?}",
+                node_hdl,
+                domain.id,
+                e
+            );
+            first_error.get_or_insert(e);
+            domain.detached_nodes.push(node_hdl);
+        }
+    }
+    first_error
 }
 
 fn set_max_node_threshold(
@@ -225,10 +296,10 @@ fn domain_ports(domain: &DomainState) -> Vec<u16> {
 
 /// Get the number of ports in a multicast domain.
 pub fn domain_port_count(hdl: &Handle, group_id: u16) -> AsicResult<usize> {
-    let mut domains = hdl.domains.lock().unwrap();
-    match domains.get_mut(&group_id) {
+    let domains = hdl.domains.lock().unwrap();
+    match domains.get(&group_id) {
         Some(d) => Ok(d.ports.len()),
-        None => Err(AsicError::InvalidArg("no such domain domain".to_string())),
+        None => Err(AsicError::Missing("no such domain".to_string())),
     }
 }
 
@@ -245,16 +316,27 @@ pub fn domain_add_port(
     let mut domains = hdl.domains.lock().unwrap();
     let domain = match domains.get_mut(&group_id) {
         Some(d) => Ok(d),
-        None => Err(AsicError::InvalidArg("no such domain domain".to_string())),
+        None => Err(AsicError::Missing("no such domain".to_string())),
     }?;
 
-    if domain.ports.contains_key(&port) {
-        return Err(AsicError::InvalidArg(
-            "port already in domain".to_string(),
-        ));
+    let bf = hdl.bf_get();
+    if let Some(mc) = domain.ports.get(&port) {
+        if node_is_associated(bf.mcast_hdl, bf.dev_id, mc.node_hdl)? {
+            return Err(AsicError::Exists(format!(
+                "port {port} already in multicast domain {group_id}"
+            )));
+        }
+
+        return associate_node(
+            bf.mcast_hdl,
+            bf.dev_id,
+            domain.mgrp_hdl,
+            mc.node_hdl,
+            level_1_excl_id,
+        );
     }
 
-    let bf = hdl.bf_get();
+    destroy_detached_nodes(&hdl.log, &bf, domain);
 
     let mut mc = MulticastState {
         node_hdl: 0,
@@ -283,11 +365,12 @@ pub fn domain_add_port(
             Ok(())
         }
         Err(e) => {
-            if let Err(x) = cleanup_node(&bf, None, &mc) {
+            if let Err(x) = node_destroy(bf.mcast_hdl, bf.dev_id, mc.node_hdl) {
                 error!(
                     hdl.log,
                     "post-failure multicast cleanup failed: {:?}", x
                 );
+                domain.detached_nodes.push(mc.node_hdl);
             }
             Err(e)
         }
@@ -304,21 +387,27 @@ pub fn domain_remove_port(
     let mut domains = hdl.domains.lock().unwrap();
     let domain = match domains.get_mut(&group_id) {
         Some(d) => Ok(d),
-        None => Err(AsicError::InvalidArg("no such domain domain".to_string())),
+        None => Err(AsicError::Missing("no such domain".to_string())),
     }?;
 
     let bf = hdl.bf_get();
+    destroy_detached_nodes(&hdl.log, &bf, domain);
 
-    let mc = match domain.ports.remove(&port) {
-        Some(n) => n,
-        None => {
-            return Err(AsicError::InvalidArg(
-                "port not in domain".to_string(),
-            ));
-        }
-    };
+    let node_hdl = domain
+        .ports
+        .get(&port)
+        .ok_or_else(|| AsicError::Missing("port not in domain".to_string()))?
+        .node_hdl;
 
-    cleanup_node(&bf, Some(domain.mgrp_hdl), &mc)?;
+    detach_node(
+        &hdl.log,
+        &bf,
+        domain.mgrp_hdl,
+        node_hdl,
+        &mut domain.detached_nodes,
+    )?;
+
+    domain.ports.remove(&port);
     Ok(())
 }
 
@@ -327,7 +416,9 @@ pub fn domain_create(hdl: &Handle, group_id: u16) -> AsicResult<()> {
     info!(hdl.log, "creating multicast domain {}", group_id);
     let mut domains = hdl.domains.lock().unwrap();
     if domains.get(&group_id).is_some() {
-        return Err(AsicError::InvalidArg("domain already exists".to_string()));
+        return Err(AsicError::Exists(format!(
+            "multicast domain {group_id} already exists"
+        )));
     };
 
     let bf = hdl.bf_get();
@@ -335,7 +426,12 @@ pub fn domain_create(hdl: &Handle, group_id: u16) -> AsicResult<()> {
     let mgrp_hdl = mgrp_create(bf.mcast_hdl, bf.dev_id, group_id)?;
     domains.insert(
         group_id,
-        DomainState { id: group_id, mgrp_hdl, ports: HashMap::new() },
+        DomainState {
+            id: group_id,
+            mgrp_hdl,
+            ports: HashMap::new(),
+            detached_nodes: Vec::new(),
+        },
     );
     Ok(())
 }
@@ -344,27 +440,61 @@ pub fn domain_create(hdl: &Handle, group_id: u16) -> AsicResult<()> {
 pub fn domain_destroy(hdl: &Handle, group_id: u16) -> AsicResult<()> {
     info!(hdl.log, "destroying multicast domain {}", group_id);
     let mut domains = hdl.domains.lock().unwrap();
-    let mut domain = match domains.remove(&group_id) {
+    let domain = match domains.get_mut(&group_id) {
         Some(d) => Ok(d),
-        None => Err(AsicError::InvalidArg("no such domain".to_string())),
+        None => Err(AsicError::Missing("no such domain".to_string())),
     }?;
 
     let bf = hdl.bf_get();
 
     let mgrp_hdl = domain.mgrp_hdl;
-    for (port, mc) in domain.ports.drain() {
-        if let Err(e) = cleanup_node(&bf, Some(mgrp_hdl), &mc) {
+    let domain_id = domain.id;
+    let mut first_err = None;
+    domain.ports.retain(|port, mc| {
+        if let Err(e) = detach_node(
+            &hdl.log,
+            &bf,
+            mgrp_hdl,
+            mc.node_hdl,
+            &mut domain.detached_nodes,
+        ) {
             error!(
                 hdl.log,
                 "cleaning up port {} for multicast domain {}: {:?}",
                 port,
-                domain.id,
+                domain_id,
                 e
             );
+            first_err.get_or_insert(e);
+            true
+        } else {
+            false
         }
+    });
+
+    if let Some(e) = destroy_detached_nodes(&hdl.log, &bf, domain) {
+        first_err.get_or_insert(e);
     }
 
-    mgrp_destroy(bf.mcast_hdl, bf.dev_id, domain.mgrp_hdl)
+    if let Some(e) = first_err {
+        return Err(e);
+    }
+
+    match mgrp_destroy(bf.mcast_hdl, bf.dev_id, mgrp_hdl) {
+        Ok(()) | Err(AsicError::Missing(_)) => {
+            domains.remove(&group_id);
+            Ok(())
+        }
+        Err(e) => {
+            if matches!(
+                mgrp_destroy(bf.mcast_hdl, bf.dev_id, mgrp_hdl),
+                Ok(()) | Err(AsicError::Missing(_))
+            ) {
+                domains.remove(&group_id);
+            }
+            Err(e)
+        }
+    }
 }
 
 /// Domain exists.
