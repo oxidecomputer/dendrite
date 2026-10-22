@@ -189,7 +189,12 @@ struct NatTest {
     geneve_vni: u32,
 }
 
-async fn test_nat_egress(switch: &Switch, test: &NatTest) -> TestResult {
+async fn test_nat_egress(
+    switch: &Switch,
+    test: &NatTest,
+    inner_ttl: Option<u8>,
+    outer_hop_limit: Option<u8>,
+) -> TestResult {
     let router_mac = test.router_mac.parse()?;
 
     // set up the switch internals so we can route the packet from the gimlet
@@ -241,10 +246,10 @@ async fn test_nat_egress(switch: &Switch, test: &NatTest) -> TestResult {
     // responsibility, then this needs to be done on the 'expected' packet
     // rather than the 'to_send' packet.
     let inner = {
-        if let Some(mut ipv4) = payload_pkt.hdrs.ipv4_hdr {
+        if let Some(ipv4) = payload_pkt.hdrs.ipv4_hdr.as_mut() {
             ipv4.ipv4_src_ip = test.uplink_port_external.parse()?;
             Ok(eth::ETHER_IPV4)
-        } else if let Some(mut ipv6) = payload_pkt.hdrs.ipv6_hdr {
+        } else if let Some(ipv6) = payload_pkt.hdrs.ipv6_hdr.as_mut() {
             ipv6.ipv6_src_ip = test.uplink_port_external.parse()?;
             Ok(eth::ETHER_IPV6)
         } else {
@@ -270,13 +275,21 @@ async fn test_nat_egress(switch: &Switch, test: &NatTest) -> TestResult {
         }
     };
 
+    if let Some(ttl) = inner_ttl {
+        if let Some(ipv4) = payload_pkt.hdrs.ipv4_hdr.as_mut() {
+            ipv4.ipv4_ttl = ttl;
+        } else if let Some(ipv6) = payload_pkt.hdrs.ipv6_hdr.as_mut() {
+            ipv6.ipv6_hop_lim = ttl;
+        }
+    }
+
     if inner == eth::ETHER_IPV4 {
         ipv4::Ipv4Hdr::update_checksum(&mut payload_pkt);
     }
 
     let switch_mac = switch.get_port_mac(test.gimlet_port).unwrap().to_string();
     let payload = payload_pkt.deparse().unwrap().to_vec();
-    let to_send = common::gen_geneve_packet(
+    let mut to_send = common::gen_geneve_packet(
         Endpoint::parse(&test.gimlet_mac, &test.gimlet_ip, 3333).unwrap(),
         Endpoint::parse(
             &switch_mac,
@@ -290,25 +303,61 @@ async fn test_nat_egress(switch: &Switch, test: &NatTest) -> TestResult {
         &payload[14..],
     );
 
-    let expected = match test.uplink_port_registered {
-        true => {
-            let mut to_recv = common::gen_packet_routed(
-                switch,
-                test.uplink_port,
-                &payload_pkt,
-            );
-            eth::EthHdr::rewrite_dmac(&mut to_recv, router_mac);
-            vec![TestPacket {
-                packet: Arc::new(to_recv),
-                port: test.uplink_port,
-            }]
-        }
-        false => Vec::new(),
+    if let Some(hop_limit) = outer_hop_limit {
+        to_send.hdrs.ipv6_hdr.as_mut().unwrap().ipv6_hop_lim = hop_limit;
+    }
+
+    let ttl_expired = matches!(inner_ttl, Some(0 | 1));
+    let expected = if ttl_expired {
+        let mut punt = payload_pkt.clone();
+        let eth_hdr = punt.hdrs.eth_hdr.as_mut().unwrap();
+        eth_hdr.eth_smac = test.gimlet_mac.parse()?;
+        eth_hdr.eth_dmac = switch_mac.parse()?;
+        let icmp_type = match inner {
+            eth::ETHER_IPV4 => icmp::ICMP_TIME_EXCEEDED,
+            _ => icmp::ICMP6_TIME_EXCEEDED,
+        };
+        common::set_icmp_needed(
+            switch,
+            &mut punt,
+            test.gimlet_port,
+            NO_PORT,
+            icmp_type,
+            0,
+        );
+        vec![TestPacket { packet: Arc::new(punt), port: SERVICE_PORT }]
+    } else if test.uplink_port_registered {
+        let mut to_recv =
+            common::gen_packet_routed(switch, test.uplink_port, &payload_pkt);
+        eth::EthHdr::rewrite_dmac(&mut to_recv, router_mac);
+        vec![TestPacket { packet: Arc::new(to_recv), port: test.uplink_port }]
+    } else {
+        // Egress to a non-uplink port is blocked by NatEgressFilter, and the
+        // counter check below confirms the drop reason.
+        Vec::new()
     };
 
     let send = TestPacket { packet: Arc::new(to_send), port: test.gimlet_port };
 
-    switch.packet_test(vec![send], expected)
+    if ttl_expired || test.uplink_port_registered {
+        return switch.packet_test(vec![send], expected);
+    }
+
+    let blocked = "nat_egress_blocked";
+    let ctr_baseline =
+        switch.get_counter(blocked, Some("egress_drop_reason")).await?;
+
+    switch.packet_test(vec![send], expected)?;
+
+    check_counter_incremented(
+        switch,
+        blocked,
+        ctr_baseline,
+        1,
+        Some("egress_drop_reason"),
+    )
+    .await?;
+    Ok(())
 }
 
 async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
@@ -418,12 +467,11 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
 }
 
 // packet to/from IPv4 addresses, with an IPv6 address for the OPTE host
-async fn test_egress_ipv4(
-    switch: &Switch,
+fn egress_ipv4_test(
     l4_protocol: L4Protocol,
     uplink_port_registered: bool,
-) -> TestResult {
-    let test = NatTest {
+) -> NatTest {
+    NatTest {
         uplink_port: PhysPort(14),
         uplink_port_external: "192.168.1.2".to_string(),
         uplink_port_registered,
@@ -446,9 +494,25 @@ async fn test_egress_ipv4(
         nat_l4_port: 10,
         l4_protocol,
         geneve_vni: 1, // not used on egress tests
-    };
+    }
+}
 
-    test_nat_egress(switch, &test).await
+async fn test_egress_ipv4(
+    switch: &Switch,
+    l4_protocol: L4Protocol,
+    uplink_port_registered: bool,
+    inner_ttl: Option<u8>,
+) -> TestResult {
+    let test = egress_ipv4_test(l4_protocol, uplink_port_registered);
+    test_nat_egress(switch, &test, inner_ttl, None).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_egress_ipv4_outer_hop_limit_zero() -> TestResult {
+    let switch = &*get_switch().await;
+    let test = egress_ipv4_test(L4Protocol::Udp, true);
+    test_nat_egress(switch, &test, None, Some(0)).await
 }
 
 // UDP packet to/from IPv4 addresses
@@ -456,7 +520,7 @@ async fn test_egress_ipv4(
 #[ignore]
 async fn test_egress_ipv4_udp() -> TestResult {
     let switch = &*get_switch().await;
-    test_egress_ipv4(switch, L4Protocol::Udp, true).await
+    test_egress_ipv4(switch, L4Protocol::Udp, true, None).await
 }
 
 // TCP packet to/from IPv4 addresses
@@ -464,7 +528,7 @@ async fn test_egress_ipv4_udp() -> TestResult {
 #[ignore]
 async fn test_egress_ipv4_tcp() -> TestResult {
     let switch = &*get_switch().await;
-    test_egress_ipv4(switch, L4Protocol::Tcp, true).await
+    test_egress_ipv4(switch, L4Protocol::Tcp, true, None).await
 }
 
 // ICMP packet to/from IPv4 addresses
@@ -472,7 +536,7 @@ async fn test_egress_ipv4_tcp() -> TestResult {
 #[ignore]
 async fn test_egress_ipv4_icmp() -> TestResult {
     let switch = &*get_switch().await;
-    test_egress_ipv4(switch, L4Protocol::Icmp, true).await
+    test_egress_ipv4(switch, L4Protocol::Icmp, true, None).await
 }
 
 // UDP packet to an IPv4 address, egressing a backplane port.
@@ -480,7 +544,7 @@ async fn test_egress_ipv4_icmp() -> TestResult {
 #[ignore]
 async fn test_backplane_egress_ipv4_udp() -> TestResult {
     let switch = &*get_switch().await;
-    test_egress_ipv4(switch, L4Protocol::Udp, false).await
+    test_egress_ipv4(switch, L4Protocol::Udp, false, None).await
 }
 
 async fn test_ingress_ipv4(
@@ -556,6 +620,7 @@ async fn test_egress_ipv6(
     switch: &Switch,
     l4_protocol: L4Protocol,
     uplink_port_registered: bool,
+    inner_ttl: Option<u8>,
 ) -> TestResult {
     let test = NatTest {
         uplink_port: PhysPort(14),
@@ -582,28 +647,70 @@ async fn test_egress_ipv6(
         geneve_vni: 1, // not used on egress tests
     };
 
-    test_nat_egress(switch, &test).await
+    test_nat_egress(switch, &test, inner_ttl, None).await
 }
 
 #[tokio::test]
 #[ignore]
 async fn test_egress_ipv6_udp() -> TestResult {
     let switch = &*get_switch().await;
-    test_egress_ipv6(switch, L4Protocol::Udp, true).await
+    test_egress_ipv6(switch, L4Protocol::Udp, true, None).await
 }
 
 #[tokio::test]
 #[ignore]
 async fn test_egress_ipv6_tcp() -> TestResult {
     let switch = &*get_switch().await;
-    test_egress_ipv6(switch, L4Protocol::Tcp, true).await
+    test_egress_ipv6(switch, L4Protocol::Tcp, true, None).await
 }
 
 #[tokio::test]
 #[ignore]
 async fn test_backplane_egress_ipv6_tcp() -> TestResult {
     let switch = &*get_switch().await;
-    test_egress_ipv6(switch, L4Protocol::Tcp, false).await
+    test_egress_ipv6(switch, L4Protocol::Tcp, false, None).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_egress_v4_zero() -> TestResult {
+    let switch = &*get_switch().await;
+    test_egress_ipv4(switch, L4Protocol::Udp, true, Some(0)).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_egress_v4_one() -> TestResult {
+    let switch = &*get_switch().await;
+    test_egress_ipv4(switch, L4Protocol::Udp, true, Some(1)).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_egress_v4_two() -> TestResult {
+    let switch = &*get_switch().await;
+    test_egress_ipv4(switch, L4Protocol::Udp, true, Some(2)).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_egress_v6_zero() -> TestResult {
+    let switch = &*get_switch().await;
+    test_egress_ipv6(switch, L4Protocol::Udp, true, Some(0)).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_egress_v6_one() -> TestResult {
+    let switch = &*get_switch().await;
+    test_egress_ipv6(switch, L4Protocol::Udp, true, Some(1)).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_egress_v6_two() -> TestResult {
+    let switch = &*get_switch().await;
+    test_egress_ipv6(switch, L4Protocol::Udp, true, Some(2)).await
 }
 
 async fn test_ingress_ipv6(

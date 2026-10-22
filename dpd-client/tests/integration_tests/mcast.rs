@@ -1860,13 +1860,13 @@ async fn test_multicast_ttl_one() -> TestResult {
     let expected_pkts = vec![];
 
     let ctr_baseline =
-        switch.get_counter("ipv4_ttl_invalid", None).await.unwrap();
+        switch.get_counter("multicast_ttl_exceeded", None).await.unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
     check_counter_incremented(
         switch,
-        "ipv4_ttl_invalid",
+        "multicast_ttl_exceeded",
         ctr_baseline,
         1,
         None,
@@ -2642,6 +2642,726 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     cleanup_test_group(switch, MULTICAST_NAT_IP.into(), TEST_TAG).await
 }
 
+fn build_inner_ttl_geneve_pkt(
+    external_ip: IpAddr,
+    src_mac: MacAddr,
+    vlan: Option<u16>,
+    nat_target: &types::NatTarget,
+    inner_ttl: u8,
+    mcast_tag: u8,
+    inner_eth: bool,
+) -> (packet::Packet, packet::Packet) {
+    let src_port = 3333;
+    let dst_port = 4444;
+
+    let og_pkt = match external_ip {
+        IpAddr::V4(_) => {
+            let mut pkt = create_ipv4_multicast_packet(
+                external_ip,
+                src_mac,
+                "192.168.1.10",
+                src_port,
+                dst_port,
+                vlan,
+            );
+            let current = pkt.hdrs.ipv4_hdr.as_ref().unwrap().ipv4_ttl;
+            ipv4::Ipv4Hdr::adjust_ttl(
+                &mut pkt,
+                i16::from(inner_ttl) - i16::from(current),
+            );
+            pkt
+        }
+        IpAddr::V6(_) => {
+            let mut pkt = create_ipv6_multicast_packet(
+                external_ip,
+                src_mac,
+                "2001:db8::1",
+                src_port,
+                dst_port,
+                vlan,
+            );
+            let current = pkt.hdrs.ipv6_hdr.as_ref().unwrap().ipv6_hop_lim;
+            ipv6::Ipv6Hdr::adjust_hlim(
+                &mut pkt,
+                i16::from(inner_ttl) - i16::from(current),
+            );
+            pkt
+        }
+    };
+
+    let (payload, ether_type) = if inner_eth {
+        let mut inner = og_pkt.clone();
+        inner.hdrs.eth_hdr.as_mut().unwrap().eth_8021q = None;
+        (inner.deparse().unwrap().to_vec(), eth::ETHER_ETHER)
+    } else {
+        let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
+        let ether_type = match external_ip {
+            IpAddr::V4(_) => eth::ETHER_IPV4,
+            IpAddr::V6(_) => eth::ETHER_IPV6,
+        };
+        (og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec(), ether_type)
+    };
+
+    let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
+        Endpoint::parse(
+            GIMLET_MAC,
+            &GIMLET_IP.to_string(),
+            geneve::GENEVE_UDP_PORT,
+        )
+        .unwrap(),
+        Endpoint::parse(
+            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
+                .to_string(),
+            &nat_target.internal_ip.to_string(),
+            geneve::GENEVE_UDP_PORT,
+        )
+        .unwrap(),
+        ether_type,
+        nat_target.vni.clone().into(),
+        mcast_tag,
+        &payload,
+    );
+
+    (og_pkt, geneve_pkt)
+}
+
+async fn run_bifurcated_inner_ttl_test(
+    switch: &Switch,
+    external_ip: IpAddr,
+    inner_ttl: u8,
+    drop_label: Option<&str>,
+    inner_eth: bool,
+) -> TestResult {
+    let ingress = PhysPort(10);
+    let egress_external = PhysPort(15);
+    let egress_underlay = PhysPort(19);
+
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some(TEST_TAG),
+        &[
+            (egress_external, types::Direction::External),
+            (egress_underlay, types::Direction::Underlay),
+        ],
+        types::InternalForwarding { nat_target: None },
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
+    let vlan = Some(10);
+    let nat_target = match external_ip {
+        IpAddr::V4(_) => create_nat_target_ipv4(),
+        IpAddr::V6(_) => create_nat_target_ipv6(),
+    };
+
+    let created_group = create_test_multicast_group(
+        switch,
+        external_ip,
+        Some(TEST_TAG),
+        &[],
+        types::InternalForwarding { nat_target: Some(nat_target.clone()) },
+        types::ExternalForwarding { vlan_id: vlan },
+        None,
+    )
+    .await;
+
+    let src_mac = switch.get_port_mac(ingress).unwrap();
+    let (og_pkt, geneve_pkt) = build_inner_ttl_geneve_pkt(
+        external_ip,
+        src_mac,
+        vlan,
+        &nat_target,
+        inner_ttl,
+        2,
+        inner_eth,
+    );
+
+    let test_pkt =
+        TestPacket { packet: Arc::new(geneve_pkt.clone()), port: ingress };
+
+    let underlay_pkt = prepare_expected_pkt(
+        switch,
+        &geneve_pkt,
+        None,
+        None,
+        Some(egress_underlay),
+    );
+
+    let mut expected_pkts = Vec::new();
+    if drop_label.is_none() {
+        let external_pkt = prepare_expected_pkt(
+            switch,
+            &og_pkt,
+            vlan,
+            None,
+            Some(egress_external),
+        );
+        expected_pkts.push(TestPacket {
+            packet: Arc::new(external_pkt),
+            port: egress_external,
+        });
+    }
+    expected_pkts.push(TestPacket {
+        packet: Arc::new(underlay_pkt),
+        port: egress_underlay,
+    });
+
+    let port_label_external = switch.port_label(egress_external).unwrap();
+    let port_label_underlay = switch.port_label(egress_underlay).unwrap();
+
+    let ctr_baseline_external = switch
+        .get_counter(&port_label_external, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay = switch
+        .get_counter(&port_label_underlay, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_drop_port = switch
+        .get_counter(&port_label_external, Some("egress_drop_port"))
+        .await
+        .unwrap();
+    let ctr_baseline_drop_reason = match drop_label {
+        Some(label) => {
+            switch.get_counter(label, Some("egress_drop_reason")).await.unwrap()
+        }
+        None => 0,
+    };
+
+    let matched =
+        switch.packet_test_matched(vec![test_pkt], expected_pkts).unwrap();
+    let underlay_got =
+        matched.iter().find(|p| p.port == egress_underlay).unwrap();
+    assert_eq!(
+        underlay_got.packet.body, geneve_pkt.body,
+        "underlay replica must carry the unmodified inner frame"
+    );
+
+    check_counter_incremented(
+        switch,
+        &port_label_underlay,
+        ctr_baseline_underlay,
+        1,
+        Some("multicast_underlay"),
+    )
+    .await
+    .unwrap();
+
+    match drop_label {
+        Some(label) => {
+            check_counter_incremented(
+                switch,
+                label,
+                ctr_baseline_drop_reason,
+                1,
+                Some("egress_drop_reason"),
+            )
+            .await
+            .unwrap();
+            check_counter_incremented(
+                switch,
+                &port_label_external,
+                ctr_baseline_drop_port,
+                1,
+                Some("egress_drop_port"),
+            )
+            .await
+            .unwrap();
+
+            let ctr_external = switch
+                .get_counter(&port_label_external, Some("multicast_external"))
+                .await
+                .unwrap();
+            assert_eq!(
+                ctr_external, ctr_baseline_external,
+                "dropped external replica must not hit the external counter"
+            );
+        }
+        None => {
+            check_counter_incremented(
+                switch,
+                &port_label_external,
+                ctr_baseline_external,
+                1,
+                Some("multicast_external"),
+            )
+            .await
+            .unwrap();
+
+            let ctr_drop_port = switch
+                .get_counter(&port_label_external, Some("egress_drop_port"))
+                .await
+                .unwrap();
+            assert_eq!(
+                ctr_drop_port, ctr_baseline_drop_port,
+                "forwarded external replica must not be counted as dropped"
+            );
+        }
+    }
+
+    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+        .await
+        .unwrap();
+    cleanup_test_group(switch, MULTICAST_NAT_IP.into(), TEST_TAG).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_bifurcated_v4_zero() -> TestResult {
+    let switch = &*get_switch().await;
+    run_bifurcated_inner_ttl_test(
+        switch,
+        IpAddr::V4(MULTICAST_TEST_IPV4),
+        0,
+        Some("multicast_ttl_exceeded"),
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_bifurcated_v4_one() -> TestResult {
+    let switch = &*get_switch().await;
+    run_bifurcated_inner_ttl_test(
+        switch,
+        IpAddr::V4(MULTICAST_TEST_IPV4),
+        1,
+        Some("multicast_ttl_exceeded"),
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_bifurcated_v4_two() -> TestResult {
+    let switch = &*get_switch().await;
+    run_bifurcated_inner_ttl_test(
+        switch,
+        IpAddr::V4(MULTICAST_TEST_IPV4),
+        2,
+        None,
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_bifurcated_v6_zero() -> TestResult {
+    let switch = &*get_switch().await;
+    run_bifurcated_inner_ttl_test(
+        switch,
+        IpAddr::V6(MULTICAST_TEST_IPV6),
+        0,
+        Some("multicast_ttl_exceeded"),
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_bifurcated_v6_one() -> TestResult {
+    let switch = &*get_switch().await;
+    run_bifurcated_inner_ttl_test(
+        switch,
+        IpAddr::V6(MULTICAST_TEST_IPV6),
+        1,
+        Some("multicast_ttl_exceeded"),
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_bifurcated_v6_two() -> TestResult {
+    let switch = &*get_switch().await;
+    run_bifurcated_inner_ttl_test(
+        switch,
+        IpAddr::V6(MULTICAST_TEST_IPV6),
+        2,
+        None,
+        false,
+    )
+    .await
+}
+
+async fn run_external_only_inner_ttl_test(
+    switch: &Switch,
+    external_ip: IpAddr,
+    inner_ttl: u8,
+    expect_drop: bool,
+    inner_eth: bool,
+) -> TestResult {
+    let ingress = PhysPort(10);
+    let egress1 = PhysPort(15);
+    let egress2 = PhysPort(17);
+
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some(TEST_TAG),
+        &[
+            (egress1, types::Direction::External),
+            (egress2, types::Direction::External),
+        ],
+        types::InternalForwarding { nat_target: None },
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
+    let vlan = Some(10);
+    let nat_target = match external_ip {
+        IpAddr::V4(_) => create_nat_target_ipv4(),
+        IpAddr::V6(_) => create_nat_target_ipv6(),
+    };
+
+    let created_group = create_test_multicast_group(
+        switch,
+        external_ip,
+        Some(TEST_TAG),
+        &[],
+        types::InternalForwarding { nat_target: Some(nat_target.clone()) },
+        types::ExternalForwarding { vlan_id: vlan },
+        None,
+    )
+    .await;
+
+    let src_mac = switch.get_port_mac(ingress).unwrap();
+    let (og_pkt, geneve_pkt) = build_inner_ttl_geneve_pkt(
+        external_ip,
+        src_mac,
+        vlan,
+        &nat_target,
+        inner_ttl,
+        0,
+        inner_eth,
+    );
+
+    let test_pkt = TestPacket { packet: Arc::new(geneve_pkt), port: ingress };
+
+    let expected_pkts = if expect_drop {
+        Vec::new()
+    } else {
+        vec![
+            TestPacket {
+                packet: Arc::new(prepare_expected_pkt(
+                    switch,
+                    &og_pkt,
+                    vlan,
+                    None,
+                    Some(egress1),
+                )),
+                port: egress1,
+            },
+            TestPacket {
+                packet: Arc::new(prepare_expected_pkt(
+                    switch,
+                    &og_pkt,
+                    vlan,
+                    None,
+                    Some(egress2),
+                )),
+                port: egress2,
+            },
+        ]
+    };
+
+    let port_label_ingress = switch.port_label(ingress).unwrap();
+    let port_label_egress1 = switch.port_label(egress1).unwrap();
+    let port_label_egress2 = switch.port_label(egress2).unwrap();
+
+    let ctr_baseline_drop_reason =
+        switch.get_counter("multicast_ttl_exceeded", None).await.unwrap();
+    let ctr_baseline_drop_port = switch
+        .get_counter(&port_label_ingress, Some("ingress_drop_port"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast_external"))
+        .await
+        .unwrap();
+
+    switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
+
+    if expect_drop {
+        check_counter_incremented(
+            switch,
+            "multicast_ttl_exceeded",
+            ctr_baseline_drop_reason,
+            1,
+            None,
+        )
+        .await
+        .unwrap();
+        check_counter_incremented(
+            switch,
+            &port_label_ingress,
+            ctr_baseline_drop_port,
+            1,
+            Some("ingress_drop_port"),
+        )
+        .await
+        .unwrap();
+
+        let ctr_external_egress1 = switch
+            .get_counter(&port_label_egress1, Some("multicast_external"))
+            .await
+            .unwrap();
+        let ctr_external_egress2 = switch
+            .get_counter(&port_label_egress2, Some("multicast_external"))
+            .await
+            .unwrap();
+        assert_eq!(
+            ctr_external_egress1, ctr_baseline_external_egress1,
+            "dropped packet must not be replicated to external members"
+        );
+        assert_eq!(
+            ctr_external_egress2, ctr_baseline_external_egress2,
+            "dropped packet must not be replicated to external members"
+        );
+    } else {
+        check_counter_incremented(
+            switch,
+            &port_label_egress1,
+            ctr_baseline_external_egress1,
+            1,
+            Some("multicast_external"),
+        )
+        .await
+        .unwrap();
+        check_counter_incremented(
+            switch,
+            &port_label_egress2,
+            ctr_baseline_external_egress2,
+            1,
+            Some("multicast_external"),
+        )
+        .await
+        .unwrap();
+
+        let ctr_drop_reason =
+            switch.get_counter("multicast_ttl_exceeded", None).await.unwrap();
+        assert_eq!(
+            ctr_drop_reason, ctr_baseline_drop_reason,
+            "forwarded packet must not be counted as a TTL drop"
+        );
+    }
+
+    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+        .await
+        .unwrap();
+    cleanup_test_group(switch, MULTICAST_NAT_IP.into(), TEST_TAG).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_external_v4_zero() -> TestResult {
+    let switch = &*get_switch().await;
+    run_external_only_inner_ttl_test(
+        switch,
+        IpAddr::V4(MULTICAST_TEST_IPV4),
+        0,
+        true,
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_external_v4_one() -> TestResult {
+    let switch = &*get_switch().await;
+    run_external_only_inner_ttl_test(
+        switch,
+        IpAddr::V4(MULTICAST_TEST_IPV4),
+        1,
+        true,
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_external_v4_two() -> TestResult {
+    let switch = &*get_switch().await;
+    run_external_only_inner_ttl_test(
+        switch,
+        IpAddr::V4(MULTICAST_TEST_IPV4),
+        2,
+        false,
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_external_v6_zero() -> TestResult {
+    let switch = &*get_switch().await;
+    run_external_only_inner_ttl_test(
+        switch,
+        IpAddr::V6(MULTICAST_TEST_IPV6),
+        0,
+        true,
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_external_v6_one() -> TestResult {
+    let switch = &*get_switch().await;
+    run_external_only_inner_ttl_test(
+        switch,
+        IpAddr::V6(MULTICAST_TEST_IPV6),
+        1,
+        true,
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_external_v6_two() -> TestResult {
+    let switch = &*get_switch().await;
+    run_external_only_inner_ttl_test(
+        switch,
+        IpAddr::V6(MULTICAST_TEST_IPV6),
+        2,
+        false,
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_bifurcated_v4_eth_one() -> TestResult {
+    let switch = &*get_switch().await;
+    run_bifurcated_inner_ttl_test(
+        switch,
+        IpAddr::V4(MULTICAST_TEST_IPV4),
+        1,
+        Some("multicast_ttl_exceeded"),
+        true,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_bifurcated_v6_eth_one() -> TestResult {
+    let switch = &*get_switch().await;
+    run_bifurcated_inner_ttl_test(
+        switch,
+        IpAddr::V6(MULTICAST_TEST_IPV6),
+        1,
+        Some("multicast_ttl_exceeded"),
+        true,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_external_v4_eth_one() -> TestResult {
+    let switch = &*get_switch().await;
+    run_external_only_inner_ttl_test(
+        switch,
+        IpAddr::V4(MULTICAST_TEST_IPV4),
+        1,
+        true,
+        true,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_external_v6_eth_one() -> TestResult {
+    let switch = &*get_switch().await;
+    run_external_only_inner_ttl_test(
+        switch,
+        IpAddr::V6(MULTICAST_TEST_IPV6),
+        1,
+        true,
+        true,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_bifurcated_v4_eth_two() -> TestResult {
+    let switch = &*get_switch().await;
+    run_bifurcated_inner_ttl_test(
+        switch,
+        IpAddr::V4(MULTICAST_TEST_IPV4),
+        2,
+        None,
+        true,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_bifurcated_v6_eth_two() -> TestResult {
+    let switch = &*get_switch().await;
+    run_bifurcated_inner_ttl_test(
+        switch,
+        IpAddr::V6(MULTICAST_TEST_IPV6),
+        2,
+        None,
+        true,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_external_v4_eth_two() -> TestResult {
+    let switch = &*get_switch().await;
+    run_external_only_inner_ttl_test(
+        switch,
+        IpAddr::V4(MULTICAST_TEST_IPV4),
+        2,
+        false,
+        true,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_inner_ttl_external_v6_eth_two() -> TestResult {
+    let switch = &*get_switch().await;
+    run_external_only_inner_ttl_test(
+        switch,
+        IpAddr::V6(MULTICAST_TEST_IPV6),
+        2,
+        false,
+        true,
+    )
+    .await
+}
+
 /// Link-local replicas reach egress with a zero replication id, so the
 /// counter block reaches them through `is_link_local_ipv6_mcast` rather
 /// than `egress_rid`. Both the underlay and external conditions exclude
@@ -3004,13 +3724,13 @@ async fn test_ipv6_multicast_hop_limit_one() -> TestResult {
     let expected_pkts = vec![];
 
     let ctr_baseline =
-        switch.get_counter("ipv6_ttl_invalid", None).await.unwrap();
+        switch.get_counter("multicast_ttl_exceeded", None).await.unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
     check_counter_incremented(
         switch,
-        "ipv6_ttl_invalid",
+        "multicast_ttl_exceeded",
         ctr_baseline,
         1,
         None,

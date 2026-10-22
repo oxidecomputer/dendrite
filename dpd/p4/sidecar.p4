@@ -373,7 +373,10 @@ control Services(
 	action mcast_inbound_link_local() {
 		hdr.sidecar.sc_code = SC_FWD_TO_USERSPACE;
 		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
-		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
+		// Inbound packets do not have an egress port yet, and reading
+		// the unset ucast_egress_port yields an unspecified value:
+		// https://p4.org/wp-content/uploads/sites/53/p4-spec/docs/P4-16-v1.2.4.html#sec-uninitialized-values-and-writing-invalid-headers
+		hdr.sidecar.sc_egress = 0;
 		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
 		hdr.sidecar.sc_payload = 0;
 		hdr.sidecar.setValid();
@@ -723,10 +726,20 @@ control NatIngress (
 
 		if (ingress_hit.apply().hit) {
 			if (hdr.ipv4.isValid()) {
-				CalculateIPv4Len.apply(hdr, meta);
-				encap_ipv4();
+				if (hdr.ipv4.ttl == 0) {
+					meta.drop_reason = DROP_IPV4_TTL_INVALID;
+					meta.dropped = true;
+				} else {
+					CalculateIPv4Len.apply(hdr, meta);
+					encap_ipv4();
+				}
 			} else if (hdr.ipv6.isValid()) {
-				encap_ipv6();
+				if (hdr.ipv6.hop_limit == 0) {
+					meta.drop_reason = DROP_IPV6_TTL_INVALID;
+					meta.dropped = true;
+				} else {
+					encap_ipv6();
+				}
 			}
 
 			if (hdr.vlan.isValid()) {
@@ -1234,7 +1247,10 @@ control Router4 (
 	action icmp_error(bit<8> type, bit<8> code) {
 		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
 		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
-		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
+		// No path into this action has yet assigned ucast_egress_port,
+		// and reading it before assignment yields an unspecified value:
+		// https://p4.org/wp-content/uploads/sites/53/p4-spec/docs/P4-16-v1.2.4.html#sec-uninitialized-values-and-writing-invalid-headers
+		hdr.sidecar.sc_egress = 0;
 		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
 		hdr.sidecar.sc_payload = (bit<128>)type << 8 | (bit<128>)code;
 		hdr.sidecar.setValid();
@@ -1244,6 +1260,12 @@ control Router4 (
 	}
 
 	apply {
+		if (hdr.ipv4.ttl == 0 && !meta.nat_egress_hit) {
+			meta.dropped = true;
+			meta.drop_reason = DROP_IPV4_TTL_INVALID;
+			return;
+		}
+
 		route4_result_t fwd;
 		fwd.is_v6 = false;
 		fwd.nexthop6 = 0;
@@ -1266,7 +1288,7 @@ control Router4 (
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
 			meta.drop_reason = DROP_IPV4_UNROUTEABLE;
-		} else if (hdr.ipv4.ttl == 1 && !IS_SERVICE(fwd.port)) {
+		} else if (hdr.ipv4.ttl <= 8w1 && !IS_SERVICE(fwd.port)) {
 			icmp_error(ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
@@ -1285,22 +1307,9 @@ control Router4 (
 control MulticastRouter4(
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
-	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ctr;
-
-	action icmp_error(bit<8> type, bit<8> code) {
-		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
-		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
-		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
-		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
-		hdr.sidecar.sc_payload = (bit<128>)type << 8 | (bit<128>)code;
-		hdr.sidecar.setValid();
-		hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;
-		meta.service_routed = true;
-		ig_tm_md.ucast_egress_port = USER_SPACE_SERVICE_PORT;
-	}
 
 	action unreachable() {
 		ctr.count();
@@ -1344,16 +1353,15 @@ control MulticastRouter4(
 			hdr.vlan.setInvalid();
 		}
 
+		// ICMP errors must not be sent for multicast destinations:
+		// https://www.rfc-editor.org/rfc/rfc1812.html#section-4.3.2.7
 		if (!tbl.apply().hit) {
-			icmp_error(ICMP_DEST_UNREACH, ICMP_DST_UNREACH_NET);
 			meta.drop_reason = DROP_IPV4_UNROUTEABLE;
-			// Dont set meta.dropped because we want an error packet
-			// to go out.
-		} else if (hdr.ipv4.ttl == 1 && !meta.service_routed) {
-			icmp_error(ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
-			meta.drop_reason = DROP_IPV4_TTL_INVALID;
-			// Dont set meta.dropped because we want an error packet
-			// to go out.
+			meta.dropped = true;
+		} else if (hdr.ipv4.ttl <= 8w1) {
+			// https://www.rfc-editor.org/rfc/rfc1812.html#section-5.3.1
+			meta.drop_reason = DROP_MULTICAST_TTL_EXCEEDED;
+			meta.dropped = true;
 		} else {
 			// Set the destination port to an invalid value
 			ig_tm_md.ucast_egress_port = (PortId_t)0x1ff;
@@ -1375,7 +1383,10 @@ control Router6 (
 	action icmp_error(bit<8> type, bit<8> code) {
 		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
 		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
-		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
+		// No path into this action has yet assigned ucast_egress_port,
+		// and reading it before assignment yields an unspecified value:
+		// https://p4.org/wp-content/uploads/sites/53/p4-spec/docs/P4-16-v1.2.4.html#sec-uninitialized-values-and-writing-invalid-headers
+		hdr.sidecar.sc_egress = 0;
 		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
 		hdr.sidecar.sc_payload = (bit<128>)type << 8 | (bit<128>)code;
 		hdr.sidecar.setValid();
@@ -1385,6 +1396,12 @@ control Router6 (
 	}
 
 	apply {
+		if (hdr.ipv6.hop_limit == 0 && !meta.nat_egress_hit) {
+			meta.dropped = true;
+			meta.drop_reason = DROP_IPV6_TTL_INVALID;
+			return;
+		}
+
 		route6_result_t fwd;
 		fwd.nexthop = 0;
 		fwd.port = 0;
@@ -1405,7 +1422,7 @@ control Router6 (
 			meta.drop_reason = DROP_IPV6_UNROUTEABLE;
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
-		} else if (hdr.ipv6.hop_limit == 1 && !IS_SERVICE(fwd.port)) {
+		} else if (hdr.ipv6.hop_limit <= 8w1 && !IS_SERVICE(fwd.port)) {
 			icmp_error(ICMP6_TIME_EXCEEDED, ICMP_EXC_TTL);
 			meta.drop_reason = DROP_IPV6_TTL_EXCEEDED;
 			// Dont set meta.dropped because we want an error packet
@@ -1422,22 +1439,9 @@ control Router6 (
 control MulticastRouter6 (
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
-	in ingress_intrinsic_metadata_t ig_intr_md,
 	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ctr;
-
-	action icmp_error(bit<8> type, bit<8> code) {
-		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
-		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
-		hdr.sidecar.sc_egress = (bit<16>)ig_tm_md.ucast_egress_port;
-		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
-		hdr.sidecar.sc_payload = (bit<128>)type << 8 | (bit<128>)code;
-		hdr.sidecar.setValid();
-		hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;
-		meta.service_routed = true;
-		ig_tm_md.ucast_egress_port = USER_SPACE_SERVICE_PORT;
-	}
 
 	action unreachable() {
 		ctr.count();
@@ -1480,16 +1484,17 @@ control MulticastRouter6 (
 			hdr.vlan.setInvalid();
 		}
 
+		// ICMPv6 errors must not be originated for multicast
+		// destinations; neither exception in RFC 4443 §2.4(e.3)
+		// (Packet Too Big, Parameter Problem code 2) applies here:
+		// https://www.rfc-editor.org/rfc/rfc4443.html#section-2.4
 		if (!tbl.apply().hit) {
-			icmp_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE);
 			meta.drop_reason = DROP_IPV6_UNROUTEABLE;
-			// Dont set meta.dropped because we want an error packet
-			// to go out.
-		} else if (hdr.ipv6.hop_limit == 1) {
-			icmp_error(ICMP6_TIME_EXCEEDED, ICMP_EXC_TTL);
-			meta.drop_reason = DROP_IPV6_TTL_EXCEEDED;
-			// Dont set meta.dropped because we want an error packet
-			// to go out.
+			meta.dropped = true;
+		} else if (hdr.ipv6.hop_limit <= 8w1) {
+			// https://www.rfc-editor.org/rfc/rfc8200.html#section-3
+			meta.drop_reason = DROP_MULTICAST_TTL_EXCEEDED;
+			meta.dropped = true;
 		} else {
 			// Set the destination port to an invalid value
 			ig_tm_md.ucast_egress_port = (PortId_t)0x1ff;
@@ -1507,13 +1512,13 @@ control L3Router(
 	apply {
 		if (hdr.ipv4.isValid()) {
 			if (meta.is_mcast && !meta.is_link_local_mcastv6) {
-				MulticastRouter4.apply(hdr, meta, ig_intr_md, ig_tm_md);
+				MulticastRouter4.apply(hdr, meta, ig_tm_md);
 			} else {
 				Router4.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			}
 		} else if (hdr.ipv6.isValid()) {
 			if (meta.is_mcast && !meta.is_link_local_mcastv6) {
-				MulticastRouter6.apply(hdr, meta, ig_intr_md, ig_tm_md);
+				MulticastRouter6.apply(hdr, meta, ig_tm_md);
 			} else {
 				Router6.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			}
@@ -1867,7 +1872,10 @@ control MulticastIngress (
  *   3. asic_id_to_port   : Map ASIC port ID to logical port number (0-255)
  *   4. port_bitmap_check : Test port's bit in bitmap (see port_bitmap_check.p4)
  *   5. modify_hdr        : If bitmap_result != 0, decapsulate packet (strip
- *                          outer headers, decrement TTL/hop limit, handle VLAN)
+ *                          outer headers, decrement TTL/hop limit, handle VLAN),
+ *                          unless the inner TTL/hop limit is <= 1, in which
+ *                          case the replica is dropped with
+ *                          DROP_MULTICAST_TTL_EXCEEDED
  *
  * The bitmap marks which egress ports require decapsulation (typically external
  * customer-facing ports) vs which keep encapsulation (underlay/sled-bound).
@@ -1875,8 +1883,7 @@ control MulticastIngress (
 control MulticastEgress (
 	inout sidecar_headers_t hdr,
 	inout sidecar_egress_meta_t meta,
-	in egress_intrinsic_metadata_t eg_intr_md,
-	in egress_intrinsic_metadata_for_deparser_t eg_dprsr_md
+	in egress_intrinsic_metadata_t eg_intr_md
 ) {
 
 	action set_decap_ports(
@@ -2058,8 +2065,22 @@ control MulticastEgress (
 					port_bitmap_check.apply();
 				}
 				if (meta.bitmap_result != 0) {
-					meta.ipv4_checksum_recalc = true;
-					modify_hdr.apply();
+					// A decapsulated packet is forwarded
+					// as a normal hop, which requires the
+					// inner TTL check before modify_hdr
+					// actually decrements it:
+					// https://www.rfc-editor.org/rfc/rfc2003.html#section-3.1
+					// https://www.rfc-editor.org/rfc/rfc2473.html#section-3.3
+					if (hdr.inner_ipv4.isValid() &&
+					    hdr.inner_ipv4.ttl <= 8w1) {
+						meta.drop_reason = DROP_MULTICAST_TTL_EXCEEDED;
+					} else if (hdr.inner_ipv6.isValid() &&
+					    hdr.inner_ipv6.hop_limit <= 8w1) {
+						meta.drop_reason = DROP_MULTICAST_TTL_EXCEEDED;
+					} else {
+						meta.ipv4_checksum_recalc = true;
+						modify_hdr.apply();
+					}
 				}
 			}
 		}
@@ -2386,8 +2407,10 @@ control Egress(
 				// the packet
 				meta.drop_reason = DROP_MULTICAST_PATH_FILTERED;
 			} else {
-				mcast_egress.apply(hdr, meta, eg_intr_md, eg_dprsr_md);
-				mac_rewrite.apply(hdr, eg_intr_md.egress_port);
+				mcast_egress.apply(hdr, meta, eg_intr_md);
+				if (meta.drop_reason == 0) {
+					mac_rewrite.apply(hdr, eg_intr_md.egress_port);
+				}
 			}
 		} else if (meta.bridge_hdr.nat_egress_hit) {
 			egress_filter.apply(meta, eg_intr_md);
