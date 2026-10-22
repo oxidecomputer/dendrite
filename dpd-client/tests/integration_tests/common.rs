@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use std::{fmt, thread};
 
-use anyhow::Context;
 use anyhow::anyhow;
+use anyhow::{Context, bail};
 use oxnet::Ipv4Net;
 use oxnet::Ipv6Net;
 use slog::Drain;
@@ -44,6 +44,14 @@ pub const ADMIN_LOCAL_MULTICAST_PREFIX: u16 = 0xFF04;
 // This is used as the "buffer timeout", which is the duration libpcap buffers
 // packets before notifying us that any are ready.
 const TEST_PCAP_TIMEOUT_MS: i32 = 1;
+
+// TODO::cory: rebase https://github.com/oxidecomputer/dendrite/pull/362
+// Interval and attempt count for polling a counter until it reaches an
+// expected value.
+//
+// Note: counter updates from the model can lag the packet itself.
+const COUNTER_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const COUNTER_POLL_ATTEMPTS: usize = 20;
 
 // Physical port number
 #[derive(Clone, Copy, PartialOrd, Ord, Hash, PartialEq, Eq)]
@@ -834,6 +842,41 @@ impl Switch {
                     .ok_or(anyhow::anyhow!("no such counter: {counter}"))
             })
     }
+}
+
+pub async fn check_counter_incremented(
+    switch: &Switch,
+    counter_name: &str,
+    baseline: u64,
+    expected_increment: u64,
+    client_name: Option<&str>,
+) -> anyhow::Result<u64> {
+    let expected = baseline + expected_increment;
+    let table = client_name.unwrap_or("ingress_drop_reason");
+    let incr_expect = format!(
+        "counter '{counter_name}' in {table} expected to increase by \
+         {expected_increment} ({baseline} -> {expected})"
+    );
+    let mut new_value = 0;
+
+    // Poll for the counter value (with timeout)
+    for _i in 0..COUNTER_POLL_ATTEMPTS {
+        thread::sleep(COUNTER_POLL_INTERVAL);
+        new_value = switch.get_counter(counter_name, client_name).await?;
+
+        if new_value == expected {
+            return Ok(new_value);
+        }
+        if new_value > expected {
+            bail!("{incr_expect}, but overshot to {new_value}");
+        }
+    }
+
+    // Counter didn't increment as expected
+    bail!(
+        "{incr_expect}, but reached {new_value} after \
+         {COUNTER_POLL_ATTEMPTS} polls"
+    )
 }
 
 // Construct a single TCP packet with an optional payload
