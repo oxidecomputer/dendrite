@@ -197,7 +197,37 @@ struct NatTest {
 }
 
 impl NatTest {
-    /// Returns a config usable for IPv4 egress tests.
+    /// Creates a default config usable for IPv4 ingress tests.
+    fn ingress_ipv4() -> Self {
+        NatTest {
+            uplink_port: PhysPort(14),
+            uplink_port_external: "192.168.1.2".to_string(),
+            uplink_port_registered: true,
+            uplink_route: "unused".to_string(),
+            router_ip: "192.168.1.1".to_string(),
+            router_mac: "02:aa:bb:cc:dd:ee".to_string(),
+
+            vpc_src_ip: "10.10.10.32".to_string(),
+            vpc_src_mac: "04:01:01:01:01:02".to_string(),
+            vpc_src_port: 4444,
+            vpc_dst_ip: "231.44.22.11".to_string(),
+            vpc_dst_mac: "04:01:01:01:01:01".to_string(),
+            vpc_dst_port: 3333,
+
+            gimlet_port: PhysPort(10),
+            gimlet_ip: "fd00:1122:7788:0101::4".to_string(),
+            gimlet_mac: "11:22:33:44:55:66".to_string(),
+            gimlet_port_ip: "fd00:1122:3344:0101::5".to_string(),
+
+            nat_l4_port: 2000,
+            l4_protocol: L4Protocol::Udp,
+            geneve_vni: 7654,
+
+            modify_pkt: NatTest::no_op,
+        }
+    }
+
+    /// Creates a default config usable for IPv4 egress tests.
     fn egress_ipv4() -> Self {
         NatTest {
             uplink_port: PhysPort(14),
@@ -227,6 +257,25 @@ impl NatTest {
     }
 
     fn no_op(_: &mut Packet) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Creates a switch NAT config for `self`.
+    async fn create_nat(&self, switch: &Switch) -> anyhow::Result<()> {
+        let nat_ip = self.uplink_port_external.parse()?;
+        let internal_ip = self.gimlet_ip.parse()?;
+        let tgt = types::NatTarget {
+            internal_ip,
+            inner_mac: self.vpc_dst_mac.parse::<MacAddr>()?.into(),
+            vni: Vni::new(self.geneve_vni)
+                .ok_or_else(|| anyhow!("Invalid VNI: {:?}", self.geneve_vni))?
+                .into(),
+        };
+
+        let nat_low = 1024;
+        let nat_high = 2048;
+        switch.client.nat_ipv4_create(&nat_ip, nat_low, nat_high, &tgt).await?;
+
         Ok(())
     }
 }
@@ -395,7 +444,7 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
         test.nat_l4_port,
     )
     .unwrap();
-    let (ingress_pkt, csum_generated) = match test.l4_protocol {
+    let (mut ingress_pkt, csum_generated) = match test.l4_protocol {
         L4Protocol::Tcp => {
             (common::gen_tcp_packet_loaded(src, dst, &load), true)
         }
@@ -407,7 +456,7 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
         }
     };
 
-    // TODO::cory: modify ingress packet
+    (test.modify_pkt)(&mut ingress_pkt)?;
 
     // Deparse the incoming packet so we can copy it into the encapsulated
     // packet
@@ -515,48 +564,11 @@ async fn test_ingress_ipv4(
     switch: &Switch,
     l4_protocol: L4Protocol,
 ) -> TestResult {
-    let test = NatTest {
-        uplink_port: PhysPort(14),
-        uplink_port_external: "192.168.1.2".to_string(),
-        uplink_port_registered: true,
-        uplink_route: "unused".to_string(),
-        router_ip: "192.168.1.1".to_string(),
-        router_mac: "02:aa:bb:cc:dd:ee".to_string(),
+    let mut test = NatTest::ingress_ipv4();
+    test.l4_protocol = l4_protocol;
 
-        vpc_src_ip: "10.10.10.32".to_string(),
-        vpc_src_mac: "04:01:01:01:01:02".to_string(),
-        vpc_src_port: 4444,
-        vpc_dst_ip: "231.44.22.11".to_string(),
-        vpc_dst_mac: "04:01:01:01:01:01".to_string(),
-        vpc_dst_port: 3333,
+    test.create_nat(switch).await?;
 
-        gimlet_port: PhysPort(10),
-        gimlet_ip: "fd00:1122:7788:0101::4".to_string(),
-        gimlet_mac: "11:22:33:44:55:66".to_string(),
-        gimlet_port_ip: "fd00:1122:3344:0101::5".to_string(),
-
-        nat_l4_port: 2000,
-        l4_protocol,
-        geneve_vni: 7654,
-
-        modify_pkt: NatTest::no_op,
-    };
-
-    let nat_ip = test.uplink_port_external.parse().unwrap();
-    let internal_ip = test.gimlet_ip.parse().unwrap();
-    let tgt = types::NatTarget {
-        internal_ip,
-        inner_mac: test.vpc_dst_mac.parse::<MacAddr>()?.into(),
-        vni: Vni::new(test.geneve_vni).unwrap().into(),
-    };
-
-    let nat_low = 1024;
-    let nat_high = 2048;
-    switch
-        .client
-        .nat_ipv4_create(&nat_ip, nat_low, nat_high, &tgt)
-        .await
-        .unwrap();
     test_nat_ingress(switch, &test).await
 }
 
@@ -722,14 +734,43 @@ async fn decap_drops_ipv4_opts() -> anyhow::Result<()> {
 
     let mut test = NatTest::egress_ipv4();
     test.l4_protocol = L4Protocol::Udp;
-    test.uplink_port_registered = false;
+    test.uplink_port_registered = true;
     test.modify_pkt = add_opts;
 
     let before = switch.get_counter("nat_ipv4_options", None).await?;
 
-    test_nat_egress(switch, &test)
+    self::test_nat_egress(switch, &test)
         .await
-        .expect_err("Should fail because NAT drops optioned packets");
+        .expect_err("Should fail because NAT egress drops optioned packets");
+
+    common::check_counter_incremented(
+        switch,
+        "nat_ipv4_options",
+        before,
+        1,
+        None,
+    )
+    .await?;
+
+    Ok(())
+}
+
+// IPv4 optioned traffic is dropped where encap is required.
+#[tokio::test]
+#[ignore]
+async fn encap_drops_ipv4_opts() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+
+    let mut test = NatTest::ingress_ipv4();
+    test.modify_pkt = add_opts;
+
+    test.create_nat(switch).await?;
+
+    let before = switch.get_counter("nat_ipv4_options", None).await?;
+
+    self::test_nat_ingress(switch, &test)
+        .await
+        .expect_err("Should fail because NAT ingress drops optioned packets");
 
     common::check_counter_incremented(
         switch,
