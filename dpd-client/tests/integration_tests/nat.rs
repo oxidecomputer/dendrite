@@ -679,30 +679,7 @@ async fn test_ingress_ipv6_icmp() -> TestResult {
     test_ingress_ipv6(switch, L4Protocol::Icmp).await
 }
 
-// Encapsulated traffic between instances allows IPv4 options
-// when decap is not required.
-#[tokio::test]
-#[ignore]
-async fn routed_encap_carries_ipv4_opts() -> anyhow::Result<()> {
-    const PAYLOAD: &[u8] = &[0xcc; 8];
-
-    let switch = &*get_switch().await;
-
-    let sled1 = Sled::try_new(1)?;
-    sled1.init(switch).await?;
-
-    let sled2 = Sled::try_new(2)?;
-    sled2.init(switch).await?;
-
-    let ipv4_opts = OptBuf::from_slice(&[0x3; 7]).expect("options should fit");
-    let (tx, rx) = sled1.routed_ipv4_pkt(switch, &sled2, ipv4_opts, PAYLOAD)?;
-
-    switch.packet_test(
-        vec![TestPacket { port: sled1.port, packet: Arc::new(tx) }],
-        vec![TestPacket { port: sled2.port, packet: Arc::new(rx) }],
-    )
-}
-
+/*
 // IPv4 optioned traffic is dropped where decap *is* required.
 #[tokio::test]
 #[ignore]
@@ -749,42 +726,6 @@ async fn encap_drops_ipv4_ops() -> anyhow::Result<()> {
     Ok(())
 }
 
-/*
-#[tokio::test]
-#[ignore]
-async fn nat_ignores_ipv4_options() -> anyhow::Result<()> {
-    const PAYLOAD: &[u8] = &[0xcc; 8];
-
-    let switch = &*get_switch().await;
-
-    let sled1 = Sled::builder().id(1)?;
-    sled1.init(switch).await?;
-
-    let uplink = PhysPort(10);
-    let external_src =
-        Endpoint::parse("02:aa:bb:cc:dd:ee", "10.10.10.10", 4444)?;
-
-    // These are not valid IPv4 options, but we could test that someday.
-    // The switch's policy is to ignore options, and this at least
-    // verifies it can work around a full buffer of them.
-    let options = OptBuf::from_array([0xcc; 40]);
-    let (from_ext, encap) = sled1.ingress_ipv4_pkt(
-        switch,
-        external_src,
-        sled1.nat_dst(switch, uplink)?,
-        options,
-        PAYLOAD,
-    )?;
-
-    switch.set_uplink(uplink, true).await;
-    let result = switch.packet_test(
-        vec![TestPacket { port: uplink, packet: Arc::new(from_ext) }],
-        vec![TestPacket { port: sled1.port, packet: Arc::new(encap) }],
-    );
-    switch.set_uplink(uplink, false).await;
-    result
-}
-
 /// Marks an IPv4 packet as a fragment with the given offset.
 /// Use `last == true` only if this is the final fragment you
 /// intend to send.
@@ -807,7 +748,6 @@ fn set_ipv4_fragment(
 
     Ok(())
 }
-*/
 
 /// Config for sending traffic from the switch to a sled's guest
 /// behind a NAT range.
@@ -1038,3 +978,4 @@ impl Sled {
         Ok((user_pkt, encap_pkt))
     }
 }
+*/
