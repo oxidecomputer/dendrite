@@ -8,6 +8,7 @@ use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
 
+use anyhow::Context;
 use anyhow::anyhow;
 use oxnet::Ipv6Net;
 
@@ -30,6 +31,7 @@ use packet::udp::UdpHdr;
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
+use crate::integration_tests::route_ipv4;
 
 use futures::TryStreamExt;
 
@@ -858,4 +860,119 @@ async fn nat_drops_optioned_packet() -> anyhow::Result<()> {
     test.create_nat(switch).await?;
 
     self::test_nat_ingress(switch, &test).await
+}
+
+/// Fragment tests watch for packet drops. This ensures
+/// unfragmented packets under the same conditions pass through.
+#[tokio::test]
+#[ignore]
+async fn frag_test_ingress_control() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+    let test = NatTest::ingress_ipv4();
+    test.create_nat(switch).await?;
+    self::test_nat_ingress(switch, &test).await
+}
+
+/// Egress equivalent to above.
+#[tokio::test]
+#[ignore]
+async fn frag_test_egress_control() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+    let test = NatTest::egress_ipv4();
+    test.create_nat(switch).await?;
+    self::test_nat_egress(switch, &test).await
+}
+
+/// First fragments are dropped by NAT encap. This is enforced
+/// because encapsulating any subsequent non-first fragments
+/// requires tracking state.
+#[tokio::test]
+#[ignore]
+async fn encap_drops_ipv4_fragment() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+    let mut test = NatTest::ingress_ipv4();
+    test.modify_result = self::no_response;
+    test.modify_inner = route_ipv4::first_fragment;
+
+    test.create_nat(switch).await?;
+    let before = switch.get_counter("nat_ipv4_fragment", None).await?;
+
+    self::test_nat_ingress(switch, &test)
+        .await
+        .context("First IPv4 fragment")?;
+
+    common::check_counter_incremented(
+        switch,
+        "nat_ipv4_fragment",
+        before,
+        1,
+        None,
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// Test above but for subsequent fragments.
+#[tokio::test]
+#[ignore]
+async fn encap_drops_ipv4_non_first_fragment() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+    let mut test = NatTest::ingress_ipv4();
+    test.modify_result = self::no_response;
+    test.modify_inner = route_ipv4::second_fragment;
+
+    test.create_nat(switch).await?;
+    let before = switch.get_counter("nat_ipv4_fragment", None).await?;
+
+    self::test_nat_ingress(switch, &test)
+        .await
+        .context("Second IPv4 fragment")?;
+    common::check_counter_incremented(
+        switch,
+        "nat_ipv4_fragment",
+        before,
+        1,
+        None,
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// OPTE already assigns the fields required for NAT egress, so sidecar
+/// can and should route decapsulated fragments without complaint.
+#[tokio::test]
+#[ignore]
+async fn decap_routes_ipv4_first_fragment() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+    let mut test = NatTest::egress_ipv4();
+    test.uplink_port_registered = true;
+    test.modify_inner = route_ipv4::first_fragment;
+
+    test.create_nat(switch).await?;
+
+    self::test_nat_egress(switch, &test)
+        .await
+        .context("First IPv4 fragment")?;
+
+    Ok(())
+}
+
+/// Test above but for a non-first fragment.
+#[tokio::test]
+#[ignore]
+async fn decap_routes_ipv4_non_first_fragment() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+    let mut test = NatTest::egress_ipv4();
+    test.uplink_port_registered = true;
+    test.modify_inner = route_ipv4::second_fragment;
+
+    test.create_nat(switch).await?;
+
+    self::test_nat_egress(switch, &test)
+        .await
+        .context("Second IPv4 fragment")?;
+
+    Ok(())
 }
