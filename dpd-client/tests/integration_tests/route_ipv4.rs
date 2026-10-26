@@ -8,6 +8,7 @@ use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 
+use anyhow::Context;
 use anyhow::anyhow;
 use oxnet::Ipv4Net;
 use packet::Packet;
@@ -1178,5 +1179,75 @@ async fn bad_ihl() -> anyhow::Result<()> {
         None,
     )
     .await?;
+    Ok(())
+}
+
+/// IPv4 fragmented packets are routed like any other well-behaved packet.
+/// This tests the first fragment.
+#[ignore]
+#[tokio::test]
+async fn first_fragments_are_routed() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+    test_route_ipv4_unicast_impl(switch, |to_send, to_recv| {
+        self::first_fragment(to_send)?;
+        self::first_fragment(to_recv)?;
+        Ok(())
+    })
+    .await
+    .context("First fragment")
+}
+
+/// Test above but for non-first fragments.
+#[ignore]
+#[tokio::test]
+async fn non_first_fragments_are_routed() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+    test_route_ipv4_unicast_impl(switch, |to_send, to_recv| {
+        self::second_fragment(to_send)?;
+        self::second_fragment(to_recv)?;
+        Ok(())
+    })
+    .await
+    .context("Second fragment")
+}
+
+/// Updates the given IPv4 packet to MF == 1.
+pub fn first_fragment(pkt: &mut Packet) -> anyhow::Result<()> {
+    let hdr = pkt
+        .hdrs
+        .ipv4_hdr
+        .as_mut()
+        .ok_or_else(|| anyhow!("Expected an IPv4 header"))?;
+    hdr.ipv4_mf = true;
+    hdr.ipv4_df = false;
+    hdr.ipv4_frag_offset = 0;
+    Ipv4Hdr::update_checksum(pkt);
+    Ok(())
+}
+
+/// Sets fragment offset on the given IPv4 packet. Ideally
+/// used after [self::first_fragment].
+pub fn second_fragment(pkt: &mut Packet) -> anyhow::Result<()> {
+    // Frag offset based on the first (presumably identical) packet's
+    // length. If zero, make up a number so the test is interesting.
+    let frag_offset = pkt
+        .body
+        .as_ref()
+        .map(|bytes| bytes.len())
+        .unwrap_or_default()
+        .max(1)
+        .div_ceil(8);
+
+    // Leave the UDP header in to exercise parsing, but in this case
+    // the UDP header's bytes are actually part of the payload.
+    let hdr = pkt
+        .hdrs
+        .ipv4_hdr
+        .as_mut()
+        .ok_or_else(|| anyhow!("Expected an IPv4 header"))?;
+    hdr.ipv4_mf = false;
+    hdr.ipv4_df = false;
+    hdr.ipv4_frag_offset = frag_offset as u16;
+    Ipv4Hdr::update_checksum(pkt);
     Ok(())
 }
