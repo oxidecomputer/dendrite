@@ -55,7 +55,9 @@ const bit<9> USER_SPACE_SERVICE_PORT = 192;
 	hdr.ipv4.diffserv,       \
 	hdr.ipv4.total_len,      \
 	hdr.ipv4.identification, \
-	hdr.ipv4.flags,          \
+	hdr.ipv4.evil,           \
+	hdr.ipv4.df,             \
+	hdr.ipv4.mf,             \
 	hdr.ipv4.frag_offset,    \
 	hdr.ipv4.ttl,            \
 	hdr.ipv4.protocol,       \
@@ -559,7 +561,7 @@ control NatIngress (
 
 		// We drop packets with options before getting here.
 		// If passing options through NAT is ever required, one
-		// clean solution is to implement varbit assignment in
+		// possibility is to implement varbit assignment in
 		// the tofino p4 compiler and to handle them here like
 		// any other header.
 
@@ -703,7 +705,6 @@ control NatIngress (
 			set_inner_icmp;
 			NoAction;
 		}
-
 		const entries = {
 			( true, true, false, false ) : set_inner_tcp;
 			( true, false, true, false  ) : set_inner_udp;
@@ -772,8 +773,15 @@ control NatIngress (
 			// from guests and gimlets that arrives on a backplane
 			// port, but prevents us from accepting or forwarding
 			// arbitrary traffic received on an uplink port.
-			meta.drop_reason = DROP_NAT_INGRESS_MISS;
 			meta.dropped = true;
+			if (hdr.ipv4.isValid() && (
+				hdr.ipv4.mf != 0 ||
+				hdr.ipv4.frag_offset != 0
+			)) {
+				meta.drop_reason = DROP_NAT_IPV4_FRAGMENT;
+			} else {
+				meta.drop_reason = DROP_NAT_INGRESS_MISS;
+			}
 		}
 	}
 }
@@ -915,6 +923,21 @@ control NatEgress (
 		) {
 			meta.drop_reason = DROP_NAT_IPV4_OPTIONS;
 			meta.dropped = true;
+		} else if (meta.nat_egress_hit &&
+			hdr.inner_ipv4.isValid() &&
+			(
+				hdr.inner_ipv4.mf != 0 ||
+				hdr.inner_ipv4.frag_offset != 0
+			) &&
+			(
+				hdr.inner_ipv4.protocol == IPPROTO_TCP ||
+				hdr.inner_ipv4.protocol == IPPROTO_UDP ||
+				hdr.inner_ipv4.protocol == IPPROTO_ICMP
+			)
+		) {
+			// Route fragments.
+			strip_outer_header();
+			decap_ipv4();
 		} else if (meta.nat_egress_hit) {
 			nat_egress.apply();
 		}

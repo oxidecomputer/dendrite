@@ -96,7 +96,9 @@ header ipv4_h {
 	bit<8>		diffserv;
 	bit<16>		total_len;
 	bit<16>		identification;
-	bit<3>		flags;
+	bit<1>		evil;
+	bit<1>		df;
+	bit<1>		mf;
 	bit<13>		frag_offset;
 	bit<8>		ttl;
 	bit<8>		protocol;
