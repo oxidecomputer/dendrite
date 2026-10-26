@@ -201,11 +201,11 @@ parser IngressParser(
 
 	state goto_proto_ipv4 {
 		meta.ipv4_checksum_err = ipv4_checksum.verify();
-		transition select(hdr.ipv4.protocol) {
-			IPPROTO_ICMP: parse_icmp;
-			IPPROTO_TCP: parse_tcp;
-			IPPROTO_UDP: parse_udp;
-			IPPROTO_SCTP: drop_sctp;
+		transition select(hdr.ipv4.protocol, hdr.ipv4.frag_offset) {
+			(IPPROTO_ICMP, 13w0): parse_icmp;
+			(IPPROTO_TCP, 13w0): parse_tcp;
+			(IPPROTO_UDP, 13w0): parse_udp;
+			(IPPROTO_SCTP, _): drop_sctp;
 			default: accept;
 		}
 	}
@@ -524,10 +524,13 @@ parser IngressParser(
 	}
 
 	state goto_inner_proto_ipv4 {
-		transition select(hdr.inner_ipv4.protocol) {
-			IPPROTO_TCP: parse_inner_tcp;
-			IPPROTO_UDP: parse_inner_udp;
-			IPPROTO_ICMP: parse_inner_icmp;
+		transition select(
+			hdr.inner_ipv4.protocol,
+			hdr.inner_ipv4.frag_offset
+		) {
+			(IPPROTO_TCP, 13w0): parse_inner_tcp;
+			(IPPROTO_UDP, 13w0): parse_inner_udp;
+			(IPPROTO_ICMP, 13w0): parse_inner_icmp;
 			default: accept;
 		}
 	}

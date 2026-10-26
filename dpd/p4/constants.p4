@@ -115,5 +115,6 @@ const bit<8> DROP_GENEVE_OPTION_UNKNOWN         = 0x1A;
 const bit<8> DROP_SCTP                          = 0x1B;
 const bit<8> DROP_IPV4_IHL_INVALID              = 0x1C;
 const bit<8> DROP_NAT_IPV4_OPTIONS              = 0x1D;
+const bit<8> DROP_NAT_IPV4_FRAGMENT             = 0x1E;
 // MAX(DROP_xxx) + 1
-const bit<32> DROP_REASON_MAX                   = 0x1E;
+const bit<32> DROP_REASON_MAX                   = 0x1F;

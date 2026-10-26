@@ -201,6 +201,7 @@ enum DropReason {
     DropSctp,
     Ipv4IhlInvalid,
     NatIpv4Options,
+    NatIpv4Fragment,
 }
 
 impl TryFrom<u8> for DropReason {
@@ -238,6 +239,7 @@ impl TryFrom<u8> for DropReason {
             27 => Ok(DropReason::DropSctp),
             0x1C => Ok(DropReason::Ipv4IhlInvalid),
             0x1D => Ok(DropReason::NatIpv4Options),
+            0x1E => Ok(DropReason::NatIpv4Fragment),
             x => Err(format!("Unrecognized drop reason: {x}")),
         }
     }
@@ -287,6 +289,7 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
         DropReason::DropSctp => "drop_sctp".to_string(),
         DropReason::Ipv4IhlInvalid => "ipv4_ihl_invalid".to_string(),
         DropReason::NatIpv4Options => "nat_ipv4_options".to_string(),
+        DropReason::NatIpv4Fragment => "nat_ipv4_fragment".to_string(),
     };
     Ok(Some(label))
 }
