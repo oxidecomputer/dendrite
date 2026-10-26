@@ -13,6 +13,7 @@ use packet::{Endpoint, eth, icmp, ipv4, sidecar};
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
+use crate::integration_tests::counters::one_counted_test;
 
 // Packets sent to an IP address assigned to a switch port should be forwarded
 // to the service port with an added sidecar header.
@@ -221,7 +222,9 @@ async fn test_arp_needed() -> TestResult {
     let expected =
         TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
-    switch.packet_test(vec![send], vec![expected])
+    assert!(one_counted_test(switch, send, Some(expected), "arp_miss").await?);
+
+    Ok(())
 }
 
 #[tokio::test]
@@ -266,7 +269,13 @@ async fn test_ttl_exceeded() -> TestResult {
     );
     let expected =
         TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
-    switch.packet_test(vec![send], vec![expected])
+
+    assert!(
+        one_counted_test(switch, send, Some(expected), "ipv4_ttl_exceeded")
+            .await?
+    );
+
+    Ok(())
 }
 
 // Arp packets sent to an IP address assigned to a switch port should be
