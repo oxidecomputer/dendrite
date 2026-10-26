@@ -22,12 +22,47 @@ use dpd_client::ClientInfo;
 use dpd_client::types::Ipv4Entry;
 use dpd_client::types::Ipv6Entry;
 
-/// Process a single packet, asserting that a given counter is incremented by
-/// one and a packet is appropriately transformed (or dropped).
+/// Awaits an increase in a given counter's value from `baseline` to
+/// `baseline + increment`.
 ///
-/// If the test runs to completion we return the counter evaluation as a
-/// boolean rather than an Error.  This allows us to trigger the error in
-/// the test routine, which gives us a more specific test failure message
+/// Returns `Ok(new_value)` if the expected increment is seen.
+pub async fn check_counter_incremented(
+    switch: &Switch,
+    counter_name: &str,
+    baseline: u64,
+    expected_increment: u64,
+    client_name: Option<&str>,
+) -> anyhow::Result<u64> {
+    let mut new_value = 0;
+
+    // Briefly delay before reading the counter each time, as there is
+    // occasionally some lag between when we see the counter set in the
+    // simulator and when that updated value is available to the SDE.  To
+    // avoid a long pointless delay here, we try multiple times with a short
+    // sleep rather than once with a long sleep.
+    for _ in 0..20 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        new_value =
+            switch.get_counter(counter_name, client_name).await.unwrap();
+
+        if new_value == baseline + expected_increment {
+            return Ok(new_value);
+        }
+    }
+
+    // Counter didn't increment as expected.
+    Err(anyhow::anyhow!(
+        "Counter '{}' expected to increase by {} (from {} to {}), but only reached {}",
+        counter_name,
+        expected_increment,
+        baseline,
+        baseline + expected_increment,
+        new_value
+    ))
+}
+
+/// Process a single packet, asserting that a given counter is incremented by
+/// one and a packet is appropriately transformed (or dropped)..
 pub async fn one_counted_test(
     switch: &Switch,
     packet: TestPacket,
@@ -36,30 +71,13 @@ pub async fn one_counted_test(
 ) -> anyhow::Result<bool> {
     let old = switch.get_counter(counter, None).await?;
     switch.packet_test(vec![packet], packet_after.into_iter().collect())?;
-
-    let mut new = 0;
-    for _i in 0..20 {
-        // Briefly delay before reading the counter for a second time, as there is
-        // occasionally some lag between when we see the counter set in the
-        // simulator and when that updated value is available to the SDE.  To
-        // avoid a long pointless delay here, we try multiple times with a short
-        // sleep rather than once with a long sleep.
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        new = switch.get_counter(counter, None).await?;
-        if old + 1 == new {
-            break;
-        }
-    }
-
-    Ok(old + 1 == new)
+    check_counter_incremented(switch, counter, old, 1, None)
+        .await
+        .map(|new| old + 1 == new)
 }
 
 /// Run a single drop test.  This sends a packet that we expect to be dropped,
 /// and verifies that the expected drop counter is bumped by one.
-///
-/// If the test runs to completion we return the counter evaluation as a
-/// boolean rather than an Error.  This allows us to trigger the error in
-/// the test routine, which gives us a more specific test failure message.
 async fn one_drop_test(
     switch: &Switch,
     port: PhysPort,
