@@ -4,12 +4,13 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use std::net::Ipv6Addr;
 use std::sync::Arc;
 
 use ::common::network::MacAddr;
 use dpd_client::ClientInfo;
 use dpd_client::types::Ipv4Entry;
-use packet::{Endpoint, eth, icmp, ipv4, sidecar};
+use packet::{Endpoint, eth, icmp, ipv4, ipv6, sidecar};
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
@@ -229,6 +230,55 @@ async fn test_arp_needed() -> TestResult {
 
 #[tokio::test]
 #[ignore]
+async fn test_ndp_needed() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let ingress_port = PhysPort(10);
+    let egress_port = PhysPort(15);
+    let router_ip = "fd00:1122:7788:0101::1";
+    let src_mac = "e0:d5:5e:67:89:ab";
+    let router_mac = switch.get_port_mac(ingress_port).unwrap();
+
+    // As in test_arp_needed, set a route without installing a neighbor.
+    common::set_route_ipv6(switch, "::/0", egress_port, router_ip).await?;
+
+    let (send_pkt, mut recv_pkt) = common::gen_udp_routed_pair(
+        switch,
+        egress_port,
+        router_mac,
+        Endpoint::parse(src_mac, "fd00:1122:7788:0202::4", 3333).unwrap(),
+        Endpoint::parse("e0:d5:5e:67:89:ac", "fd00:1122:7788:0101::5", 4444)
+            .unwrap(),
+    );
+
+    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress_port };
+
+    let payload = router_ip.parse::<Ipv6Addr>().unwrap().octets();
+    common::add_sidecar_hdr(
+        switch,
+        &mut recv_pkt,
+        sidecar::SC_NEIGHBOR_NEEDED,
+        ingress_port,
+        egress_port,
+        Some(&payload[..]),
+    );
+
+    // Because the packet wasn't successfully routed, the src/dst mac addresses
+    // should be unchanged.
+    let src_eth = send.packet.hdrs.eth_hdr.as_ref().unwrap();
+    eth::EthHdr::rewrite_smac(&mut recv_pkt, src_eth.eth_smac);
+    eth::EthHdr::rewrite_dmac(&mut recv_pkt, src_eth.eth_dmac);
+
+    let expected =
+        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
+
+    assert!(one_counted_test(switch, send, Some(expected), "ndp_miss").await?);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
 async fn test_ttl_exceeded() -> TestResult {
     let switch = &*get_switch().await;
 
@@ -265,13 +315,66 @@ async fn test_ttl_exceeded() -> TestResult {
         ingress,
         SERVICE_PORT,
         icmp::ICMP_TIME_EXCEEDED,
-        0,
+        icmp::ICMP_EXC_TTL,
     );
     let expected =
         TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
     assert!(
         one_counted_test(switch, send, Some(expected), "ipv4_ttl_exceeded")
+            .await?
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_hop_limit_exceeded() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let ingress = PhysPort(10);
+    let egress = PhysPort(14);
+    let port_mac = "a8:40:25:00:00:0c".parse::<MacAddr>()?;
+
+    let orig_src =
+        Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0202::4", 3333)
+            .unwrap();
+    let orig_dst =
+        Endpoint::parse("e0:d5:5e:67:89:ac", "fd00:1122:3344:0101::5", 4444)
+            .unwrap();
+
+    let (port_id, link_id) = switch.link_id(ingress).unwrap();
+    switch
+        .client
+        .link_mac_set(&port_id, &link_id, &port_mac.into())
+        .await
+        .unwrap();
+
+    common::set_route_ipv6(switch, "::/0", egress, "fd00:1122:7788:0101::1")
+        .await?;
+
+    // build the initial packet and set its ttl to expire in 1 hop
+    let mut send_pkt = common::gen_udp_packet(orig_src, orig_dst);
+    ipv6::Ipv6Hdr::adjust_hlim(&mut send_pkt, -254);
+
+    let mut recv_pkt = send_pkt.clone();
+
+    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress };
+
+    common::set_icmp_needed(
+        switch,
+        &mut recv_pkt,
+        ingress,
+        SERVICE_PORT,
+        icmp::ICMP6_TIME_EXCEEDED,
+        icmp::ICMP6_TIME_EXCEED_TRANSIT,
+    );
+    let expected =
+        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
+
+    assert!(
+        one_counted_test(switch, send, Some(expected), "ipv6_ttl_exceeded")
             .await?
     );
 
