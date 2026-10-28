@@ -7,11 +7,15 @@
 //! Public types for multicast group management introduced in the
 //! `MCAST_STRICT_UNDERLAY` version.
 
+use std::fmt;
 use std::net::{IpAddr, Ipv6Addr};
+use std::str::FromStr;
 
+use oxnet::Ipv6Net;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::impls::mcast::IPV6_ADMIN_SCOPED_MULTICAST_PREFIX;
 use crate::v1;
 use crate::v1::mcast::{
     ExternalForwarding, InternalForwarding, MulticastGroupId,
@@ -19,6 +23,14 @@ use crate::v1::mcast::{
 };
 use crate::v7;
 use crate::v7::mcast::IpSrc;
+
+/// Underlay multicast subnet (`ff04::/64`).
+///
+/// See [`UnderlayMulticastIpv6`] for its role.
+pub const UNDERLAY_MULTICAST_SUBNET: Ipv6Net = Ipv6Net::new_unchecked(
+    Ipv6Addr::new(IPV6_ADMIN_SCOPED_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 0),
+    64,
+);
 
 /// A validated underlay multicast IPv6 address.
 ///
@@ -39,10 +51,34 @@ use crate::v7::mcast::IpSrc;
     JsonSchema,
 )]
 #[serde(try_from = "Ipv6Addr", into = "Ipv6Addr")]
-pub struct UnderlayMulticastIpv6(pub(crate) Ipv6Addr);
+pub struct UnderlayMulticastIpv6(Ipv6Addr);
+
+impl UnderlayMulticastIpv6 {
+    /// Create a new `UnderlayMulticastIpv6` if the address is within the
+    /// underlay multicast subnet (`ff04::/64`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnderlayMulticastError::InvalidUnderlayMulticastIp`] if
+    /// `addr` is outside [`UNDERLAY_MULTICAST_SUBNET`].
+    pub fn new(addr: Ipv6Addr) -> Result<Self, UnderlayMulticastError> {
+        if !UNDERLAY_MULTICAST_SUBNET.contains(addr) {
+            return Err(UnderlayMulticastError::InvalidUnderlayMulticastIp(
+                addr,
+            ));
+        }
+        Ok(Self(addr))
+    }
+
+    /// Return the inner IPv6 address.
+    #[inline]
+    pub const fn ip(&self) -> Ipv6Addr {
+        self.0
+    }
+}
 
 impl TryFrom<Ipv6Addr> for UnderlayMulticastIpv6 {
-    type Error = Error;
+    type Error = UnderlayMulticastError;
 
     fn try_from(addr: Ipv6Addr) -> Result<Self, Self::Error> {
         Self::new(addr)
@@ -52,6 +88,29 @@ impl TryFrom<Ipv6Addr> for UnderlayMulticastIpv6 {
 impl From<UnderlayMulticastIpv6> for Ipv6Addr {
     fn from(addr: UnderlayMulticastIpv6) -> Self {
         addr.0
+    }
+}
+
+impl From<UnderlayMulticastIpv6> for IpAddr {
+    fn from(addr: UnderlayMulticastIpv6) -> Self {
+        IpAddr::V6(addr.0)
+    }
+}
+
+impl fmt::Display for UnderlayMulticastIpv6 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for UnderlayMulticastIpv6 {
+    type Err = UnderlayMulticastParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let addr: Ipv6Addr = s.parse().map_err(|e| {
+            UnderlayMulticastParseError::InvalidIpv6(s.to_string(), e)
+        })?;
+        Ok(Self::new(addr)?)
     }
 }
 
@@ -73,14 +132,25 @@ impl TryFrom<v1::mcast::AdminScopedIpv6> for UnderlayMulticastIpv6 {
     }
 }
 
-#[derive(Clone, Debug, thiserror::Error)]
-pub enum Error {
+/// Errors raised while validating an underlay multicast address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum UnderlayMulticastError {
+    /// The address is outside the underlay multicast subnet (`ff04::/64`).
     #[error(
         "Address {0} is not in underlay multicast subnet (must be ff04::/64)"
     )]
     InvalidUnderlayMulticastIp(Ipv6Addr),
+}
+
+/// Error returned when parsing an [`UnderlayMulticastIpv6`] from a string.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum UnderlayMulticastParseError {
+    /// The string could not be parsed as an IPv6 address.
     #[error("Invalid IPv6 address '{0}': {1}")]
-    InvalidIpv6Address(String, std::net::AddrParseError),
+    InvalidIpv6(String, std::net::AddrParseError),
+    /// The parsed address was outside the underlay multicast subnet.
+    #[error(transparent)]
+    Value(#[from] UnderlayMulticastError),
 }
 
 /// A multicast group configuration for POST requests for internal (to the rack)
@@ -207,6 +277,9 @@ impl From<MulticastGroupResponse> for v7::mcast::MulticastGroupResponse {
     }
 }
 
+/// Maximum length for multicast tags.
+pub const MAX_TAG_LENGTH: usize = 80;
+
 /// Tag for identifying and authorizing multicast group operations.
 ///
 /// Tag format: 1 to 80 ASCII bytes containing alphanumeric characters,
@@ -215,13 +288,73 @@ impl From<MulticastGroupResponse> for v7::mcast::MulticastGroupResponse {
 #[derive(
     Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
 )]
+#[serde(try_from = "String", into = "String")]
 pub struct MulticastTag(
     #[schemars(
         length(min = 1, max = 80),
         regex(pattern = r"^[a-zA-Z0-9_.:-]+$")
     )]
-    pub String,
+    String,
 );
+
+/// Error parsing a multicast tag from a string.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MulticastTagParseError(pub(crate) String);
+
+impl fmt::Display for MulticastTagParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for MulticastTagParseError {}
+
+impl FromStr for MulticastTag {
+    type Err = MulticastTagParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Err(MulticastTagParseError(
+                "tag cannot be empty".to_string(),
+            ));
+        }
+        if s.len() > MAX_TAG_LENGTH {
+            return Err(MulticastTagParseError(format!(
+                "tag cannot exceed {MAX_TAG_LENGTH} bytes"
+            )));
+        }
+        if !s.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'.')
+        }) {
+            return Err(MulticastTagParseError(
+                "tag must contain only ASCII alphanumeric characters, hyphens, \
+                 underscores, colons, or periods"
+                    .to_string(),
+            ));
+        }
+        Ok(MulticastTag(s.to_string()))
+    }
+}
+
+impl AsRef<str> for MulticastTag {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<MulticastTag> for String {
+    fn from(tag: MulticastTag) -> Self {
+        tag.0
+    }
+}
+
+impl TryFrom<String> for MulticastTag {
+    type Error = MulticastTagParseError;
+
+    fn try_from(tag: String) -> Result<Self, Self::Error> {
+        tag.parse()
+    }
+}
 
 /// Path parameter for multicast tag-based operations.
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -231,7 +364,9 @@ pub struct MulticastTagPath {
 
 impl From<v1::misc::TagPath> for MulticastTagPath {
     fn from(path: v1::misc::TagPath) -> Self {
-        Self { tag: path.tag.into() }
+        // Versions before `MCAST_STRICT_UNDERLAY` accept any tag string, and a
+        // malformed one matches against no group.
+        Self { tag: MulticastTag(path.tag) }
     }
 }
 

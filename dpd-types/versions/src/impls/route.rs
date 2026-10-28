@@ -100,31 +100,3 @@ impl From<Ipv6Route> for RouteTarget {
         RouteTarget::V6(route)
     }
 }
-
-impl TryFrom<RouteTarget> for Ipv4Route {
-    type Error = dropshot::HttpError;
-
-    fn try_from(target: RouteTarget) -> Result<Self, Self::Error> {
-        match target {
-            RouteTarget::V4(route) => Ok(route),
-            _ => Err(dropshot::HttpError::for_bad_request(
-                None,
-                "expected an IPv4 route target".to_string(),
-            )),
-        }
-    }
-}
-
-impl TryFrom<RouteTarget> for Ipv6Route {
-    type Error = dropshot::HttpError;
-
-    fn try_from(target: RouteTarget) -> Result<Self, Self::Error> {
-        match target {
-            RouteTarget::V6(route) => Ok(route),
-            _ => Err(dropshot::HttpError::for_bad_request(
-                None,
-                "expected an IPv6 route target".to_string(),
-            )),
-        }
-    }
-}

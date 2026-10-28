@@ -17,8 +17,8 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 use aal::{ActionParse, AsicError};
 use aal_macros::*;
+use dpd_types::mcast::UNDERLAY_MULTICAST_SUBNET;
 use dpd_types::table;
-use omicron_common::address::UNDERLAY_MULTICAST_SUBNET;
 use slog::debug;
 
 use super::{Ipv4MatchKey, Ipv6MatchKey};

@@ -315,7 +315,7 @@ impl TableTest for types::Ipv4Nat {
                 1,
             ),
             inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
-            vni: 0.into(),
+            vni: 0.try_into().unwrap(),
         };
         switch
             .client
@@ -353,7 +353,7 @@ impl TableTest for types::Ipv6Nat {
         let tgt = types::NatTarget {
             internal_ip: "fd00:1122:7788:0101::4".parse::<Ipv6Addr>().unwrap(),
             inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
-            vni: 0.into(),
+            vni: 0.try_into().unwrap(),
         };
         switch
             .client

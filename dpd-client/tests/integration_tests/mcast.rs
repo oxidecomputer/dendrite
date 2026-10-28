@@ -279,7 +279,7 @@ fn create_nat_target_ipv4() -> types::ExternalNatTarget {
     types::ExternalNatTarget {
         internal_ip: MULTICAST_NAT_IP.try_into().unwrap(),
         inner_mac: MacAddr::new(0x11, 0x22, 0x33, 0x44, 0x55, 0x66).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     }
 }
 
@@ -287,7 +287,7 @@ fn create_nat_target_ipv6() -> types::ExternalNatTarget {
     types::ExternalNatTarget {
         internal_ip: MULTICAST_NAT_IP.try_into().unwrap(),
         inner_mac: MacAddr::new(0x11, 0x22, 0x33, 0x44, 0x55, 0x66).into(),
-        vni: 101.into(),
+        vni: 101.try_into().unwrap(),
     }
 }
 
@@ -428,7 +428,7 @@ fn prepare_expected_pkt(
                 )
                 .unwrap(),
                 eth::ETHER_ETHER,
-                *nat.vni,
+                nat.vni.as_u32(),
                 &ingress_payload,
             );
 
@@ -753,7 +753,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
     let nat_target = types::ExternalNatTarget {
         internal_ip: "ff04::200".parse().unwrap(), // References admin-scoped group
         inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x03).into(),
-        vni: 200.into(),
+        vni: 200.try_into().unwrap(),
     };
 
     let external_group = types::MulticastGroupCreateExternalEntry {
@@ -1101,7 +1101,7 @@ async fn test_group_api_lifecycle() {
         internal_ip: MULTICAST_NAT_IP.try_into().unwrap(),
         inner_mac: MacAddr::from(MULTICAST_NAT_IP.derive_multicast_mac())
             .into(),
-        vni: 200.into(),
+        vni: 200.try_into().unwrap(),
     };
 
     let external_update = types::MulticastGroupUpdateExternalEntry {
@@ -2227,7 +2227,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
         )
         .unwrap(),
         eth::ETHER_IPV4,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         0, // mcast_tag = 0
         &payload,
     );
@@ -2406,7 +2406,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
         geneve_src,
         geneve_dst,
         eth::ETHER_IPV4,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         1, // mcast_tag = 1
         &payload,
     );
@@ -2595,7 +2595,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
         )
         .unwrap(),
         eth::ETHER_IPV4,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         2, // mcast_tag = 2
         &payload,
     );
@@ -2834,7 +2834,7 @@ fn build_inner_ttl_geneve_pkt(
         )
         .unwrap(),
         ether_type,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         mcast_tag,
         &payload,
     );
@@ -5278,7 +5278,7 @@ async fn test_external_group_nat_target_validation() -> TestResult {
     let nonexistent_nat_target = types::ExternalNatTarget {
         internal_ip: "ff04::1".parse().unwrap(), // Admin-scoped IPv6 that does not exist
         inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x01).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let group_with_invalid_nat = types::MulticastGroupCreateExternalEntry {
@@ -5344,7 +5344,7 @@ async fn test_external_group_nat_target_validation() -> TestResult {
     let valid_nat_target = types::ExternalNatTarget {
         internal_ip: "ff04::1".parse().unwrap(), // References the admin-scoped group we just created
         inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x02).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let group_with_valid_nat = types::MulticastGroupCreateExternalEntry {
@@ -5384,7 +5384,7 @@ async fn test_external_group_nat_target_validation() -> TestResult {
                     internal_ip: "ff04::2".parse().unwrap(),
                     inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x03)
                         .into(),
-                    vni: 101.into(),
+                    vni: 101.try_into().unwrap(),
                 },
             },
             external_forwarding: types::ExternalForwarding {
@@ -5760,7 +5760,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     let nat_target = types::ExternalNatTarget {
         internal_ip: ipv6.try_into().unwrap(),
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x00, 0x00, 0x01).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let external_group = types::MulticastGroupCreateExternalEntry {
@@ -5843,7 +5843,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         )
         .unwrap(),
         eth::ETHER_IPV6,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
         &payload,
     );
@@ -5971,7 +5971,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         )
         .unwrap(),
         eth::ETHER_IPV6,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
         &payload2,
     );
@@ -6165,7 +6165,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
             _ => panic!("Expected IPv6 address"),
         },
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x02, 0x64).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let external_group = types::MulticastGroupCreateExternalEntry {
@@ -6248,7 +6248,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         )
         .unwrap(),
         eth::ETHER_IPV4,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
         &payload,
     );
@@ -6371,7 +6371,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         )
         .unwrap(),
         eth::ETHER_IPV4,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
         &payload2,
     );
@@ -6570,7 +6570,7 @@ async fn test_multicast_create_missing_nat_target_preserves_state() -> TestResul
     let nat_target = types::ExternalNatTarget {
         internal_ip: invalid_internal_ip.try_into().unwrap(),
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x02, 0x66).into(),
-        vni: 200.into(),
+        vni: 200.try_into().unwrap(),
     };
 
     let external_entry = types::MulticastGroupCreateExternalEntry {
@@ -6793,7 +6793,7 @@ async fn test_multicast_update_invalid_nat_mac_preserves_state() -> TestResult {
             _ => panic!("Expected IPv6 address"),
         },
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x02, 0x68).into(),
-        vni: 104.into(),
+        vni: 104.try_into().unwrap(),
     };
 
     let external_entry = types::MulticastGroupCreateExternalEntry {
@@ -6834,7 +6834,7 @@ async fn test_multicast_update_invalid_nat_mac_preserves_state() -> TestResult {
         },
         // Invalid MAC (not multicast)
         inner_mac: MacAddr::new(0x02, 0x00, 0x00, 0x00, 0x00, 0x00).into(),
-        vni: 300.into(),
+        vni: 300.try_into().unwrap(),
     };
 
     let invalid_update = types::MulticastGroupUpdateExternalEntry {
@@ -6926,7 +6926,7 @@ async fn test_multicast_update_invalid_source_preserves_state() -> TestResult {
     let nat_target = types::ExternalNatTarget {
         internal_ip: MULTICAST_NAT_IP.try_into().unwrap(),
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x01, 0x64).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     // Create initial SSM group with source filters
@@ -7260,7 +7260,7 @@ async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
             _ => panic!("Expected IPv6"),
         },
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x01, 0x64).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     // Get baseline source filter table state
@@ -7376,7 +7376,7 @@ async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
             _ => panic!("Expected IPv6"),
         },
         inner_mac: MacAddr::new(0x33, 0x33, 0x00, 0x00, 0x01, 0x00).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let baseline_table = switch
@@ -7489,7 +7489,7 @@ async fn test_source_filter_update_to_any() -> TestResult {
             _ => panic!("Expected IPv6"),
         },
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x01, 0x65).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let baseline_table = switch
@@ -7616,7 +7616,7 @@ async fn test_source_filter_cleanup_on_delete() -> TestResult {
             _ => panic!("Expected IPv6"),
         },
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x01, 0x66).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let baseline_table = switch
@@ -7716,7 +7716,7 @@ async fn test_source_filter_empty_vec_normalizes_to_any() -> TestResult {
             _ => panic!("Expected IPv6"),
         },
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x01, 0x67).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let baseline_table = switch
@@ -7830,7 +7830,7 @@ async fn test_update_nonexistent_group_returns_404() -> TestResult {
             nat_target: types::ExternalNatTarget {
                 internal_ip: "ff04::1".parse().unwrap(),
                 inner_mac: MacAddr::new(1, 0, 94, 0, 0, 1).into(),
-                vni: 100.into(),
+                vni: 100.try_into().unwrap(),
             },
         },
 
