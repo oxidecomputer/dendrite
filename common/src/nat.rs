@@ -12,9 +12,9 @@ mod tests {
 
     #[test]
     fn test_vni() {
-        assert!(Vni::new(u32::MAX).is_none());
-        assert!(Vni::new(0).is_some());
-        assert!(Vni::new(Vni::MAX_VNI).is_some());
-        assert!(Vni::new(Vni::MAX_VNI + 1).is_none());
+        assert!(Vni::new(u32::MAX).is_err());
+        assert!(Vni::new(0).is_ok());
+        assert!(Vni::new(Vni::MAX_VNI).is_ok());
+        assert!(Vni::new(Vni::MAX_VNI + 1).is_err());
     }
 }

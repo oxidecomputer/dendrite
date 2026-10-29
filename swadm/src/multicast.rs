@@ -259,7 +259,9 @@ impl fmt::Display for ExternalSummary<'_> {
         write!(
             f,
             "nat={} mac={} vni={}",
-            nat_target.internal_ip, nat_target.inner_mac, *nat_target.vni,
+            nat_target.internal_ip,
+            nat_target.inner_mac,
+            nat_target.vni.as_u32(),
         )?;
         match self.external_forwarding.vlan_id {
             Some(v) => write!(f, " vlan={v}")?,
@@ -404,7 +406,7 @@ async fn multicast_add(client: &Client, args: AddArgs) -> anyhow::Result<()> {
             nat_target: types::ExternalNatTarget {
                 internal_ip: underlay,
                 inner_mac: inner_mac.into(),
-                vni: types::Vni::from(vni),
+                vni,
             },
         },
         external_forwarding: types::ExternalForwarding { vlan_id: vlan },
@@ -601,7 +603,9 @@ async fn multicast_get(
             writeln!(
                 &mut tw,
                 "NAT target:\t{} (mac {}, vni {})",
-                nat_target.internal_ip, nat_target.inner_mac, *nat_target.vni,
+                nat_target.internal_ip,
+                nat_target.inner_mac,
+                nat_target.vni.as_u32(),
             )?;
             match external_forwarding.vlan_id {
                 Some(v) => writeln!(&mut tw, "VLAN:\t{v}")?,
@@ -651,7 +655,7 @@ mod tests {
                 nat_target: types::ExternalNatTarget {
                     internal_ip: "ff04::1".parse()?,
                     inner_mac: "11:22:33:44:55:66".parse::<MacAddr>()?.into(),
-                    vni: types::Vni::from(77_u32),
+                    vni: Vni::new(77)?,
                 },
             },
             external_forwarding: types::ExternalForwarding {

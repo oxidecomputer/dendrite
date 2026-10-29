@@ -146,28 +146,8 @@ parser IngressParser(
 
 		transition select(hdr.ipv4.dst_addr[31:28]) {
 			4w0xe: set_mcast_ipv4;
-			default: validate_ttl;
-		}
-	}
-
-	state validate_ttl {
-		transition select(hdr.ipv4.ttl) {
-			8w0: defer_ttl_drop;
 			default: goto_proto_ipv4;
 		}
-	}
-
-	// Records the TTL drop reason without setting `meta.dropped`. A packet
-	// addressed to the switch must still be received (RFC 1812 §4.2.2.9), and
-	// whether the destination is a switch address depends on Filter's switch
-	// address tables, which run after the parser.
-	//
-	// NatIngress and Router4/Router6 drop on the forwarding paths, although
-	// the NAT egress (Geneve decap) path is exempt from a Router4/Router6 drop
-	// and still punts for an inner TTL of 0.
-	state defer_ttl_drop {
-		meta.drop_reason = DROP_IPV4_TTL_INVALID;
-		transition goto_proto_ipv4;
 	}
 
 	state set_mcast_ipv4 {
@@ -238,7 +218,7 @@ parser IngressParser(
 	state set_link_local_mcast {
 		meta.is_link_local_mcastv6 = true;
 		meta.is_mcast = true;
-		transition validate_hop_limit;
+		transition goto_proto_ipv6;
 	}
 
 	state check_ipv6_mcast {
@@ -246,21 +226,8 @@ parser IngressParser(
 		// (ff00::/8) and if the MAC address is in the correct format.
 		transition select(hdr.ipv6.dst_addr[127:120]) {
 			8w0xff: set_mcast_ipv6;
-			default: validate_hop_limit;
-		}
-	}
-
-	state validate_hop_limit {
-		transition select(hdr.ipv6.hop_limit) {
-			8w0: defer_hop_limit_drop;
 			default: goto_proto_ipv6;
 		}
-	}
-
-	// Similar to `defer_ttl_drop`, but for IPv6 (RFC 8200 §3).
-	state defer_hop_limit_drop {
-		meta.drop_reason = DROP_IPV6_TTL_INVALID;
-		transition goto_proto_ipv6;
 	}
 
 	state validate_mcast_hop_limit {

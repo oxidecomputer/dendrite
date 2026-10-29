@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use dpd_types_versions::{latest, v1, v4, v7, v8, v9, v14};
+use dpd_types_versions::{latest, v1, v3, v4, v7, v8, v9, v14};
 use dropshot::{
     EmptyScanParams, HttpError, HttpResponseCreated, HttpResponseDeleted,
     HttpResponseOk, HttpResponseUpdatedNoContent, PaginationParams, Path,
@@ -1314,6 +1314,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/nat/ipv6/{ipv6}",
+        versions = VERSION_MCAST_EXTERNAL_SCOPE..,
     }]
     async fn nat_ipv6_list(
         rqctx: RequestContext<Self::Context>,
@@ -1322,17 +1323,57 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<ResultsPage<latest::nat::Ipv6Nat>>, HttpError>;
 
     /**
+     * Get all of the external->internal NAT mappings for a given address.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/nat/ipv6/{ipv6}",
+        versions = ..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "nat_ipv6_list",
+    }]
+    async fn nat_ipv6_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::nat::NatIpv6Path>,
+        query: Query<PaginationParams<EmptyScanParams, v1::nat::NatToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<v1::nat::Ipv6Nat>>, HttpError> {
+        let HttpResponseOk(page) =
+            Self::nat_ipv6_list(rqctx, path, query).await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
+    }
+
+    /**
      * Get the external->internal NAT mapping for the given address and starting L3
      * port.
      */
     #[endpoint {
         method = GET,
         path = "/nat/ipv6/{ipv6}/{low}",
+        versions = VERSION_MCAST_EXTERNAL_SCOPE..,
     }]
     async fn nat_ipv6_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::nat::NatIpv6PortPath>,
     ) -> Result<HttpResponseOk<latest::network::NatTarget>, HttpError>;
+
+    /**
+     * Get the external->internal NAT mapping for the given address and starting L3
+     * port.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/nat/ipv6/{ipv6}/{low}",
+        versions = ..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "nat_ipv6_get",
+    }]
+    async fn nat_ipv6_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::nat::NatIpv6PortPath>,
+    ) -> Result<HttpResponseOk<v1::network::NatTarget>, HttpError> {
+        Self::nat_ipv6_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+    }
 
     /**
      * Add an external->internal NAT mapping for the given address and L3 port
@@ -1349,13 +1390,41 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = PUT,
-        path = "/nat/ipv6/{ipv6}/{low}/{high}"
+        path = "/nat/ipv6/{ipv6}/{low}/{high}",
+        versions = VERSION_MCAST_EXTERNAL_SCOPE..,
     }]
     async fn nat_ipv6_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::nat::NatIpv6RangePath>,
         target: TypedBody<latest::network::NatTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Add an external->internal NAT mapping for the given address and L3 port
+     * range.
+     *
+     * This maps an external IPv6 address and L3 port range to:
+     *  - A gimlet's IPv6 address
+     *  - A gimlet's MAC address
+     *  - A Geneve VNI
+     *
+     * These identify the gimlet on which a guest is running, and gives OPTE the
+     * information it needs to  identify the guest VM that uses the external IPv6
+     * and port range when making connections outside of an Oxide rack.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/nat/ipv6/{ipv6}/{low}/{high}",
+        versions = ..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "nat_ipv6_create",
+    }]
+    async fn nat_ipv6_create_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::nat::NatIpv6RangePath>,
+        target: TypedBody<v1::network::NatTarget>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::nat_ipv6_create(rqctx, path, target.map(Into::into)).await
+    }
 
     /**
      * Delete the NAT mapping for an IPv6 address and starting L3 port.
@@ -1398,6 +1467,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/nat/ipv4/{ipv4}",
+        versions = VERSION_MCAST_EXTERNAL_SCOPE..,
     }]
     async fn nat_ipv4_list(
         rqctx: RequestContext<Self::Context>,
@@ -1406,16 +1476,55 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<ResultsPage<latest::nat::Ipv4Nat>>, HttpError>;
 
     /**
+     * Get all of the external->internal NAT mappings for a given IPv4 address.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/nat/ipv4/{ipv4}",
+        versions = ..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "nat_ipv4_list",
+    }]
+    async fn nat_ipv4_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::nat::NatIpv4Path>,
+        query: Query<PaginationParams<EmptyScanParams, v1::nat::NatToken>>,
+    ) -> Result<HttpResponseOk<ResultsPage<v1::nat::Ipv4Nat>>, HttpError> {
+        let HttpResponseOk(page) =
+            Self::nat_ipv4_list(rqctx, path, query).await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
+    }
+
+    /**
      * Get the external->internal NAT mapping for the given address/port
      */
     #[endpoint {
         method = GET,
         path = "/nat/ipv4/{ipv4}/{low}",
+        versions = VERSION_MCAST_EXTERNAL_SCOPE..,
     }]
     async fn nat_ipv4_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::nat::NatIpv4PortPath>,
     ) -> Result<HttpResponseOk<latest::network::NatTarget>, HttpError>;
+
+    /**
+     * Get the external->internal NAT mapping for the given address/port
+     */
+    #[endpoint {
+        method = GET,
+        path = "/nat/ipv4/{ipv4}/{low}",
+        versions = ..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "nat_ipv4_get",
+    }]
+    async fn nat_ipv4_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::nat::NatIpv4PortPath>,
+    ) -> Result<HttpResponseOk<v1::network::NatTarget>, HttpError> {
+        Self::nat_ipv4_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+    }
 
     /**
      * Add an external->internal NAT mapping for the given address/port range
@@ -1432,13 +1541,40 @@ pub trait DpdApi {
 
     #[endpoint {
         method = PUT,
-        path = "/nat/ipv4/{ipv4}/{low}/{high}"
+        path = "/nat/ipv4/{ipv4}/{low}/{high}",
+        versions = VERSION_MCAST_EXTERNAL_SCOPE..,
     }]
     async fn nat_ipv4_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::nat::NatIpv4RangePath>,
         target: TypedBody<latest::network::NatTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Add an external->internal NAT mapping for the given address/port range
+     *
+     * This maps an external IPv6 address and L3 port range to:
+     *  - A gimlet's IPv6 address
+     *  - A gimlet's MAC address
+     *  - A Geneve VNI
+     *
+     * These identify the gimlet on which a guest is running, and gives OPTE the
+     * information it needs to  identify the guest VM that uses the external IPv6
+     * and port range when making connections outside of an Oxide rack.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/nat/ipv4/{ipv4}/{low}/{high}",
+        versions = ..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "nat_ipv4_create",
+    }]
+    async fn nat_ipv4_create_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::nat::NatIpv4RangePath>,
+        target: TypedBody<v1::network::NatTarget>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::nat_ipv4_create(rqctx, path, target.map(Into::into)).await
+    }
 
     /**
      * Clear the NAT mappings for an IPv4 address and starting L3 port.
@@ -1469,7 +1605,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/attached_subnet",
-        versions = VERSION_ATTACHED_SUBNETS..,
+        versions = VERSION_MCAST_EXTERNAL_SCOPE..,
     }]
     async fn attached_subnet_list(
         rqctx: RequestContext<Self::Context>,
@@ -1487,17 +1623,61 @@ pub trait DpdApi {
     >;
 
     /**
+     * Get all of the external subnets with internal mappings
+     */
+    #[endpoint {
+        method = GET,
+        path = "/attached_subnet",
+        versions = VERSION_ATTACHED_SUBNETS..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "attached_subnet_list",
+    }]
+    async fn attached_subnet_list_v3(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<
+            PaginationParams<EmptyScanParams, v3::route::AttachedSubnetToken>,
+        >,
+    ) -> Result<
+        HttpResponseOk<ResultsPage<v3::attached_subnet::AttachedSubnetEntry>>,
+        HttpError,
+    > {
+        let HttpResponseOk(page) =
+            Self::attached_subnet_list(rqctx, query).await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
+    }
+
+    /**
      * Get the mapping for the given external subnet.
      */
     #[endpoint {
         method = GET,
         path = "/attached_subnet/{subnet}",
-        versions = VERSION_ATTACHED_SUBNETS..,
+        versions = VERSION_MCAST_EXTERNAL_SCOPE..,
     }]
     async fn attached_subnet_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::route::SubnetPath>,
     ) -> Result<HttpResponseOk<latest::network::InstanceTarget>, HttpError>;
+
+    /**
+     * Get the mapping for the given external subnet.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/attached_subnet/{subnet}",
+        versions = VERSION_ATTACHED_SUBNETS..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "attached_subnet_get",
+    }]
+    async fn attached_subnet_get_v3(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v3::route::SubnetPath>,
+    ) -> Result<HttpResponseOk<v3::network::InstanceTarget>, HttpError> {
+        Self::attached_subnet_get(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
 
     /**
      * Add a mapping to an internal target for an external subnet address.
@@ -1509,13 +1689,34 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/attached_subnet/{subnet}",
-        versions = VERSION_ATTACHED_SUBNETS..,
+        versions = VERSION_MCAST_EXTERNAL_SCOPE..,
     }]
     async fn attached_subnet_create(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::route::SubnetPath>,
         target: TypedBody<latest::network::InstanceTarget>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Add a mapping to an internal target for an external subnet address.
+     *
+     * These identify the gimlet on which a guest is running, and gives OPTE the
+     * information it needs to  identify the guest VM that uses the external
+     * subnet.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/attached_subnet/{subnet}",
+        versions = VERSION_ATTACHED_SUBNETS..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "attached_subnet_create",
+    }]
+    async fn attached_subnet_create_v3(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v3::route::SubnetPath>,
+        target: TypedBody<v3::network::InstanceTarget>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::attached_subnet_create(rqctx, path, target.map(Into::into)).await
+    }
 
     /**
      * Delete the mapping for an external subnet
@@ -1977,8 +2178,8 @@ pub trait DpdApi {
      * including admin-local, except for the reserved underlay subnet of
      * ff04::/64, which belongs specifically to the internal multicast API.
      *
-     * The request body is decoded into either an ASM or SSM-classified
-     * request with validation running on the group address and source list.
+     * The group address determines whether the group is any-source (ASM) or
+     * source-specific (SSM). An SSM group requires at least one exact source.
      *
      * These groups do not carry member subscribers, as membership lives
      * only on the underlay group mapped to by the required NAT target.
@@ -2345,8 +2546,7 @@ pub trait DpdApi {
      * including admin-local, except for the reserved underlay subnet of
      * ff04::/64, which belongs to the internal multicast API.
      *
-     * The path address is checked as an external multicast address before the
-     * handler runs.
+     * The path address must be a valid external multicast address.
      *
      * Omitting `sources` preserves the group's existing source filter.
      *

@@ -219,40 +219,69 @@ impl From<u64> for MacAddr {
     Serialize,
 )]
 #[serde(try_from = "u32")]
-pub struct Vni(pub(crate) u32);
+pub struct Vni(u32);
+
+/// Error raised while validating a [`Vni`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum VniError {
+    /// The value exceeds the 24-bit Geneve maximum.
+    #[error(
+        "VNI {value} exceeds the maximum 24-bit value {max}",
+        max = Vni::MAX_VNI
+    )]
+    OutOfRange { value: u32 },
+}
+
+/// Error returned when parsing a [`Vni`] from a string.
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum VniParseError {
+    /// The string could not be parsed as a `u32`.
+    #[error("Invalid VNI '{0}': {1}")]
+    InvalidInt(String, std::num::ParseIntError),
+    /// The parsed integer was out of range.
+    #[error(transparent)]
+    Value(#[from] VniError),
+}
 
 impl Vni {
     pub const MAX_VNI: u32 = 0x00FF_FFFF;
-    const ERR_MSG: &'static str = "VNI out of 24-bit range";
 
     /// Construct a new VNI, validating that it's a valid 24-bit value.
-    pub const fn new(vni: u32) -> Option<Self> {
-        // bool.then_some is not const, unforunately
-        if vni <= Self::MAX_VNI { Some(Self(vni)) } else { None }
+    pub const fn new(vni: u32) -> Result<Self, VniError> {
+        if vni > Self::MAX_VNI {
+            return Err(VniError::OutOfRange { value: vni });
+        }
+        Ok(Self(vni))
     }
 
     /// Return the VNI as a u32.
-    pub const fn as_u32(&self) -> u32 {
+    pub const fn as_u32(self) -> u32 {
         self.0
     }
 }
 
 impl core::convert::TryFrom<u32> for Vni {
-    type Error = &'static str;
+    type Error = VniError;
 
     fn try_from(vni: u32) -> Result<Self, Self::Error> {
-        Self::new(vni).ok_or(Self::ERR_MSG)
+        Self::new(vni)
+    }
+}
+
+impl From<Vni> for u32 {
+    fn from(vni: Vni) -> Self {
+        vni.0
     }
 }
 
 impl core::str::FromStr for Vni {
-    type Err = &'static str;
+    type Err = VniParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.parse::<u32>().map(Vni::new) {
-            Err(_) | Ok(None) => Err(Self::ERR_MSG),
-            Ok(Some(vni)) => Ok(vni),
-        }
+        let vni = s
+            .parse::<u32>()
+            .map_err(|e| VniParseError::InvalidInt(s.to_string(), e))?;
+        Ok(Self::new(vni)?)
     }
 }
 

@@ -39,3 +39,26 @@ impl From<InstanceTarget> for NatTarget {
         }
     }
 }
+
+#[cfg(test)]
+mod proptests;
+
+#[cfg(test)]
+mod tests {
+    use crate::latest::network::Vni;
+    use crate::v1;
+
+    #[test]
+    fn vni_schema_bounds() {
+        let latest = serde_json::to_value(schemars::schema_for!(Vni)).unwrap();
+        assert_eq!(latest["type"], "integer");
+        assert_eq!(latest["format"], "uint32");
+        assert_eq!(latest["minimum"].as_f64(), Some(0.0));
+        assert_eq!(latest["maximum"].as_f64(), Some(f64::from(Vni::MAX_VNI)));
+
+        let v1 = serde_json::to_value(schemars::schema_for!(v1::network::Vni))
+            .unwrap();
+        assert_eq!(v1["type"], "integer");
+        assert!(v1.get("maximum").is_none(), "{v1}");
+    }
+}
