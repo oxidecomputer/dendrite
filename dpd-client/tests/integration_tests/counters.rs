@@ -20,9 +20,11 @@ use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
 use crate::integration_tests::icmp_ipv4;
 use ::common::network::MacAddr;
+use ::common::network::Vni;
 use dpd_client::ClientInfo;
 use dpd_client::types::Ipv4Entry;
 use dpd_client::types::Ipv6Entry;
+use dpd_client::types::NatTarget;
 
 // Interval and attempt count for polling a counter until it reaches an
 // expected value.
@@ -232,6 +234,42 @@ async fn test_ipv4_ttl_test(ttl: u8, reason: &str) -> TestResult {
 #[ignore]
 async fn test_ipv4_ttl_invalid() -> TestResult {
     test_ipv4_ttl_test(0, "ipv4_ttl_invalid").await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_ipv4_ttl_invalid_nat_ingress() -> TestResult {
+    let switch = &*get_switch().await;
+    let ingress = PhysPort(14);
+    let nat_ip = "192.168.1.2";
+    let nat_port = 2000;
+
+    let tgt = NatTarget {
+        internal_ip: "fd00:1122:7788:0101::4".parse().unwrap(),
+        inner_mac: "04:01:01:01:01:01".parse::<MacAddr>()?.into(),
+        vni: Vni::new(7654).unwrap().into(),
+    };
+    switch
+        .client
+        .nat_ipv4_create(&nat_ip.parse().unwrap(), 1024, 2048, &tgt)
+        .await
+        .unwrap();
+
+    let mut packet = common::gen_udp_packet(
+        Endpoint::parse("02:aa:bb:cc:dd:ee", "10.10.10.32", 4444).unwrap(),
+        Endpoint::parse(
+            &switch.get_port_mac(ingress).unwrap().to_string(),
+            nat_ip,
+            nat_port,
+        )
+        .unwrap(),
+    );
+    packet.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_ttl = 0;
+    packet::ipv4::Ipv4Hdr::update_checksum(&mut packet);
+
+    assert!(one_drop_test(switch, ingress, packet, "ipv4_ttl_invalid").await?);
+
+    Ok(())
 }
 
 /// Set a port to accept only inbound traffic with a corresponding NAT mapping.

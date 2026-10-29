@@ -10,6 +10,7 @@ use std::sync::Arc;
 use ::common::network::MacAddr;
 use dpd_client::ClientInfo;
 use dpd_client::types::Ipv4Entry;
+use dpd_client::types::Ipv6Entry;
 use packet::{Endpoint, eth, icmp, ipv4, ipv6, sidecar};
 
 use crate::integration_tests::common;
@@ -57,6 +58,102 @@ async fn test_service_ipv4_unicast() -> TestResult {
         TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
     switch.packet_test(vec![send], vec![expected])
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_service_ipv4_unicast_ttl_zero() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let ingress = PhysPort(12);
+    let router_ip = "10.10.10.1";
+    let router_mac = "02:78:39:45:b9:00";
+
+    let (port_id, link_id) = switch.link_id(ingress).unwrap();
+    let entry = Ipv4Entry {
+        addr: router_ip.parse().unwrap(),
+        tag: switch.client.inner().tag.clone(),
+    };
+    switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
+
+    let mut send_pkt = common::gen_udp_packet(
+        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
+        Endpoint::parse(router_mac, router_ip, 4444).unwrap(),
+    );
+    send_pkt.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_ttl = 0;
+    ipv4::Ipv4Hdr::update_checksum(&mut send_pkt);
+    let mut recv_pkt = send_pkt.clone();
+
+    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress };
+
+    common::add_sidecar_hdr(
+        switch,
+        &mut recv_pkt,
+        sidecar::SC_FWD_TO_USERSPACE,
+        ingress,
+        NO_PORT,
+        None,
+    );
+    let expected =
+        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
+
+    let ctr_baseline =
+        switch.get_counter("ipv4_ttl_invalid", None).await.unwrap();
+
+    let result = switch.packet_test(vec![send], vec![expected]);
+
+    let ctr_final = switch.get_counter("ipv4_ttl_invalid", None).await.unwrap();
+    assert_eq!(ctr_final, ctr_baseline, "ttl 0 to a switch address");
+
+    result
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_service_ipv6_unicast_hop_limit_zero() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let ingress = PhysPort(12);
+    let router_ip = "fd00:1122:3344:0100::1";
+    let router_mac = "02:78:39:45:b9:00";
+
+    let (port_id, link_id) = switch.link_id(ingress).unwrap();
+    let entry = Ipv6Entry {
+        addr: router_ip.parse().unwrap(),
+        tag: switch.client.inner().tag.clone(),
+    };
+    switch.client.link_ipv6_create(&port_id, &link_id, &entry).await.unwrap();
+
+    let mut send_pkt = common::gen_udp_packet(
+        Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:3344:0200::1", 3333)
+            .unwrap(),
+        Endpoint::parse(router_mac, router_ip, 4444).unwrap(),
+    );
+    ipv6::Ipv6Hdr::adjust_hlim(&mut send_pkt, -255);
+    let mut recv_pkt = send_pkt.clone();
+
+    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress };
+
+    common::add_sidecar_hdr(
+        switch,
+        &mut recv_pkt,
+        sidecar::SC_FWD_TO_USERSPACE,
+        ingress,
+        NO_PORT,
+        None,
+    );
+    let expected =
+        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
+
+    let ctr_baseline =
+        switch.get_counter("ipv6_ttl_invalid", None).await.unwrap();
+
+    let result = switch.packet_test(vec![send], vec![expected]);
+
+    let ctr_final = switch.get_counter("ipv6_ttl_invalid", None).await.unwrap();
+    assert_eq!(ctr_final, ctr_baseline, "hop limit 0 to a switch address");
+
+    result
 }
 
 // Packets sent to an IP address assigned to a switch port should be forwarded
@@ -319,7 +416,7 @@ async fn test_ttl_exceeded() -> TestResult {
         switch,
         &mut recv_pkt,
         ingress,
-        SERVICE_PORT,
+        NO_PORT,
         icmp::ICMP_TIME_EXCEEDED,
         icmp::ICMP_EXC_TTL,
     );

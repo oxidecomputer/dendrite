@@ -567,6 +567,45 @@ async fn test_ipv6_link_local_multicast_hop_limit_one() -> TestResult {
 
 #[tokio::test]
 #[ignore]
+async fn test_ipv6_link_local_mcast_hop_limit_zero() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let ingress = PhysPort(10);
+
+    let src = Endpoint::parse("e0:d5:5e:67:89:ab", "fe80::1", 3333).unwrap();
+    let dst = Endpoint::parse("33:33:00:00:00:01", "ff02::1", 4444).unwrap();
+
+    let mut send = common::gen_udp_packet(src, dst);
+    ipv6::Ipv6Hdr::adjust_hlim(&mut send, -255);
+
+    let test_pkt = TestPacket { packet: Arc::new(send.clone()), port: ingress };
+
+    let mut recv = send.clone();
+    common::add_sidecar_hdr(
+        switch,
+        &mut recv,
+        sidecar::SC_FWD_TO_USERSPACE,
+        ingress,
+        NO_PORT,
+        None,
+    );
+
+    let expected =
+        vec![TestPacket { packet: Arc::new(recv), port: SERVICE_PORT }];
+
+    let ctr_baseline =
+        switch.get_counter("ipv6_ttl_invalid", None).await.unwrap();
+
+    let result = switch.packet_test(vec![test_pkt], expected);
+
+    let ctr_final = switch.get_counter("ipv6_ttl_invalid", None).await.unwrap();
+    assert_eq!(ctr_final, ctr_baseline, "link-local mcast at hop limit 0");
+
+    result
+}
+
+#[tokio::test]
+#[ignore]
 async fn test_reset() -> TestResult {
     let switch = &*get_switch().await;
 
