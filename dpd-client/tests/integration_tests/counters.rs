@@ -11,7 +11,9 @@
 
 use std::net::Ipv4Addr;
 use std::sync::Arc;
+use std::time::Duration;
 
+use anyhow::bail;
 use packet::Endpoint;
 
 use crate::integration_tests::common;
@@ -21,6 +23,13 @@ use ::common::network::MacAddr;
 use dpd_client::ClientInfo;
 use dpd_client::types::Ipv4Entry;
 use dpd_client::types::Ipv6Entry;
+
+// Interval and attempt count for polling a counter until it reaches an
+// expected value.
+//
+// Note: counter updates from the model can lag the packet itself.
+const COUNTER_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const COUNTER_POLL_ATTEMPTS: usize = 20;
 
 /// Awaits an increase in a given counter's value from `baseline` to
 /// `baseline + increment`.
@@ -33,6 +42,12 @@ pub async fn check_counter_incremented(
     expected_increment: u64,
     client_name: Option<&str>,
 ) -> anyhow::Result<u64> {
+    let expected = baseline + expected_increment;
+    let table = client_name.unwrap_or("ingress_drop_reason");
+    let incr_expect = format!(
+        "counter '{counter_name}' in {table} expected to increase by \
+         {expected_increment} ({baseline} -> {expected})"
+    );
     let mut new_value = 0;
 
     // Briefly delay before reading the counter each time, as there is
@@ -40,25 +55,23 @@ pub async fn check_counter_incremented(
     // simulator and when that updated value is available to the SDE.  To
     // avoid a long pointless delay here, we try multiple times with a short
     // sleep rather than once with a long sleep.
-    for _ in 0..20 {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        new_value =
-            switch.get_counter(counter_name, client_name).await.unwrap();
+    for _ in 0..COUNTER_POLL_ATTEMPTS {
+        tokio::time::sleep(COUNTER_POLL_INTERVAL).await;
+        new_value = switch.get_counter(counter_name, client_name).await?;
 
-        if new_value == baseline + expected_increment {
+        if new_value == expected {
             return Ok(new_value);
+        }
+        if new_value > expected {
+            bail!("{incr_expect}, but overshot to {new_value}");
         }
     }
 
     // Counter didn't increment as expected.
-    Err(anyhow::anyhow!(
-        "Counter '{}' expected to increase by {} (from {} to {}), but only reached {}",
-        counter_name,
-        expected_increment,
-        baseline,
-        baseline + expected_increment,
-        new_value
-    ))
+    bail!(
+        "{incr_expect}, but reached {new_value} after \
+         {COUNTER_POLL_ATTEMPTS} polls"
+    )
 }
 
 /// Process a single packet, asserting that a given counter is incremented by
@@ -68,10 +81,11 @@ pub async fn one_counted_test(
     packet: TestPacket,
     packet_after: Option<TestPacket>,
     counter: &str,
+    client_name: Option<&str>,
 ) -> anyhow::Result<bool> {
-    let old = switch.get_counter(counter, None).await?;
+    let old = switch.get_counter(counter, client_name).await?;
     switch.packet_test(vec![packet], packet_after.into_iter().collect())?;
-    check_counter_incremented(switch, counter, old, 1, None)
+    check_counter_incremented(switch, counter, old, 1, client_name)
         .await
         .map(|new| old + 1 == new)
 }
@@ -89,6 +103,7 @@ async fn one_drop_test(
         TestPacket { packet: Arc::new(packet), port },
         None,
         counter,
+        None,
     )
     .await
 }
