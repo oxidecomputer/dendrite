@@ -43,7 +43,7 @@ const RETRY_INTERVAL: Duration = Duration::from_millis(200);
 const RETRY_MAX: Duration = Duration::from_secs(90);
 
 /// A `LinkCreate` config with common defaults.
-const LINK_CREATE: LinkCreate = LinkCreate {
+const TEST_LINK_CONF: LinkCreate = LinkCreate {
     lane: None,
     autoneg: false,
     kr: false,
@@ -73,7 +73,7 @@ async fn test_basic_autoneg_chaos() -> anyhow::Result<()> {
     let (_guard, client) = init_harness(fname!(), &config);
 
     let err = client
-        .link_create(&QSFP0, &LINK_CREATE)
+        .link_create(&QSFP0, &TEST_LINK_CONF)
         .await
         .expect_err("Expected error on create");
 
@@ -101,7 +101,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LINK_CREATE,
+            params: TEST_LINK_CONF,
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
     );
@@ -131,7 +131,7 @@ async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate { kr: true, ..LINK_CREATE },
+            params: LinkCreate { kr: true, ..TEST_LINK_CONF },
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
     );
@@ -157,7 +157,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate { kr: true, ..LINK_CREATE },
+            params: LinkCreate { kr: true, ..TEST_LINK_CONF },
             addrs: vec!["203.0.113.47".parse().unwrap()],
         },
     );
@@ -173,7 +173,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate { kr: true, ..LINK_CREATE },
+            params: LinkCreate { kr: true, ..TEST_LINK_CONF },
             addrs: vec![
                 "203.0.113.46".parse().unwrap(),
                 "203.0.113.48".parse().unwrap(),
@@ -200,7 +200,7 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     settings.links.insert(
         "0".into(),
         LinkSettings {
-            params: LinkCreate { kr: true, ..LINK_CREATE },
+            params: LinkCreate { kr: true, ..TEST_LINK_CONF },
             addrs: vec![
                 "203.0.113.47".parse().unwrap(),
                 "fd00:1701::d".parse().unwrap(),
@@ -472,7 +472,7 @@ async fn settings_eventually_reconcile() -> anyhow::Result<()> {
         links: [(
             LINK0.to_string(),
             LinkSettings {
-                params: LINK_CREATE,
+                params: TEST_LINK_CONF,
                 addrs: vec![rng.unique_ipv4().into(), rng.unique_ipv6().into()],
             },
         )]
@@ -550,7 +550,8 @@ async fn settings_apply_respects_tags() -> anyhow::Result<()> {
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let mut rng = IpRng::new(fname_hash!());
-    let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
+    let link_id =
+        client.link_create(&QSFP0, &TEST_LINK_CONF).await?.into_inner();
 
     let cxt = TestContext::new(&client, QSFP0.clone(), link_id);
     let tag1 = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
@@ -595,7 +596,8 @@ async fn settings_rollback_respects_tags() -> anyhow::Result<()> {
     );
 
     let mut rng = IpRng::new(fname_hash!());
-    let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
+    let link_id =
+        client.link_create(&QSFP0, &TEST_LINK_CONF).await?.into_inner();
 
     let cxt = TestContext::new(&client, QSFP0.clone(), link_id);
     let mut tag1 = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
@@ -775,7 +777,8 @@ async fn settings_clear_ignores_tags() -> anyhow::Result<()> {
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let mut rng = IpRng::new(fname_hash!());
-    let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
+    let link_id =
+        client.link_create(&QSFP0, &TEST_LINK_CONF).await?.into_inner();
 
     let cxt = TestContext::new(&client, QSFP0.clone(), link_id);
     let tag1 = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
@@ -807,7 +810,8 @@ async fn create_addr_rejects_theft() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
-    let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
+    let link_id =
+        client.link_create(&QSFP0, &TEST_LINK_CONF).await?.into_inner();
 
     let cxt = TestContext::new(&client, QSFP0.clone(), link_id);
 
@@ -835,7 +839,10 @@ async fn create_addr_rejects_theft() -> anyhow::Result<()> {
 
     let link4 = LinkId(4);
     client
-        .link_create(&QSFP0, &LinkCreate { lane: Some(link4), ..LINK_CREATE })
+        .link_create(
+            &QSFP0,
+            &LinkCreate { lane: Some(link4), ..TEST_LINK_CONF },
+        )
         .await?;
     client
         .link_ipv4_create(&QSFP0, &link4, &tag1.v4_entry)
@@ -948,7 +955,7 @@ async fn apply_allows_multiple_tags() -> anyhow::Result<()> {
     tag2.v4_entry.addr = tag1.v4_entry.addr;
     tag2.v6_entry.addr = tag1.v6_entry.addr;
 
-    client.link_create(&QSFP0, &LINK_CREATE).await?;
+    client.link_create(&QSFP0, &TEST_LINK_CONF).await?;
     tag2.create_addrs().await?;
     tag1.apply_addrs().await?;
 
@@ -1068,7 +1075,8 @@ async fn link_init_recovers() -> anyhow::Result<()> {
     };
     let (_guard, client) = harness::init_harness(fname!(), &conf);
 
-    let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
+    let link_id =
+        client.link_create(&QSFP0, &TEST_LINK_CONF).await?.into_inner();
 
     retry::retry_op(RETRY_INTERVAL, RETRY_MAX, async || {
         match client.link_get(&QSFP0, &link_id).await?.into_inner().link_state {
@@ -1099,7 +1107,8 @@ async fn link_addrs_are_isolated() -> anyhow::Result<()> {
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
 
-    let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
+    let link_id =
+        client.link_create(&QSFP0, &TEST_LINK_CONF).await?.into_inner();
 
     let cxt = TestContext::new(&client, QSFP0.clone(), link_id);
     let tag1 = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
@@ -1128,7 +1137,8 @@ async fn loopback_addrs_are_isolated() -> anyhow::Result<()> {
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
 
-    let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
+    let link_id =
+        client.link_create(&QSFP0, &TEST_LINK_CONF).await?.into_inner();
 
     let cxt = TestContext::new(&client, QSFP0.clone(), link_id);
     let tag1 = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
@@ -1381,7 +1391,7 @@ async fn basic_multiple_tag_crud() -> anyhow::Result<()> {
     let tags: [Cow<'static, str>; 10] =
         std::array::from_fn(|idx| format!("chaos{idx}").into());
 
-    let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?;
+    let link_id = client.link_create(&QSFP0, &TEST_LINK_CONF).await?;
     let cxt = TestContext::new(&client, QSFP0.clone(), LINK0);
     let mut registered = BTreeSet::new();
 
@@ -1690,7 +1700,7 @@ impl<'a> TestAddrs<'a> {
         PortSettings {
             links: HashMap::from([(
                 link_id.to_string(),
-                LinkSettings { params: LINK_CREATE, addrs: Vec::new() },
+                LinkSettings { params: TEST_LINK_CONF, addrs: Vec::new() },
             )]),
         }
     }
