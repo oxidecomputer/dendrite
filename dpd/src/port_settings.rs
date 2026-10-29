@@ -108,9 +108,10 @@ impl LinkSpec {
     /// Constructs a new [`LinkSpec`] from the given link.
     fn new(p: &Link, amap: &SyncAddrMap) -> Self {
         let addrs = amap
+            .get()
             .read()
             .unwrap()
-            .iter_by_iface(p.asic_addr_id())
+            .iter_by_iface(p.asic_addr_iface())
             .map(|(ip, tags)| (*ip, tags.clone()))
             .collect();
 
@@ -516,8 +517,13 @@ impl PortSettingsDiff {
         rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
             let switch = ctx.switch;
             let link_lock = ctx.link(link_id)?;
-            let mut link = link_lock.lock().unwrap();
-            switch.clear_ip_address_locked(&mut link, addr, Some(&tag))?;
+            let link = link_lock.lock().unwrap();
+            switch.addrs.clear_addr(
+                switch,
+                link.asic_addr_iface(),
+                addr,
+                Some(&tag),
+            )?;
             Ok(())
         });
         Ok(())
@@ -533,7 +539,12 @@ impl PortSettingsDiff {
         trace!(ctx.log, "ip clear ({addr}: {tag})");
         let switch = ctx.switch;
         let link_id = link.link_id;
-        switch.clear_ip_address_locked(link, addr, Some(&tag))?;
+        switch.addrs.clear_addr(
+            switch,
+            link.asic_addr_iface(),
+            addr,
+            Some(&tag),
+        )?;
 
         rb.wind(move |ctx: &mut Context<'_>| -> DpdResult<()> {
             let switch = ctx.switch;

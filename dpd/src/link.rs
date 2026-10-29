@@ -112,8 +112,11 @@ impl LinkMap {
                 link_id: link.link_id,
             });
         };
-
-        link.clear_link_addresses::<IpAddr>(switch, None)?;
+        switch.addrs.clear_addrs::<IpAddr>(
+            switch,
+            link.asic_addr_iface(),
+            None,
+        )?;
         slot.remove();
 
         Ok(())
@@ -469,11 +472,15 @@ impl Link {
 
     /// Return the link-local address for this link, if one has been added.
     pub fn link_local(&self, addrs: &SyncAddrMap) -> Option<Ipv6Addr> {
-        addrs.read().unwrap().iter_by_iface(self.asic_addr_id()).find_map(
-            |(addr, _tag)| {
+        // TODO::cory: make it a link property. Use oxnet NotLinkLocal types in AddrMap
+        addrs
+            .get()
+            .read()
+            .unwrap()
+            .iter_by_iface(self.asic_addr_iface())
+            .find_map(|(addr, _tag)| {
                 Ipv6Addr::is_unicast_link_local(addr).then_some(*addr)
-            },
-        )
+            })
     }
 
     /// Return the FEC scheme in use for this link.  If the link has not yet
@@ -500,24 +507,6 @@ impl Link {
             ipv6_enabled: self.ipv6_enabled,
             link_local: self.link_local(addrs),
         }
-    }
-
-    /// Removes addresses of type `A` from asic and link tables.
-    ///
-    /// If `Some(tag)` is provided, only those addresses belonging
-    /// to the named tag are deleted.
-    ///
-    /// Returns [`DpdError::AddrClear`] if any addresses could not be deleted.
-    fn clear_link_addresses<A: IpAddrLike>(
-        &self,
-        switch: &Switch,
-        tag: Option<&str>,
-    ) -> DpdResult<()> {
-        switch.addrs.write().unwrap().try_retain_by_iface::<A>(
-            switch,
-            self.asic_addr_id(),
-            |_addr, entry_tag| tag.is_some_and(|t| t != entry_tag),
-        )
     }
 }
 
@@ -720,13 +709,18 @@ impl Switch {
         link_id: LinkId,
     ) -> DpdResult<()> {
         let link_lock = self.get_link_lock(port_id, link_id)?;
-        let mut link = link_lock.lock().unwrap();
-
-        link.clear_link_addresses::<IpAddr>(self, None)?;
+        {
+            let mut link = link_lock.lock().unwrap();
+            self.addrs.clear_addrs::<IpAddr>(
+                self,
+                link.asic_addr_iface(),
+                None,
+            )?;
+            link.config.delete_me = true;
+        }
 
         // Notify the reconciliation task that this link's ASIC resources need
         // to be released.
-        link.config.delete_me = true;
         self.reconciler.trigger(port_id, link_id);
 
         Ok(())
@@ -741,11 +735,14 @@ impl Switch {
         let mut errors: Option<Vec<_>> = None;
 
         for link_lock in links.0.values() {
-            let cleared = link_lock
-                .lock()
-                .unwrap()
-                .clear_link_addresses::<IpAddr>(self, tag);
-
+            let cleared = {
+                let link = link_lock.lock().unwrap();
+                self.addrs.clear_addrs::<IpAddr>(
+                    self,
+                    link.asic_addr_iface(),
+                    tag,
+                )
+            };
             match cleared {
                 Ok(()) => (),
                 Err(DpdError::AddrClear(failed)) => {
@@ -1004,10 +1001,10 @@ impl Switch {
         addr: IpAddr,
         tag: String,
     ) -> DpdResult<bool> {
-        self.addrs.write().unwrap().try_set(
+        self.addrs.get().write().unwrap().try_set(
             self,
             addr,
-            link.asic_addr_id(),
+            link.asic_addr_iface(),
             tag,
         )
     }
@@ -1029,23 +1026,6 @@ impl Switch {
         })
     }
 
-    /// Removes the address from soft state and switch tables if it exists.
-    ///
-    /// On success, returns whether anything was actually deleted.
-    pub fn clear_ip_address_locked(
-        &self,
-        link: &mut Link,
-        addr: IpAddr,
-        tag: Option<&str>,
-    ) -> DpdResult<bool> {
-        self.addrs.write().unwrap().try_clear(
-            self,
-            addr,
-            link.asic_addr_id(),
-            tag,
-        )
-    }
-
     /// Delete one IP address on the specified link.
     pub fn delete_ip_address(
         &self,
@@ -1055,7 +1035,8 @@ impl Switch {
         tag: Option<&str>,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            if !self.clear_ip_address_locked(link, addr, tag)? {
+            let iface_id = link.asic_addr_iface();
+            if !self.addrs.clear_addr(self, iface_id, addr, tag)? {
                 return Err(DpdError::NoSuchAddress {
                     port_id,
                     link_id,
@@ -1086,9 +1067,10 @@ impl Switch {
 
         self.link_fetch(port_id, link_id, |link| {
             self.addrs
+                .get()
                 .read()
                 .unwrap()
-                .iface_addr_range(link.asic_addr_id(), addr_bounds)
+                .iface_addr_range(link.asic_addr_iface(), addr_bounds)
                 .flat_map(move |(addr, tags)| {
                     tags.range::<String, _>(tag_bounds)
                         .map(move |t| (addr, t.as_str()))
@@ -1108,11 +1090,7 @@ impl Switch {
         link_id: LinkId,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            self.addrs.write().unwrap().try_retain_by_iface::<A>(
-                self,
-                link.asic_addr_id(),
-                |_, _| false,
-            )
+            self.addrs.clear_addrs::<A>(self, link.asic_addr_iface(), None)
         })
     }
 

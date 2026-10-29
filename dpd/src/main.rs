@@ -14,7 +14,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
-use std::sync::RwLock;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
@@ -36,6 +35,7 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::time::Duration;
 use tokio::time::sleep;
 
+use crate::addr::SyncAddrMap;
 use crate::macaddrs::BaseMac;
 use crate::port_map::SidecarRevision;
 use crate::rpw::WorkflowServer;
@@ -197,7 +197,7 @@ pub struct Switch {
     pub arp: Mutex<arp::ArpData>,
     pub nat: nat::Nat,
     pub attached_subnet: Mutex<attached_subnet::AttachedSubnetData>,
-    pub addrs: RwLock<addr::AddrMap>,
+    pub addrs: SyncAddrMap,
     pub identifiers: Mutex<Option<SwitchIdentifiers>>,
     pub oximeter_producer: Mutex<Option<oximeter_producer::Server>>,
     pub oximeter_meta: Mutex<Option<OximeterMetadata>>,
@@ -310,7 +310,7 @@ impl Switch {
             counters,
             routes: TokioMutex::new(route_data),
             arp: Mutex::new(arp::init()),
-            addrs: RwLock::new(addr::AddrMap::default()),
+            addrs: SyncAddrMap::default(),
             nat: nat::Nat::new(),
             attached_subnet: Mutex::new(attached_subnet::init()),
             switch_ports,

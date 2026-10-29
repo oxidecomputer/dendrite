@@ -1352,6 +1352,7 @@ impl DpdApi for DpdApiImpl {
         let addrs = rqctx
             .context()
             .addrs
+            .get()
             .read()
             .unwrap()
             .iter_by_iface(AsicAddrIface::Loopback)
@@ -1394,6 +1395,7 @@ impl DpdApi for DpdApiImpl {
         let addrs = rqctx
             .context()
             .addrs
+            .get()
             .read()
             .unwrap()
             .iter_by_iface(AsicAddrIface::Loopback)
@@ -2979,9 +2981,10 @@ impl crate::link::Link {
     /// current link state and this tag's resources.
     pub fn settings(&self, amap: &SyncAddrMap, tag: &str) -> LinkSettings {
         let addrs: HashSet<IpAddr> = amap
+            .get()
             .read()
             .unwrap()
-            .iter_by_iface(self.asic_addr_id())
+            .iter_by_iface(self.asic_addr_iface())
             .filter(|(_, tags)| tags.contains(tag))
             .map(|(addr, _)| *addr)
             .collect();

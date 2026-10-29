@@ -24,7 +24,7 @@ use crate::DpdResult;
 use crate::Switch;
 use crate::table::port_ip;
 
-// TODO::cory: proptest
+// TODO::cory: proptest?
 
 /// A helper trait for converting to and from [`std::net::IpAddr`].
 pub trait IpAddrLike: Sized + Copy + Into<IpAddr> {
@@ -58,8 +58,55 @@ impl IpAddrLike for IpAddr {
     }
 }
 
-/// A mutex wrapper for [`AddrMap`].
-pub type SyncAddrMap = RwLock<AddrMap>;
+/// A mutex-wrapped [`AddrMap`].
+///
+/// The fns on this outer struct are convenience wrappers for
+/// operations on the inner [`AddrMap`].
+///
+/// Assume every method other than `get` acquires a lock.
+#[derive(Debug, Default)]
+pub struct SyncAddrMap(RwLock<AddrMap>);
+
+impl SyncAddrMap {
+    /// Returns the inner (lockable) map.
+    pub fn get(&self) -> &RwLock<AddrMap> {
+        &self.0
+    }
+
+    /// Removes all addresses of the declared type belonging to
+    /// this interface.
+    ///
+    /// If `Some(tag)` is provided, only those addresses belonging
+    /// to the named tag are deleted.
+    ///
+    /// Returns [`DpdError::AddrClear`] if any addresses could not
+    /// be deleted.
+    pub fn clear_addrs<A: IpAddrLike>(
+        &self,
+        switch: &Switch,
+        iface: AsicAddrIface,
+        tag: Option<&str>,
+    ) -> DpdResult<()> {
+        self.0.write().unwrap().try_retain_by_iface::<A>(
+            switch,
+            iface,
+            |_addr, entry_tag| tag.is_some_and(|t| t != entry_tag),
+        )
+    }
+
+    /// Removes the address from switch tables if it exists.
+    ///
+    /// On success, returns whether anything was actually deleted.
+    pub fn clear_addr(
+        &self,
+        switch: &Switch,
+        iface: AsicAddrIface,
+        addr: IpAddr,
+        tag: Option<&str>,
+    ) -> DpdResult<bool> {
+        self.0.write().unwrap().try_clear(switch, addr, iface, tag)
+    }
+}
 
 /// A switch may have many interfaces and many addresses. An
 /// address may belong to exactly one interface, and an interface
@@ -416,7 +463,7 @@ struct AddrSpec {
 
 /// The switch entity to which an IP address uniquely belongs.
 ///
-/// Use [`crate::link::Link::asic_addr_id`] to construct a link ID.
+/// Use [`crate::link::Link::asic_addr_iface`] to construct a link ID.
 /// Loopback has no asic_id.
 ///
 /// # Correctness
@@ -454,7 +501,7 @@ enum AddrIface {
 
 impl crate::link::Link {
     /// Constructs an address ownership ID for this link.
-    pub fn asic_addr_id(&self) -> AsicAddrIface {
+    pub fn asic_addr_iface(&self) -> AsicAddrIface {
         AsicAddrIface::Link {
             port_id: self.port_id,
             link_id: self.link_id,

@@ -14,7 +14,7 @@ pub fn set_loopback(
     addr: IpAddr,
     tag: String,
 ) -> DpdResult<()> {
-    switch.addrs.write().unwrap().try_set(
+    switch.addrs.get().write().unwrap().try_set(
         switch,
         addr,
         AsicAddrIface::Loopback,
@@ -28,7 +28,7 @@ pub fn clear_loopback(
     addr: IpAddr,
     tag: Option<&str>,
 ) -> DpdResult<()> {
-    switch.addrs.write().unwrap().try_clear(
+    switch.addrs.get().write().unwrap().try_clear(
         switch,
         addr,
         AsicAddrIface::Loopback,
