@@ -136,8 +136,10 @@ impl HttpResponseCheck for dpd_client::Error<dpd_client::types::Error> {
 
 #[cfg(test)]
 pub mod retry {
+    use anyhow::bail;
+    use std::collections::HashMap;
+    use std::fmt::Write;
     use std::time::Duration;
-    use std::time::Instant;
     use thiserror::Error;
 
     #[derive(Error, Debug)]
@@ -166,20 +168,41 @@ pub mod retry {
         poll_max: Duration,
         mut op: impl AsyncFnMut() -> Result<(), ReturnCode>,
     ) -> anyhow::Result<()> {
-        let poll_start = Instant::now();
-        loop {
-            let retry_msg = match op().await {
-                Ok(()) => return Ok(()),
-                Err(ReturnCode::Fatal(e)) => return Err(anyhow::anyhow!(e)),
-                Err(ReturnCode::Retry(msg)) => msg,
-            };
+        let mut errors: HashMap<String, usize> = HashMap::new();
 
-            let duration = Instant::now().duration_since(poll_start);
-            if duration > poll_max {
-                return Err(anyhow::anyhow!("operation failed: {retry_msg}"));
+        let fut = tokio::time::timeout(poll_max, async {
+            loop {
+                let retry_msg = match op().await {
+                    Ok(()) => return Ok(()),
+                    Err(ReturnCode::Fatal(e)) => {
+                        return Err(anyhow::anyhow!(e));
+                    }
+                    Err(ReturnCode::Retry(msg)) => msg,
+                };
+                *errors.entry(retry_msg).or_default() += 1;
+                tokio::time::sleep(poll_interval).await;
             }
-            tokio::time::sleep(poll_interval).await;
+        });
+
+        if let Ok(success_or_fatal) = fut.await {
+            // Either success or fatal.
+            return success_or_fatal;
         }
+
+        let mut emsg = "Timed out. Errors:".to_string();
+        let empty = errors.is_empty();
+        for (err, ct) in errors {
+            writeln!(&mut emsg, "- Count {ct}: {err}")?;
+        }
+
+        if empty {
+            writeln!(
+                &mut emsg,
+                "- No errors reported, operation never completed."
+            )?;
+        }
+
+        bail!(emsg);
     }
 }
 

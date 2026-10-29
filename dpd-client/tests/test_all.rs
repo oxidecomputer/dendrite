@@ -10,7 +10,7 @@
 // actually don't care that you can't move the task between threads.
 #![allow(clippy::await_holding_lock)]
 
-// #[cfg(target_os = "linux")]
+#[cfg(target_os = "linux")]
 mod integration_tests;
 
 #[cfg(feature = "chaos")]

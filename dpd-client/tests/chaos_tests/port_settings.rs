@@ -546,7 +546,7 @@ Reconciliation retries:
 /// resources from other tags.
 #[tokio::test]
 async fn settings_apply_respects_tags() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let mut rng = IpRng::new(fname_hash!());
@@ -720,7 +720,7 @@ impl AddrCheck {
 /// resources under different tags.
 #[tokio::test]
 async fn address_cmds_respect_tags() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let mut rng = IpRng::new(fname_hash!());
@@ -771,7 +771,7 @@ async fn address_cmds_respect_tags() -> anyhow::Result<()> {
 /// it does seek to track API's current behavior.
 #[tokio::test]
 async fn settings_clear_ignores_tags() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let mut rng = IpRng::new(fname_hash!());
@@ -804,7 +804,7 @@ async fn settings_clear_ignores_tags() -> anyhow::Result<()> {
 /// address has already been registered on a different interface.
 #[tokio::test]
 async fn create_addr_rejects_theft() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
     let link_id = client.link_create(&QSFP0, &LINK_CREATE).await?.into_inner();
@@ -869,7 +869,7 @@ async fn create_addr_rejects_theft() -> anyhow::Result<()> {
 /// Verifies deletion fails when the address does not exist.
 #[tokio::test]
 async fn deleted_address_must_exist() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
 
@@ -909,7 +909,7 @@ async fn deleted_address_must_exist() -> anyhow::Result<()> {
 /// and observes if this ever changes.
 #[tokio::test]
 async fn apply_implicit_delete() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
 
@@ -937,7 +937,7 @@ async fn apply_implicit_delete() -> anyhow::Result<()> {
 /// tag is released.
 #[tokio::test]
 async fn apply_allows_multiple_tags() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
 
@@ -1095,7 +1095,7 @@ async fn link_init_recovers() -> anyhow::Result<()> {
 /// This tests the order where link registration wins.
 #[tokio::test]
 async fn link_addrs_are_isolated() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
 
@@ -1124,7 +1124,7 @@ async fn link_addrs_are_isolated() -> anyhow::Result<()> {
 /// Reverse of [`addrs_are_isolated`]. Now loopback registration wins.
 #[tokio::test]
 async fn loopback_addrs_are_isolated() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
 
@@ -1164,10 +1164,13 @@ async fn loopback_addrs_are_isolated() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Dropping a link without deleting the corresponding table entries
-/// is a leak. So DPD shouldn't do that.
-/// If a table entry cannot be deleted, then DPD should not allow
-/// that entry's link to be deleted.
+/// DPD table state mirrors asic table state. DPD must not drop a
+/// resource until it has been successfully cleared from the asic.
+/// Doing otherwise would effectively leak asic table memory.
+///
+/// This test constructs an "asic" entry that deterministically cannot
+/// be cleared, meaning that it should also be impossible to delete
+/// from DPD.
 #[tokio::test]
 async fn deletion_doesnt_leak_table_entries() -> anyhow::Result<()> {
     let config = AsicConfig {
@@ -1263,7 +1266,38 @@ async fn deletion_prevails() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// An address owned exclusively across the switch, and it must be
+/// Given an IP + Tag belonging to another interface, this calls
+/// port_settings_apply from the given conf and tries to steal
+/// that address.
+///
+/// Returns the result of the apply command, which should probably
+/// always be an error.
+async fn try_steal(
+    conf: &mut TestAddrs<'_>,
+    steal_ip: IpAddr,
+    current_tag: String,
+) -> anyhow::Result<()> {
+    match steal_ip {
+        IpAddr::V4(v4) => {
+            let entry = Ipv4Entry { addr: v4, tag: current_tag };
+            let prev = std::mem::replace(&mut conf.v4_entry, entry);
+            let status = conf.apply_addrs().await;
+            conf.v4_entry = prev;
+            status?;
+        }
+        IpAddr::V6(v6) => {
+            let entry = Ipv6Entry { addr: v6, tag: current_tag };
+            let prev = std::mem::replace(&mut conf.v6_entry, entry);
+            let status = conf.apply_addrs().await;
+            conf.v6_entry = prev;
+            status?;
+        }
+    }
+
+    Ok(())
+}
+
+/// An address is owned exclusively across the switch, and it must be
 /// released to transfer owners.
 ///
 /// Equivalently, a link/loopback address registration will never
@@ -1271,7 +1305,7 @@ async fn deletion_prevails() -> anyhow::Result<()> {
 /// link/loopback source.
 #[tokio::test]
 async fn loopback_cannot_steal_addrs() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let port1: PortId = "qsfp0".parse()?;
@@ -1281,12 +1315,12 @@ async fn loopback_cannot_steal_addrs() -> anyhow::Result<()> {
     let cxt1 = TestContext::new(&client, port1.clone(), LINK0);
     let cxt2 = TestContext::new(&client, port2.clone(), LINK0);
 
-    let mut p1 = TestAddrs::new(&cxt1, &mut rng, TAG1.to_string());
+    let p1 = TestAddrs::new(&cxt1, &mut rng, TAG1.to_string());
     let mut p2 = TestAddrs::new(&cxt2, &mut rng, TAG1.to_string());
 
-    let mut loopback_v4 =
+    let loopback_v4 =
         Ipv4Entry { addr: rng.unique_ipv4(), tag: TAG1.to_string() };
-    let mut loopback_v6 =
+    let loopback_v6 =
         Ipv6Entry { addr: rng.unique_ipv6(), tag: TAG1.to_string() };
 
     p1.apply_addrs().await?;
@@ -1294,29 +1328,21 @@ async fn loopback_cannot_steal_addrs() -> anyhow::Result<()> {
     client.loopback_ipv4_create(&loopback_v4).await?;
     client.loopback_ipv6_create(&loopback_v6).await?;
 
-    std::mem::swap(&mut p1.v4_entry, &mut p2.v4_entry);
-    p2.apply_addrs()
+    self::try_steal(&mut p2, p1.v4_entry.addr.into(), TAG1.to_string())
         .await
         .expect_err("v4 address is already registered under p1");
-    std::mem::swap(&mut p1.v4_entry, &mut p2.v4_entry);
 
-    std::mem::swap(&mut p1.v6_entry, &mut p2.v6_entry);
-    p2.apply_addrs()
+    self::try_steal(&mut p2, p1.v6_entry.addr.into(), TAG1.to_string())
         .await
         .expect_err("v6 address is already registered under p1");
-    std::mem::swap(&mut p1.v6_entry, &mut p2.v6_entry);
 
-    std::mem::swap(&mut loopback_v4, &mut p2.v4_entry);
-    p2.apply_addrs()
+    self::try_steal(&mut p2, loopback_v4.addr.into(), TAG1.to_string())
         .await
         .expect_err("v4 address is already registered under loopback");
-    std::mem::swap(&mut loopback_v4, &mut p2.v4_entry);
 
-    std::mem::swap(&mut loopback_v6, &mut p2.v6_entry);
-    p2.apply_addrs()
+    self::try_steal(&mut p2, loopback_v6.addr.into(), TAG1.to_string())
         .await
         .expect_err("v6 address is already registered under loopback");
-    std::mem::swap(&mut loopback_v6, &mut p2.v6_entry);
 
     client
         .loopback_ipv4_create(&p1.v4_entry)
@@ -1346,7 +1372,7 @@ async fn loopback_cannot_steal_addrs() -> anyhow::Result<()> {
 /// Verifies CRUD actions with multiple tags on a single address.
 #[tokio::test]
 async fn basic_multiple_tag_crud() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let mut rng = IpRng::new(fname_hash!());
@@ -1420,7 +1446,7 @@ async fn basic_multiple_tag_crud() -> anyhow::Result<()> {
 /// address belonging to another link with another tag.
 #[tokio::test]
 async fn links_cannot_steal_addrs_across_tags() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let port1: PortId = "qsfp0".parse()?;
@@ -1449,7 +1475,7 @@ async fn links_cannot_steal_addrs_across_tags() -> anyhow::Result<()> {
 async fn link_state_sanity_check_err() -> anyhow::Result<()> {
     let fail_enable = AsicConfig {
         radix: TESTING_RADIX,
-        port_enable_set: Chaos::new(1.),
+        port_enable_set: Chaos::new(1.0),
         ..Default::default()
     };
     let (_guard, client) = harness::init_harness(fname!(), &fail_enable);
@@ -1469,7 +1495,7 @@ async fn link_state_sanity_check_err() -> anyhow::Result<()> {
 /// Link reaches `LinkState::Up` under a good config with no failures.
 #[tokio::test]
 async fn link_state_sanity_check_ok() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     self::link_state_sanity_check(&client, |state| match state {
