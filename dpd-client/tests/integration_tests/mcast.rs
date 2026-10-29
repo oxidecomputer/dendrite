@@ -12,6 +12,7 @@ use std::{
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
+use crate::integration_tests::counters::check_counter_incremented;
 use ::common::network::MacAddr;
 use anyhow::anyhow;
 use dpd_client::{Error, types};
@@ -69,37 +70,6 @@ fn has_vlan_action_for_ip(
                 .map(|v| v == &vlan.to_string())
                 .unwrap_or(false)
     })
-}
-
-async fn check_counter_incremented(
-    switch: &Switch,
-    counter_name: &str,
-    baseline: u64,
-    expected_increment: u64,
-    client_name: Option<&str>,
-) -> anyhow::Result<u64> {
-    let mut new_value = 0;
-
-    // Poll for the counter value (with timeout)
-    for _i in 0..20 {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        new_value =
-            switch.get_counter(counter_name, client_name).await.unwrap();
-
-        if new_value == baseline + expected_increment {
-            return Ok(new_value);
-        }
-    }
-
-    // Counter didn't increment as expected
-    Err(anyhow!(
-        "Counter '{}' expected to increase by {} (from {} to {}), but only reached {}",
-        counter_name,
-        expected_increment,
-        baseline,
-        baseline + expected_increment,
-        new_value
-    ))
 }
 
 async fn create_test_multicast_group(

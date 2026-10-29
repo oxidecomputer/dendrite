@@ -2182,11 +2182,17 @@ control Ingress(
 			}
 		}
 
-		if (meta.dropped) {
-			// Handle dropped packets
-			ig_dprsr_md.drop_ctl = 1;
+		// Drops recorded in the L3 router need to be counted, but
+		// we do not convert them to _actual_ packet drops in the
+		// deparser. We forward such packets to the host to generate an
+		// ICMP response in our stead.
+		if (meta.drop_reason != 0) {
 			drop_port_ctr.count(ig_intr_md.ingress_port);
 			drop_reason_ctr.count(meta.drop_reason);
+		}
+
+		if (meta.dropped) {
+			ig_dprsr_md.drop_ctl = 1;
 		} else if (!meta.is_mcast) {
 			if (ig_tm_md.ucast_egress_port != USER_SPACE_SERVICE_PORT) {
 				mac_rewrite.apply(hdr, ig_tm_md.ucast_egress_port);
