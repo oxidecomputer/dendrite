@@ -11,7 +11,7 @@
 //!
 //! [Sidecar-lite]: https://github.com/oxidecomputer/sidecar-lite
 
-use std::collections::{BTreeMap, HashMap, HashSet, hash_map::Entry};
+use std::collections::{BTreeMap, HashMap, hash_map::Entry};
 
 use aal::{AsicError, AsicResult};
 
@@ -64,7 +64,7 @@ pub struct RefreshedReplEntry {
 /// group's membership change is triggered.
 #[derive(Default)]
 pub struct McGroupData {
-    groups: HashMap<u16, HashSet<u16>>,
+    groups: HashMap<u16, u128>,
     /// Replication table entries keyed on their matched keyset, recorded at
     /// table-write time so membership changes can refresh bitmaps.
     repl_entries: BTreeMap<Vec<u8>, ReplEntryRef>,
@@ -85,17 +85,15 @@ impl McGroupData {
     ///
     /// Returns zero for unknown groups.
     pub fn port_bitmap(&self, group_id: u16) -> u128 {
-        self.groups.get(&group_id).map_or(0, |ports| {
-            ports.iter().fold(0, |bitmap, &port| bitmap | (1u128 << port))
-        })
+        self.groups.get(&group_id).copied().unwrap_or(0)
     }
 
     /// Get the number of ports in a multicast domain.
     pub fn domain_port_count(&self, group_id: u16) -> AsicResult<usize> {
-        match self.groups.get(&group_id) {
-            Some(g) => Ok(g.len()),
-            None => Err(no_group(group_id)),
-        }
+        self.groups
+            .get(&group_id)
+            .map(|ports| ports.count_ones() as usize)
+            .ok_or_else(|| no_group(group_id))
     }
 
     /// Add a port to a multicast domain. Port must be < 128 to fit
@@ -107,20 +105,22 @@ impl McGroupData {
         _rid: u16,
         _level1_excl_id: u16,
     ) -> AsicResult<()> {
-        if port >= 128 {
+        if u32::from(port) >= u128::BITS {
             return Err(AsicError::InvalidArg(format!(
                 "port {port} exceeds softnpu 128-port bitmap limit"
             )));
         }
 
-        let group =
+        let ports =
             self.groups.get_mut(&group_id).ok_or_else(|| no_group(group_id))?;
-
-        group.insert(port).then_some(()).ok_or_else(|| {
-            AsicError::Exists(format!(
+        let bit = 1u128 << port;
+        if *ports & bit != 0 {
+            return Err(AsicError::Exists(format!(
                 "multicast group {group_id} already contains port {port}"
-            ))
-        })
+            )));
+        }
+        *ports |= bit;
+        Ok(())
     }
 
     /// Remove a port from a multicast domain.
@@ -129,14 +129,16 @@ impl McGroupData {
         group_id: u16,
         port: u16,
     ) -> AsicResult<()> {
-        let group =
+        let ports =
             self.groups.get_mut(&group_id).ok_or_else(|| no_group(group_id))?;
-
-        group.remove(&port).then_some(()).ok_or_else(|| {
-            AsicError::Missing(format!(
+        let bit = 1u128.checked_shl(u32::from(port)).unwrap_or(0);
+        if *ports & bit == 0 {
+            return Err(AsicError::Missing(format!(
                 "multicast group {group_id} doesn't contain port {port}"
-            ))
-        })
+            )));
+        }
+        *ports &= !bit;
+        Ok(())
     }
 
     /// Create a multicast domain.
@@ -146,7 +148,7 @@ impl McGroupData {
                 "multicast group {group_id} already exists"
             ))),
             Entry::Vacant(vacant) => {
-                vacant.insert(HashSet::new());
+                vacant.insert(0);
                 Ok(())
             }
         }
@@ -185,9 +187,13 @@ impl McGroupData {
         self.repl_entries.remove(keyset);
     }
 
-    /// Forget every tracked replication entry when the replication table is
-    /// cleared, so a later membership change for a reused group identifier
-    /// cannot resurrect a stale bitmap from a forgotten keyset.
+    /// Iterate over the keysets of every tracked replication entry.
+    pub fn repl_keysets(&self) -> impl Iterator<Item = &[u8]> + '_ {
+        self.repl_entries.keys().map(Vec::as_slice)
+    }
+
+    /// Forget every tracked replication entry once its pipeline entry has
+    /// been removed.
     pub fn clear_repl_entries(&mut self) {
         self.repl_entries.clear();
     }
@@ -199,10 +205,10 @@ impl McGroupData {
     pub fn refresh_params_for_group(
         &self,
         group_id: u16,
-    ) -> Vec<RefreshedReplEntry> {
+    ) -> impl Iterator<Item = RefreshedReplEntry> + '_ {
         self.repl_entries
             .iter()
-            .filter(|(_, e)| {
+            .filter(move |(_, e)| {
                 e.external_grp == group_id || e.underlay_grp == group_id
             })
             .map(|(keyset, e)| RefreshedReplEntry {
@@ -211,17 +217,12 @@ impl McGroupData {
                 underlay_bitmap: self.port_bitmap(e.underlay_grp),
                 rid: e.rid,
             })
-            .collect()
     }
 
     /// Validate that the current group count does not exceed the limit.
-    pub fn set_max_nodes(
-        &mut self,
-        max_nodes: u32,
-        _max_link_aggregated_nodes: u32,
-    ) -> AsicResult<()> {
+    pub fn set_max_nodes(&self, max_nodes: u32) -> AsicResult<()> {
         let total = self.domains_count();
-        if u64::try_from(total).unwrap_or(u64::MAX) > u64::from(max_nodes) {
+        if total > usize::try_from(max_nodes).unwrap_or(usize::MAX) {
             return Err(AsicError::InvalidArg(format!(
                 "number of multicast groups {total} exceeds max nodes {max_nodes}"
             )));
@@ -357,11 +358,11 @@ mod tests {
         group_data.domain_create(2).unwrap();
 
         assert!(matches!(
-            group_data.set_max_nodes(1, 0),
+            group_data.set_max_nodes(1),
             Err(AsicError::InvalidArg(_))
         ));
-        assert!(group_data.set_max_nodes(2, 0).is_ok());
-        assert!(group_data.set_max_nodes(100, 0).is_ok());
+        assert!(group_data.set_max_nodes(2).is_ok());
+        assert!(group_data.set_max_nodes(100).is_ok());
     }
 
     #[test]
@@ -379,14 +380,16 @@ mod tests {
         group_data.record_repl_entry(keyset.clone(), 0, 65533, 65533);
 
         // Refreshed against current membership @ only port 1.
-        let initial = group_data.refresh_params_for_group(65533);
+        let initial: Vec<_> =
+            group_data.refresh_params_for_group(65533).collect();
         assert_eq!(initial.len(), 1);
         assert_eq!(initial[0].underlay_bitmap, 1u128 << 1);
 
         // A later member add must surface in a fresh refresh.
         group_data.domain_port_add(65533, 2, 0, 0).unwrap();
         group_data.domain_port_add(65533, 3, 0, 0).unwrap();
-        let refreshed = group_data.refresh_params_for_group(65533);
+        let refreshed: Vec<_> =
+            group_data.refresh_params_for_group(65533).collect();
         assert_eq!(refreshed.len(), 1);
         assert_eq!(refreshed[0].keyset, keyset);
         assert_eq!(refreshed[0].rid, 65533);
@@ -412,13 +415,14 @@ mod tests {
         group_data.record_repl_entry(key_b, 0, 200, 8);
 
         // Only the entry referencing group 100 is refreshed.
-        let refreshed = group_data.refresh_params_for_group(100);
+        let refreshed: Vec<_> =
+            group_data.refresh_params_for_group(100).collect();
         assert_eq!(refreshed.len(), 1);
         assert_eq!(refreshed[0].keyset, key_a);
 
         // After forgetting it, the group has no entries to refresh.
         group_data.forget_repl_entry(&key_a);
-        assert!(group_data.refresh_params_for_group(100).is_empty());
+        assert!(group_data.refresh_params_for_group(100).next().is_none());
     }
 
     #[test]
@@ -429,14 +433,15 @@ mod tests {
         // Group 50 sits in the external slot here, not the underlay slot.
         group_data.record_repl_entry(vec![0xcc], 50, 0, 1);
 
-        let refreshed = group_data.refresh_params_for_group(50);
+        let refreshed: Vec<_> =
+            group_data.refresh_params_for_group(50).collect();
         assert_eq!(refreshed.len(), 1);
         assert_eq!(refreshed[0].external_bitmap, 1u128 << 9);
         assert_eq!(refreshed[0].underlay_bitmap, 0);
     }
 
     #[test]
-    fn clear_repl_entries_drops_all_tracked_entries() {
+    fn clear_repl_entries_after_listing_keysets() {
         let mut group_data = McGroupData::default();
         group_data.domain_create(100).unwrap();
         group_data.domain_create(200).unwrap();
@@ -445,16 +450,15 @@ mod tests {
         group_data.record_repl_entry(vec![0xaa], 0, 100, 7);
         group_data.record_repl_entry(vec![0xbb], 0, 200, 8);
 
-        // Both entries are tracked before the clear.
-        assert_eq!(group_data.refresh_params_for_group(100).len(), 1);
-        assert_eq!(group_data.refresh_params_for_group(200).len(), 1);
+        let keysets: Vec<_> =
+            group_data.repl_keysets().map(<[u8]>::to_vec).collect();
+        assert_eq!(keysets, vec![vec![0xaa], vec![0xbb]]);
 
         group_data.clear_repl_entries();
 
-        // After clearing, no keyset survives to be resurrected, even though the
-        // group memberships themselves are untouched.
-        assert!(group_data.refresh_params_for_group(100).is_empty());
-        assert!(group_data.refresh_params_for_group(200).is_empty());
+        assert_eq!(group_data.repl_keysets().count(), 0);
+        assert!(group_data.refresh_params_for_group(100).next().is_none());
+        assert!(group_data.refresh_params_for_group(200).next().is_none());
         assert_eq!(group_data.domain_port_count(100).unwrap(), 1);
         assert_eq!(group_data.domain_port_count(200).unwrap(), 1);
     }
@@ -470,7 +474,8 @@ mod tests {
 
         group_data.domain_destroy(1).unwrap();
 
-        let refreshed = group_data.refresh_params_for_group(2);
+        let refreshed: Vec<_> =
+            group_data.refresh_params_for_group(2).collect();
         assert_eq!(refreshed.len(), 1);
         assert_eq!(refreshed[0].keyset, vec![0xbb]);
     }

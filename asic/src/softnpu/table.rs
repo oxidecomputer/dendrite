@@ -139,7 +139,7 @@ impl Table {
         trace!(hdl.log, "keyset_data:\n{keyset_data:#?}");
         trace!(hdl.log, "parameter_data:\n{parameter_data:#?}");
 
-        replace_entry(
+        add_entry(
             hdl,
             table,
             crate::softnpu::mcast::SET_PORT_BITMAP_ACTION.to_string(),
@@ -151,19 +151,13 @@ impl Table {
     }
 }
 
-fn replace_entry(
+fn add_entry(
     hdl: &Handle,
     table: String,
     action: String,
     keyset_data: Vec<u8>,
     parameter_data: Vec<u8>,
 ) {
-    let remove = ManagementRequest::TableRemove(TableRemove {
-        table: table.clone(),
-        keyset_data: keyset_data.clone(),
-    });
-    crate::softnpu::mgmt::write(remove, &hdl.mgmt_config);
-
     let add = ManagementRequest::TableAdd(TableAdd {
         table,
         action,
@@ -216,12 +210,31 @@ impl TableOps<Handle> for Table {
     }
 
     fn clear(&self, hdl: &Handle) -> AsicResult<()> {
-        // TODO: the management protocol has no clear message, meaning
-        // that entries stay in the pipeline. Send a `TableClear` once
-        // softnpu and propolis support one.
-        if self.type_ == TableType::McastIpv6 {
-            hdl.mc_data.lock().unwrap().clear_repl_entries();
+        // TODO: the management protocol has no clear message (yet).
+        //
+        // For now, only the multicast replication entries tracked in `mc_data`
+        // get removed here, one `TableRemove` per keyset, and every other
+        // table retains its entries.
+        //
+        // Send a `TableClear` once softnpu and propolis support one (the
+        // pipeline side landed in oxidecomputer/p4#278).
+        if self.type_ != TableType::McastIpv6 {
+            return Ok(());
         }
+
+        let Some(table) = self.softnpu_table_name() else {
+            return Ok(());
+        };
+
+        let mut mc_data = hdl.mc_data.lock().unwrap();
+        for keyset_data in mc_data.repl_keysets() {
+            let remove = ManagementRequest::TableRemove(TableRemove {
+                table: table.to_string(),
+                keyset_data: keyset_data.to_vec(),
+            });
+            crate::softnpu::mgmt::write(remove, &hdl.mgmt_config);
+        }
+        mc_data.clear_repl_entries();
         Ok(())
     }
 
@@ -622,7 +635,7 @@ impl TableOps<Handle> for Table {
                 ("rewrite_src_mac", params)
             }
             (TableType::McastEgressPortMapping, "set_port_number") => {
-                ("set_port_number", port_number_param(&action_data)?)
+                ("set_port_number", vec![port_number_param(&action_data)?])
             }
             // Sidecar-lite's resolvers support drop (by default).
             (TableType::ArpIpv4, "drop")
@@ -645,7 +658,7 @@ impl TableOps<Handle> for Table {
         trace!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
         trace!(hdl.log, "parameter_data:\n{:#?}", parameter_data);
 
-        replace_entry(hdl, table, action, keyset_data, parameter_data);
+        add_entry(hdl, table, action, keyset_data, parameter_data);
 
         Ok(())
     }
@@ -656,12 +669,13 @@ impl TableOps<Handle> for Table {
         key: &M,
         data: &A,
     ) -> AsicResult<()> {
-        // SoftNPU does not currently support in-place updates. `entry_add`
-        // removes the key before adding it back with the new action data.
+        // SoftNPU does not currently support in-place updates. The key is
+        // removed via `entry_del` and added back with the new action data.
         //
         // Note: this is not an atomic op, as a lookup between the two messages
         // could miss the entry, and mgmt IO failures panic in mgmt::write
         // rather than surface errors.
+        self.entry_del(hdl, key)?;
         self.entry_add(hdl, key, data)
     }
 
@@ -845,12 +859,11 @@ fn pack_decap_bitmap(args: &aal::ActionData) -> Vec<u8> {
     chunks.iter().flat_map(|c| c.to_le_bytes()).collect()
 }
 
-fn port_number_param(args: &aal::ActionData) -> AsicResult<Vec<u8>> {
+fn port_number_param(args: &aal::ActionData) -> AsicResult<u8> {
     args.args
         .iter()
         .find(|arg| arg.name == "port_number")
         .and_then(|arg| u8::try_from(&arg.value).ok())
-        .map(|port_number| vec![port_number])
         .ok_or_else(|| {
             AsicError::InvalidArg(format!(
                 "{}: missing or invalid port_number",
@@ -1045,7 +1058,7 @@ mod tests {
                 value: ValueTypes::U64(17),
             }],
         };
-        assert_eq!(port_number_param(&action_data).unwrap(), vec![17]);
+        assert_eq!(port_number_param(&action_data).unwrap(), 17);
 
         let missing = aal::ActionData {
             action: "set_port_number".to_string(),

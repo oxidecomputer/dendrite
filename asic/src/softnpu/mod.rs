@@ -152,7 +152,7 @@ impl Handle {
     /// the recomputed bitmaps.
     fn rewrite_replication_entries(
         &self,
-        entries: Vec<mcast::RefreshedReplEntry>,
+        entries: impl IntoIterator<Item = mcast::RefreshedReplEntry>,
     ) {
         use softnpu_lib::{TableAdd, TableRemove};
 
@@ -266,8 +266,7 @@ impl AsicMulticastOps for Handle {
             "setting max nodes to {max_nodes}, \
              max link aggregated nodes to {max_link_aggregated_nodes}"
         );
-        let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.set_max_nodes(max_nodes, max_link_aggregated_nodes)
+        self.mc_data.lock().unwrap().set_max_nodes(max_nodes)
     }
 }
 
