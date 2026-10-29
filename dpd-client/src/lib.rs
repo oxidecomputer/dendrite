@@ -41,12 +41,13 @@ progenitor::generate_api!(
     crates = {
         "oxnet" = "0.1.0",
     },
-    // The generated `format: ip` newtype accepts any IP address. Use
-    // `ExternalMulticastIp` to apply the server's scope validation in the
-    // client's `TryFrom<IpAddr>` conversion.
+    // Replace the generated newtypes for these validated types with the
+    // server's own set, ensuring clients apply the same checks when
+    // constructing or parsing them.
     replace = {
         ExternalMulticastIp = dpd_types_versions::latest::mcast::ExternalMulticastIp,
         UnderlayMulticastIpv6 = dpd_types_versions::latest::mcast::UnderlayMulticastIpv6,
+        Vni = dpd_types_versions::latest::network::Vni,
     },
 );
 
@@ -314,46 +315,23 @@ impl From<counters::RMonCounters> for types::RMonCounters {
     }
 }
 
-impl TryFrom<types::Vni> for network::Vni {
-    type Error = String;
-
-    fn try_from(t: types::Vni) -> Result<network::Vni, String> {
-        network::Vni::new(t.0)
-            .ok_or_else(|| String::from("VNI is out of valid range"))
-    }
-}
-
-impl From<network::Vni> for types::Vni {
-    fn from(t: network::Vni) -> types::Vni {
-        types::Vni(t.as_u32())
-    }
-}
-
-impl TryFrom<types::InstanceTarget> for network::InstanceTarget {
-    type Error = String;
-
-    fn try_from(
-        t: types::InstanceTarget,
-    ) -> Result<network::InstanceTarget, Self::Error> {
-        Ok(Self {
+impl From<types::InstanceTarget> for network::InstanceTarget {
+    fn from(t: types::InstanceTarget) -> Self {
+        Self {
             internal_ip: t.internal_ip,
             inner_mac: t.inner_mac.into(),
-            vni: t.vni.try_into()?,
-        })
+            vni: t.vni,
+        }
     }
 }
 
-impl TryFrom<types::NatTarget> for network::NatTarget {
-    type Error = String;
-
-    fn try_from(
-        t: types::NatTarget,
-    ) -> Result<network::NatTarget, Self::Error> {
-        Ok(Self {
+impl From<types::NatTarget> for network::NatTarget {
+    fn from(t: types::NatTarget) -> Self {
+        Self {
             internal_ip: t.internal_ip,
             inner_mac: t.inner_mac.into(),
-            vni: t.vni.try_into()?,
-        })
+            vni: t.vni,
+        }
     }
 }
 

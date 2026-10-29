@@ -18,4 +18,6 @@ mod route;
 mod serdes;
 mod switch_identifiers;
 pub(crate) mod table;
+#[cfg(test)]
+pub(crate) mod test_util;
 mod transceivers;

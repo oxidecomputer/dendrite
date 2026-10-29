@@ -380,8 +380,8 @@ impl convert::From<common::network::VlanError> for DpdError {
     }
 }
 
-impl convert::From<dpd_types::mcast::Error> for DpdError {
-    fn from(err: dpd_types::mcast::Error) -> Self {
+impl convert::From<dpd_types::mcast::UnderlayMulticastError> for DpdError {
+    fn from(err: dpd_types::mcast::UnderlayMulticastError) -> Self {
         DpdError::Invalid(err.to_string())
     }
 }

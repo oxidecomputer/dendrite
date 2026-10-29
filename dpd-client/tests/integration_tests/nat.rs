@@ -26,6 +26,7 @@ use packet::udp;
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
+use crate::integration_tests::counters::check_counter_incremented;
 
 use futures::TryStreamExt;
 
