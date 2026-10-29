@@ -24,6 +24,7 @@ use packet::{Endpoint, eth, geneve, ipv4, ipv6, sidecar, udp};
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
+use crate::integration_tests::counters::check_counter_incremented;
 
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
 const MULTICAST_TEST_IPV6: Ipv6Addr =

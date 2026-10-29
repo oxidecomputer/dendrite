@@ -1247,9 +1247,6 @@ control Router4 (
 	action icmp_error(bit<8> type, bit<8> code) {
 		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
 		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
-		// No path into this action has yet assigned ucast_egress_port,
-		// and reading it before assignment yields an unspecified value:
-		// https://p4.org/wp-content/uploads/sites/53/p4-spec/docs/P4-16-v1.2.4.html#sec-uninitialized-values-and-writing-invalid-headers
 		hdr.sidecar.sc_egress = 0;
 		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
 		hdr.sidecar.sc_payload = (bit<128>)type << 8 | (bit<128>)code;
@@ -1383,9 +1380,6 @@ control Router6 (
 	action icmp_error(bit<8> type, bit<8> code) {
 		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
 		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
-		// No path into this action has yet assigned ucast_egress_port,
-		// and reading it before assignment yields an unspecified value:
-		// https://p4.org/wp-content/uploads/sites/53/p4-spec/docs/P4-16-v1.2.4.html#sec-uninitialized-values-and-writing-invalid-headers
 		hdr.sidecar.sc_egress = 0;
 		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
 		hdr.sidecar.sc_payload = (bit<128>)type << 8 | (bit<128>)code;
@@ -2198,11 +2192,17 @@ control Ingress(
 			}
 		}
 
-		if (meta.dropped) {
-			// Handle dropped packets
-			ig_dprsr_md.drop_ctl = 1;
+		// Drops recorded in the L3 router need to be counted, but
+		// we do not convert them to _actual_ packet drops in the
+		// deparser. We forward such packets to the host to generate an
+		// ICMP response in our stead.
+		if (meta.drop_reason != 0) {
 			drop_port_ctr.count(ig_intr_md.ingress_port);
 			drop_reason_ctr.count(meta.drop_reason);
+		}
+
+		if (meta.dropped) {
+			ig_dprsr_md.drop_ctl = 1;
 		} else if (!meta.is_mcast) {
 			if (ig_tm_md.ucast_egress_port != USER_SPACE_SERVICE_PORT) {
 				mac_rewrite.apply(hdr, ig_tm_md.ucast_egress_port);

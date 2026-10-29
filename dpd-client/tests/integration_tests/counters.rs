@@ -11,7 +11,9 @@
 
 use std::net::Ipv4Addr;
 use std::sync::Arc;
+use std::time::Duration;
 
+use anyhow::bail;
 use packet::Endpoint;
 
 use crate::integration_tests::common;
@@ -24,37 +26,88 @@ use dpd_client::types::Ipv4Entry;
 use dpd_client::types::Ipv6Entry;
 use dpd_client::types::NatTarget;
 
-// Run a single drop test.  This sends a packet that we expect to be dropped,
-// and verifies that the expected drop counter is bumped by one.  If the test
-// runs to completion we return the counter evaluation as a boolean rather than
-// an Error.  This allows us to trigger the error in the test routine, which
-// gives us a more specific test failure message.
+// Interval and attempt count for polling a counter until it reaches an
+// expected value.
+//
+// Note: counter updates from the model can lag the packet itself.
+const COUNTER_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const COUNTER_POLL_ATTEMPTS: usize = 20;
+
+/// Awaits an increase in a given counter's value from `baseline` to
+/// `baseline + increment`.
+///
+/// Returns `Ok(new_value)` if the expected increment is seen.
+pub async fn check_counter_incremented(
+    switch: &Switch,
+    counter_name: &str,
+    baseline: u64,
+    expected_increment: u64,
+    client_name: Option<&str>,
+) -> anyhow::Result<u64> {
+    let expected = baseline + expected_increment;
+    let table = client_name.unwrap_or("ingress_drop_reason");
+    let incr_expect = format!(
+        "counter '{counter_name}' in {table} expected to increase by \
+         {expected_increment} ({baseline} -> {expected})"
+    );
+    let mut new_value = 0;
+
+    // Briefly delay before reading the counter each time, as there is
+    // occasionally some lag between when we see the counter set in the
+    // simulator and when that updated value is available to the SDE.  To
+    // avoid a long pointless delay here, we try multiple times with a short
+    // sleep rather than once with a long sleep.
+    for _ in 0..COUNTER_POLL_ATTEMPTS {
+        tokio::time::sleep(COUNTER_POLL_INTERVAL).await;
+        new_value = switch.get_counter(counter_name, client_name).await?;
+
+        if new_value == expected {
+            return Ok(new_value);
+        }
+        if new_value > expected {
+            bail!("{incr_expect}, but overshot to {new_value}");
+        }
+    }
+
+    // Counter didn't increment as expected.
+    bail!(
+        "{incr_expect}, but reached {new_value} after \
+         {COUNTER_POLL_ATTEMPTS} polls"
+    )
+}
+
+/// Process a single packet, asserting that a given counter is incremented by
+/// one and a packet is appropriately transformed (or dropped)..
+pub async fn one_counted_test(
+    switch: &Switch,
+    packet: TestPacket,
+    packet_after: Option<TestPacket>,
+    counter: &str,
+    client_name: Option<&str>,
+) -> anyhow::Result<bool> {
+    let old = switch.get_counter(counter, client_name).await?;
+    switch.packet_test(vec![packet], packet_after.into_iter().collect())?;
+    check_counter_incremented(switch, counter, old, 1, client_name)
+        .await
+        .map(|new| old + 1 == new)
+}
+
+/// Run a single drop test.  This sends a packet that we expect to be dropped,
+/// and verifies that the expected drop counter is bumped by one.
 async fn one_drop_test(
     switch: &Switch,
     port: PhysPort,
     packet: packet::Packet,
     counter: &str,
 ) -> anyhow::Result<bool> {
-    let send = TestPacket { packet: Arc::new(packet), port };
-
-    let old = switch.get_counter(counter, None).await?;
-    switch.packet_test(vec![send], Vec::new())?;
-
-    let mut new = 0;
-    for _i in 0..20 {
-        // Briefly delay before reading the counter for a second time, as there is
-        // occasionally some lag between when we see the counter set in the
-        // simulator and when that updated value is available to the SDE.  To
-        // avoid a long pointless delay here, we try multiple times with a short
-        // sleep rather than once with a long sleep.
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        new = switch.get_counter(counter, None).await?;
-        if old + 1 == new {
-            break;
-        }
-    }
-
-    Ok(old + 1 == new)
+    one_counted_test(
+        switch,
+        TestPacket { packet: Arc::new(packet), port },
+        None,
+        counter,
+        None,
+    )
+    .await
 }
 
 // Add an IPv4 address to a port on the switch
