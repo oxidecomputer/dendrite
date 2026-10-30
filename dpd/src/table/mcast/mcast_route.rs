@@ -13,12 +13,12 @@
 //! NAT ingress also matches on destination address only. The group VLAN
 //! gets applied on egress.
 
-use dpd_types::table;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use aal::ActionParse;
+use aal::{ActionParse, AsicError};
 use aal_macros::*;
-use omicron_common::address::UNDERLAY_MULTICAST_SUBNET;
+use dpd_types::mcast::UNDERLAY_MULTICAST_SUBNET;
+use dpd_types::table;
 use slog::debug;
 
 use super::{Ipv4MatchKey, Ipv6MatchKey};
@@ -77,6 +77,28 @@ pub(crate) fn update_ipv4_entry(
         return Ok(());
     }
 
+    set_ipv4_entry(s, route, new_vlan_id)
+}
+
+/// Insert a missing IPv4 multicast route or update its forwarding action.
+pub(crate) fn ensure_ipv4_entry(
+    s: &Switch,
+    route: Ipv4Addr,
+    vlan_id: Option<u16>,
+) -> DpdResult<()> {
+    match set_ipv4_entry(s, route, vlan_id) {
+        Err(DpdError::Switch(AsicError::Missing(_))) => {
+            add_ipv4_entry(s, route, vlan_id)
+        }
+        res => res,
+    }
+}
+
+fn set_ipv4_entry(
+    s: &Switch,
+    route: Ipv4Addr,
+    new_vlan_id: Option<u16>,
+) -> DpdResult<()> {
     let match_key = Ipv4MatchKey::new(route);
     let action = match new_vlan_id {
         None => Ipv4Action::Forward,
@@ -169,6 +191,30 @@ pub(crate) fn update_ipv6_entry(
         return Ok(());
     }
 
+    set_ipv6_entry(s, route, new_vlan_id)
+}
+
+/// Insert a missing IPv6 multicast route or update its forwarding action.
+///
+/// Underlay routes use `forward`, regardless of `vlan_id`.
+pub(crate) fn ensure_ipv6_entry(
+    s: &Switch,
+    route: Ipv6Addr,
+    vlan_id: Option<u16>,
+) -> DpdResult<()> {
+    match set_ipv6_entry(s, route, vlan_id) {
+        Err(DpdError::Switch(AsicError::Missing(_))) => {
+            add_ipv6_entry(s, route, vlan_id)
+        }
+        res => res,
+    }
+}
+
+fn set_ipv6_entry(
+    s: &Switch,
+    route: Ipv6Addr,
+    new_vlan_id: Option<u16>,
+) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(route);
 
     // Reserved underlay multicast subnet (ff04::/64) is internal to the rack

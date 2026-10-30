@@ -11,16 +11,16 @@
 //! check in the P4 pipeline. Each group has a single entry keyed on its
 //! destination address.
 
-use dpd_types::table;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use crate::{Switch, table::*};
-
-use super::{Ipv4MatchKey, Ipv6MatchKey};
-use aal::ActionParse;
+use aal::{ActionParse, AsicError};
 use aal_macros::*;
 use common::network::{MacAddr, NatTarget};
+use dpd_types::table;
 use slog::debug;
+
+use super::{Ipv4MatchKey, Ipv6MatchKey};
+use crate::{Switch, table::*};
 
 #[derive(ActionParse, Debug)]
 enum Ipv4Action {
@@ -65,11 +65,16 @@ pub(crate) fn update_ipv4_entry(
     };
 
     debug!(s.log, "update ingress mcast entry {match_key} -> {action_key:?}");
-    s.table_entry_update(
+    match s.table_entry_update(
         TableType::NatIngressIpv4Mcast,
         &match_key,
         &action_key,
-    )
+    ) {
+        Err(DpdError::Switch(AsicError::Missing(_))) => {
+            add_ipv4_entry(s, ip, new_tgt)
+        }
+        res => res,
+    }
 }
 
 /// Delete a NAT entry for IPv4 multicast traffic.
@@ -134,11 +139,16 @@ pub(crate) fn update_ipv6_entry(
     };
 
     debug!(s.log, "update ingress mcast entry {match_key} -> {action_key:?}");
-    s.table_entry_update(
+    match s.table_entry_update(
         TableType::NatIngressIpv6Mcast,
         &match_key,
         &action_key,
-    )
+    ) {
+        Err(DpdError::Switch(AsicError::Missing(_))) => {
+            add_ipv6_entry(s, ip, new_tgt)
+        }
+        res => res,
+    }
 }
 
 /// Delete a NAT entry for IPv6 multicast traffic.

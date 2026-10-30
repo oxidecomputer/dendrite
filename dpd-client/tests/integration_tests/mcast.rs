@@ -10,23 +10,28 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::anyhow;
+use futures::TryStreamExt;
+use oxnet::MulticastMac;
+
+use ::common::counters::SERVICE_PORT_LABEL;
+use ::common::network::MacAddr;
+use dpd_client::Error;
+use dpd_client::MISSING_NAT_TARGET_ERROR_CODE;
+use dpd_client::types;
+use dpd_types::mcast::{ExternalMulticastIp, UnderlayMulticastIpv6};
+use packet::{Endpoint, eth, geneve, ipv4, ipv6, sidecar, udp};
+
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
 use crate::integration_tests::counters::check_counter_incremented;
-use ::common::counters::SERVICE_PORT_LABEL;
-use ::common::network::MacAddr;
-use anyhow::anyhow;
-use dpd_client::{Error, types};
-use futures::TryStreamExt;
-use oxnet::MulticastMac;
-use packet::{Endpoint, eth, geneve, ipv4, ipv6, sidecar, udp};
 
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
 const MULTICAST_TEST_IPV6: Ipv6Addr =
     Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 1, 0x1010);
 const MULTICAST_TEST_IPV4_SSM: Ipv4Addr = Ipv4Addr::new(232, 123, 45, 67);
 const MULTICAST_TEST_IPV6_SSM: Ipv6Addr =
-    Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0, 0x1111);
+    Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0xf000, 0x1111);
 const MULTICAST_NAT_IP: Ipv6Addr =
     Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 1);
 const GIMLET_MAC: &str = "11:22:33:44:55:66";
@@ -41,16 +46,6 @@ const TAG_A: &str = "tag_a";
 const TAG_B: &str = "tag_b";
 const TAG_WRONG: &str = "wrong_tag";
 const TAG_DIFFERENT: &str = "different_tag";
-
-trait ToIpAddr {
-    fn to_ip_addr(&self) -> IpAddr;
-}
-
-impl ToIpAddr for types::UnderlayMulticastIpv6 {
-    fn to_ip_addr(&self) -> IpAddr {
-        IpAddr::V6(self.0)
-    }
-}
 
 /// Count table entries matching a specific IP address in any key field.
 fn count_entries_for_ip(entries: &[types::TableEntry], ip: &str) -> usize {
@@ -78,7 +73,7 @@ async fn create_test_multicast_group(
     group_ip: IpAddr,
     tag: Option<&str>,
     ports: &[(PhysPort, types::Direction)],
-    internal_forwarding: types::InternalForwarding,
+    nat_target: Option<types::ExternalNatTarget>,
     external_forwarding: types::ExternalForwarding,
     sources: Option<Vec<types::IpSrc>>,
 ) -> types::MulticastGroupResponse {
@@ -98,9 +93,13 @@ async fn create_test_multicast_group(
         IpAddr::V4(_) => {
             // IPv4 groups are always external and require NAT targets
             let external_entry = types::MulticastGroupCreateExternalEntry {
-                group_ip,
+                group_ip: group_ip.try_into().unwrap(),
                 tag: tag.map(String::from),
-                internal_forwarding,
+                internal_forwarding: types::ExternalInternalForwarding {
+                    nat_target: nat_target.expect(
+                        "external multicast group requires a NAT target",
+                    ),
+                },
                 external_forwarding,
                 sources,
             };
@@ -126,7 +125,8 @@ async fn create_test_multicast_group(
                 .is_admin_local_multicast()
             {
                 // Admin-local IPv6 groups are internal
-                let admin_local_ip = types::UnderlayMulticastIpv6(ipv6);
+                let admin_local_ip =
+                    UnderlayMulticastIpv6::try_from(ipv6).unwrap();
                 let internal_entry = types::MulticastGroupCreateUnderlayEntry {
                     group_ip: admin_local_ip,
                     tag: tag.map(String::from),
@@ -150,9 +150,13 @@ async fn create_test_multicast_group(
             } else {
                 // Non-admin-local IPv6 groups are external-only and require NAT targets
                 let external_entry = types::MulticastGroupCreateExternalEntry {
-                    group_ip,
+                    group_ip: group_ip.try_into().unwrap(),
                     tag: tag.map(String::from),
-                    internal_forwarding,
+                    internal_forwarding: types::ExternalInternalForwarding {
+                        nat_target: nat_target.expect(
+                            "external multicast group requires a NAT target",
+                        ),
+                    },
                     external_forwarding,
                     sources,
                 };
@@ -201,9 +205,11 @@ async fn cleanup_test_group(
 fn get_group_ip(response: &types::MulticastGroupResponse) -> IpAddr {
     match response {
         types::MulticastGroupResponse::Underlay { group_ip, .. } => {
-            group_ip.to_ip_addr()
+            (*group_ip).into()
         }
-        types::MulticastGroupResponse::External { group_ip, .. } => *group_ip,
+        types::MulticastGroupResponse::External { group_ip, .. } => {
+            (*group_ip).into()
+        }
     }
 }
 
@@ -253,12 +259,12 @@ fn get_sources(
 
 fn get_nat_target(
     response: &types::MulticastGroupResponse,
-) -> Option<&types::NatTarget> {
+) -> Option<&types::ExternalNatTarget> {
     match response {
         types::MulticastGroupResponse::Underlay { .. } => None,
         types::MulticastGroupResponse::External {
             internal_forwarding, ..
-        } => internal_forwarding.nat_target.as_ref(),
+        } => Some(&internal_forwarding.nat_target),
     }
 }
 
@@ -269,19 +275,19 @@ fn get_tag(response: &types::MulticastGroupResponse) -> &String {
     }
 }
 
-fn create_nat_target_ipv4() -> types::NatTarget {
-    types::NatTarget {
-        internal_ip: MULTICAST_NAT_IP,
+fn create_nat_target_ipv4() -> types::ExternalNatTarget {
+    types::ExternalNatTarget {
+        internal_ip: MULTICAST_NAT_IP.try_into().unwrap(),
         inner_mac: MacAddr::new(0x11, 0x22, 0x33, 0x44, 0x55, 0x66).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     }
 }
 
-fn create_nat_target_ipv6() -> types::NatTarget {
-    types::NatTarget {
-        internal_ip: MULTICAST_NAT_IP,
+fn create_nat_target_ipv6() -> types::ExternalNatTarget {
+    types::ExternalNatTarget {
+        internal_ip: MULTICAST_NAT_IP.try_into().unwrap(),
         inner_mac: MacAddr::new(0x11, 0x22, 0x33, 0x44, 0x55, 0x66).into(),
-        vni: 101.into(),
+        vni: 101.try_into().unwrap(),
     }
 }
 
@@ -381,8 +387,8 @@ fn prepare_expected_pkt(
     switch: &Switch,
     send_pkt: &packet::Packet,
     vlan: Option<u16>,
-    nat_target: Option<&types::NatTarget>,
-    switch_port: Option<PhysPort>,
+    nat_target: Option<&types::ExternalNatTarget>,
+    switch_port: PhysPort,
 ) -> packet::Packet {
     match nat_target {
         Some(nat) => {
@@ -399,7 +405,7 @@ fn prepare_expected_pkt(
             };
 
             let switch_port_mac =
-                switch.get_port_mac(switch_port.unwrap()).unwrap().to_string();
+                switch.get_port_mac(switch_port).unwrap().to_string();
 
             let mut forward_pkt = common::gen_external_geneve_packet(
                 Endpoint::parse(
@@ -413,14 +419,16 @@ fn prepare_expected_pkt(
                 )
                 .unwrap(),
                 Endpoint::parse(
-                    &MacAddr::from(nat.internal_ip.derive_multicast_mac())
-                        .to_string(),
+                    &MacAddr::from(
+                        Ipv6Addr::from(nat.internal_ip).derive_multicast_mac(),
+                    )
+                    .to_string(),
                     &nat.internal_ip.to_string(),
                     geneve::GENEVE_UDP_PORT,
                 )
                 .unwrap(),
                 eth::ETHER_ETHER,
-                *nat.vni,
+                nat.vni.as_u32(),
                 &ingress_payload,
             );
 
@@ -451,11 +459,8 @@ fn prepare_expected_pkt(
             }
 
             // Rewrite src mac
-            if let Some(port) = switch_port {
-                let port_mac = switch.get_port_mac(port).unwrap();
-                recv_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_smac =
-                    port_mac.clone();
-            }
+            let port_mac = switch.get_port_mac(switch_port).unwrap();
+            recv_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_smac = port_mac.clone();
 
             recv_pkt
         }
@@ -506,7 +511,7 @@ async fn test_group_creation_with_validation() -> TestResult {
         internal_multicast_ip,
         Some(TEST_TAG),
         &[(egress1, types::Direction::Underlay)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -521,10 +526,10 @@ async fn test_group_creation_with_validation() -> TestResult {
     // Test creating a group with invalid parameters (e.g., invalid VLAN ID)
     // IPv4 groups are always external
     let external_invalid = types::MulticastGroupCreateExternalEntry {
-        group_ip: IpAddr::V4(MULTICAST_TEST_IPV4),
+        group_ip: IpAddr::V4(MULTICAST_TEST_IPV4).try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding {
             vlan_id: Some(4096), // Invalid: VLAN ID must be 1-4094
@@ -551,10 +556,10 @@ async fn test_group_creation_with_validation() -> TestResult {
 
     // Test with the null VLAN ID 0 (also invalid)
     let external_vlan0 = types::MulticastGroupCreateExternalEntry {
-        group_ip: IpAddr::V4(MULTICAST_TEST_IPV4),
+        group_ip: IpAddr::V4(MULTICAST_TEST_IPV4).try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding {
             vlan_id: Some(0), // Invalid: VLAN 0 is the null VID
@@ -581,10 +586,10 @@ async fn test_group_creation_with_validation() -> TestResult {
 
     // Test with reserved VLAN ID 4095 (also invalid)
     let external_vlan4095 = types::MulticastGroupCreateExternalEntry {
-        group_ip: IpAddr::V4(MULTICAST_TEST_IPV4),
+        group_ip: IpAddr::V4(MULTICAST_TEST_IPV4).try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding {
             vlan_id: Some(4095), // Invalid: VLAN 4095 is reserved
@@ -612,10 +617,10 @@ async fn test_group_creation_with_validation() -> TestResult {
     // Test with valid parameters
     // IPv4 groups are always external
     let external_valid = types::MulticastGroupCreateExternalEntry {
-        group_ip: IpAddr::V4(MULTICAST_TEST_IPV4_SSM),
+        group_ip: IpAddr::V4(MULTICAST_TEST_IPV4_SSM).try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: Some(vec![types::IpSrc::Exact(
@@ -636,12 +641,12 @@ async fn test_group_creation_with_validation() -> TestResult {
         "External group should reference the same external group ID as the internal group"
     );
 
-    assert_eq!(created.group_ip, MULTICAST_TEST_IPV4_SSM);
-    assert_eq!(created.tag, TEST_TAG);
     assert_eq!(
-        created.internal_forwarding.nat_target,
-        Some(nat_target.clone())
+        IpAddr::from(created.group_ip),
+        IpAddr::V4(MULTICAST_TEST_IPV4_SSM)
     );
+    assert_eq!(created.tag, TEST_TAG);
+    assert_eq!(created.internal_forwarding.nat_target, nat_target.clone());
     assert_eq!(created.external_forwarding.vlan_id, Some(10));
     assert_eq!(
         created.sources,
@@ -651,13 +656,15 @@ async fn test_group_creation_with_validation() -> TestResult {
     );
 
     // Clean up external first (references internal via NAT target), then internal
-    cleanup_test_group(switch, created.group_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, created.group_ip.into(), TEST_TAG)
+        .await
+        .unwrap();
     cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
 }
 
 #[tokio::test]
 #[ignore]
-async fn test_internal_ipv6_validation() -> TestResult {
+async fn test_underlay_ipv6_validation() -> TestResult {
     let switch = &*get_switch().await;
 
     let (port_id, link_id) = switch.link_id(PhysPort(15)).unwrap();
@@ -707,7 +714,7 @@ async fn test_internal_ipv6_validation() -> TestResult {
 
     assert_eq!(updated.tag, TEST_TAG);
 
-    cleanup_test_group(switch, created.group_ip.to_ip_addr(), TEST_TAG).await
+    cleanup_test_group(switch, IpAddr::from(created.group_ip), TEST_TAG).await
 }
 
 #[tokio::test]
@@ -743,17 +750,17 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
         .into_inner();
 
     // Create external group that references the admin-scoped group
-    let nat_target = types::NatTarget {
+    let nat_target = types::ExternalNatTarget {
         internal_ip: "ff04::200".parse().unwrap(), // References admin-scoped group
         inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x03).into(),
-        vni: 200.into(),
+        vni: 200.try_into().unwrap(),
     };
 
     let external_group = types::MulticastGroupCreateExternalEntry {
-        group_ip: IpAddr::V4("224.1.2.3".parse().unwrap()),
+        group_ip: "224.1.2.3".parse().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target,
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(42) }, // This VLAN should be used by admin-scoped group
         sources: None,
@@ -768,13 +775,8 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
 
     assert_eq!(created_external.external_forwarding.vlan_id, Some(42));
     assert_eq!(
-        created_external
-            .internal_forwarding
-            .nat_target
-            .as_ref()
-            .unwrap()
-            .internal_ip,
-        "ff04::200".parse::<std::net::Ipv6Addr>().unwrap()
+        created_external.internal_forwarding.nat_target.internal_ip,
+        "ff04::200".parse::<UnderlayMulticastIpv6>().unwrap()
     );
 
     // Verify IPv4 route table has one entry for the VLAN group.
@@ -831,20 +833,133 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
 
     // Verify the admin-scoped group's bitmap entry has VLAN 42 from external
     // group propagation.
-    assert!(
-        bitmap_table
-            .entries
-            .iter()
-            .any(|entry| entry.action_args.values().any(|v| v.contains("42"))),
-        "Admin-scoped group bitmap should have VLAN 42 from external group"
+    let bitmap_entry = bitmap_table
+        .entries
+        .iter()
+        .find(|entry| {
+            entry.keys.get("mcast_external_grp")
+                == Some(&created_admin.external_group_id.to_string())
+        })
+        .expect("Internal group bitmap entry should exist");
+    assert_eq!(bitmap_entry.action, "set_decap_ports_and_vlan");
+    assert_eq!(
+        bitmap_entry.action_args.get("vlan_id").map(String::as_str),
+        Some("42"),
     );
+
+    let second_admin = switch
+        .client
+        .multicast_group_create_underlay(
+            &types::MulticastGroupCreateUnderlayEntry {
+                group_ip: "ff04::201".parse().unwrap(),
+                ..internal_group_entry.clone()
+            },
+        )
+        .await?
+        .into_inner();
+
+    let mut port_args = bitmap_entry.action_args.clone();
+    port_args.remove("vlan_id");
+    let mut update = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: external_group.internal_forwarding.clone(),
+        external_forwarding: external_group.external_forwarding.clone(),
+        sources: None,
+    };
+
+    for (target, vlan_id) in [
+        (&second_admin, Some(42)),
+        (&created_admin, None),
+        (&created_admin, Some(42)),
+    ] {
+        update.internal_forwarding.nat_target.internal_ip = target.group_ip;
+        update.external_forwarding.vlan_id = vlan_id;
+        let updated = switch
+            .client
+            .multicast_group_update_external(
+                &created_external.group_ip,
+                &make_tag(TEST_TAG),
+                &update,
+            )
+            .await?
+            .into_inner();
+        assert_eq!(updated.external_group_id, target.external_group_id);
+        assert_eq!(updated.internal_forwarding, update.internal_forwarding);
+        assert_eq!(updated.external_forwarding.vlan_id, vlan_id);
+
+        let bitmaps = switch
+            .client
+            .table_dump("Egress.mcast_egress.tbl_decap_ports", false)
+            .await?
+            .into_inner();
+
+        for group in [&created_admin, &second_admin] {
+            let entry = bitmaps
+                .entries
+                .iter()
+                .find(|entry| {
+                    entry.keys.get("mcast_external_grp")
+                        == Some(&group.external_group_id.to_string())
+                })
+                .unwrap();
+            let group_vlan =
+                if group.external_group_id == target.external_group_id {
+                    vlan_id
+                } else {
+                    None
+                };
+            let mut expected_args = port_args.clone();
+            let expected_action = match group_vlan {
+                Some(vlan_id) => {
+                    expected_args.insert("vlan_id".into(), vlan_id.to_string());
+                    "set_decap_ports_and_vlan"
+                }
+                None => "set_decap_ports",
+            };
+            assert_eq!(entry.action, expected_action);
+            assert_eq!(entry.action_args, expected_args);
+        }
+    }
 
     // Delete external group first since it references the internal group via
     // NAT target
-    cleanup_test_group(switch, created_external.group_ip, TEST_TAG)
+    cleanup_test_group(switch, created_external.group_ip.into(), TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, created_admin.group_ip.to_ip_addr(), TEST_TAG)
+
+    let recreated = switch
+        .client
+        .multicast_group_create_external(
+            &types::MulticastGroupCreateExternalEntry {
+                external_forwarding: types::ExternalForwarding {
+                    vlan_id: None,
+                },
+                ..external_group
+            },
+        )
+        .await?
+        .into_inner();
+    assert_eq!(recreated.external_group_id, created_admin.external_group_id);
+    assert_eq!(recreated.external_forwarding.vlan_id, None);
+
+    let bitmaps = switch
+        .client
+        .table_dump("Egress.mcast_egress.tbl_decap_ports", false)
+        .await?
+        .into_inner();
+    let entry = bitmaps
+        .entries
+        .iter()
+        .find(|entry| {
+            entry.keys.get("mcast_external_grp")
+                == Some(&created_admin.external_group_id.to_string())
+        })
+        .unwrap();
+    assert_eq!(entry.action, "set_decap_ports");
+    assert_eq!(entry.action_args, port_args);
+    cleanup_test_group(switch, recreated.group_ip.into(), TEST_TAG).await?;
+    cleanup_test_group(switch, IpAddr::from(second_admin.group_ip), TEST_TAG)
+        .await?;
+    cleanup_test_group(switch, IpAddr::from(created_admin.group_ip), TEST_TAG)
         .await
 }
 
@@ -860,7 +975,7 @@ async fn test_group_api_lifecycle() {
         internal_multicast_ip,
         Some(TEST_TAG),
         &[(egress1, types::Direction::Underlay)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -871,10 +986,10 @@ async fn test_group_api_lifecycle() {
     let vlan_id = 10;
     let nat_target = create_nat_target_ipv4();
     let external_create = types::MulticastGroupCreateExternalEntry {
-        group_ip,
+        group_ip: group_ip.try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding {
             vlan_id: Some(vlan_id),
@@ -891,12 +1006,9 @@ async fn test_group_api_lifecycle() {
 
     let external_group_id = created.external_group_id;
 
-    assert_eq!(created.group_ip, MULTICAST_TEST_IPV4);
+    assert_eq!(IpAddr::from(created.group_ip), IpAddr::V4(MULTICAST_TEST_IPV4));
     assert_eq!(created.tag, TEST_TAG);
-    assert_eq!(
-        created.internal_forwarding.nat_target,
-        Some(nat_target.clone())
-    );
+    assert_eq!(created.internal_forwarding.nat_target, nat_target.clone());
     assert_eq!(created.external_forwarding.vlan_id, Some(vlan_id));
 
     // Route table: 1 entry (dst_addr only, VLAN via action)
@@ -985,16 +1097,16 @@ async fn test_group_api_lifecycle() {
     );
 
     // Update the group
-    let updated_nat_target = types::NatTarget {
-        internal_ip: MULTICAST_NAT_IP.into(),
+    let updated_nat_target = types::ExternalNatTarget {
+        internal_ip: MULTICAST_NAT_IP.try_into().unwrap(),
         inner_mac: MacAddr::from(MULTICAST_NAT_IP.derive_multicast_mac())
             .into(),
-        vni: 200.into(),
+        vni: 200.try_into().unwrap(),
     };
 
     let external_update = types::MulticastGroupUpdateExternalEntry {
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(updated_nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: updated_nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(20) },
         sources: None,
@@ -1003,7 +1115,7 @@ async fn test_group_api_lifecycle() {
     let updated = switch
         .client
         .multicast_group_update_external(
-            &group_ip,
+            &group_ip.try_into().unwrap(),
             &make_tag(TEST_TAG),
             &external_update,
         )
@@ -1013,10 +1125,7 @@ async fn test_group_api_lifecycle() {
 
     assert_eq!(updated.external_group_id, external_group_id);
     assert_eq!(updated.tag, TEST_TAG);
-    assert_eq!(
-        updated.internal_forwarding.nat_target,
-        Some(updated_nat_target)
-    );
+    assert_eq!(updated.internal_forwarding.nat_target, updated_nat_target);
     assert_eq!(updated.external_forwarding.vlan_id, Some(20));
     assert_eq!(updated.sources, None);
 
@@ -1084,7 +1193,7 @@ async fn test_multicast_del_tag_validation() -> TestResult {
         internal_multicast_ip,
         Some(TEST_TAG),
         &[(PhysPort(11), types::Direction::Underlay)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -1093,10 +1202,10 @@ async fn test_multicast_del_tag_validation() -> TestResult {
     // Test Case 1: Delete with mismatched tag should fail
     let tagged_group_ip = IpAddr::V4(Ipv4Addr::new(224, 0, 10, 1));
     let external_tagged = types::MulticastGroupCreateExternalEntry {
-        group_ip: tagged_group_ip,
+        group_ip: tagged_group_ip.try_into().unwrap(),
         tag: Some(TAG_A.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: create_nat_target_ipv4(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -1163,10 +1272,10 @@ async fn test_multicast_del_tag_validation() -> TestResult {
     // then delete with the generated tag
     let auto_tagged_group_ip = IpAddr::V4(Ipv4Addr::new(224, 0, 10, 2));
     let external_auto_tagged = types::MulticastGroupCreateExternalEntry {
-        group_ip: auto_tagged_group_ip,
+        group_ip: auto_tagged_group_ip.try_into().unwrap(),
         tag: None, // Will get auto-generated tag
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: create_nat_target_ipv4(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -1210,21 +1319,37 @@ async fn test_multicast_tagged_groups_management() {
         internal_multicast_ip,
         Some(&format!("{}_internal", tag)),
         &[(PhysPort(11), types::Direction::Underlay)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
     .await;
+
+    let additional_internal_ips: [Ipv6Addr; 2] =
+        ["ff04::2", "ff04::3"].map(|ip| ip.parse().unwrap());
+
+    for internal_ip in additional_internal_ips {
+        create_test_multicast_group(
+            switch,
+            IpAddr::V6(internal_ip),
+            Some(&format!("{}_internal", tag)),
+            &[(PhysPort(11), types::Direction::Underlay)],
+            None,
+            types::ExternalForwarding { vlan_id: None },
+            None,
+        )
+        .await;
+    }
 
     let nat_target = create_nat_target_ipv4();
     let group_ip = IpAddr::V4(MULTICAST_TEST_IPV4);
 
     // Create first IPv4 external group (entry point only, no members)
     let external_group1 = types::MulticastGroupCreateExternalEntry {
-        group_ip,
+        group_ip: group_ip.try_into().unwrap(),
         tag: Some(tag.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -1241,8 +1366,11 @@ async fn test_multicast_tagged_groups_management() {
     let external_group2 = types::MulticastGroupCreateExternalEntry {
         group_ip: "224.0.1.2".parse().unwrap(), // Different IP
         tag: Some(tag.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: types::ExternalNatTarget {
+                internal_ip: additional_internal_ips[0].try_into().unwrap(),
+                ..nat_target.clone()
+            },
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -1259,8 +1387,11 @@ async fn test_multicast_tagged_groups_management() {
     let external_group3 = types::MulticastGroupCreateExternalEntry {
         group_ip: "224.0.1.3".parse().unwrap(), // Different IP
         tag: Some(TAG_DIFFERENT.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: types::ExternalNatTarget {
+                internal_ip: additional_internal_ips[1].try_into().unwrap(),
+                ..nat_target.clone()
+            },
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -1285,9 +1416,9 @@ async fn test_multicast_tagged_groups_management() {
 
     let group_ips: HashSet<_> =
         tagged_groups.iter().map(|g| get_group_ip(g)).collect();
-    assert!(group_ips.contains(&created1.group_ip));
-    assert!(group_ips.contains(&created2.group_ip));
-    assert!(!group_ips.contains(&created3.group_ip));
+    assert!(group_ips.contains(&IpAddr::from(created1.group_ip)));
+    assert!(group_ips.contains(&IpAddr::from(created2.group_ip)));
+    assert!(!group_ips.contains(&IpAddr::from(created3.group_ip)));
 
     // Delete all groups with the tag
     switch
@@ -1306,9 +1437,26 @@ async fn test_multicast_tagged_groups_management() {
 
     let remaining_ips: HashSet<_> =
         remaining_groups.iter().map(|g| get_group_ip(g)).collect();
-    assert!(!remaining_ips.contains(&created1.group_ip));
-    assert!(!remaining_ips.contains(&created2.group_ip));
-    assert!(remaining_ips.contains(&created3.group_ip));
+    assert!(!remaining_ips.contains(&IpAddr::from(created1.group_ip)));
+    assert!(!remaining_ips.contains(&IpAddr::from(created2.group_ip)));
+    assert!(remaining_ips.contains(&IpAddr::from(created3.group_ip)));
+
+    cleanup_test_group(switch, IpAddr::from(created3.group_ip), TAG_DIFFERENT)
+        .await
+        .unwrap();
+    for internal_ip in [
+        MULTICAST_NAT_IP,
+        additional_internal_ips[0],
+        additional_internal_ips[1],
+    ] {
+        cleanup_test_group(
+            switch,
+            IpAddr::V6(internal_ip),
+            &format!("{}_internal", tag),
+        )
+        .await
+        .unwrap();
+    }
 }
 
 #[tokio::test]
@@ -1358,22 +1506,9 @@ async fn test_api_internal_ipv6_bifurcated_replication() -> TestResult {
     );
 
     // Verify members are preserved
-    assert_eq!(created.members.len(), 2);
-    let external_members: Vec<_> = created
-        .members
-        .iter()
-        .filter(|m| m.direction == types::Direction::External)
-        .collect();
-    let underlay_members: Vec<_> = created
-        .members
-        .iter()
-        .filter(|m| m.direction == types::Direction::Underlay)
-        .collect();
+    assert_eq!(created.members, admin_scoped_group.members);
 
-    assert_eq!(external_members.len(), 1);
-    assert_eq!(underlay_members.len(), 1);
-
-    cleanup_test_group(switch, created.group_ip.to_ip_addr(), TEST_TAG).await
+    cleanup_test_group(switch, IpAddr::from(created.group_ip), TEST_TAG).await
 }
 
 #[tokio::test]
@@ -1405,7 +1540,7 @@ async fn test_api_internal_ipv6_underlay_only() -> TestResult {
     assert_eq!(created.members.len(), 1);
     assert_eq!(created.members[0].direction, types::Direction::Underlay);
 
-    cleanup_test_group(switch, created.group_ip.to_ip_addr(), TEST_TAG).await
+    cleanup_test_group(switch, IpAddr::from(created.group_ip), TEST_TAG).await
 }
 
 #[tokio::test]
@@ -1438,7 +1573,7 @@ async fn test_api_internal_ipv6_external_only() -> TestResult {
     assert_eq!(created.members.len(), 1);
     assert_eq!(created.members[0].direction, types::Direction::External);
 
-    cleanup_test_group(switch, created.group_ip.to_ip_addr(), TEST_TAG).await
+    cleanup_test_group(switch, IpAddr::from(created.group_ip), TEST_TAG).await
 }
 
 #[tokio::test]
@@ -1453,7 +1588,7 @@ async fn test_api_invalid_combinations() -> TestResult {
         internal_multicast_ip,
         Some(TEST_TAG),
         &[(PhysPort(26), types::Direction::Underlay)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -1461,10 +1596,10 @@ async fn test_api_invalid_combinations() -> TestResult {
 
     // IPv4 with underlay members should fail
     let ipv4_with_underlay = types::MulticastGroupCreateExternalEntry {
-        group_ip: IpAddr::V4("224.1.0.200".parse().unwrap()), // Avoid 224.0.0.0/24 reserved range
+        group_ip: "224.1.0.200".parse().unwrap(), // Avoid 224.0.0.0/24 reserved range
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: create_nat_target_ipv4(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -1478,12 +1613,27 @@ async fn test_api_invalid_combinations() -> TestResult {
         .expect("IPv4 external group should be created")
         .into_inner();
 
+    let internal_multicast_ip2 = "ff04::2".parse().unwrap();
+    create_test_multicast_group(
+        switch,
+        IpAddr::V6(internal_multicast_ip2),
+        Some(TEST_TAG),
+        &[(PhysPort(26), types::Direction::Underlay)],
+        None,
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
     // Non-admin-scoped IPv6 should use external API
     let non_admin_ipv6 = types::MulticastGroupCreateExternalEntry {
         group_ip: "ff0e::400".parse().unwrap(), // Global scope, not admin-scoped
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv6()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: types::ExternalNatTarget {
+                internal_ip: internal_multicast_ip2.try_into().unwrap(),
+                ..create_nat_target_ipv6()
+            },
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(20) },
         sources: None,
@@ -1496,43 +1646,17 @@ async fn test_api_invalid_combinations() -> TestResult {
         .expect("Non-admin-scoped IPv6 should use external API")
         .into_inner();
 
-    // Admin-scoped IPv6 with underlay members should fail via external API
-    let admin_scoped_external_entry =
-        types::MulticastGroupCreateExternalEntry {
-            group_ip: "ff04::500".parse().unwrap(), // Admin-scoped
-            tag: Some(TEST_TAG.to_string()),
-            internal_forwarding: types::InternalForwarding {
-                nat_target: Some(create_nat_target_ipv6()),
-            },
-            external_forwarding: types::ExternalForwarding {
-                vlan_id: Some(30),
-            },
-            sources: None,
-        };
+    assert!("ff04::500".parse::<ExternalMulticastIp>().is_err());
 
-    // This should fail because admin-scoped groups must use internal API
-    let result = switch
-        .client
-        .multicast_group_create_external(&admin_scoped_external_entry)
-        .await
-        .expect_err("Admin-scoped IPv6 should fail via external API");
-
-    // Verify it's the expected validation error
-    match result {
-        Error::ErrorResponse(inner) => {
-            assert_eq!(inner.status(), 400);
-            assert!(inner.message.contains("admin-local scope"));
-        }
-        _ => panic!(
-            "Expected ErrorResponse for admin-local external group creation"
-        ),
-    }
-
-    cleanup_test_group(switch, created_ipv4.group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(switch, created_non_admin.group_ip, TEST_TAG)
+    cleanup_test_group(switch, created_ipv4.group_ip.into(), TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, created_non_admin.group_ip.into(), TEST_TAG)
+        .await
+        .unwrap();
+    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, IpAddr::V6(internal_multicast_ip2), TEST_TAG)
+        .await
 }
 
 #[tokio::test]
@@ -1553,7 +1677,7 @@ async fn test_ipv4_multicast_invalid_destination_mac() -> TestResult {
         internal_multicast_ip,
         Some(TEST_TAG),
         &[(egress1, types::Direction::Underlay)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -1568,9 +1692,7 @@ async fn test_ipv4_multicast_invalid_destination_mac() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
         None,
     )
@@ -1648,7 +1770,7 @@ async fn test_ipv6_multicast_invalid_destination_mac() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &[(egress1, types::Direction::External)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -1733,7 +1855,7 @@ async fn test_multicast_ttl_zero() -> TestResult {
         internal_multicast_ip,
         Some(TEST_TAG),
         &[(egress1, types::Direction::Underlay)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -1747,9 +1869,7 @@ async fn test_multicast_ttl_zero() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
         None,
     )
@@ -1815,7 +1935,7 @@ async fn test_multicast_ttl_one() -> TestResult {
         internal_multicast_ip,
         Some(TEST_TAG),
         &[(egress1, types::Direction::Underlay)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -1829,9 +1949,7 @@ async fn test_multicast_ttl_one() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
         None,
     )
@@ -1905,7 +2023,7 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
         internal_multicast_ip,
         Some(TEST_TAG),
         &underlay_members,
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -1925,9 +2043,7 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &external_members,
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: vlan },
         None,
     )
@@ -1975,14 +2091,14 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
         &to_send,
         vlan,
         get_nat_target(&created_group),
-        Some(egress1),
+        egress1,
     );
     let to_recv2 = prepare_expected_pkt(
         switch,
         &to_send,
         vlan,
         get_nat_target(&created_group),
-        Some(egress3),
+        egress3,
     );
 
     let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
@@ -2039,7 +2155,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
         internal_multicast_ip,
         Some(TEST_TAG),
         &replication_members,
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
         None,
     )
@@ -2054,9 +2170,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: vlan },
         None,
     )
@@ -2081,10 +2195,10 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
     // decrement the ttl/hlim, and update the desination MAC to the
     // Egress port MAC
     let expected_pkt1 =
-        prepare_expected_pkt(switch, &og_pkt, vlan, None, Some(egress1));
+        prepare_expected_pkt(switch, &og_pkt, vlan, None, egress1);
 
     let expected_pkt2 =
-        prepare_expected_pkt(switch, &og_pkt, vlan, None, Some(egress2));
+        prepare_expected_pkt(switch, &og_pkt, vlan, None, egress2);
 
     // Use same NAT target as the one used in the original packet
     let nat_target = create_nat_target_ipv4();
@@ -2104,14 +2218,16 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
         )
         .unwrap(),
         Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
+            &MacAddr::from(
+                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
+            )
+            .to_string(),
             &nat_target.internal_ip.to_string(),
             geneve::GENEVE_UDP_PORT,
         )
         .unwrap(),
         eth::ETHER_IPV4,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         0, // mcast_tag = 0
         &payload,
     );
@@ -2225,7 +2341,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
             (egress3, types::Direction::Underlay),
             (egress4, types::Direction::Underlay),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
         None,
     )
@@ -2239,9 +2355,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
         None,
     )
@@ -2276,8 +2390,10 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
     )
     .unwrap();
     let geneve_dst = Endpoint::parse(
-        &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-            .to_string(),
+        &MacAddr::from(
+            Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
+        )
+        .to_string(),
         &nat_target.internal_ip.to_string(),
         geneve::GENEVE_UDP_PORT,
     )
@@ -2290,7 +2406,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
         geneve_src,
         geneve_dst,
         eth::ETHER_IPV4,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         1, // mcast_tag = 1
         &payload,
     );
@@ -2300,9 +2416,9 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
 
     // Vlan should be stripped and we only replicate to underlay ports
     let recv_pkt1 =
-        prepare_expected_pkt(switch, &geneve_pkt, None, None, Some(egress3));
+        prepare_expected_pkt(switch, &geneve_pkt, None, None, egress3);
     let recv_pkt2 =
-        prepare_expected_pkt(switch, &geneve_pkt, None, None, Some(egress4));
+        prepare_expected_pkt(switch, &geneve_pkt, None, None, egress4);
 
     // We expect the packet not be decapped and forwarded to both egress
     // ports
@@ -2415,7 +2531,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
             (egress3, types::Direction::Underlay),
             (egress4, types::Direction::Underlay),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
         None,
     )
@@ -2430,9 +2546,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: vlan },
         None,
     )
@@ -2472,14 +2586,16 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
         )
         .unwrap(),
         Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
+            &MacAddr::from(
+                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
+            )
+            .to_string(),
             &nat_target.internal_ip.to_string(),
             geneve::GENEVE_UDP_PORT,
         )
         .unwrap(),
         eth::ETHER_IPV4,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         2, // mcast_tag = 2
         &payload,
     );
@@ -2488,17 +2604,15 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
         TestPacket { packet: Arc::new(geneve_pkt.clone()), port: ingress };
 
     // External ports should be replicated with Vlan information
-    let recv_pkt1 =
-        prepare_expected_pkt(switch, &og_pkt, vlan, None, Some(egress1));
+    let recv_pkt1 = prepare_expected_pkt(switch, &og_pkt, vlan, None, egress1);
 
-    let recv_pkt2 =
-        prepare_expected_pkt(switch, &og_pkt, vlan, None, Some(egress2));
+    let recv_pkt2 = prepare_expected_pkt(switch, &og_pkt, vlan, None, egress2);
 
     // Vlan should be stripped when we replicate to underlay ports
     let recv_pkt3 =
-        prepare_expected_pkt(switch, &geneve_pkt, None, None, Some(egress3));
+        prepare_expected_pkt(switch, &geneve_pkt, None, None, egress3);
     let recv_pkt4 =
-        prepare_expected_pkt(switch, &geneve_pkt, None, None, Some(egress4));
+        prepare_expected_pkt(switch, &geneve_pkt, None, None, egress4);
 
     // We expect 2 packets to be decapped and forwarded to external ports
     // and 2 packets to be forwarded to underlay ports (still encapped)
@@ -2647,7 +2761,7 @@ fn build_inner_ttl_geneve_pkt(
     external_ip: IpAddr,
     src_mac: MacAddr,
     vlan: Option<u16>,
-    nat_target: &types::NatTarget,
+    nat_target: &types::ExternalNatTarget,
     inner_ttl: u8,
     mcast_tag: u8,
     inner_eth: bool,
@@ -2711,14 +2825,16 @@ fn build_inner_ttl_geneve_pkt(
         )
         .unwrap(),
         Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
+            &MacAddr::from(
+                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
+            )
+            .to_string(),
             &nat_target.internal_ip.to_string(),
             geneve::GENEVE_UDP_PORT,
         )
         .unwrap(),
         ether_type,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         mcast_tag,
         &payload,
     );
@@ -2746,7 +2862,7 @@ async fn run_bifurcated_inner_ttl_test(
             (egress_external, types::Direction::External),
             (egress_underlay, types::Direction::Underlay),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -2763,7 +2879,7 @@ async fn run_bifurcated_inner_ttl_test(
         external_ip,
         Some(TEST_TAG),
         &[],
-        types::InternalForwarding { nat_target: Some(nat_target.clone()) },
+        Some(nat_target.clone()),
         types::ExternalForwarding { vlan_id: vlan },
         None,
     )
@@ -2783,23 +2899,13 @@ async fn run_bifurcated_inner_ttl_test(
     let test_pkt =
         TestPacket { packet: Arc::new(geneve_pkt.clone()), port: ingress };
 
-    let underlay_pkt = prepare_expected_pkt(
-        switch,
-        &geneve_pkt,
-        None,
-        None,
-        Some(egress_underlay),
-    );
+    let underlay_pkt =
+        prepare_expected_pkt(switch, &geneve_pkt, None, None, egress_underlay);
 
     let mut expected_pkts = Vec::new();
     if drop_label.is_none() {
-        let external_pkt = prepare_expected_pkt(
-            switch,
-            &og_pkt,
-            vlan,
-            None,
-            Some(egress_external),
-        );
+        let external_pkt =
+            prepare_expected_pkt(switch, &og_pkt, vlan, None, egress_external);
         expected_pkts.push(TestPacket {
             packet: Arc::new(external_pkt),
             port: egress_external,
@@ -3013,7 +3119,7 @@ async fn run_external_only_inner_ttl_test(
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -3030,7 +3136,7 @@ async fn run_external_only_inner_ttl_test(
         external_ip,
         Some(TEST_TAG),
         &[],
-        types::InternalForwarding { nat_target: Some(nat_target.clone()) },
+        Some(nat_target.clone()),
         types::ExternalForwarding { vlan_id: vlan },
         None,
     )
@@ -3055,21 +3161,13 @@ async fn run_external_only_inner_ttl_test(
         vec![
             TestPacket {
                 packet: Arc::new(prepare_expected_pkt(
-                    switch,
-                    &og_pkt,
-                    vlan,
-                    None,
-                    Some(egress1),
+                    switch, &og_pkt, vlan, None, egress1,
                 )),
                 port: egress1,
             },
             TestPacket {
                 packet: Arc::new(prepare_expected_pkt(
-                    switch,
-                    &og_pkt,
-                    vlan,
-                    None,
-                    Some(egress2),
+                    switch, &og_pkt, vlan, None, egress2,
                 )),
                 port: egress2,
             },
@@ -3514,7 +3612,7 @@ async fn test_ipv4_multicast_drops_ingress_is_egress_port() -> TestResult {
         internal_multicast_ip,
         Some(TEST_TAG),
         &[(ingress, types::Direction::Underlay)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // No NAT target for admin-scoped group
         None,
     )
@@ -3528,9 +3626,7 @@ async fn test_ipv4_multicast_drops_ingress_is_egress_port() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -3597,7 +3693,7 @@ async fn test_ipv6_multicast_hop_limit_zero() -> TestResult {
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
         None,
     )
@@ -3611,9 +3707,7 @@ async fn test_ipv6_multicast_hop_limit_zero() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
         None,
     )
@@ -3679,7 +3773,7 @@ async fn test_ipv6_multicast_hop_limit_one() -> TestResult {
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
         None,
     )
@@ -3693,9 +3787,7 @@ async fn test_ipv6_multicast_hop_limit_one() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
         None,
     )
@@ -3763,7 +3855,7 @@ async fn test_ipv6_multicast_basic_replication_nat_ingress() -> TestResult {
         internal_multicast_ip,
         Some(TEST_TAG),
         &underlay_members,
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
         None,
     )
@@ -3778,9 +3870,7 @@ async fn test_ipv6_multicast_basic_replication_nat_ingress() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: vlan },
         None,
     )
@@ -3818,7 +3908,7 @@ async fn test_ipv6_multicast_basic_replication_nat_ingress() -> TestResult {
         &to_send,
         vlan,
         get_nat_target(&created_group),
-        Some(egress1),
+        egress1,
     );
 
     let test_pkt = TestPacket { packet: Arc::new(to_send), port: ingress };
@@ -3871,7 +3961,7 @@ async fn test_ipv4_multicast_source_filtering_exact_match() -> TestResult {
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
         None,
     )
@@ -3888,9 +3978,7 @@ async fn test_ipv4_multicast_source_filtering_exact_match() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
         Some(vec![allowed_src]),
     )
@@ -3923,7 +4011,7 @@ async fn test_ipv4_multicast_source_filtering_exact_match() -> TestResult {
         &allowed_pkt,
         vlan,
         get_nat_target(&created_group),
-        Some(egress1),
+        egress1,
     );
 
     let to_recv12 = prepare_expected_pkt(
@@ -3931,7 +4019,7 @@ async fn test_ipv4_multicast_source_filtering_exact_match() -> TestResult {
         &allowed_pkt,
         vlan,
         get_nat_target(&created_group),
-        Some(egress2),
+        egress2,
     );
 
     let test_pkts = vec![
@@ -3988,7 +4076,7 @@ async fn test_ipv4_multicast_source_filtering_multiple_exact() -> TestResult {
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
         None,
     )
@@ -4012,9 +4100,7 @@ async fn test_ipv4_multicast_source_filtering_multiple_exact() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
         Some(allowed_sources),
     )
@@ -4056,7 +4142,7 @@ async fn test_ipv4_multicast_source_filtering_multiple_exact() -> TestResult {
         &allowed_pkt1,
         vlan,
         get_nat_target(&created_group),
-        Some(egress1),
+        egress1,
     );
 
     let to_recv22 = prepare_expected_pkt(
@@ -4064,7 +4150,7 @@ async fn test_ipv4_multicast_source_filtering_multiple_exact() -> TestResult {
         &allowed_pkt2,
         vlan,
         get_nat_target(&created_group),
-        Some(egress2),
+        egress2,
     );
 
     let to_recv12 = prepare_expected_pkt(
@@ -4072,7 +4158,7 @@ async fn test_ipv4_multicast_source_filtering_multiple_exact() -> TestResult {
         &allowed_pkt1,
         vlan,
         get_nat_target(&created_group),
-        Some(egress2),
+        egress2,
     );
 
     let to_recv21 = prepare_expected_pkt(
@@ -4080,7 +4166,7 @@ async fn test_ipv4_multicast_source_filtering_multiple_exact() -> TestResult {
         &allowed_pkt2,
         vlan,
         get_nat_target(&created_group),
-        Some(egress1),
+        egress1,
     );
 
     let test_pkts = vec![
@@ -4140,7 +4226,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
         None,
     )
@@ -4163,9 +4249,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: vlan },
         Some(sources),
     )
@@ -4208,7 +4292,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
         &allowed_pkt1,
         vlan,
         get_nat_target(&created_group),
-        Some(egress1),
+        egress1,
     );
 
     let to_recv22 = prepare_expected_pkt(
@@ -4216,7 +4300,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
         &allowed_pkt2,
         vlan,
         get_nat_target(&created_group),
-        Some(egress2),
+        egress2,
     );
 
     let to_recv12 = prepare_expected_pkt(
@@ -4224,7 +4308,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
         &allowed_pkt1,
         vlan,
         get_nat_target(&created_group),
-        Some(egress2),
+        egress2,
     );
 
     let to_recv21 = prepare_expected_pkt(
@@ -4232,7 +4316,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
         &allowed_pkt2,
         vlan,
         get_nat_target(&created_group),
-        Some(egress1),
+        egress1,
     );
 
     let test_pkts = vec![
@@ -4293,7 +4377,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
         None,
     )
@@ -4308,9 +4392,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
         None,
     )
@@ -4332,7 +4414,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
         &to_send,
         vlan,
         get_nat_target(&created_group),
-        Some(egress1),
+        egress1,
     );
 
     let to_recv2 = prepare_expected_pkt(
@@ -4340,7 +4422,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
         &to_send,
         vlan,
         get_nat_target(&created_group),
-        Some(egress2),
+        egress2,
     );
 
     let test_pkt =
@@ -4358,8 +4440,8 @@ async fn test_multicast_dynamic_membership() -> TestResult {
     // but we can update their NAT target, vlan, and sources.
     // Must pass same tag for validation.
     let external_update_entry = types::MulticastGroupUpdateExternalEntry {
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: create_nat_target_ipv4(),
         }, // Keep the same NAT target
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) }, // Test with VLAN like reference test
         sources: None,
@@ -4368,7 +4450,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
     switch
         .client
         .multicast_group_update_external(
-            &get_group_ip(&created_group),
+            &get_group_ip(&created_group).try_into().unwrap(),
             &make_tag(TEST_TAG),
             &external_update_entry,
         )
@@ -4403,7 +4485,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
     switch
         .client
         .multicast_group_update_underlay(
-            &types::UnderlayMulticastIpv6(ipv6),
+            &UnderlayMulticastIpv6::try_from(ipv6).unwrap(),
             &make_tag(TEST_TAG),
             &internal_update_entry,
         )
@@ -4416,14 +4498,14 @@ async fn test_multicast_dynamic_membership() -> TestResult {
         &to_send,
         vlan,
         get_nat_target(&created_group),
-        Some(egress2),
+        egress2,
     );
     let to_recv2_new = prepare_expected_pkt(
         switch,
         &to_send,
         vlan,
         get_nat_target(&created_group),
-        Some(egress3),
+        egress3,
     );
 
     let test_pkt_new = TestPacket { packet: Arc::new(to_send), port: ingress };
@@ -4465,7 +4547,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
             (egress3, types::Direction::External),
             (egress4, types::Direction::External),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
         None,
     )
@@ -4480,10 +4562,25 @@ async fn test_multicast_multiple_groups() -> TestResult {
         multicast_ip1,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
+        None,
+    )
+    .await;
+
+    let internal_multicast_ip2 = "ff04::2".parse().unwrap();
+    create_test_multicast_group(
+        switch,
+        IpAddr::V6(internal_multicast_ip2),
+        Some(TEST_TAG),
+        &[
+            (egress1, types::Direction::External),
+            (egress2, types::Direction::External),
+            (egress3, types::Direction::External),
+            (egress4, types::Direction::External),
+        ],
+        None,
+        types::ExternalForwarding { vlan_id: None },
         None,
     )
     .await;
@@ -4497,9 +4594,10 @@ async fn test_multicast_multiple_groups() -> TestResult {
         multicast_ip2,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(types::ExternalNatTarget {
+            internal_ip: internal_multicast_ip2.try_into().unwrap(),
+            ..create_nat_target_ipv4()
+        }),
         types::ExternalForwarding { vlan_id: Some(20) },
         None,
     )
@@ -4530,7 +4628,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
         &to_send1,
         vlan1,
         get_nat_target(&created_group1),
-        Some(egress1),
+        egress1,
     );
 
     let to_recv1_2 = prepare_expected_pkt(
@@ -4538,7 +4636,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
         &to_send1,
         vlan1,
         get_nat_target(&created_group1),
-        Some(egress2),
+        egress2,
     );
 
     let to_recv2_1 = prepare_expected_pkt(
@@ -4546,7 +4644,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
         &to_send2,
         vlan2,
         get_nat_target(&created_group2),
-        Some(egress3),
+        egress3,
     );
 
     let to_recv2_2 = prepare_expected_pkt(
@@ -4554,16 +4652,15 @@ async fn test_multicast_multiple_groups() -> TestResult {
         &to_send2,
         vlan2,
         get_nat_target(&created_group2),
-        Some(egress4),
+        egress4,
     );
 
-    // Since both groups NAT to the same admin-scoped group, they both replicate to all ports
     let to_recv1_3 = prepare_expected_pkt(
         switch,
         &to_send1,
         vlan1,
         get_nat_target(&created_group1),
-        Some(egress3),
+        egress3,
     );
 
     let to_recv1_4 = prepare_expected_pkt(
@@ -4571,7 +4668,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
         &to_send1,
         vlan1,
         get_nat_target(&created_group1),
-        Some(egress4),
+        egress4,
     );
 
     let to_recv2_3 = prepare_expected_pkt(
@@ -4579,7 +4676,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
         &to_send2,
         vlan2,
         get_nat_target(&created_group2),
-        Some(egress1),
+        egress1,
     );
 
     let to_recv2_4 = prepare_expected_pkt(
@@ -4587,7 +4684,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
         &to_send2,
         vlan2,
         get_nat_target(&created_group2),
-        Some(egress2),
+        egress2,
     );
 
     let test_pkts = vec![
@@ -4596,7 +4693,6 @@ async fn test_multicast_multiple_groups() -> TestResult {
     ];
 
     let expected_pkts = vec![
-        // First multicast group - replicates to all ports since both groups share same NAT target
         TestPacket { packet: Arc::new(to_recv1_1), port: egress1 },
         TestPacket { packet: Arc::new(to_recv1_2), port: egress2 },
         TestPacket { packet: Arc::new(to_recv1_3), port: egress3 },
@@ -4616,7 +4712,9 @@ async fn test_multicast_multiple_groups() -> TestResult {
     cleanup_test_group(switch, get_group_ip(&created_group2), TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, IpAddr::V6(internal_multicast_ip2), TEST_TAG)
+        .await
 }
 
 #[tokio::test]
@@ -4640,11 +4738,30 @@ async fn test_multicast_reset_all_tables() -> TestResult {
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
         None,
     )
     .await;
+
+    let additional_internal_ips: [Ipv6Addr; 3] =
+        ["ff04::3", "ff04::4", "ff04::5"].map(|ip| ip.parse().unwrap());
+
+    for internal_ip in additional_internal_ips {
+        create_test_multicast_group(
+            switch,
+            IpAddr::V6(internal_ip),
+            Some(TEST_TAG),
+            &[
+                (egress1, types::Direction::External),
+                (egress2, types::Direction::External),
+            ],
+            None,
+            types::ExternalForwarding { vlan_id: None },
+            None,
+        )
+        .await;
+    }
 
     // IPv4 external group with NAT and VLAN
     let multicast_ip1 = IpAddr::V4(MULTICAST_TEST_IPV4);
@@ -4655,9 +4772,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
         multicast_ip1,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: vlan1 },
         None,
     )
@@ -4672,9 +4787,10 @@ async fn test_multicast_reset_all_tables() -> TestResult {
         multicast_ip2,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv6()),
-        },
+        Some(types::ExternalNatTarget {
+            internal_ip: additional_internal_ips[0].try_into().unwrap(),
+            ..create_nat_target_ipv6()
+        }),
         types::ExternalForwarding { vlan_id: vlan2 },
         None, // No sources for this group
     )
@@ -4684,7 +4800,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     let ipv6 = Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 2);
 
     let group_entry2b = types::MulticastGroupCreateUnderlayEntry {
-        group_ip: types::UnderlayMulticastIpv6(ipv6),
+        group_ip: UnderlayMulticastIpv6::try_from(ipv6).unwrap(),
         tag: Some(TEST_TAG.to_string()),
         members: vec![types::MulticastGroupMember {
             port_id: switch.link_id(egress1).unwrap().0,
@@ -4713,9 +4829,10 @@ async fn test_multicast_reset_all_tables() -> TestResult {
         multicast_ip3,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(types::ExternalNatTarget {
+            internal_ip: additional_internal_ips[1].try_into().unwrap(),
+            ..create_nat_target_ipv4()
+        }),
         types::ExternalForwarding { vlan_id: vlan3 },
         sources.clone(),
     )
@@ -4732,9 +4849,10 @@ async fn test_multicast_reset_all_tables() -> TestResult {
         multicast_ip4,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv6()),
-        },
+        Some(types::ExternalNatTarget {
+            internal_ip: additional_internal_ips[2].try_into().unwrap(),
+            ..create_nat_target_ipv6()
+        }),
         types::ExternalForwarding { vlan_id: vlan4 },
         ipv6_sources.clone(),
     )
@@ -4923,10 +5041,13 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     for group_ip in [
         get_group_ip(&created_group1),
         get_group_ip(&created_group2),
-        created_group2b.group_ip.to_ip_addr(),
+        IpAddr::from(created_group2b.group_ip),
         get_group_ip(&created_group3),
         get_group_ip(&created_group4),
         internal_multicast_ip,
+        IpAddr::V6(additional_internal_ips[0]),
+        IpAddr::V6(additional_internal_ips[1]),
+        IpAddr::V6(additional_internal_ips[2]),
     ] {
         let result = switch.client.multicast_group_get(&group_ip).await;
 
@@ -4961,7 +5082,7 @@ async fn test_multicast_multiple_packets() -> TestResult {
             (egress2, types::Direction::Underlay),
             (egress3, types::Direction::Underlay),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
         None,
     )
@@ -4976,9 +5097,7 @@ async fn test_multicast_multiple_packets() -> TestResult {
         multicast_ip,
         Some(TEST_TAG),
         &[], // External groups have no members
-        types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
-        },
+        Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
         None,
     )
@@ -5011,7 +5130,7 @@ async fn test_multicast_multiple_packets() -> TestResult {
             &to_send,
             vlan,
             get_nat_target(&created_group),
-            Some(egress1),
+            egress1,
         );
 
         let to_recv2 = prepare_expected_pkt(
@@ -5019,7 +5138,7 @@ async fn test_multicast_multiple_packets() -> TestResult {
             &to_send,
             vlan,
             get_nat_target(&created_group),
-            Some(egress2),
+            egress2,
         );
 
         let to_recv3 = prepare_expected_pkt(
@@ -5027,7 +5146,7 @@ async fn test_multicast_multiple_packets() -> TestResult {
             &to_send,
             vlan,
             get_nat_target(&created_group),
-            Some(egress3),
+            egress3,
         );
 
         test_pkts.push(TestPacket { packet: Arc::new(to_send), port: ingress });
@@ -5156,17 +5275,17 @@ async fn test_external_group_nat_target_validation() -> TestResult {
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
     // Creating external group with NAT target referencing non-existent group should fail
-    let nonexistent_nat_target = types::NatTarget {
+    let nonexistent_nat_target = types::ExternalNatTarget {
         internal_ip: "ff04::1".parse().unwrap(), // Admin-scoped IPv6 that does not exist
         inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x01).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let group_with_invalid_nat = types::MulticastGroupCreateExternalEntry {
-        group_ip: IpAddr::V4("224.1.0.101".parse().unwrap()),
+        group_ip: "224.1.0.101".parse().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nonexistent_nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nonexistent_nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -5180,7 +5299,11 @@ async fn test_external_group_nat_target_validation() -> TestResult {
 
     match res {
         Error::ErrorResponse(inner) => {
-            assert_eq!(inner.status(), 400, "Expected 400 Bad Request");
+            assert_eq!(inner.status(), 409, "Expected 409 Conflict");
+            assert_eq!(
+                inner.error_code.as_deref(),
+                Some(MISSING_NAT_TARGET_ERROR_CODE)
+            );
         }
         _ => panic!("Expected ErrorResponse for invalid NAT target"),
     }
@@ -5218,17 +5341,17 @@ async fn test_external_group_nat_target_validation() -> TestResult {
     );
 
     // Test 3: Now create external group with valid NAT target
-    let valid_nat_target = types::NatTarget {
+    let valid_nat_target = types::ExternalNatTarget {
         internal_ip: "ff04::1".parse().unwrap(), // References the admin-scoped group we just created
         inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x02).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let group_with_valid_nat = types::MulticastGroupCreateExternalEntry {
-        group_ip: IpAddr::V4("224.1.0.102".parse().unwrap()),
+        group_ip: "224.1.0.102".parse().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(valid_nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: valid_nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -5249,21 +5372,121 @@ async fn test_external_group_nat_target_validation() -> TestResult {
 
     // Verify NAT target configuration
     assert_eq!(
-        created_external
-            .internal_forwarding
-            .nat_target
-            .as_ref()
-            .unwrap()
-            .internal_ip,
+        created_external.internal_forwarding.nat_target.internal_ip,
         valid_nat_target.internal_ip,
         "External group's NAT target should point to the correct internal IP"
     );
 
+    let update_with_missing_nat_target =
+        types::MulticastGroupUpdateExternalEntry {
+            internal_forwarding: types::ExternalInternalForwarding {
+                nat_target: types::ExternalNatTarget {
+                    internal_ip: "ff04::2".parse().unwrap(),
+                    inner_mac: MacAddr::new(0x03, 0x00, 0x00, 0x00, 0x00, 0x03)
+                        .into(),
+                    vni: 101.try_into().unwrap(),
+                },
+            },
+            external_forwarding: types::ExternalForwarding {
+                vlan_id: Some(10),
+            },
+            sources: None,
+        };
+
+    let res = switch
+        .client
+        .multicast_group_update_external(
+            &created_external.group_ip,
+            &make_tag(TEST_TAG),
+            &update_with_missing_nat_target,
+        )
+        .await
+        .expect_err("Should reject an update with a missing NAT target");
+
+    match res {
+        Error::ErrorResponse(inner) => {
+            assert_eq!(inner.status(), 409, "Expected 409 Conflict");
+            assert_eq!(
+                inner.error_code.as_deref(),
+                Some(MISSING_NAT_TARGET_ERROR_CODE)
+            );
+        }
+        _ => panic!("Expected ErrorResponse for missing NAT target"),
+    }
+
+    let second_admin = switch
+        .client
+        .multicast_group_create_underlay(
+            &types::MulticastGroupCreateUnderlayEntry {
+                group_ip: "ff04::2".parse().unwrap(),
+                ..admin_scoped_group.clone()
+            },
+        )
+        .await?
+        .into_inner();
+
+    let second_external = switch
+        .client
+        .multicast_group_create_external(
+            &types::MulticastGroupCreateExternalEntry {
+                group_ip: "224.1.0.103".parse().unwrap(),
+                internal_forwarding: update_with_missing_nat_target
+                    .internal_forwarding
+                    .clone(),
+                ..group_with_valid_nat.clone()
+            },
+        )
+        .await?
+        .into_inner();
+
+    let err = switch
+        .client
+        .multicast_group_create_external(&group_with_invalid_nat)
+        .await
+        .expect_err("Should reject an already owned NAT target");
+
+    let Error::ErrorResponse(response) = err else {
+        panic!("Unexpected NAT target error: {err:?}");
+    };
+    assert_eq!(response.status(), 400);
+    assert!(response.message.contains("already referenced"));
+
+    let err = switch
+        .client
+        .multicast_group_update_external(
+            &created_external.group_ip,
+            &make_tag(TEST_TAG),
+            &update_with_missing_nat_target,
+        )
+        .await
+        .expect_err("Should reject an already owned NAT target");
+
+    let Error::ErrorResponse(response) = err else {
+        panic!("Unexpected NAT target error: {err:?}");
+    };
+    assert_eq!(response.status(), 400);
+    assert!(response.message.contains("already referenced"));
+
+    let group_after_rejected_update = switch
+        .client
+        .multicast_group_get(&created_external.group_ip.into())
+        .await
+        .expect("Should retain the external group after the rejected update")
+        .into_inner();
+    assert_eq!(
+        get_nat_target(&group_after_rejected_update),
+        Some(&valid_nat_target),
+    );
+
     // Delete external group first since it references the internal group via NAT target
-    cleanup_test_group(switch, created_external.group_ip, TEST_TAG)
+    cleanup_test_group(switch, created_external.group_ip.into(), TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, created_admin.group_ip.to_ip_addr(), TEST_TAG)
+    cleanup_test_group(switch, second_external.group_ip.into(), TEST_TAG)
+        .await?;
+    cleanup_test_group(switch, IpAddr::from(second_admin.group_ip), TEST_TAG)
+        .await?;
+    cleanup_test_group(switch, IpAddr::from(created_admin.group_ip), TEST_TAG)
         .await
 }
 
@@ -5293,61 +5516,13 @@ async fn test_ipv6_multicast_scope_validation() {
         "Admin-local scope (ff04::/16) should work with internal API"
     );
 
-    // Site-local scope (ff05::/16) - should be rejected (only admin-local ff04 allowed)
-    let site_local_group = types::MulticastGroupCreateUnderlayEntry {
-        group_ip: "ff05::200".parse().unwrap(),
-        tag: Some(TEST_TAG.to_string()),
-        members: vec![types::MulticastGroupMember {
-            port_id: egress_port.clone(),
-            link_id: egress_link,
-            direction: types::Direction::External,
-        }],
-    };
-
-    let site_local_result =
-        switch.client.multicast_group_create_underlay(&site_local_group).await;
-    assert!(
-        site_local_result.is_err(),
-        "Site-local scope (ff05::/16) should be rejected - only admin-local (ff04) allowed"
-    );
-
-    // Organization-local scope (ff08::/16) - should be rejected (only admin-local ff04 allowed)
-    let org_local_group = types::MulticastGroupCreateUnderlayEntry {
-        group_ip: "ff08::300".parse().unwrap(),
-        tag: Some(TEST_TAG.to_string()),
-        members: vec![types::MulticastGroupMember {
-            port_id: egress_port.clone(),
-            link_id: egress_link,
-            direction: types::Direction::External,
-        }],
-    };
-
-    let org_local_result =
-        switch.client.multicast_group_create_underlay(&org_local_group).await;
-    assert!(
-        org_local_result.is_err(),
-        "Organization-local scope (ff08::/16) should be rejected - only admin-local (ff04) allowed"
-    );
-
-    // Global scope (ff0e::/16) - should be rejected by server-side validation
-    let global_scope_group = types::MulticastGroupCreateUnderlayEntry {
-        group_ip: "ff0e::400".parse().unwrap(),
-        tag: Some(TEST_TAG.to_string()),
-        members: vec![types::MulticastGroupMember {
-            port_id: egress_port.clone(),
-            link_id: egress_link,
-            direction: types::Direction::External,
-        }],
-    };
-
-    let global_scope_result = switch
-        .client
-        .multicast_group_create_underlay(&global_scope_group)
-        .await;
-    assert!(
-        global_scope_result.is_err(),
-        "Global scope (ff0e::/16) should be rejected by server-side validation"
-    );
+    // Underlay groups must fall within the internal ff04::/64 block, so
+    // site-local (ff05), organization-local (ff08), and global (ff0e) scopes
+    // fail to parse as `UnderlayMulticastIpv6` before any request reaches
+    // dpd.
+    assert!("ff05::200".parse::<UnderlayMulticastIpv6>().is_err());
+    assert!("ff08::300".parse::<UnderlayMulticastIpv6>().is_err());
+    assert!("ff0e::400".parse::<UnderlayMulticastIpv6>().is_err());
 
     // Test the reverse: admin-scoped should be rejected by external API
     // First create an admin-scoped group to reference
@@ -5367,35 +5542,7 @@ async fn test_ipv6_multicast_scope_validation() {
         .await
         .expect("Should create target group");
 
-    let admin_scoped_external = types::MulticastGroupCreateExternalEntry {
-        group_ip: "ff04::500".parse().unwrap(),
-        tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(types::NatTarget {
-                internal_ip: "ff04::1000".parse().unwrap(),
-                inner_mac: MacAddr::new(0x02, 0x00, 0x00, 0x00, 0x00, 0x01)
-                    .into(),
-                vni: 100.into(),
-            }),
-        },
-        external_forwarding: types::ExternalForwarding { vlan_id: Some(42) },
-        sources: None,
-    };
-
-    let admin_external_result = switch
-        .client
-        .multicast_group_create_external(&admin_scoped_external)
-        .await;
-    assert!(
-        admin_external_result.is_err(),
-        "Admin-scoped addresses should be rejected by external API"
-    );
-    let external_error_msg =
-        format!("{:?}", admin_external_result.unwrap_err());
-    assert!(
-        external_error_msg.contains("admin-local scope"),
-        "Error should indicate admin-local addresses require internal API"
-    );
+    assert!("ff04::500".parse::<ExternalMulticastIp>().is_err());
 
     // Cleanup all created groups
     let admin_local_group = admin_local_result.unwrap().into_inner();
@@ -5405,7 +5552,7 @@ async fn test_ipv6_multicast_scope_validation() {
     switch
         .client
         .multicast_group_delete(
-            &admin_local_group.group_ip.to_ip_addr(),
+            &IpAddr::from(admin_local_group.group_ip),
             &del_tag,
         )
         .await
@@ -5414,7 +5561,7 @@ async fn test_ipv6_multicast_scope_validation() {
     let del_tag = make_tag(TEST_TAG);
     switch
         .client
-        .multicast_group_delete(&target_group.group_ip.to_ip_addr(), &del_tag)
+        .multicast_group_delete(&IpAddr::from(target_group.group_ip), &del_tag)
         .await
         .ok();
 }
@@ -5462,7 +5609,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
         group1_ip,
         Some(TEST_TAG),
         &[(PhysPort(11), types::Direction::External)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -5474,7 +5621,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
         group2_ip,
         Some(TEST_TAG),
         &[(PhysPort(12), types::Direction::External)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -5508,7 +5655,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
         group3_ip,
         Some(TEST_TAG),
         &[(PhysPort(13), types::Direction::External)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -5557,7 +5704,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
         group4_ip,
         Some(TEST_TAG),
         &[(PhysPort(14), types::Direction::External)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -5598,7 +5745,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         internal_group_ip,
         Some(TEST_TAG),
         &[], // No members (Omicron setup)
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -5610,17 +5757,17 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         _ => panic!("Expected IPv6 address"),
     };
 
-    let nat_target = types::NatTarget {
-        internal_ip: ipv6,
+    let nat_target = types::ExternalNatTarget {
+        internal_ip: ipv6.try_into().unwrap(),
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x00, 0x00, 0x01).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let external_group = types::MulticastGroupCreateExternalEntry {
-        group_ip: external_group_ip,
+        group_ip: external_group_ip.try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) }, // Test with VLAN like reference test
         sources: None,
@@ -5687,14 +5834,16 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         )
         .unwrap(),
         Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
+            &MacAddr::from(
+                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
+            )
+            .to_string(),
             &nat_target.internal_ip.to_string(),
             geneve::GENEVE_UDP_PORT,
         )
         .unwrap(),
         eth::ETHER_IPV6,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
         &payload,
     );
@@ -5753,10 +5902,12 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         ],
     };
 
-    let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
+    let ipv6_update: UnderlayMulticastIpv6 = match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
         _ => panic!("Expected IPv6 address"),
-    });
+    }
+    .try_into()
+    .unwrap();
 
     switch
         .client
@@ -5811,14 +5962,16 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         )
         .unwrap(),
         Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
+            &MacAddr::from(
+                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
+            )
+            .to_string(),
             &nat_target.internal_ip.to_string(),
             geneve::GENEVE_UDP_PORT,
         )
         .unwrap(),
         eth::ETHER_IPV6,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
         &payload2,
     );
@@ -5829,7 +5982,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         &og_pkt2,
         Some(10), // VLAN should come from external group
         None,     // No NAT target for external members
-        Some(egress1),
+        egress1,
     );
 
     let expected2 = prepare_expected_pkt(
@@ -5837,7 +5990,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         &og_pkt2,
         Some(10), // VLAN should come from external group
         None,     // No NAT target for external members (like reference test)
-        Some(egress2),
+        egress2,
     );
 
     // Underlay member gets the Geneve packet unchanged
@@ -5846,7 +5999,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         &to_send_again,
         None, // No VLAN
         None, // No NAT target for underlay member
-        Some(egress3),
+        egress3,
     );
 
     let send_again =
@@ -5879,10 +6032,12 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         members: vec![], // Remove all members
     };
 
-    let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
+    let ipv6_update: UnderlayMulticastIpv6 = match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
         _ => panic!("Expected IPv6 address"),
-    });
+    }
+    .try_into()
+    .unwrap();
 
     switch
         .client
@@ -5997,27 +6152,27 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         internal_group_ip,
         Some(TEST_TAG),
         &[], // No members
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
     .await;
 
     // Create external group that references the internal group (empty, no members)
-    let nat_target = types::NatTarget {
+    let nat_target = types::ExternalNatTarget {
         internal_ip: match internal_group_ip {
-            IpAddr::V6(ipv6) => ipv6,
+            IpAddr::V6(ipv6) => ipv6.try_into().unwrap(),
             _ => panic!("Expected IPv6 address"),
         },
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x02, 0x64).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let external_group = types::MulticastGroupCreateExternalEntry {
-        group_ip: external_group_ip,
+        group_ip: external_group_ip.try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) }, // Test with VLAN like reference test
         sources: None,
@@ -6073,7 +6228,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         Some(10),
     );
 
-    // Create Geneve packet targeting the internal group (like test_encapped_multicast_geneve_mcast_tag_to_underlay_members)
+    // Create Geneve packet targeting the internal group
     let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
@@ -6084,14 +6239,16 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         )
         .unwrap(),
         Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
+            &MacAddr::from(
+                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
+            )
+            .to_string(),
             &nat_target.internal_ip.to_string(),
             geneve::GENEVE_UDP_PORT,
         )
         .unwrap(),
         eth::ETHER_IPV4,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
         &payload,
     );
@@ -6145,10 +6302,12 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         members: vec![external_member1, external_member2, underlay_member],
     };
 
-    let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
+    let ipv6_update: UnderlayMulticastIpv6 = match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
         _ => panic!("Expected IPv6 address"),
-    });
+    }
+    .try_into()
+    .unwrap();
 
     switch
         .client
@@ -6203,14 +6362,16 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         )
         .unwrap(),
         Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
+            &MacAddr::from(
+                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
+            )
+            .to_string(),
             &nat_target.internal_ip.to_string(),
             geneve::GENEVE_UDP_PORT,
         )
         .unwrap(),
         eth::ETHER_IPV4,
-        nat_target.vni.clone().into(),
+        nat_target.vni.as_u32(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
         &payload2,
     );
@@ -6221,7 +6382,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         &og_pkt2,
         Some(10), // VLAN should come from external group
         None,     // No NAT target for external members (like reference test)
-        Some(egress1),
+        egress1,
     );
 
     let expected2 = prepare_expected_pkt(
@@ -6229,7 +6390,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         &og_pkt2,
         Some(10), // VLAN should come from external group
         None,     // No NAT target for external members (like reference test)
-        Some(egress2),
+        egress2,
     );
 
     // Underlay member gets the Geneve packet unchanged (like test_encapped_multicast_geneve_mcast_tag_to_underlay_members)
@@ -6238,7 +6399,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         &test_packet2,
         None, // No VLAN
         None, // No NAT target for underlay member
-        Some(egress3),
+        egress3,
     );
 
     let send_again =
@@ -6271,10 +6432,12 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         members: vec![], // Remove all members
     };
 
-    let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
+    let ipv6_update: UnderlayMulticastIpv6 = match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
         _ => panic!("Expected IPv6 address"),
-    });
+    }
+    .try_into()
+    .unwrap();
 
     switch
         .client
@@ -6332,7 +6495,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
+async fn test_multicast_create_missing_nat_target_preserves_state() -> TestResult
 {
     let switch = &*get_switch().await;
 
@@ -6357,7 +6520,7 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
             (PhysPort(15), types::Direction::External),
             (PhysPort(17), types::Direction::Underlay),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -6404,17 +6567,17 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
         }
         _ => panic!("Expected IPv6 address"),
     };
-    let nat_target = types::NatTarget {
-        internal_ip: invalid_internal_ip,
+    let nat_target = types::ExternalNatTarget {
+        internal_ip: invalid_internal_ip.try_into().unwrap(),
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x02, 0x66).into(),
-        vni: 200.into(),
+        vni: 200.try_into().unwrap(),
     };
 
     let external_entry = types::MulticastGroupCreateExternalEntry {
-        group_ip: external_group_ip,
+        group_ip: external_group_ip.try_into().unwrap(),
         tag: None,
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target,
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -6530,7 +6693,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
             (PhysPort(15), types::Direction::External),
             (PhysPort(17), types::Direction::Underlay),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -6557,10 +6720,12 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
     let update_request =
         types::MulticastGroupUpdateUnderlayEntry { members: invalid_members };
 
-    let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
+    let ipv6_update: UnderlayMulticastIpv6 = match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
         _ => panic!("Expected IPv6 address"),
-    });
+    }
+    .try_into()
+    .unwrap();
 
     // This should fail and trigger rollback
     let result = switch
@@ -6594,7 +6759,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
+async fn test_multicast_update_invalid_nat_mac_preserves_state() -> TestResult {
     let switch = &*get_switch().await;
 
     let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
@@ -6615,27 +6780,27 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
         internal_group_ip,
         Some(TEST_TAG),
         &[(PhysPort(15), types::Direction::External)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
     .await;
 
     // Create external group with NAT
-    let nat_target = types::NatTarget {
+    let nat_target = types::ExternalNatTarget {
         internal_ip: match internal_group_ip {
-            IpAddr::V6(ipv6) => ipv6,
+            IpAddr::V6(ipv6) => ipv6.try_into().unwrap(),
             _ => panic!("Expected IPv6 address"),
         },
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x02, 0x68).into(),
-        vni: 104.into(),
+        vni: 104.try_into().unwrap(),
     };
 
     let external_entry = types::MulticastGroupCreateExternalEntry {
-        group_ip: external_group_ip,
+        group_ip: external_group_ip.try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -6662,19 +6827,19 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
         .expect("Should be able to dump NAT table");
 
     // Attempt to update NAT target to invalid configuration that should fail
-    let invalid_nat_target = types::NatTarget {
+    let invalid_nat_target = types::ExternalNatTarget {
         internal_ip: match internal_group_ip {
-            IpAddr::V6(ipv6) => ipv6,
+            IpAddr::V6(ipv6) => ipv6.try_into().unwrap(),
             _ => panic!("Expected IPv6 address"),
         },
         // Invalid MAC (not multicast)
         inner_mac: MacAddr::new(0x02, 0x00, 0x00, 0x00, 0x00, 0x00).into(),
-        vni: 300.into(),
+        vni: 300.try_into().unwrap(),
     };
 
     let invalid_update = types::MulticastGroupUpdateExternalEntry {
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(invalid_nat_target),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: invalid_nat_target,
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -6684,7 +6849,7 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
     let result = switch
         .client
         .multicast_group_update_external(
-            &external_group_ip,
+            &external_group_ip.try_into().unwrap(),
             &make_tag(TEST_TAG),
             &invalid_update,
         )
@@ -6739,134 +6904,7 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_multicast_rollback_vlan_propagation_consistency() {
-    let switch = &*get_switch().await;
-
-    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
-        ADMIN_LOCAL_MULTICAST_PREFIX,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        105,
-    ));
-    let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 105));
-
-    // Create internal group with members (so bitmap entry get created)
-    create_test_multicast_group(
-        &switch,
-        internal_group_ip,
-        Some(TEST_TAG),
-        &[
-            (PhysPort(15), types::Direction::External),
-            (PhysPort(17), types::Direction::Underlay),
-        ],
-        types::InternalForwarding { nat_target: None },
-        types::ExternalForwarding { vlan_id: None },
-        None,
-    )
-    .await;
-
-    // Get initial bitmap table state
-    let _initial_bitmap_table = switch
-        .client
-        .table_dump("Egress.mcast_egress.tbl_decap_ports", false)
-        .await
-        .expect("Should be able to dump bitmap table");
-
-    // First, delete the internal group to break the NAT target reference
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG)
-        .await
-        .expect("Should cleanup internal group");
-
-    let nat_target = types::NatTarget {
-        internal_ip: match internal_group_ip {
-            IpAddr::V6(ipv6) => ipv6,
-            _ => panic!("Expected IPv6 address"),
-        },
-        inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x02, 0x69).into(),
-        vni: 105.into(),
-    };
-
-    // Get initial table states before attempting creation
-    let initial_route_table = switch
-        .client
-        .table_dump("Ingress.l3_router.MulticastRouter4.tbl", false)
-        .await
-        .expect("Should be able to dump route table");
-    let initial_bitmap_table = switch
-        .client
-        .table_dump("Egress.mcast_egress.tbl_decap_ports", false)
-        .await
-        .expect("Should be able to dump bitmap table");
-
-    // Attempt to create external group that references the deleted internal group
-    let external_entry = types::MulticastGroupCreateExternalEntry {
-        group_ip: external_group_ip,
-        tag: None,
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target),
-        },
-        external_forwarding: types::ExternalForwarding { vlan_id: Some(999) },
-        sources: None,
-    };
-
-    // This should fail because the NAT target (internal group) no longer exists
-    let result =
-        switch.client.multicast_group_create_external(&external_entry).await;
-
-    assert!(
-        result.is_err(),
-        "External group creation should fail when NAT target doesn't exist"
-    );
-
-    // Verify rollback worked - tables should remain unchanged
-    let post_route_table = switch
-        .client
-        .table_dump("Ingress.l3_router.MulticastRouter4.tbl", false)
-        .await
-        .expect("Should be able to dump route table after rollback");
-    let post_bitmap_table = switch
-        .client
-        .table_dump("Egress.mcast_egress.tbl_decap_ports", false)
-        .await
-        .expect("Should be able to dump bitmap table after rollback");
-
-    assert_eq!(
-        initial_route_table.entries.len(),
-        post_route_table.entries.len(),
-        "Route table should be unchanged after rollback"
-    );
-    assert_eq!(
-        initial_bitmap_table.entries.len(),
-        post_bitmap_table.entries.len(),
-        "Bitmap table should be unchanged after rollback"
-    );
-
-    // No external group should exist since creation failed
-    let groups = switch
-        .client
-        .multicast_groups_list(None, None)
-        .await
-        .expect("Should be able to list groups after rollback");
-
-    let external_groups: Vec<_> = groups
-        .items
-        .iter()
-        .filter(|g| get_group_ip(g) == external_group_ip)
-        .collect();
-
-    assert!(
-        external_groups.is_empty(),
-        "No external group should exist after failed creation"
-    );
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_multicast_rollback_source_filter_update() -> TestResult {
+async fn test_multicast_update_invalid_source_preserves_state() -> TestResult {
     let switch = &*get_switch().await;
 
     // First create the internal admin-scoped group that will be the NAT target
@@ -6877,7 +6915,7 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
         internal_multicast_ip,
         Some(TEST_TAG),
         &[(egress1, types::Direction::External)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None }, // No NAT needed for internal groups
         None,
     )
@@ -6885,10 +6923,10 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
 
     // Create IPv4 SSM group that supports source filters
     let group_ip = IpAddr::V4(Ipv4Addr::new(232, 1, 1, 100)); // SSM range
-    let nat_target = types::NatTarget {
-        internal_ip: MULTICAST_NAT_IP.into(),
+    let nat_target = types::ExternalNatTarget {
+        internal_ip: MULTICAST_NAT_IP.try_into().unwrap(),
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x01, 0x64).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     // Create initial SSM group with source filters
@@ -6898,10 +6936,10 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
     ];
 
     let external_group = types::MulticastGroupCreateExternalEntry {
-        group_ip,
+        group_ip: group_ip.try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target,
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: Some(initial_sources.clone()),
@@ -6936,7 +6974,7 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
     let result = switch
         .client
         .multicast_group_update_external(
-            &group_ip,
+            &group_ip.try_into().unwrap(),
             &make_tag(TEST_TAG),
             &failing_update_entry,
         )
@@ -7008,7 +7046,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
             (PhysPort(15), types::Direction::External),
             (PhysPort(16), types::Direction::Underlay),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -7051,10 +7089,12 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
     let update_request =
         types::MulticastGroupUpdateUnderlayEntry { members: mixed_members };
 
-    let ipv6_update = types::UnderlayMulticastIpv6(match internal_group_ip {
+    let ipv6_update: UnderlayMulticastIpv6 = match internal_group_ip {
         IpAddr::V6(ipv6) => ipv6,
         _ => panic!("Expected IPv6 address"),
-    });
+    }
+    .try_into()
+    .unwrap();
 
     // This should fail after partially adding some members, triggering incremental rollback
     let result = switch
@@ -7091,146 +7131,6 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_multicast_rollback_table_operation_failure() {
-    let switch = &*get_switch().await;
-
-    let internal_group_ip = IpAddr::V6(Ipv6Addr::new(
-        ADMIN_LOCAL_MULTICAST_PREFIX,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        107,
-    ));
-    let external_group_ip = IpAddr::V4(Ipv4Addr::new(224, 1, 2, 107));
-
-    // Create internal group first
-    create_test_multicast_group(
-        &switch,
-        internal_group_ip,
-        Some(TEST_TAG),
-        &[
-            (PhysPort(15), types::Direction::External),
-            (PhysPort(17), types::Direction::Underlay),
-        ],
-        types::InternalForwarding { nat_target: None },
-        types::ExternalForwarding { vlan_id: None },
-        None,
-    )
-    .await;
-
-    // Delete the internal group to break the NAT target reference
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG)
-        .await
-        .expect("Should cleanup internal group");
-
-    // Get table states after internal group deletion but before external group attempt
-    let initial_route_table = switch
-        .client
-        .table_dump("Ingress.l3_router.MulticastRouter4.tbl", false)
-        .await
-        .expect("Should be able to dump route table");
-    let initial_nat_table = switch
-        .client
-        .table_dump("Ingress.nat_ingress.ingress_ipv4_mcast", false)
-        .await
-        .expect("Should be able to dump NAT table");
-    let initial_bitmap_table = switch
-        .client
-        .table_dump("Egress.mcast_egress.tbl_decap_ports", false)
-        .await
-        .expect("Should be able to dump bitmap table");
-
-    // Attempt to create external group that references the non-existent internal group
-    let broken_nat_target = types::NatTarget {
-        internal_ip: match internal_group_ip {
-            IpAddr::V6(ipv6) => ipv6,
-            _ => panic!("Expected IPv6 address"),
-        },
-        inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x02, 0x6b).into(),
-        vni: 107.into(),
-    };
-
-    let external_entry = types::MulticastGroupCreateExternalEntry {
-        group_ip: external_group_ip,
-        tag: None,
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(broken_nat_target),
-        },
-        external_forwarding: types::ExternalForwarding { vlan_id: Some(200) },
-        sources: None,
-    };
-
-    // This should fail because the NAT target (internal group) doesn't exist
-    let result =
-        switch.client.multicast_group_create_external(&external_entry).await;
-
-    // Verify the creation failed
-    assert!(
-        result.is_err(),
-        "External group creation should fail when NAT target doesn't exist"
-    );
-
-    // Verify table rollback worked - all tables should be unchanged
-    let post_route_table = switch
-        .client
-        .table_dump("Ingress.l3_router.MulticastRouter4.tbl", false)
-        .await
-        .expect("Should be able to dump route table after rollback");
-
-    let post_nat_table = switch
-        .client
-        .table_dump("Ingress.nat_ingress.ingress_ipv4_mcast", false)
-        .await
-        .expect("Should be able to dump NAT table after rollback");
-
-    let post_bitmap_table = switch
-        .client
-        .table_dump("Egress.mcast_egress.tbl_decap_ports", false)
-        .await
-        .expect("Should be able to dump bitmap table after rollback");
-
-    assert_eq!(
-        post_route_table.entries.len(),
-        initial_route_table.entries.len(),
-        "Route table should be unchanged after table operation rollback"
-    );
-
-    assert_eq!(
-        post_nat_table.entries.len(),
-        initial_nat_table.entries.len(),
-        "NAT table should be unchanged after table operation rollback"
-    );
-
-    assert_eq!(
-        post_bitmap_table.entries.len(),
-        initial_bitmap_table.entries.len(),
-        "Bitmap table should be unchanged after table operation rollback"
-    );
-
-    // Verify no external group was created
-    let groups = switch
-        .client
-        .multicast_groups_list(None, None)
-        .await
-        .expect("Should be able to list groups after rollback");
-
-    let external_groups: Vec<_> = groups
-        .items
-        .iter()
-        .filter(|g| get_group_ip(g) == external_group_ip)
-        .collect();
-
-    assert!(
-        external_groups.is_empty(),
-        "No external group should exist after table operation rollback"
-    );
-}
-
-#[tokio::test]
-#[ignore]
 #[allow(dead_code)]
 async fn test_multicast_group_get_underlay() -> TestResult {
     let switch = &*get_switch().await;
@@ -7255,7 +7155,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
             (PhysPort(10), types::Direction::External),
             (PhysPort(12), types::Direction::Underlay),
         ],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -7263,12 +7163,14 @@ async fn test_multicast_group_get_underlay() -> TestResult {
 
     let retrieved_underlay = switch
         .client
-        .multicast_group_get_underlay(&types::UnderlayMulticastIpv6(
-            match internal_group_ip {
+        .multicast_group_get_underlay(
+            &match internal_group_ip {
                 IpAddr::V6(ipv6) => ipv6,
                 _ => panic!("Expected IPv6 address"),
-            },
-        ))
+            }
+            .try_into()
+            .unwrap(),
+        )
         .await
         .expect(
             "Should be able to get underlay group via admin-scoped endpoint",
@@ -7276,7 +7178,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
         .into_inner();
 
     // Verify the response matches what we created
-    assert_eq!(retrieved_underlay.group_ip.to_ip_addr(), internal_group_ip);
+    assert_eq!(IpAddr::from(retrieved_underlay.group_ip), internal_group_ip);
     assert_eq!(retrieved_underlay.tag, TEST_TAG);
     assert_eq!(retrieved_underlay.members.len(), 2);
 
@@ -7346,19 +7248,19 @@ async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
         internal_group_ip,
         Some(TEST_TAG),
         &[(PhysPort(10), types::Direction::External)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
     .await;
 
-    let nat_target = types::NatTarget {
+    let nat_target = types::ExternalNatTarget {
         internal_ip: match internal_group_ip {
-            IpAddr::V6(ipv6) => ipv6,
+            IpAddr::V6(ipv6) => ipv6.try_into().unwrap(),
             _ => panic!("Expected IPv6"),
         },
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x01, 0x64).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     // Get baseline source filter table state
@@ -7372,10 +7274,10 @@ async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
     // Create external group with mixed sources: specific + `Any`
     // The optimization should collapse this to just one /0 entry
     let external_group = types::MulticastGroupCreateExternalEntry {
-        group_ip: external_group_ip,
+        group_ip: external_group_ip.try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: Some(vec![
@@ -7421,11 +7323,6 @@ async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
         .multicast_group_delete(&internal_group_ip, &del_tag)
         .await;
 
-    assert!(
-        delete_internal_first_result.is_err(),
-        "Deleting internal group while still referenced by external group should fail"
-    );
-
     if let Err(Error::ErrorResponse(resp)) = &delete_internal_first_result {
         let error_msg = format!("{resp:?}");
         assert!(
@@ -7467,19 +7364,19 @@ async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
         internal_group_ip,
         Some(TEST_TAG),
         &[(PhysPort(10), types::Direction::External)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
     .await;
 
-    let nat_target = types::NatTarget {
+    let nat_target = types::ExternalNatTarget {
         internal_ip: match internal_group_ip {
-            IpAddr::V6(ipv6) => ipv6,
+            IpAddr::V6(ipv6) => ipv6.try_into().unwrap(),
             _ => panic!("Expected IPv6"),
         },
         inner_mac: MacAddr::new(0x33, 0x33, 0x00, 0x00, 0x01, 0x00).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let baseline_table = switch
@@ -7491,10 +7388,10 @@ async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
 
     // Create external group with mixed sources: specific + `Any`
     let external_group = types::MulticastGroupCreateExternalEntry {
-        group_ip: external_group_ip,
+        group_ip: external_group_ip.try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: Some(vec![
@@ -7540,11 +7437,6 @@ async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
         .multicast_group_delete(&internal_group_ip, &del_tag)
         .await;
 
-    assert!(
-        delete_internal_first_result.is_err(),
-        "Deleting internal group while still referenced by external group should fail"
-    );
-
     if let Err(Error::ErrorResponse(resp)) = &delete_internal_first_result {
         let error_msg = format!("{resp:?}");
         assert!(
@@ -7585,19 +7477,19 @@ async fn test_source_filter_update_to_any() -> TestResult {
         internal_group_ip,
         Some(TEST_TAG),
         &[(PhysPort(10), types::Direction::External)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
     .await;
 
-    let nat_target = types::NatTarget {
+    let nat_target = types::ExternalNatTarget {
         internal_ip: match internal_group_ip {
-            IpAddr::V6(ipv6) => ipv6,
+            IpAddr::V6(ipv6) => ipv6.try_into().unwrap(),
             _ => panic!("Expected IPv6"),
         },
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x01, 0x65).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let baseline_table = switch
@@ -7609,10 +7501,10 @@ async fn test_source_filter_update_to_any() -> TestResult {
 
     // Create external group with only specific sources (no `Any`)
     let external_group = types::MulticastGroupCreateExternalEntry {
-        group_ip: external_group_ip,
+        group_ip: external_group_ip.try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: Some(vec![
@@ -7642,8 +7534,8 @@ async fn test_source_filter_update_to_any() -> TestResult {
 
     // Update to include `Any`, simulating an "any source" member joining
     let update_entry = types::MulticastGroupUpdateExternalEntry {
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: Some(vec![
@@ -7656,7 +7548,7 @@ async fn test_source_filter_update_to_any() -> TestResult {
     let updated = switch
         .client
         .multicast_group_update_external(
-            &external_group_ip,
+            &external_group_ip.try_into().unwrap(),
             &make_tag(TEST_TAG),
             &update_entry,
         )
@@ -7712,19 +7604,19 @@ async fn test_source_filter_cleanup_on_delete() -> TestResult {
         internal_group_ip,
         Some(TEST_TAG),
         &[(PhysPort(10), types::Direction::External)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
     .await;
 
-    let nat_target = types::NatTarget {
+    let nat_target = types::ExternalNatTarget {
         internal_ip: match internal_group_ip {
-            IpAddr::V6(ipv6) => ipv6,
+            IpAddr::V6(ipv6) => ipv6.try_into().unwrap(),
             _ => panic!("Expected IPv6"),
         },
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x01, 0x66).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let baseline_table = switch
@@ -7736,10 +7628,10 @@ async fn test_source_filter_cleanup_on_delete() -> TestResult {
 
     // Create external group with sources
     let external_group = types::MulticastGroupCreateExternalEntry {
-        group_ip: external_group_ip,
+        group_ip: external_group_ip.try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: Some(vec![
@@ -7812,19 +7704,19 @@ async fn test_source_filter_empty_vec_normalizes_to_any() -> TestResult {
         internal_group_ip,
         Some(TEST_TAG),
         &[(PhysPort(10), types::Direction::External)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
     .await;
 
-    let nat_target = types::NatTarget {
+    let nat_target = types::ExternalNatTarget {
         internal_ip: match internal_group_ip {
-            IpAddr::V6(ipv6) => ipv6,
+            IpAddr::V6(ipv6) => ipv6.try_into().unwrap(),
             _ => panic!("Expected IPv6"),
         },
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x01, 0x67).into(),
-        vni: 100.into(),
+        vni: 100.try_into().unwrap(),
     };
 
     let baseline_table = switch
@@ -7837,10 +7729,10 @@ async fn test_source_filter_empty_vec_normalizes_to_any() -> TestResult {
     // Create external group with empty sources vec - should normalize to None
     // and add a single /0 entry (allow any source)
     let external_group = types::MulticastGroupCreateExternalEntry {
-        group_ip: external_group_ip,
+        group_ip: external_group_ip.try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: Some(vec![]), // Empty vec should normalize to None
@@ -7898,7 +7790,7 @@ async fn test_update_nonexistent_group_returns_404() -> TestResult {
     let switch = &*get_switch().await;
 
     // Case: Update non-existent underlay group
-    let nonexistent_underlay: types::UnderlayMulticastIpv6 =
+    let nonexistent_underlay: UnderlayMulticastIpv6 =
         Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 0xdead)
             .try_into()
             .unwrap();
@@ -7934,14 +7826,21 @@ async fn test_update_nonexistent_group_returns_404() -> TestResult {
 
     let external_update = types::MulticastGroupUpdateExternalEntry {
         external_forwarding: types::ExternalForwarding { vlan_id: Some(100) },
-        internal_forwarding: types::InternalForwarding { nat_target: None },
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: types::ExternalNatTarget {
+                internal_ip: "ff04::1".parse().unwrap(),
+                inner_mac: MacAddr::new(1, 0, 94, 0, 0, 1).into(),
+                vni: 100.try_into().unwrap(),
+            },
+        },
+
         sources: None,
     };
 
     let result = switch
         .client
         .multicast_group_update_external(
-            &nonexistent_external,
+            &nonexistent_external.try_into().unwrap(),
             &make_tag("nonexistent_test"),
             &external_update,
         )
@@ -7997,7 +7896,7 @@ async fn test_delete_nonexistent_group_returns_404() -> TestResult {
 async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
     let switch = &*get_switch().await;
 
-    let group_ip: types::UnderlayMulticastIpv6 =
+    let group_ip: UnderlayMulticastIpv6 =
         Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 0x501)
             .try_into()
             .unwrap();
@@ -8027,7 +7926,7 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
     let del_tag = make_tag(tag);
     switch
         .client
-        .multicast_group_delete(&group_ip.to_ip_addr(), &del_tag)
+        .multicast_group_delete(&IpAddr::from(group_ip), &del_tag)
         .await
         .expect("Should delete group during recovery");
 
@@ -8109,7 +8008,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
         internal_ip,
         Some(tag),
         &[(egress_port, types::Direction::Underlay)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -8121,10 +8020,10 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
 
     // Create without VLAN
     let create_no_vlan = types::MulticastGroupCreateExternalEntry {
-        group_ip,
+        group_ip: group_ip.try_into().unwrap(),
         tag: Some(tag.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: None },
         sources: None,
@@ -8138,8 +8037,8 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
 
     // Update to add VLAN 10
     let update_add_vlan = types::MulticastGroupUpdateExternalEntry {
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -8148,7 +8047,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
     let updated = switch
         .client
         .multicast_group_update_external(
-            &group_ip,
+            &group_ip.try_into().unwrap(),
             &make_tag(tag),
             &update_add_vlan,
         )
@@ -8168,8 +8067,8 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
 
     // Update to change VLAN 10 -> 20, verify no stale entries
     let update_change_vlan = types::MulticastGroupUpdateExternalEntry {
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(20) },
         sources: None,
@@ -8178,7 +8077,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
     let updated = switch
         .client
         .multicast_group_update_external(
-            &group_ip,
+            &group_ip.try_into().unwrap(),
             &make_tag(tag),
             &update_change_vlan,
         )
@@ -8202,8 +8101,8 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
 
     // Update to remove VLAN
     let update_remove_vlan = types::MulticastGroupUpdateExternalEntry {
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: None },
         sources: None,
@@ -8212,7 +8111,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
     let updated = switch
         .client
         .multicast_group_update_external(
-            &group_ip,
+            &group_ip.try_into().unwrap(),
             &make_tag(tag),
             &update_remove_vlan,
         )
@@ -8257,7 +8156,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
         internal_ip,
         Some(tag),
         &[(egress_port, types::Direction::Underlay)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -8270,10 +8169,10 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
 
     // Create without VLAN
     let create_no_vlan = types::MulticastGroupCreateExternalEntry {
-        group_ip,
+        group_ip: group_ip.try_into().unwrap(),
         tag: Some(tag.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: None },
         sources: None,
@@ -8287,8 +8186,8 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
 
     // Update to add VLAN 10
     let update_add_vlan = types::MulticastGroupUpdateExternalEntry {
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -8297,7 +8196,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
     let updated = switch
         .client
         .multicast_group_update_external(
-            &group_ip,
+            &group_ip.try_into().unwrap(),
             &make_tag(tag),
             &update_add_vlan,
         )
@@ -8317,8 +8216,8 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
 
     // Update to change VLAN 10 -> 20, verify no stale entries
     let update_change_vlan = types::MulticastGroupUpdateExternalEntry {
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(20) },
         sources: None,
@@ -8327,7 +8226,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
     let updated = switch
         .client
         .multicast_group_update_external(
-            &group_ip,
+            &group_ip.try_into().unwrap(),
             &make_tag(tag),
             &update_change_vlan,
         )
@@ -8351,8 +8250,8 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
 
     // Update to remove VLAN
     let update_remove_vlan = types::MulticastGroupUpdateExternalEntry {
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(nat_target.clone()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: None },
         sources: None,
@@ -8361,7 +8260,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
     let updated = switch
         .client
         .multicast_group_update_external(
-            &group_ip,
+            &group_ip.try_into().unwrap(),
             &make_tag(tag),
             &update_remove_vlan,
         )
@@ -8461,7 +8360,7 @@ async fn test_tag_immutability_on_update() -> TestResult {
     let del_tag = make_tag(TAG_A);
     switch
         .client
-        .multicast_group_delete(&group_ip.to_ip_addr(), &del_tag)
+        .multicast_group_delete(&IpAddr::from(group_ip), &del_tag)
         .await
         .expect("Should delete with correct tag");
 
@@ -8504,7 +8403,7 @@ async fn test_tag_validation_on_delete() -> TestResult {
     let del_tag = make_tag(TAG_WRONG);
     let result = switch
         .client
-        .multicast_group_delete(&group_ip.to_ip_addr(), &del_tag)
+        .multicast_group_delete(&IpAddr::from(group_ip), &del_tag)
         .await;
 
     match &result {
@@ -8533,7 +8432,7 @@ async fn test_tag_validation_on_delete() -> TestResult {
     let del_tag = make_tag(TAG_A);
     switch
         .client
-        .multicast_group_delete(&group_ip.to_ip_addr(), &del_tag)
+        .multicast_group_delete(&IpAddr::from(group_ip), &del_tag)
         .await
         .expect("Should delete with correct tag");
 
@@ -8558,7 +8457,7 @@ async fn test_tag_validation() -> TestResult {
         internal_ip,
         Some(TEST_TAG),
         &[(PhysPort(11), types::Direction::Underlay)],
-        types::InternalForwarding { nat_target: None },
+        None,
         types::ExternalForwarding { vlan_id: None },
         None,
     )
@@ -8566,10 +8465,10 @@ async fn test_tag_validation() -> TestResult {
 
     let external_ip = IpAddr::V4(Ipv4Addr::new(224, 0, 12, 1));
     let create_entry = types::MulticastGroupCreateExternalEntry {
-        group_ip: external_ip,
+        group_ip: external_ip.try_into().unwrap(),
         tag: Some(TAG_A.to_string()),
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: create_nat_target_ipv4(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
@@ -8582,8 +8481,8 @@ async fn test_tag_validation() -> TestResult {
         .expect("Should create external group");
 
     let update_entry = types::MulticastGroupUpdateExternalEntry {
-        internal_forwarding: types::InternalForwarding {
-            nat_target: Some(create_nat_target_ipv4()),
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: create_nat_target_ipv4(),
         },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(20) },
         sources: None,
@@ -8592,7 +8491,7 @@ async fn test_tag_validation() -> TestResult {
     let result = switch
         .client
         .multicast_group_update_external(
-            &external_ip,
+            &external_ip.try_into().unwrap(),
             &make_tag(TAG_WRONG),
             &update_entry,
         )
@@ -8642,7 +8541,7 @@ async fn test_tag_validation() -> TestResult {
     let del_tag = make_tag("casesensitivetag");
     let result = switch
         .client
-        .multicast_group_delete(&case_group_ip.to_ip_addr(), &del_tag)
+        .multicast_group_delete(&IpAddr::from(case_group_ip), &del_tag)
         .await;
 
     assert!(
@@ -8653,7 +8552,7 @@ async fn test_tag_validation() -> TestResult {
     let del_tag = make_tag("CaseSensitiveTag");
     switch
         .client
-        .multicast_group_delete(&case_group_ip.to_ip_addr(), &del_tag)
+        .multicast_group_delete(&IpAddr::from(case_group_ip), &del_tag)
         .await
         .expect("Should delete with correct case");
 

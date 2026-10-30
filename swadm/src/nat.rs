@@ -4,7 +4,6 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use std::convert::TryFrom;
 use std::io::{Write, stdout};
 use std::net::{IpAddr, Ipv6Addr};
 
@@ -116,7 +115,7 @@ async fn nat_list(
                 entry.high,
                 entry.target.internal_ip,
                 MacAddr::from(entry.target.inner_mac),
-                entry.target.vni.0,
+                entry.target.vni.as_u32(),
             )?;
         }
     }
@@ -134,7 +133,7 @@ async fn nat_list(
                 entry.high,
                 entry.target.internal_ip,
                 MacAddr::from(entry.target.inner_mac),
-                entry.target.vni.0,
+                entry.target.vni.as_u32(),
             )?;
         }
     }
@@ -153,10 +152,7 @@ async fn nat_get(
             let target = client
                 .nat_ipv4_get(&ipv4, port)
                 .await
-                .map(|r| {
-                    common::network::NatTarget::try_from(r.into_inner())
-                        .expect("Invalid NAT target from server")
-                })
+                .map(|r| common::network::NatTarget::from(r.into_inner()))
                 .context("failed to get IPv4 NAT mapping")?;
             println!("target: {target}");
         }
@@ -164,10 +160,7 @@ async fn nat_get(
             let target = client
                 .nat_ipv6_get(&ipv6, port)
                 .await
-                .map(|r| {
-                    common::network::NatTarget::try_from(r.into_inner())
-                        .expect("Invalid NAT target from server")
-                })
+                .map(|r| common::network::NatTarget::from(r.into_inner()))
                 .context("failed to get IPv6 NAT mapping")?;
             println!("target: {target}");
         }
@@ -184,11 +177,8 @@ async fn nat_add(
     inner_mac: MacAddr,
     vni: Vni,
 ) -> anyhow::Result<()> {
-    let tgt = types::NatTarget {
-        internal_ip,
-        inner_mac: inner_mac.into(),
-        vni: types::Vni::from(vni),
-    };
+    let tgt =
+        types::NatTarget { internal_ip, inner_mac: inner_mac.into(), vni };
     match external {
         IpAddr::V4(ext) => client
             .nat_ipv4_create(&ext, low_port, high_port, &tgt)

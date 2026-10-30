@@ -7,7 +7,7 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "13.0.0"
+    "version": "14.0.0"
   },
   "paths": {
     "/all-settings": {
@@ -1249,7 +1249,7 @@
     "/multicast/external-groups": {
       "post": {
         "summary": "Create an external-only multicast group configuration.",
-        "description": "External-only groups are used for IPv4 and non-admin-local IPv6 multicast traffic that doesn't require replication infrastructure. These groups use simple forwarding tables and require a NAT target.",
+        "description": "External-only groups carry either IPv4 or IPv6 traffic and share their NAT target's replication groups. Any admitted IPv6 scope can be used, including admin-local, except for the reserved underlay subnet of ff04::/64, which belongs specifically to the internal multicast API.\n\nThe group address determines whether the group is any-source (ASM) or source-specific (SSM). An SSM group requires at least one exact source.\n\nThese groups do not carry member subscribers, as membership lives only on the underlay group mapped to by the required NAT target.\n\nThe NAT target must reference an existing underlay group. The underlay group cannot already be referenced by another external group.",
         "operationId": "multicast_group_create_external",
         "requestBody": {
           "content": {
@@ -1284,16 +1284,16 @@
     "/multicast/external-groups/{group_ip}": {
       "put": {
         "summary": "Update an external-only multicast group configuration for a given group IP address.",
-        "description": "External-only groups are used for IPv4 and non-admin-local IPv6 multicast traffic that doesn't require replication infrastructure.\n\nThe `tag` query parameter must match the group's existing tag.",
+        "description": "External-only groups carry IPv4 or IPv6 traffic and share their NAT target's replication groups. Any admitted IPv6 scope can be used, including admin-local, except for the reserved underlay subnet of ff04::/64, which belongs to the internal multicast API.\n\nThe path address must be a valid external multicast address.\n\nOmitting `sources` preserves the group's existing source filter.\n\nThe `tag` query parameter must match the group's existing tag. The NAT target must reference an existing underlay group. The underlay group cannot be referenced by another external group.",
         "operationId": "multicast_group_update_external",
         "parameters": [
           {
             "in": "path",
             "name": "group_ip",
+            "description": "External multicast group IP address.",
             "required": true,
             "schema": {
-              "type": "string",
-              "format": "ip"
+              "$ref": "#/components/schemas/ExternalMulticastIp"
             }
           },
           {
@@ -6489,6 +6489,48 @@
           }
         }
       },
+      "ExternalInternalForwarding": {
+        "description": "Internal forwarding for an external multicast group.\n\nExternal groups always carry a NAT target.",
+        "type": "object",
+        "properties": {
+          "nat_target": {
+            "description": "The group's underlay NAT target.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalNatTarget"
+              }
+            ]
+          }
+        },
+        "required": [
+          "nat_target"
+        ]
+      },
+      "ExternalMulticastIp": {
+        "description": "A validated IP address for a customer-visible overlay multicast group.\n\nThe overlay multicast group is the address guests can send to and join, e.g. `233.252.0.1` or `ff0e::1`, and spans both address families. Its rack-internal underlay mapping is validated separately via `UnderlayMulticastIpv6`, with a 1:1 mapping between the two.\n\nJSON uses the ordinary IP-address string form. Deserialization rejects addresses that are not multicast, use a reserved, interface-local, or link-local scope, fall in the `ff04::/64` underlay subnet, are a reserved base or SSM null address, or carry malformed prefix-based or embedded-RP flags.",
+        "type": "string",
+        "format": "ip"
+      },
+      "ExternalNatTarget": {
+        "description": "NAT target for an external multicast group.\n\nThe MAC must be a multicast MAC and the internal IP must lie within the `ff04::/64` internal underlay block.",
+        "type": "object",
+        "properties": {
+          "inner_mac": {
+            "$ref": "#/components/schemas/MacAddr"
+          },
+          "internal_ip": {
+            "$ref": "#/components/schemas/UnderlayMulticastIpv6"
+          },
+          "vni": {
+            "$ref": "#/components/schemas/Vni"
+          }
+        },
+        "required": [
+          "inner_mac",
+          "internal_ip",
+          "vni"
+        ]
+      },
       "Fault": {
         "description": "A Fault represents a specific kind of failure, and carries some additional context.  Currently Faults are only used to describe Link failures, but there is no reason they couldn't be used elsewhere.",
         "oneOf": [
@@ -6830,20 +6872,6 @@
           "internal_ip",
           "vni"
         ]
-      },
-      "InternalForwarding": {
-        "description": "Represents the NAT target for multicast traffic for internal/underlay forwarding.",
-        "type": "object",
-        "properties": {
-          "nat_target": {
-            "nullable": true,
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/NatTarget"
-              }
-            ]
-          }
-        }
       },
       "IpNet": {
         "x-rust-type": {
@@ -8394,21 +8422,36 @@
         ]
       },
       "MulticastGroupCreateExternalEntry": {
-        "description": "A multicast group configuration for POST requests for external (to the rack) groups.",
+        "description": "Request body for creating a customer-visible overlay multicast group.\n\nThe group IP address determines whether the group is ASM or SSM.",
         "type": "object",
         "properties": {
           "external_forwarding": {
-            "$ref": "#/components/schemas/ExternalForwarding"
+            "description": "Egress VLAN configuration for external forwarding.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalForwarding"
+              }
+            ]
           },
           "group_ip": {
-            "type": "string",
-            "format": "ip"
+            "description": "The multicast address for the group.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalMulticastIp"
+              }
+            ]
           },
           "internal_forwarding": {
-            "$ref": "#/components/schemas/InternalForwarding"
+            "description": "NAT target selecting the underlay group that replicates this group's traffic.\n\nIt must reference an existing underlay group.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalInternalForwarding"
+              }
+            ]
           },
           "sources": {
             "nullable": true,
+            "description": "Optional source list.\n\nA source list can be absent from ASM group requests. If absent, empty, or containing `Any`, the group permits every source (i.e., a wildcard).\n\nSSM groups require at least one exact source in the list and reject `Any` wildcard entries.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/IpSrc"
@@ -8451,26 +8494,42 @@
         ]
       },
       "MulticastGroupExternalResponse": {
-        "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin-local IPv6 multicast via NAT targets.",
+        "description": "Response structure for external multicast group operations.",
         "type": "object",
         "properties": {
           "external_forwarding": {
-            "$ref": "#/components/schemas/ExternalForwarding"
+            "description": "Egress VLAN configuration for external forwarding.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalForwarding"
+              }
+            ]
           },
           "external_group_id": {
+            "description": "ASIC replication group ID for the external group.",
             "type": "integer",
             "format": "uint16",
             "minimum": 0
           },
           "group_ip": {
-            "type": "string",
-            "format": "ip"
+            "description": "The validated multicast address of the group.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalMulticastIp"
+              }
+            ]
           },
           "internal_forwarding": {
-            "$ref": "#/components/schemas/InternalForwarding"
+            "description": "NAT target for forwarding onto the underlay.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalInternalForwarding"
+              }
+            ]
           },
           "sources": {
             "nullable": true,
+            "description": "Source filter, or null when any source is permitted.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/IpSrc"
@@ -8513,7 +8572,7 @@
         "description": "Unified response type for operations that return mixed group types.",
         "oneOf": [
           {
-            "description": "Response structure for underlay/internal multicast group operations. These groups handle admin-local IPv6 multicast with full replication.",
+            "description": "An internal group on the underlay, with members.",
             "type": "object",
             "properties": {
               "external_group_id": {
@@ -8556,23 +8615,38 @@
             ]
           },
           {
-            "description": "Response structure for external multicast group operations. These groups handle IPv4 and non-admin-local IPv6 multicast via NAT targets.",
+            "description": "An external overlay group containing a NAT target and VLAN configuration, having no direct members.",
             "type": "object",
             "properties": {
               "external_forwarding": {
-                "$ref": "#/components/schemas/ExternalForwarding"
+                "description": "Egress VLAN configuration for external forwarding.",
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ExternalForwarding"
+                  }
+                ]
               },
               "external_group_id": {
+                "description": "ASIC replication group ID for the external group.",
                 "type": "integer",
                 "format": "uint16",
                 "minimum": 0
               },
               "group_ip": {
-                "type": "string",
-                "format": "ip"
+                "description": "The validated multicast address of the group.",
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ExternalMulticastIp"
+                  }
+                ]
               },
               "internal_forwarding": {
-                "$ref": "#/components/schemas/InternalForwarding"
+                "description": "NAT target for forwarding onto the underlay.",
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ExternalInternalForwarding"
+                  }
+                ]
               },
               "kind": {
                 "type": "string",
@@ -8582,6 +8656,7 @@
               },
               "sources": {
                 "nullable": true,
+                "description": "Source filter, or null when any source is permitted.",
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/IpSrc"
@@ -8661,17 +8736,28 @@
         ]
       },
       "MulticastGroupUpdateExternalEntry": {
-        "description": "A multicast group update entry for PUT requests for external (to the rack) groups.\n\nTag validation is performed via the `tag` query parameter.",
+        "description": "Updated forwarding and source-filter settings for an external group.",
         "type": "object",
         "properties": {
           "external_forwarding": {
-            "$ref": "#/components/schemas/ExternalForwarding"
+            "description": "Egress VLAN configuration for external forwarding.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalForwarding"
+              }
+            ]
           },
           "internal_forwarding": {
-            "$ref": "#/components/schemas/InternalForwarding"
+            "description": "NAT target selecting the underlay group that replicates this group's traffic.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExternalInternalForwarding"
+              }
+            ]
           },
           "sources": {
             "nullable": true,
+            "description": "Replacement source list.\n\nExclude or set to null to preserve the current source filter.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/IpSrc"
@@ -8699,7 +8785,7 @@
         ]
       },
       "NatTarget": {
-        "description": "represents an internal NAT target",
+        "description": "Represents an internal NAT target.",
         "type": "object",
         "properties": {
           "inner_mac": {
@@ -10666,10 +10752,11 @@
         ]
       },
       "Vni": {
-        "description": "A Geneve Virtual Network Identifier.\n\nA Geneve VNI is a 24-bit value used to identify virtual networks encapsulated using the Generic Network Virtualization Encapsulation (Geneve) protocol (RFC 8926).",
+        "description": "A validated Geneve Virtual Network Identifier.\n\nA Geneve VNI is a 24-bit value used to identify virtual networks encapsulated using the Generic Network Virtualization Encapsulation (Geneve) protocol (RFC 8926). Any value above the 24-bit maximum of 16777215 is rejected at both construction and deserialization.",
         "type": "integer",
         "format": "uint32",
-        "minimum": 0
+        "minimum": 0,
+        "maximum": 16777215
       },
       "ipv4ResultsPage": {
         "description": "A single page of results",

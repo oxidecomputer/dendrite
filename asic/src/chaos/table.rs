@@ -4,7 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
@@ -12,19 +12,20 @@ use std::sync::Mutex;
 
 use crate::chaos::{Handle, table_unfurl};
 use aal::{
-    ActionParse, AsicError, AsicResult, CounterData, MatchParse, TableOps,
+    ActionData, ActionParse, AsicError, AsicResult, CounterData, MatchData,
+    MatchParse, TableOps,
 };
 use common::table::TableType;
 
 pub struct Table {
     type_: TableType,
-    keys: Mutex<HashSet<u64>>,
+    keys: Mutex<HashMap<u64, (MatchData, ActionData)>>,
 }
 
 impl TableOps<Handle> for Table {
     fn new(hdl: &Handle, type_: TableType) -> AsicResult<Table> {
         table_unfurl!(hdl, type_, table_new);
-        Ok(Table { type_, keys: Mutex::new(HashSet::new()) })
+        Ok(Table { type_, keys: Mutex::new(HashMap::new()) })
     }
 
     fn size(&self) -> usize {
@@ -39,7 +40,7 @@ impl TableOps<Handle> for Table {
     fn clear(&self, hdl: &Handle) -> AsicResult<()> {
         table_unfurl!(hdl, self.type_, table_clear);
         let mut keys = self.keys.lock().unwrap();
-        *keys = HashSet::new();
+        *keys = HashMap::new();
         Ok(())
     }
 
@@ -47,18 +48,21 @@ impl TableOps<Handle> for Table {
         &self,
         hdl: &Handle,
         key: &M,
-        _data: &A,
+        data: &A,
     ) -> AsicResult<()> {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
         let x: u64 = hasher.finish();
 
         let mut keys = self.keys.lock().unwrap();
-        if keys.contains(&x) {
-            return Err(AsicError::Exists);
+        if keys.contains_key(&x) {
+            return Err(AsicError::Exists(format!(
+                "entry already in table {}",
+                self.type_
+            )));
         }
         table_unfurl!(hdl, self.type_, table_entry_add);
-        keys.insert(x);
+        keys.insert(x, (key.key_to_ir()?, data.action_to_ir()?));
         Ok(())
     }
 
@@ -66,19 +70,20 @@ impl TableOps<Handle> for Table {
         &self,
         hdl: &Handle,
         key: &M,
-        _data: &A,
+        data: &A,
     ) -> AsicResult<()> {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
         let x: u64 = hasher.finish();
 
-        let keys = self.keys.lock().unwrap();
-        if !keys.contains(&x) {
+        let mut keys = self.keys.lock().unwrap();
+        let Some((_, action)) = keys.get_mut(&x) else {
             return Err(AsicError::Missing(
                 "table entry not found".to_string(),
             ));
-        }
+        };
         table_unfurl!(hdl, self.type_, table_entry_update);
+        *action = data.action_to_ir()?;
         Ok(())
     }
 
@@ -92,7 +97,7 @@ impl TableOps<Handle> for Table {
         let x: u64 = hasher.finish();
 
         let mut keys = self.keys.lock().unwrap();
-        if !keys.contains(&x) {
+        if !keys.contains_key(&x) {
             return Err(AsicError::Missing(
                 "table entry not found".to_string(),
             ));
@@ -107,7 +112,14 @@ impl TableOps<Handle> for Table {
         _hdl: &Handle,
         _from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>> {
-        Err(AsicError::OperationUnsupported)
+        self.keys
+            .lock()
+            .unwrap()
+            .values()
+            .map(|(key, action)| {
+                Ok((M::ir_to_key(key)?, A::ir_to_action(action)?))
+            })
+            .collect()
     }
 
     fn get_counters<M: MatchParse>(

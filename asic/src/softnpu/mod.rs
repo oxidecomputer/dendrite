@@ -338,9 +338,7 @@ impl AsicOps for Handle {
         // and use it as before.
         let port_hdl = PortHdl::new(connector, 0);
         if ports.contains_key(&port_hdl) {
-            return Err(AsicError::InvalidArg(format!(
-                "Port {port_hdl:?} exists"
-            )));
+            return Err(AsicError::Exists(format!("Port {port_hdl:?} exists")));
         }
         ports.insert(port_hdl, Port { enabled: true, tx_eq: 0 });
         self.port_to_asic_id(port_hdl).map(|id| (port_hdl, id))
@@ -349,7 +347,7 @@ impl AsicOps for Handle {
     fn port_delete(&self, port_hdl: PortHdl) -> AsicResult<()> {
         let mut ports = self.ports.lock().unwrap();
         if !ports.contains_key(&port_hdl) {
-            return Err(AsicError::InvalidArg(format!(
+            return Err(AsicError::Missing(format!(
                 "Port {port_hdl:?} does not exist"
             )));
         }

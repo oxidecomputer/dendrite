@@ -39,3 +39,45 @@ impl From<InstanceTarget> for NatTarget {
         }
     }
 }
+
+#[cfg(any(test, feature = "testing"))]
+mod arbitrary_impls {
+    use proptest::prelude::*;
+
+    use crate::v14::network::Vni;
+
+    /// Generate valid `Vni` values in `[0, Vni::MAX_VNI]`.
+    impl Arbitrary for Vni {
+        type Parameters = ();
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+            (0u32..=Vni::MAX_VNI)
+                .prop_map(|value| Vni::new(value).expect("VNI is in range"))
+                .boxed()
+        }
+    }
+}
+
+#[cfg(test)]
+mod proptests;
+
+#[cfg(test)]
+mod tests {
+    use crate::latest::network::Vni;
+    use crate::v1;
+
+    #[test]
+    fn vni_schema_bounds() {
+        let latest = serde_json::to_value(schemars::schema_for!(Vni)).unwrap();
+        assert_eq!(latest["type"], "integer");
+        assert_eq!(latest["format"], "uint32");
+        assert_eq!(latest["minimum"].as_f64(), Some(0.0));
+        assert_eq!(latest["maximum"].as_f64(), Some(f64::from(Vni::MAX_VNI)));
+
+        let v1 = serde_json::to_value(schemars::schema_for!(v1::network::Vni))
+            .unwrap();
+        assert_eq!(v1["type"], "integer");
+        assert!(v1.get("maximum").is_none(), "{v1}");
+    }
+}

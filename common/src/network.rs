@@ -57,8 +57,9 @@ pub enum VlanError {
 /// Returns [`VlanError::InvalidVlan`] if the ID falls outside `1..=4094`.
 ///
 /// [IEEE 802.1Q]: https://ieeexplore.ieee.org/document/10004498
-// TODO: replace with a validated `VlanId` newtype in oxnet, shared with
-// omicron's `common/src/vlan.rs` bounds check.
+// TODO: replace with oxnet's validated `VlanId` newtype
+// (oxidecomputer/oxnet#85), which is shared with omicron's `common/src/vlan.rs`
+// bounds check.
 pub fn validate_vlan(id: impl Into<u16>) -> Result<(), VlanError> {
     let id: u16 = id.into();
     if !(1..=4094).contains(&id) {
