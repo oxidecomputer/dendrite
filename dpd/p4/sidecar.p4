@@ -17,9 +17,6 @@ const bit<9> USER_SPACE_SERVICE_PORT = 192;
 #include <constants.p4>
 #include <parser.p4>
 
-// This is the port that we use to send packets to user space.
-#define IS_SERVICE(p) ((p) == USER_SPACE_SERVICE_PORT)
-
 // Includes the checksum for the original data, the geneve header, the
 // outer udp header, and the outer ipv6 pseudo-header.
 // NOTE: safe to include geneve oxg_ext_tag here (via nat_ingress_csum)
@@ -500,8 +497,21 @@ control AttachedSubnetIngress (
 control NatIngress (
 	inout sidecar_headers_t hdr,
 	inout sidecar_ingress_meta_t meta,
-	in ingress_intrinsic_metadata_t ig_intr_md
+	in ingress_intrinsic_metadata_t ig_intr_md,
+	inout ingress_intrinsic_metadata_for_tm_t ig_tm_md
 ) {
+	action icmp_error(bit<8> type, bit<8> code) {
+		hdr.sidecar.sc_code = SC_ICMP_NEEDED;
+		hdr.sidecar.sc_ingress = (bit<16>)ig_intr_md.ingress_port;
+		hdr.sidecar.sc_egress = 0;
+		hdr.sidecar.sc_ether_type = hdr.ethernet.ether_type;
+		hdr.sidecar.sc_payload = (bit<128>)type << 8 | (bit<128>)code;
+		hdr.sidecar.setValid();
+		hdr.ethernet.ether_type = ETHERTYPE_SIDECAR;
+		meta.service_routed = true;
+		ig_tm_md.ucast_egress_port = USER_SPACE_SERVICE_PORT;
+	}
+
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv4_ingress_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) ipv6_ingress_ctr;
 	DirectCounter<bit<32>>(CounterType_t.PACKETS_AND_BYTES) mcast_ipv4_ingress_ctr;
@@ -725,24 +735,28 @@ control NatIngress (
 		}
 
 		if (ingress_hit.apply().hit) {
+			// A TTL/hop limit of 0 would expire when being forwarded to the
+			// sled, leading us to send a request for an ICMP(v6) Time
+			// Exceeded from the host instead of performing encapsulation
+			// (RFC 1812 §5.3.1; RFC 4443 §3.3).
 			if (hdr.ipv4.isValid()) {
 				if (hdr.ipv4.ttl == 0) {
-					meta.drop_reason = DROP_IPV4_TTL_INVALID;
-					meta.dropped = true;
+					icmp_error(ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
+					meta.drop_reason = DROP_IPV4_TTL_EXCEEDED;
 				} else {
 					CalculateIPv4Len.apply(hdr, meta);
 					encap_ipv4();
 				}
 			} else if (hdr.ipv6.isValid()) {
 				if (hdr.ipv6.hop_limit == 0) {
-					meta.drop_reason = DROP_IPV6_TTL_INVALID;
-					meta.dropped = true;
+					icmp_error(ICMP6_TIME_EXCEEDED, ICMP_EXC_TTL);
+					meta.drop_reason = DROP_IPV6_TTL_EXCEEDED;
 				} else {
 					encap_ipv6();
 				}
 			}
 
-			if (hdr.vlan.isValid()) {
+			if (hdr.vlan.isValid() && !meta.service_routed) {
 				// When setting up the inner headers above, we
 				// copied the ether type from the outer to
 				// the inner.  If this is a vlan packet, we
@@ -1257,12 +1271,6 @@ control Router4 (
 	}
 
 	apply {
-		if (hdr.ipv4.ttl == 0 && !meta.nat_egress_hit) {
-			meta.dropped = true;
-			meta.drop_reason = DROP_IPV4_TTL_INVALID;
-			return;
-		}
-
 		route4_result_t fwd;
 		fwd.is_v6 = false;
 		fwd.nexthop6 = 0;
@@ -1285,7 +1293,13 @@ control Router4 (
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
 			meta.drop_reason = DROP_IPV4_UNROUTEABLE;
-		} else if (hdr.ipv4.ttl <= 8w1 && !IS_SERVICE(fwd.port)) {
+		} else if (hdr.ipv4.ttl <= 8w1) {
+			// A forwarded TTL of 0 or 1 expires here and requests a Time
+			// Exceeded (RFC 1812 §5.3.1). Traffic delivered locally to a switch
+			// address is service-routed and never reaches the L3Router control
+			// (RFC 1812 §4.2.2.9).
+			// Geneve traffic to a switch tunnel endpoint is decapped before the
+			// inner frame reaches L3Router.
 			icmp_error(ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
@@ -1390,12 +1404,6 @@ control Router6 (
 	}
 
 	apply {
-		if (hdr.ipv6.hop_limit == 0 && !meta.nat_egress_hit) {
-			meta.dropped = true;
-			meta.drop_reason = DROP_IPV6_TTL_INVALID;
-			return;
-		}
-
 		route6_result_t fwd;
 		fwd.nexthop = 0;
 		fwd.port = 0;
@@ -1416,7 +1424,13 @@ control Router6 (
 			meta.drop_reason = DROP_IPV6_UNROUTEABLE;
 			// Dont set meta.dropped because we want an error packet
 			// to go out.
-		} else if (hdr.ipv6.hop_limit <= 8w1 && !IS_SERVICE(fwd.port)) {
+		} else if (hdr.ipv6.hop_limit <= 8w1) {
+			// A forwarded hop limit of 0 or 1 expires here and requests a
+			// Time Exceeded (RFC 4443 §3.3). Traffic delivered locally to a switch
+			// address is service-routed and never reaches the L3Router control
+			// (RFC 8200 §3).
+			// Geneve traffic to a switch tunnel endpoint is decapped before the
+			// inner frame reaches L3Router.
 			icmp_error(ICMP6_TIME_EXCEEDED, ICMP_EXC_TTL);
 			meta.drop_reason = DROP_IPV6_TTL_EXCEEDED;
 			// Dont set meta.dropped because we want an error packet
@@ -2172,7 +2186,7 @@ control Ingress(
 		// that the NAT'd outer address is used for multicast
 		// replication to inbound groups
 		if (!meta.dropped && !hdr.geneve.isValid()) {
-			nat_ingress.apply(hdr, meta, ig_intr_md);
+			nat_ingress.apply(hdr, meta, ig_intr_md, ig_tm_md);
 		}
 
 		if (!meta.dropped) {
