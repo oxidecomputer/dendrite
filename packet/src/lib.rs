@@ -321,7 +321,6 @@ pub struct Headers {
     pub eth_hdr: Option<eth::EthHdr>,
     pub lldp_hdr: Option<lldp::LldpHdr>,
     pub sidecar_hdr: Option<sidecar::SidecarHdr>,
-    /// 802.1q tag following the sidecar header (see [`sidecar::SidecarVlanHdr`]).
     pub sidecar_vlan_hdr: Option<sidecar::SidecarVlanHdr>,
     pub ipv4_hdr: Option<ipv4::Ipv4Hdr>,
     pub ipv6_hdr: Option<ipv6::Ipv6Hdr>,

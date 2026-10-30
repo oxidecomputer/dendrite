@@ -86,15 +86,32 @@ pub async fn check_counter_unchanged(
     baseline: u64,
     client_name: Option<&str>,
 ) -> anyhow::Result<()> {
+    check_counters_unchanged(switch, &[(counter_name, baseline)], client_name)
+        .await
+}
+
+/// Assert that each `(counter, baseline)` pair holds for a single polling
+/// cycle.
+///
+/// Note: Every execution of this method must wait out the full cycle, about
+/// 2s (`COUNTER_POLL_ATTEMPTS` × `COUNTER_POLL_INTERVAL`). Pass every counter a
+/// test checks in a single call.
+pub async fn check_counters_unchanged(
+    switch: &Switch,
+    counters: &[(&str, u64)],
+    client_name: Option<&str>,
+) -> anyhow::Result<()> {
     let table = client_name.unwrap_or("ingress_drop_reason");
     for poll in 1..=COUNTER_POLL_ATTEMPTS {
         tokio::time::sleep(COUNTER_POLL_INTERVAL).await;
-        let value = switch.get_counter(counter_name, client_name).await?;
-        if value != baseline {
-            bail!(
-                "counter '{counter_name}' in {table} expected to stay at \
-                 {baseline}, but reached {value} on poll {poll}"
-            );
+        for &(counter_name, baseline) in counters {
+            let value = switch.get_counter(counter_name, client_name).await?;
+            if value != baseline {
+                bail!(
+                    "counter '{counter_name}' in {table} expected to stay at \
+                     {baseline}, but reached {value} on poll {poll}"
+                );
+            }
         }
     }
     Ok(())
