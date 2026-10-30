@@ -321,6 +321,8 @@ pub struct Headers {
     pub eth_hdr: Option<eth::EthHdr>,
     pub lldp_hdr: Option<lldp::LldpHdr>,
     pub sidecar_hdr: Option<sidecar::SidecarHdr>,
+    /// 802.1q tag following the sidecar header (see [`sidecar::SidecarVlanHdr`]).
+    pub sidecar_vlan_hdr: Option<sidecar::SidecarVlanHdr>,
     pub ipv4_hdr: Option<ipv4::Ipv4Hdr>,
     pub ipv6_hdr: Option<ipv6::Ipv6Hdr>,
     pub tcp_hdr: Option<tcp::TcpHdr>,
@@ -336,6 +338,7 @@ impl Headers {
         Headers {
             eth_hdr: None,
             sidecar_hdr: None,
+            sidecar_vlan_hdr: None,
             lldp_hdr: None,
             ipv4_hdr: None,
             ipv6_hdr: None,
@@ -377,6 +380,11 @@ impl PartialEq for Packet {
         let mut is_eq = test("eth hdr", a.eth_hdr.as_ref(), b.eth_hdr.as_ref());
         is_eq &=
             test("sidecar hdr", a.sidecar_hdr.as_ref(), b.sidecar_hdr.as_ref());
+        is_eq &= test(
+            "sidecar vlan hdr",
+            a.sidecar_vlan_hdr.as_ref(),
+            b.sidecar_vlan_hdr.as_ref(),
+        );
         is_eq &= test("lldp hdr", a.lldp_hdr.as_ref(), b.lldp_hdr.as_ref());
         is_eq &= test("ipv4 hdr", a.ipv4_hdr.as_ref(), b.ipv4_hdr.as_ref());
         is_eq &= test("ipv6 hdr", a.ipv6_hdr.as_ref(), b.ipv6_hdr.as_ref());
