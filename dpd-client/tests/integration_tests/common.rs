@@ -1363,7 +1363,15 @@ pub fn add_sidecar_hdr(
     payload: Option<&[u8]>,
 ) {
     let eth = pkt.hdrs.eth_hdr.as_mut().unwrap();
-    let sc_ether_type = eth.eth_type;
+    // sidecar.p4 emits a tagged packet's VLAN header after the sidecar header,
+    // with `sc_ether_type` mapping to the VLAN instead of the L3 protocol.
+    let (sc_ether_type, sidecar_vlan_hdr) = match eth.eth_8021q.take() {
+        Some(tag) => (
+            eth::ETHER_VLAN,
+            Some(sidecar::SidecarVlanHdr { tag, ether_type: eth.eth_type }),
+        ),
+        None => (eth.eth_type, None),
+    };
     let sc_payload = [0u8; 16];
 
     let mut s = sidecar::SidecarHdr {
@@ -1380,6 +1388,7 @@ pub fn add_sidecar_hdr(
     }
 
     pkt.hdrs.sidecar_hdr = Some(s);
+    pkt.hdrs.sidecar_vlan_hdr = sidecar_vlan_hdr;
     eth.eth_type = eth::ETHER_SIDECAR;
 }
 
