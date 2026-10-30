@@ -139,7 +139,7 @@ impl Table {
         trace!(hdl.log, "keyset_data:\n{keyset_data:#?}");
         trace!(hdl.log, "parameter_data:\n{parameter_data:#?}");
 
-        add_entry(
+        replace_entry(
             hdl,
             table,
             crate::softnpu::mcast::SET_PORT_BITMAP_ACTION.to_string(),
@@ -151,13 +151,27 @@ impl Table {
     }
 }
 
-fn add_entry(
+/// Write an entry, or replace any entry already associated with the key.
+///
+/// Note: SoftNPU's `TableAdd` retrains an existing entry in place and reports
+/// nothing back. The backend key lookup does not return `AsicError::Exists`,
+/// for example.
+///
+/// Removing the key before the add ensures that the pipeline is in agreement
+/// with what DPD wrote.
+fn replace_entry(
     hdl: &Handle,
     table: String,
     action: String,
     keyset_data: Vec<u8>,
     parameter_data: Vec<u8>,
 ) {
+    let remove = ManagementRequest::TableRemove(TableRemove {
+        table: table.clone(),
+        keyset_data: keyset_data.clone(),
+    });
+    crate::softnpu::mgmt::write(remove, &hdl.mgmt_config);
+
     let add = ManagementRequest::TableAdd(TableAdd {
         table,
         action,
@@ -658,7 +672,7 @@ impl TableOps<Handle> for Table {
         trace!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
         trace!(hdl.log, "parameter_data:\n{:#?}", parameter_data);
 
-        add_entry(hdl, table, action, keyset_data, parameter_data);
+        replace_entry(hdl, table, action, keyset_data, parameter_data);
 
         Ok(())
     }
@@ -669,13 +683,12 @@ impl TableOps<Handle> for Table {
         key: &M,
         data: &A,
     ) -> AsicResult<()> {
-        // SoftNPU does not currently support in-place updates. The key is
-        // removed via `entry_del` and added back with the new action data.
+        // SoftNPU does not currently support in-place updates. `entry_add`
+        // removes the key first before adding it back with the new action data.
         //
         // Note: this is not an atomic op, as a lookup between the two messages
         // could miss the entry, and mgmt IO failures panic in mgmt::write
         // rather than surface errors.
-        self.entry_del(hdl, key)?;
         self.entry_add(hdl, key, data)
     }
 
