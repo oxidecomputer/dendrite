@@ -16,7 +16,7 @@ use packet::{Endpoint, eth, icmp, ipv4, sidecar};
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
 use crate::integration_tests::counters::{
-    check_counter_unchanged, one_counted_test,
+    check_counters_unchanged, one_counted_test,
 };
 
 // Packets sent to an IP address assigned to a switch port should be forwarded
@@ -132,12 +132,11 @@ async fn service_unicast_ttl_impl(
 
     let mut baselines = Vec::with_capacity(counters.len());
     for counter in &counters {
-        baselines.push(switch.get_counter(counter, None).await?);
+        baselines
+            .push((counter.as_str(), switch.get_counter(counter, None).await?));
     }
     switch.packet_test(vec![send], vec![expected])?;
-    for (counter, baseline) in counters.iter().zip(baselines) {
-        check_counter_unchanged(switch, counter, baseline, None).await?;
-    }
+    check_counters_unchanged(switch, &baselines, None).await?;
 
     Ok(())
 }
