@@ -72,7 +72,16 @@ pub fn swadm_exact(
         .map(Cow::from)
         .unwrap_or_else(|_| common::DEFAULT_DPD_PORT.to_string().into());
 
+    // CI exports RUST_BACKTRACE=1, which forces anyhow to append a "Stack
+    // backtrace:" section to every error swadm prints, and stderr would
+    // differ from a local run and never match an expectation file.
+    //
+    // We still keep panic backtraces but turn off the library-level ones,
+    // just like omdb's test harness does:
+    // https://github.com/oxidecomputer/omicron/blob/654472b6368b48743f34c0744e2acfb06278f796/dev-tools/omdb/tests/test_all_output.rs#L961-L969
     let output = Command::new(self::SWADM)
+        .env("RUST_BACKTRACE", "1")
+        .env("RUST_LIB_BACKTRACE", "0")
         .args(["--host", host.as_ref(), "--port", port.as_ref()])
         .args(input)
         .output()?;
@@ -135,10 +144,40 @@ pub mod re {
     use regex::Regex;
     use std::sync::LazyLock;
 
-    /// A block of parentheses with characters inside. Doesn't
+    /// A block of parentheses with characters inside. This doesn't
     /// support nested parentheses.
     pub static PARENS: LazyLock<Pattern> =
         LazyLock::new(|| Regex::new(r"\([^)]*\)").unwrap().into());
+
+    /// Matches the multicast group IDs that dpd allocates, as printed out by
+    /// `swadm multicast get` (the "group ID:" lines) and `swadm multicast
+    /// list` (the two ID columns). Each capture group holds one ID, or `-`
+    /// when the group is lacking one.
+    ///
+    /// This is an example with captured spans, marked with `^`, in each output
+    /// form:
+    ///
+    /// ```text
+    /// External group ID:  65534
+    ///                     ^^^^^
+    /// 232.123.45.99  external  65534         -            test  nat=...
+    ///                          ^^^^^         ^
+    /// ff04::5ad:1    underlay  65534         65533        test  int0/0(...)
+    ///                          ^^^^^         ^^^^^
+    /// ```
+    ///
+    /// The regex crate has no lookaround operation, which means that the match
+    /// also incorporates the surrounding text (the label, or the group IP and
+    /// kind) in order to anchor each ID.
+    ///
+    /// Use [`Output::mask`](super::Output::mask) to replace only the captures.
+    pub static GROUP_ID: LazyLock<Pattern> = LazyLock::new(|| {
+        Regex::new(
+            r"(?m)^(?:(?:External|Underlay) group ID: +(\d+)$|\S+ +(?:external|underlay) +(\d+|-) +(\d+|-) )",
+        )
+        .unwrap()
+        .into()
+    });
 }
 
 /// A wrapper type for regex inputs that can be
@@ -230,6 +269,40 @@ impl Output {
         self
     }
 
+    /// Replaces the digits in each numeric capture group of the pattern with
+    /// `#` of the same width, keeping the column alignment intact.
+    pub fn mask(&mut self, reg: impl AsRef<Regex>) -> &mut Self {
+        *self.as_mut() = reg
+            .as_ref()
+            .replace_all(self.as_ref(), |caps: &regex::Captures<'_>| {
+                let matched = caps.get(0).unwrap();
+                let id_spans: Vec<_> = caps
+                    .iter()
+                    .skip(1)
+                    .flatten()
+                    .filter(|group| {
+                        group.as_str().bytes().all(|b| b.is_ascii_digit())
+                    })
+                    .map(|group| group.range())
+                    .collect();
+
+                matched
+                    .as_str()
+                    .char_indices()
+                    .map(|(offset, ch)| {
+                        let pos = matched.start() + offset;
+                        if id_spans.iter().any(|span| span.contains(&pos)) {
+                            '#'
+                        } else {
+                            ch
+                        }
+                    })
+                    .collect::<String>()
+            })
+            .to_string();
+        self
+    }
+
     /// Keeps only those lines of output text for which the pattern matches.
     ///
     /// This reformats line separators into a single newline.
@@ -296,11 +369,51 @@ impl TryFrom<self::Error> for Output {
 
 #[cfg(test)]
 mod test {
+    use super::Output;
     use super::re;
 
     /// Verify these unwraps don't panic.
     #[test]
     fn pattern_statics() {
         let _ = &*re::PARENS;
+        let _ = &*re::GROUP_ID;
+    }
+
+    #[test]
+    fn mask_group_ids_in_list() {
+        let list = "\
+Group IP       Kind      Ext Group ID  UL Group ID  Tag   Detail
+232.123.45.99  external  65534         -            test  nat=ff04::5ad:1 mac=11:22:33:44:55:66 vni=777 vlan=100 src=10.0.0.1
+ff04::5ad:1    underlay  65534         65533        test  int0/0(underlay)
+";
+        let expected = "\
+Group IP       Kind      Ext Group ID  UL Group ID  Tag   Detail
+232.123.45.99  external  #####         -            test  nat=ff04::5ad:1 mac=11:22:33:44:55:66 vni=777 vlan=100 src=10.0.0.1
+ff04::5ad:1    underlay  #####         #####        test  int0/0(underlay)
+";
+        let mut out = Output::Stdout(list.to_string());
+        out.mask(&*re::GROUP_ID);
+        assert_eq!(AsRef::<str>::as_ref(&out), expected);
+    }
+
+    #[test]
+    fn mask_group_ids_in_get() {
+        let get = "\
+Group IP:           ff04::5ad:1
+Kind:               underlay
+External group ID:  65534
+Underlay group ID:  65533
+Tag:                test
+";
+        let expected = "\
+Group IP:           ff04::5ad:1
+Kind:               underlay
+External group ID:  #####
+Underlay group ID:  #####
+Tag:                test
+";
+        let mut out = Output::Stdout(get.to_string());
+        out.mask(&*re::GROUP_ID);
+        assert_eq!(AsRef::<str>::as_ref(&out), expected);
     }
 }

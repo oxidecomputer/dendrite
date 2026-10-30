@@ -1,0 +1,4 @@
+Error: failed to delete multicast group ff04::5ad:1
+
+Caused by:
+    Error Response: status: 400 Bad Request; 
