@@ -33,6 +33,8 @@
 
 mod impls;
 pub mod latest;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 #[path = "initial/mod.rs"]
 pub mod v1;
 #[path = "asic_details/mod.rs"]
