@@ -14,23 +14,17 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use proptest::prelude::*;
 use test_strategy::{Arbitrary, proptest};
 
-use crate::impls::test_util::{json_round_trip, outcome};
+use crate::impls::test_util::{json_round_trip, outcome, shrink_fully};
 use crate::latest::mcast::{
     EmbeddedIpv4, ExternalMulticastIp, ExternalMulticastIpError,
     InvalidEmbeddedRp, InvalidMulticastSource, MAX_TAG_LENGTH,
     MulticastSourceError, MulticastTag, UnderlayMulticastIpv6, UnicastAddrV4,
     UnicastAddrV6, is_ssm_address,
 };
-
-/// Usable IPv6 multicast scopes, containing every scope
-/// `ExternalMulticastIp::new` accepts (3 through f).
-const USABLE_MULTICAST_SCOPES: [u8; 13] =
-    [0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf];
-
-/// Generate a usable IPv6 multicast scope nibble.
-fn usable_scope_strategy() -> impl Strategy<Value = u8> {
-    proptest::sample::select(&USABLE_MULTICAST_SCOPES[..])
-}
+use crate::testing::{
+    ipv4_asm_group_strategy, ipv4_ssm_group_strategy, ipv6_asm_group_strategy,
+    ipv6_ssm_group_strategy, usable_scope_strategy,
+};
 
 /// Spec for SSM classification per RFC 4607 §1, RFC 7371 §4.1.2, and
 /// RFC 3306 §6, with the `ff2` and `rsvd` nibbles ignored upon receipt
@@ -550,6 +544,81 @@ fn prop_is_ssm_matches_spec(
     #[strategy(ssm_candidate_strategy())] addr: IpAddr,
 ) {
     prop_assert_eq!(is_ssm_address(addr), spec_is_ssm(addr), "{}", addr);
+}
+
+/// Property: every `Arbitrary` `UnderlayMulticastIpv6` satisfies
+/// `spec_underlay`
+#[proptest]
+fn prop_arbitrary_underlay_matches_spec(addr: UnderlayMulticastIpv6) {
+    let ip = addr.ip();
+    prop_assert!(spec_underlay(ip), "{}", ip);
+}
+
+/// Property: every `Arbitrary` `UnicastAddrV4` satisfies `spec_source_v4`
+#[proptest]
+fn prop_arbitrary_source_v4_matches_spec(addr: UnicastAddrV4) {
+    let ip = addr.ip();
+    prop_assert_eq!(spec_source_v4(ip), Ok(()), "{}", ip);
+}
+
+/// Property: every `Arbitrary` `UnicastAddrV6` satisfies `spec_source_v6`
+#[proptest]
+fn prop_arbitrary_source_v6_matches_spec(addr: UnicastAddrV6) {
+    let ip = addr.ip();
+    prop_assert_eq!(spec_source_v6(ip), Ok(()), "{}", ip);
+}
+
+/// The exported multicast generators continue producing valid, correctly
+/// designated values at every shrink step.
+#[test]
+fn generators_stay_valid_while_shrinking() {
+    shrink_fully(any::<UnderlayMulticastIpv6>());
+    shrink_fully(any::<UnicastAddrV4>());
+    shrink_fully(any::<UnicastAddrV6>());
+    shrink_fully(ipv4_asm_group_strategy());
+    shrink_fully(ipv4_ssm_group_strategy());
+    shrink_fully(ipv6_asm_group_strategy());
+    shrink_fully(ipv6_ssm_group_strategy());
+}
+
+/// Property: every `ipv4_asm_group_strategy` group satisfies `spec_group_v4`
+/// and is not SSM
+#[proptest]
+fn prop_asm_group_v4_matches_spec(
+    #[strategy(ipv4_asm_group_strategy())] addr: Ipv4Addr,
+) {
+    prop_assert_eq!(spec_group_v4(addr), Ok(()), "{}", addr);
+    prop_assert!(!spec_is_ssm(IpAddr::V4(addr)), "{}", addr);
+}
+
+/// Property: every `ipv4_ssm_group_strategy` group satisfies `spec_group_v4`
+/// and is SSM
+#[proptest]
+fn prop_ssm_group_v4_matches_spec(
+    #[strategy(ipv4_ssm_group_strategy())] addr: Ipv4Addr,
+) {
+    prop_assert_eq!(spec_group_v4(addr), Ok(()), "{}", addr);
+    prop_assert!(spec_is_ssm(IpAddr::V4(addr)), "{}", addr);
+}
+
+/// Property: every `ipv6_asm_group_strategy` group satisfies `spec_group_v6`
+/// and is not SSM
+#[proptest]
+fn prop_asm_group_v6_matches_spec(
+    #[strategy(ipv6_asm_group_strategy())] addr: Ipv6Addr,
+) {
+    prop_assert_eq!(spec_group_v6(addr), Ok(()), "{}", addr);
+    prop_assert!(!spec_is_ssm(IpAddr::V6(addr)), "{}", addr);
+}
+
+/// Property: every `ipv6_ssm_group_strategy` group satisfies `spec_group_v6`
+/// and is SSM
+#[proptest]
+fn prop_ssm_group_v6_matches_spec(
+    #[strategy(ipv6_ssm_group_strategy())] addr: Ipv6Addr,
+) {
+    prop_assert_eq!(spec_group_v6(addr), Ok(()), "{}", addr);
+    prop_assert!(spec_is_ssm(IpAddr::V6(addr)), "{}", addr);
 }
 
 /// Spec for a multicast tag: 1 to 80 bytes, each an ASCII alphanumeric

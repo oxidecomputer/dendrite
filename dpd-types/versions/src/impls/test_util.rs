@@ -10,8 +10,30 @@
 use std::fmt::Debug;
 
 use proptest::prelude::*;
+use proptest::strategy::ValueTree;
+use proptest::test_runner::TestRunner;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+
+/// Shrink 256 generated value trees until `simplify()` returns false,
+/// evaluating each value along the way.
+///
+/// This uses a deterministic runner, with shrinking being used here to
+/// exercise lower range bounds and earlier union arms.
+///
+/// Calling `current()` reruns each mapping and its checks.
+pub(crate) fn shrink_fully<S: Strategy>(strategy: S) {
+    let mut runner = TestRunner::deterministic();
+    for _ in 0..256 {
+        let mut tree = strategy.new_tree(&mut runner).expect("new value tree");
+        loop {
+            let _ = tree.current();
+            if !tree.simplify() {
+                break;
+            }
+        }
+    }
+}
 
 /// Discard the success value of `res`, keeping the error for comparison.
 pub(crate) fn outcome<T, E>(res: &Result<T, E>) -> Result<(), &E> {

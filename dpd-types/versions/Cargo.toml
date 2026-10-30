@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
 oxnet.workspace = true
+proptest = { workspace = true, optional = true }
 rand.workspace = true
 schemars = { workspace = true, features = ["chrono", "uuid1"] }
 serde.workspace = true
@@ -16,3 +17,6 @@ uuid.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
 test-strategy.workspace = true
+
+[features]
+testing = ["dep:proptest"]

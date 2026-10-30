@@ -12,7 +12,7 @@
 use proptest::prelude::*;
 use test_strategy::proptest;
 
-use crate::impls::test_util::json_round_trip;
+use crate::impls::test_util::{json_round_trip, shrink_fully};
 use crate::latest::network::{Vni, VniError, VniParseError};
 use crate::v1;
 
@@ -139,4 +139,17 @@ fn prop_vni_conversions_preserve_value(
     let latest = Vni::from(v1_vni);
     prop_assert_eq!(latest.as_u32(), value);
     prop_assert_eq!(v1::network::Vni::from(latest).as_u32(), value);
+}
+
+/// Property: every `Arbitrary` `Vni` satisfies `spec_vni`
+#[proptest]
+fn prop_arbitrary_vni_matches_spec(vni: Vni) {
+    prop_assert_eq!(spec_vni(vni.as_u32()), Ok(vni.as_u32()));
+}
+
+/// The `Arbitrary` `Vni` generator continues producing valid values at each
+/// shrink step.
+#[test]
+fn vni_generator_stays_valid_while_shrinking() {
+    shrink_fully(any::<Vni>());
 }
