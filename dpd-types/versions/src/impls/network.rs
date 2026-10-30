@@ -40,6 +40,25 @@ impl From<InstanceTarget> for NatTarget {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
+mod arbitrary_impls {
+    use proptest::prelude::*;
+
+    use crate::v14::network::Vni;
+
+    /// Generate valid `Vni` values in `[0, Vni::MAX_VNI]`.
+    impl Arbitrary for Vni {
+        type Parameters = ();
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+            (0u32..=Vni::MAX_VNI)
+                .prop_map(|value| Vni::new(value).expect("VNI is in range"))
+                .boxed()
+        }
+    }
+}
+
 #[cfg(test)]
 mod proptests;
 

@@ -393,6 +393,78 @@ impl fmt::Display for IpSrc {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
+mod arbitrary_impls {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    use proptest::prelude::*;
+
+    use super::IPV6_ADMIN_SCOPED_MULTICAST_PREFIX;
+    use crate::v8::mcast::UnderlayMulticastIpv6;
+    use crate::v14::mcast::{UnicastAddrV4, UnicastAddrV6};
+
+    /// Generate IPv4 unicast addresses that work as a multicast source.
+    ///
+    /// This avoids 0/8, 127/8, 169.254/16, and the multicast/reserved ranges
+    /// (224/3 onward).
+    impl Arbitrary for UnicastAddrV4 {
+        type Parameters = ();
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+            prop_oneof![
+                0x0100_0000u32..=0x7eff_ffff,
+                0x8000_0000u32..=0xa9fd_ffff,
+                0xa9ff_0000u32..=0xdfff_ffff,
+            ]
+            .prop_map(|bits| {
+                UnicastAddrV4::new(Ipv4Addr::from(bits))
+                    .expect("generated IPv4 source is valid")
+            })
+            .boxed()
+        }
+    }
+
+    /// Generate IPv6 unicast addresses that `UnicastAddrV6::new` accepts.
+    impl Arbitrary for UnicastAddrV6 {
+        type Parameters = ();
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+            prop_oneof![
+                (1u128 << 32)..(0xffffu128 << 32),
+                (1u128 << 48)..(0xfe80u128 << 112),
+                (0xfec0u128 << 112)..(0xff00u128 << 112),
+            ]
+            .prop_map(|bits| {
+                UnicastAddrV6::new(Ipv6Addr::from(bits))
+                    .expect("generated IPv6 source is valid")
+            })
+            .boxed()
+        }
+    }
+
+    /// Generate underlay multicast addresses within the internal `ff04::/64`
+    /// block.
+    impl Arbitrary for UnderlayMulticastIpv6 {
+        type Parameters = ();
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+            any::<u64>()
+                .prop_map(|bits| {
+                    let addr = Ipv6Addr::from(
+                        (u128::from(IPV6_ADMIN_SCOPED_MULTICAST_PREFIX) << 112)
+                            | u128::from(bits),
+                    );
+                    UnderlayMulticastIpv6::new(addr)
+                        .expect("generated underlay address is valid")
+                })
+                .boxed()
+        }
+    }
+}
+
 #[cfg(test)]
 mod proptests;
 
