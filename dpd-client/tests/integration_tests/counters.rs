@@ -20,9 +20,11 @@ use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
 use crate::integration_tests::icmp_ipv4;
 use ::common::network::MacAddr;
+use ::common::network::Vni;
 use dpd_client::ClientInfo;
 use dpd_client::types::Ipv4Entry;
 use dpd_client::types::Ipv6Entry;
+use dpd_client::types::NatTarget;
 
 // Interval and attempt count for polling a counter until it reaches an
 // expected value.
@@ -72,6 +74,47 @@ pub async fn check_counter_incremented(
         "{incr_expect}, but reached {new_value} after \
          {COUNTER_POLL_ATTEMPTS} polls"
     )
+}
+
+/// Assert that a counter holds at `baseline` for the full polling cycle.
+///
+/// Counter updates can lag the packet; a single occurrence of an unchanged
+/// read does not demonstrate that a late increment will not arrive.
+pub async fn check_counter_unchanged(
+    switch: &Switch,
+    counter_name: &str,
+    baseline: u64,
+    client_name: Option<&str>,
+) -> anyhow::Result<()> {
+    check_counters_unchanged(switch, &[(counter_name, baseline)], client_name)
+        .await
+}
+
+/// Assert that each `(counter, baseline)` pair holds for a single polling
+/// cycle.
+///
+/// Note: Every execution of this method must wait out the full cycle, about
+/// 2s (`COUNTER_POLL_ATTEMPTS` × `COUNTER_POLL_INTERVAL`). Pass every counter a
+/// test checks in a single call.
+pub async fn check_counters_unchanged(
+    switch: &Switch,
+    counters: &[(&str, u64)],
+    client_name: Option<&str>,
+) -> anyhow::Result<()> {
+    let table = client_name.unwrap_or("ingress_drop_reason");
+    for poll in 1..=COUNTER_POLL_ATTEMPTS {
+        tokio::time::sleep(COUNTER_POLL_INTERVAL).await;
+        for &(counter_name, baseline) in counters {
+            let value = switch.get_counter(counter_name, client_name).await?;
+            if value != baseline {
+                bail!(
+                    "counter '{counter_name}' in {table} expected to stay at \
+                     {baseline}, but reached {value} on poll {poll}"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Process a single packet, asserting that a given counter is incremented by
@@ -202,36 +245,104 @@ async fn test_ipv4_checksum_err() -> TestResult {
     Ok(())
 }
 
-async fn test_ipv4_ttl_test(ttl: u8, reason: &str) -> TestResult {
-    let switch = &*get_switch().await;
-    let ingress = PhysPort(10);
-    let subnet = "10.10.10.0/24";
-    let nexthop_ip = "10.10.10.1";
-    let src_ip = "10.10.9.10";
-    let dst_ip = "10.10.10.11";
-
-    common::set_route_ipv4(switch, subnet, ingress, nexthop_ip).await?;
-
-    let mut packet = common::gen_udp_packet(
-        Endpoint::parse("e0:d5:5e:67:89:ab", src_ip, 3333).unwrap(),
-        Endpoint::parse("e0:d5:5e:67:89:ac", dst_ip, 4444).unwrap(),
+/// Send a packet out that should be punted to the service port with a `Time
+/// Exceeded` request, and verify that `counter` is incremented by one.
+async fn one_time_exceeded_test(
+    switch: &Switch,
+    ingress: PhysPort,
+    packet: packet::Packet,
+    sc_egress: PhysPort,
+    icmp_type: u8,
+    icmp_code: u8,
+    counter: &str,
+) -> anyhow::Result<bool> {
+    let mut expected = packet.clone();
+    common::set_icmp_needed(
+        switch,
+        &mut expected,
+        ingress,
+        sc_egress,
+        icmp_type,
+        icmp_code,
     );
 
-    let hdr = packet.hdrs.ipv4_hdr.as_mut().unwrap();
-    hdr.ipv4_ttl = ttl;
+    one_counted_test(
+        switch,
+        TestPacket { packet: Arc::new(packet), port: ingress },
+        Some(TestPacket { packet: Arc::new(expected), port: SERVICE_PORT }),
+        counter,
+        None,
+    )
+    .await
+}
+
+/// Send a TTL 0 packet out that reaches a NAT ingress entry, optionally
+/// VLAN-tagged, and verify that the complete punted packet (with the tag
+/// included) requests a `Time Exceeded` reply.
+async fn nat_ingress_ttl_zero_impl(vlan: Option<u16>) -> TestResult {
+    let switch = &*get_switch().await;
+    let ingress = PhysPort(14);
+    let nat_ip = "192.168.1.2";
+    let nat_port = 2000;
+
+    let tgt = NatTarget {
+        internal_ip: "fd00:1122:7788:0101::4".parse().unwrap(),
+        inner_mac: "04:01:01:01:01:01".parse::<MacAddr>()?.into(),
+        vni: Vni::new(7654).unwrap().into(),
+    };
+    switch
+        .client
+        .nat_ipv4_create(&nat_ip.parse().unwrap(), 1024, 2048, &tgt)
+        .await
+        .unwrap();
+
+    let mut packet = common::gen_udp_packet(
+        Endpoint::parse("02:aa:bb:cc:dd:ee", "10.10.10.32", 4444).unwrap(),
+        Endpoint::parse(
+            &switch.get_port_mac(ingress).unwrap().to_string(),
+            nat_ip,
+            nat_port,
+        )
+        .unwrap(),
+    );
+    packet.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_ttl = 0;
     packet::ipv4::Ipv4Hdr::update_checksum(&mut packet);
 
-    assert!(one_drop_test(switch, ingress, packet, reason).await?);
+    if let Some(vlan) = vlan {
+        packet.hdrs.eth_hdr.as_mut().unwrap().eth_8021q =
+            Some(packet::eth::EthQHdr {
+                eth_pcp: 0,
+                eth_dei: 0,
+                eth_vlan_tag: vlan,
+            });
+    }
+
+    assert!(
+        one_time_exceeded_test(
+            switch,
+            ingress,
+            packet,
+            NO_PORT,
+            packet::icmp::ICMP_TIME_EXCEEDED,
+            packet::icmp::ICMP_EXC_TTL,
+            "ipv4_ttl_exceeded",
+        )
+        .await?
+    );
 
     Ok(())
 }
 
-/// Sets up a route to 10.10.10.0/24 through port 10.  We then send a packet
-/// with a ttl of 0, and expect an ipv4_ttl_invalid drop.
 #[tokio::test]
 #[ignore]
-async fn test_ipv4_ttl_invalid() -> TestResult {
-    test_ipv4_ttl_test(0, "ipv4_ttl_invalid").await
+async fn test_ipv4_ttl_zero_exceeded_nat_ingress() -> TestResult {
+    nat_ingress_ttl_zero_impl(None).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_ipv4_ttl_zero_exceeded_nat_ingress_vlan() -> TestResult {
+    nat_ingress_ttl_zero_impl(Some(200)).await
 }
 
 /// Set a port to accept only inbound traffic with a corresponding NAT mapping.
@@ -268,36 +379,6 @@ async fn test_nat_filtering() -> TestResult {
 
     assert!(result?);
     Ok(())
-}
-
-async fn test_ipv6_ttl(ttl: u8, reason: &str) -> TestResult {
-    let switch = &*get_switch().await;
-    let ingress = PhysPort(10);
-    let subnet = "fd00:1122:3344:0100::0/64";
-    let nexthop_ip = "fd00:1122:3344:0100::1";
-    let src_ip = "fd00:1122:3344:0200:1111::0";
-    let dst_ip = "fd00:1122:3344:0100:2222::0";
-
-    common::set_route_ipv6(switch, subnet, ingress, nexthop_ip).await?;
-
-    let mut packet = common::gen_udp_packet(
-        Endpoint::parse("e0:d5:5e:67:89:ab", src_ip, 3333).unwrap(),
-        Endpoint::parse("e0:d5:5e:67:89:ac", dst_ip, 4444).unwrap(),
-    );
-
-    let hdr = packet.hdrs.ipv6_hdr.as_mut().unwrap();
-    hdr.ipv6_hop_lim = ttl;
-
-    assert!(one_drop_test(switch, ingress, packet, reason).await?);
-
-    Ok(())
-}
-/// Sets up a route to fd00:1122:3344:0100::0/64 through port 10.  We then send
-/// a packet with a hop_limit of 0, and expect an ipv6_ttl_invalid drop.
-#[tokio::test]
-#[ignore]
-async fn test_ipv6_ttl_invalid() -> TestResult {
-    test_ipv6_ttl(0, "ipv6_ttl_invalid").await
 }
 
 /// Any ICMP_ECHO request with an icmp_code other than 0 should result in a

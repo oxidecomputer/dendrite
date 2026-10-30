@@ -4,17 +4,20 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use std::net::Ipv6Addr;
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Arc;
 
 use ::common::network::MacAddr;
 use dpd_client::ClientInfo;
 use dpd_client::types::Ipv4Entry;
-use packet::{Endpoint, eth, icmp, ipv4, ipv6, sidecar};
+use dpd_client::types::Ipv6Entry;
+use packet::{Endpoint, eth, icmp, ipv4, sidecar};
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
-use crate::integration_tests::counters::one_counted_test;
+use crate::integration_tests::counters::{
+    check_counters_unchanged, one_counted_test,
+};
 
 // Packets sent to an IP address assigned to a switch port should be forwarded
 // to the service port with an added sidecar header.
@@ -57,6 +60,121 @@ async fn test_service_ipv4_unicast() -> TestResult {
         TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
     switch.packet_test(vec![send], vec![expected])
+}
+
+/// Send a packet out with the provided TTL/hop limit to a switch address,
+/// and verify it is delivered to the service port without counting as a
+/// TTL drop.
+async fn service_unicast_ttl_impl(
+    router_ip: IpAddr,
+    src_ip: &str,
+    ttl: u8,
+) -> TestResult {
+    let switch = &*get_switch().await;
+
+    let ingress = PhysPort(12);
+    let router_mac = "02:78:39:45:b9:00";
+
+    let (port_id, link_id) = switch.link_id(ingress).unwrap();
+    let tag = switch.client.inner().tag.clone();
+    match router_ip {
+        IpAddr::V4(addr) => {
+            let entry = Ipv4Entry { addr, tag };
+            switch
+                .client
+                .link_ipv4_create(&port_id, &link_id, &entry)
+                .await
+                .unwrap();
+        }
+        IpAddr::V6(addr) => {
+            let entry = Ipv6Entry { addr, tag };
+            switch
+                .client
+                .link_ipv6_create(&port_id, &link_id, &entry)
+                .await
+                .unwrap();
+        }
+    }
+
+    let mut send_pkt = common::gen_udp_packet(
+        Endpoint::parse("e0:d5:5e:67:89:ab", src_ip, 3333).unwrap(),
+        Endpoint::parse(router_mac, &router_ip.to_string(), 4444).unwrap(),
+    );
+
+    let ip_family = if router_ip.is_ipv4() {
+        send_pkt.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_ttl = ttl;
+        ipv4::Ipv4Hdr::update_checksum(&mut send_pkt);
+        "ipv4"
+    } else {
+        send_pkt.hdrs.ipv6_hdr.as_mut().unwrap().ipv6_hop_lim = ttl;
+        "ipv6"
+    };
+
+    let counters = [
+        format!("{ip_family}_ttl_invalid"),
+        format!("{ip_family}_ttl_exceeded"),
+    ];
+    let mut recv_pkt = send_pkt.clone();
+
+    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress };
+
+    common::add_sidecar_hdr(
+        switch,
+        &mut recv_pkt,
+        sidecar::SC_FWD_TO_USERSPACE,
+        ingress,
+        NO_PORT,
+        None,
+    );
+
+    let expected =
+        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
+
+    let mut baselines = Vec::with_capacity(counters.len());
+    for counter in &counters {
+        baselines
+            .push((counter.as_str(), switch.get_counter(counter, None).await?));
+    }
+    switch.packet_test(vec![send], vec![expected])?;
+    check_counters_unchanged(switch, &baselines, None).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_service_ipv4_unicast_ttl_zero() -> TestResult {
+    service_unicast_ttl_impl("10.10.10.1".parse().unwrap(), "10.10.10.10", 0)
+        .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_service_ipv4_unicast_ttl_one() -> TestResult {
+    service_unicast_ttl_impl("10.10.10.1".parse().unwrap(), "10.10.10.10", 1)
+        .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_service_ipv6_unicast_hop_limit_zero() -> TestResult {
+    service_unicast_ttl_impl(
+        "fd00:1122:3344:0100::1".parse().unwrap(),
+        "fd00:1122:3344:0200::1",
+        0,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_service_ipv6_unicast_hop_limit_one() -> TestResult {
+    service_unicast_ttl_impl(
+        "fd00:1122:3344:0100::1".parse().unwrap(),
+        "fd00:1122:3344:0200::1",
+        1,
+    )
+    .await
 }
 
 // Packets sent to an IP address assigned to a switch port should be forwarded
@@ -283,9 +401,9 @@ async fn test_ndp_needed() -> TestResult {
     Ok(())
 }
 
-#[tokio::test]
-#[ignore]
-async fn test_ttl_exceeded() -> TestResult {
+/// Forward an IPv4 packet with the given TTL, and verify that it requests an
+/// ICMP Time Exceeded and counts as ipv4_ttl_exceeded.
+async fn ipv4_ttl_exceeded_impl(ttl: u8) -> TestResult {
     let switch = &*get_switch().await;
 
     let ingress = PhysPort(10);
@@ -307,9 +425,9 @@ async fn test_ttl_exceeded() -> TestResult {
     common::set_route_ipv4(switch, "10.10.10.0/24", egress, "10.10.10.1")
         .await?;
 
-    // build the initial packet and set its ttl to expire in 1 hop
     let mut send_pkt = common::gen_udp_packet(orig_src, orig_dst);
-    ipv4::Ipv4Hdr::adjust_ttl(&mut send_pkt, -254);
+    send_pkt.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_ttl = ttl;
+    ipv4::Ipv4Hdr::update_checksum(&mut send_pkt);
 
     let mut recv_pkt = send_pkt.clone();
 
@@ -319,7 +437,7 @@ async fn test_ttl_exceeded() -> TestResult {
         switch,
         &mut recv_pkt,
         ingress,
-        SERVICE_PORT,
+        NO_PORT,
         icmp::ICMP_TIME_EXCEEDED,
         icmp::ICMP_EXC_TTL,
     );
@@ -342,7 +460,19 @@ async fn test_ttl_exceeded() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_hop_limit_exceeded() -> TestResult {
+async fn test_ttl_exceeded() -> TestResult {
+    ipv4_ttl_exceeded_impl(1).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_ttl_zero_exceeded() -> TestResult {
+    ipv4_ttl_exceeded_impl(0).await
+}
+
+/// Forward an IPv6 packet with the given hop limit, and verify that it
+/// requests an ICMPv6 Time Exceeded and counts as ipv6_ttl_exceeded.
+async fn ipv6_hop_limit_exceeded_impl(hop_limit: u8) -> TestResult {
     let switch = &*get_switch().await;
 
     let ingress = PhysPort(10);
@@ -366,9 +496,8 @@ async fn test_hop_limit_exceeded() -> TestResult {
     common::set_route_ipv6(switch, "::/0", egress, "fd00:1122:7788:0101::1")
         .await?;
 
-    // build the initial packet and set its ttl to expire in 1 hop
     let mut send_pkt = common::gen_udp_packet(orig_src, orig_dst);
-    ipv6::Ipv6Hdr::adjust_hlim(&mut send_pkt, -254);
+    send_pkt.hdrs.ipv6_hdr.as_mut().unwrap().ipv6_hop_lim = hop_limit;
 
     let mut recv_pkt = send_pkt.clone();
 
@@ -397,6 +526,18 @@ async fn test_hop_limit_exceeded() -> TestResult {
     );
 
     Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_hop_limit_exceeded() -> TestResult {
+    ipv6_hop_limit_exceeded_impl(1).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_hop_limit_zero_exceeded() -> TestResult {
+    ipv6_hop_limit_exceeded_impl(0).await
 }
 
 // Arp packets sent to an IP address assigned to a switch port should be

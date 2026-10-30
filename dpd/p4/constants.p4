@@ -79,9 +79,24 @@ const bit<8> DROP_NDP_NULL                      = 0x07;
 const bit<8> DROP_NDP_MISS                      = 0x08;
 const bit<8> DROP_MULTICAST_TO_LOCAL_INTERFACE	= 0x09;
 const bit<8> DROP_IPV4_CHECKSUM_ERR             = 0x0A;
+// Native multicast packets with an IPv4 TTL of 0 are dropped in the parser
+// without an ICMP error reply (see RFC 1812 §5.3.1)
+//
+// NOTE: unicast packets to a switch address are received at any TTL
+// (see RFC 1812 §4.2.2.9)
 const bit<8> DROP_IPV4_TTL_INVALID              = 0x0B;
+// IPv4 unicast TTL of 0 or 1 on a forwarded path, which requests an ICMP Time
+// Exceeded from the host, counted without a drop (see RFC 1812 §5.3.1)
 const bit<8> DROP_IPV4_TTL_EXCEEDED             = 0x0C;
+// Native non-link-local multicast packets with an IPv6 hop limit of 0 are
+// dropped in the parser without an ICMPv6 error reply (see RFC 4443 §2.4(e.3))
+// and ff01::/16 is dropped earlier as DROP_MULTICAST_TO_LOCAL_INTERFACE.
+//
+// NOTE: unicast packets to a switch address are received at any hop limit
+// (see RFC 8200 §3)
 const bit<8> DROP_IPV6_TTL_INVALID              = 0x0D;
+// IPv6 unicast hop limit of 0 or 1 on a forwarded path, which requests an
+// ICMPv6 Time Exceeded from the host, counted without a drop (see RFC 4443 §3.3)
 const bit<8> DROP_IPV6_TTL_EXCEEDED             = 0x0E;
 const bit<8> DROP_IPV4_UNROUTEABLE              = 0x0F;
 const bit<8> DROP_IPV6_UNROUTEABLE              = 0x10;
@@ -96,5 +111,9 @@ const bit<8> DROP_GENEVE_OPTIONS_TOO_LONG       = 0x18;
 const bit<8> DROP_GENEVE_OPTION_MALFORMED       = 0x19;
 const bit<8> DROP_GENEVE_OPTION_UNKNOWN         = 0x1A;
 const bit<8> DROP_SCTP                          = 0x1B;
+// Multicast TTL expired, dropped without an ICMP(v6) Time Exceeded:
+// TTL/hop limit of 1 in the parser, or inner TTL/hop limit of 0 or 1
+// on the decapsulation path (see RFC 1812 §4.3.2.7, §5.3.1; RFC 4443 §2.4(e.3))
+const bit<8> DROP_MULTICAST_TTL_EXCEEDED        = 0x1C;
 // MAX(DROP_xxx) + 1
-const bit<32> DROP_REASON_MAX                   = 0x1C;
+const bit<32> DROP_REASON_MAX                   = 0x1D;
