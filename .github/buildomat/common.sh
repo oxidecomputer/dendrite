@@ -7,7 +7,7 @@
 # track when we exceed the current ceiling. The underlying intention is to grow
 # deliberately and thoughtfully, given the limited space on the ASIC.
 if [ "$MULTICAST" == "" ]; then
-	TOFINO_STAGES=17
+	TOFINO_STAGES=18
 else
 	TOFINO_STAGES=19
 fi
