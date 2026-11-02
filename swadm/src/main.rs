@@ -95,6 +95,8 @@ enum Commands {
     /// Display switch and ASIC identifiers.
     #[clap(visible_alias = "id")]
     Identifiers,
+
+    /// Take an ASIC snapshot
     Snapshot {
         #[command(subcommand)]
         cmd: snapshot::Snapshot,
