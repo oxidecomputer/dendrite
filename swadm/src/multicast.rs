@@ -80,7 +80,9 @@ use tabwriter::TabWriter;
 
 use common::network::{MacAddr, Vni};
 use dpd_client::{Client, ClientInfo, types};
-use dpd_types::mcast::{ExternalMulticastIp, UnderlayMulticastIpv6};
+use dpd_types::mcast::{
+    ExternalMulticastIp, MulticastTag, UnderlayMulticastIpv6,
+};
 
 use crate::LinkPath;
 
@@ -277,9 +279,7 @@ async fn multicast_list(
     kind: Option<GroupKind>,
 ) -> anyhow::Result<()> {
     let tag = tag
-        .map(|tag| {
-            tag.parse::<types::MulticastTag>().context("invalid multicast tag")
-        })
+        .map(|tag| tag.parse::<MulticastTag>().context("invalid multicast tag"))
         .transpose()?;
     let mut groups = match &tag {
         Some(tag) => {
@@ -424,7 +424,7 @@ async fn multicast_add(client: &Client, args: AddArgs) -> anyhow::Result<()> {
     if let Err(err) = created {
         let underlay_ip = IpAddr::from(underlay);
         let rollback = async {
-            let tag: types::MulticastTag =
+            let tag: MulticastTag =
                 tag.parse().with_context(|| format!("invalid tag {tag}"))?;
             client
                 .multicast_group_delete(&underlay_ip, &tag)
@@ -510,7 +510,7 @@ async fn multicast_del(
     tag: String,
     underlay_only: bool,
 ) -> anyhow::Result<()> {
-    let tag_param: types::MulticastTag =
+    let tag_param: MulticastTag =
         tag.parse().with_context(|| format!("invalid tag {tag}"))?;
 
     let group = client

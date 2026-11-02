@@ -19,7 +19,9 @@ use ::common::network::MacAddr;
 use dpd_client::Error;
 use dpd_client::MISSING_NAT_TARGET_ERROR_CODE;
 use dpd_client::types;
-use dpd_types::mcast::{ExternalMulticastIp, UnderlayMulticastIpv6};
+use dpd_types::mcast::{
+    ExternalMulticastIp, MulticastTag, UnderlayMulticastIpv6,
+};
 use packet::{Endpoint, eth, geneve, ipv4, ipv6, sidecar, udp};
 
 use crate::integration_tests::common;
@@ -181,7 +183,7 @@ async fn create_test_multicast_group(
     }
 }
 
-fn make_tag(tag: &str) -> types::MulticastTag {
+fn make_tag(tag: &str) -> MulticastTag {
     tag.parse().expect("tag should parse")
 }
 
@@ -1238,7 +1240,7 @@ async fn test_multicast_del_tag_validation() -> TestResult {
 
     // Case: Empty string should fail client-side validation (schema enforces minLength: 1)
     assert!(
-        "".parse::<types::MulticastTag>().is_err(),
+        "".parse::<MulticastTag>().is_err(),
         "Empty tag should fail client-side validation"
     );
 

@@ -37,6 +37,7 @@ progenitor::generate_api!(
     derives = [ PartialEq ],
     patch = {
         PortId = {derives = [PartialOrd, Ord, PartialEq, Eq, Hash, Clone] },
+        MulticastGroupMember = {derives = [Eq, Hash] },
     },
     crates = {
         "oxnet" = "0.1.0",
@@ -46,6 +47,7 @@ progenitor::generate_api!(
     // constructing or parsing them.
     replace = {
         ExternalMulticastIp = dpd_types_versions::latest::mcast::ExternalMulticastIp,
+        MulticastTag = dpd_types_versions::latest::mcast::MulticastTag,
         UnderlayMulticastIpv6 = dpd_types_versions::latest::mcast::UnderlayMulticastIpv6,
         Vni = dpd_types_versions::latest::network::Vni,
     },

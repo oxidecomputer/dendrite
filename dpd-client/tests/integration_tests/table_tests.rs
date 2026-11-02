@@ -17,7 +17,7 @@ use reqwest::StatusCode;
 use dpd_client::ClientInfo;
 use dpd_client::ResponseValue;
 use dpd_client::types;
-use dpd_types::mcast::UnderlayMulticastIpv6;
+use dpd_types::mcast::{MulticastTag, UnderlayMulticastIpv6};
 
 use crate::integration_tests::common::prelude::*;
 
@@ -504,7 +504,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let ip = IpAddr::V6(gen_ipv6_multicast_addr(idx));
-        let del_tag: types::MulticastTag =
+        let del_tag: MulticastTag =
             MCAST_TAG.parse().expect("tag should parse");
         switch.client.multicast_group_delete(&ip, &del_tag).await
     }
@@ -514,7 +514,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
         switch
             .client
             .multicast_groups_list_by_tag_stream(
-                &MCAST_TAG.parse::<types::MulticastTag>().unwrap(),
+                &MCAST_TAG.parse::<MulticastTag>().unwrap(),
                 None,
             )
             .try_collect::<Vec<_>>()
