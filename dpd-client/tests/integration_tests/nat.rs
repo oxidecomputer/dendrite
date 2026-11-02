@@ -161,12 +161,6 @@ async fn test_api() -> TestResult {
     Ok(())
 }
 
-enum L4Protocol {
-    Tcp,
-    Udp,
-    Icmp,
-}
-
 struct NatTest {
     // uplink network info
     uplink_port: PhysPort,
@@ -341,46 +335,35 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
     switch.client.route_ipv6_set(&route).await.unwrap();
     common::add_neighbor_ipv6(switch, &test.gimlet_ip, gimlet_mac).await?;
 
-    let load = vec![0xaau8, 0xbb, 0xcc, 0xdd, 0xee];
     // Build a packet coming from an external host via an upstream router, to an
     // uplinked switch port.  The packet is addressed to a nat ip/port pair.
+    let load = vec![0xaau8, 0xbb, 0xcc, 0xdd, 0xee];
     let switch_mac = switch.get_port_mac(test.uplink_port).unwrap().to_string();
-    let ingress_pkt = common::gen_udp_packet_loaded(
+    let src =
         Endpoint::parse(&test.router_mac, &test.vpc_src_ip, test.vpc_src_port)
-            .unwrap(),
-        Endpoint::parse(
-            &switch_mac,
-            &test.uplink_port_external,
-            test.nat_l4_port,
-        )
-        .unwrap(),
-        &load,
-    );
-
-    let icmp_load = &[];
-    let ingress_icmp_pkt = common::gen_icmp_packet_loaded(
-        Endpoint::parse(&test.router_mac, &test.vpc_src_ip, test.vpc_src_port)
-            .unwrap(),
-        Endpoint::parse(
-            &switch_mac,
-            &test.uplink_port_external,
-            test.nat_l4_port,
-        )
-        .unwrap(),
-        icmp_load,
-    );
+            .unwrap();
+    let dst = Endpoint::parse(
+        &switch_mac,
+        &test.uplink_port_external,
+        test.nat_l4_port,
+    )
+    .unwrap();
+    let (ingress_pkt, csum_generated) = match test.l4_protocol {
+        L4Protocol::Tcp => {
+            (common::gen_tcp_packet_loaded(src, dst, &load), true)
+        }
+        L4Protocol::Udp => {
+            (common::gen_udp_packet_loaded(src, dst, &load), true)
+        }
+        L4Protocol::Icmp => {
+            (common::gen_icmp_packet_loaded(src, dst, &load), false)
+        }
+    };
 
     // Deparse the incoming packet so we can copy it into the encapsulated
     // packet
     let ingress_payload = {
         let mut encapped = ingress_pkt.clone();
-        let eth = encapped.hdrs.eth_hdr.as_mut().unwrap();
-        eth.eth_smac = MacAddr::new(0, 0, 0, 0, 0, 0);
-        eth.eth_dmac = test.vpc_dst_mac.parse().unwrap();
-        encapped.deparse().unwrap().to_vec()
-    };
-    let ingress_icmp_payload = {
-        let mut encapped = ingress_icmp_pkt.clone();
         let eth = encapped.hdrs.eth_hdr.as_mut().unwrap();
         eth.eth_smac = MacAddr::new(0, 0, 0, 0, 0, 0);
         eth.eth_dmac = test.vpc_dst_mac.parse().unwrap();
@@ -400,7 +383,7 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
         Endpoint::parse(
             &gimlet_port_mac,
             switch_port_ip,
-            geneve::GENEVE_UDP_PORT,
+            common::tofino_flow_hash(src, dst, test.l4_protocol),
         )
         .unwrap(),
         Endpoint::parse(
@@ -413,50 +396,23 @@ async fn test_nat_ingress(switch: &Switch, test: &NatTest) -> TestResult {
         test.geneve_vni,
         &ingress_payload,
     );
-    let mut forward_icmp_pkt = common::gen_external_geneve_packet(
-        Endpoint::parse(
-            &gimlet_port_mac,
-            switch_port_ip,
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &test.gimlet_mac,
-            &test.gimlet_ip,
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        eth::ETHER_ETHER,
-        test.geneve_vni,
-        &ingress_icmp_payload,
-    );
 
     /* Adjust for transition from switch port to gimlet port */
     ipv6::Ipv6Hdr::adjust_hlim(&mut forward_pkt, -1);
-    ipv6::Ipv6Hdr::adjust_hlim(&mut forward_icmp_pkt, -1);
+    if csum_generated {
+        udp::UdpHdr::update_checksum(&mut forward_pkt);
+    } else {
+        forward_pkt.hdrs.udp_hdr.as_mut().unwrap().udp_sum = 0;
+    }
 
-    udp::UdpHdr::update_checksum(&mut forward_pkt);
-    // TODO: I cannot convince the tofino to compute this correctly.
-    // Conveniently, we dont actually need it, see RFC 6935.
-    //
-    //     udp::UdpHdr::update_checksum(&mut forward_icmp_pkt);
-    //
-    forward_icmp_pkt.hdrs.udp_hdr.as_mut().unwrap().udp_sum = 0;
-
-    let send = vec![
-        TestPacket { packet: Arc::new(ingress_pkt), port: test.uplink_port },
-        TestPacket {
-            packet: Arc::new(ingress_icmp_pkt),
-            port: test.uplink_port,
-        },
-    ];
-    let expected = vec![
-        TestPacket { packet: Arc::new(forward_pkt), port: test.gimlet_port },
-        TestPacket {
-            packet: Arc::new(forward_icmp_pkt),
-            port: test.gimlet_port,
-        },
-    ];
+    let send = vec![TestPacket {
+        packet: Arc::new(ingress_pkt),
+        port: test.uplink_port,
+    }];
+    let expected = vec![TestPacket {
+        packet: Arc::new(forward_pkt),
+        port: test.gimlet_port,
+    }];
 
     switch.packet_test(send, expected)
 }
@@ -588,6 +544,13 @@ async fn test_ingress_ipv4_tcp() -> TestResult {
     test_ingress_ipv4(switch, L4Protocol::Tcp).await
 }
 
+#[tokio::test]
+#[ignore]
+async fn test_ingress_ipv4_icmp() -> TestResult {
+    let switch = &*get_switch().await;
+    test_ingress_ipv4(switch, L4Protocol::Icmp).await
+}
+
 // packet to/from IPv6 addresses,
 async fn test_egress_ipv6(
     switch: &Switch,
@@ -701,4 +664,11 @@ async fn test_ingress_ipv6_udp() -> TestResult {
 async fn test_ingress_ipv6_tcp() -> TestResult {
     let switch = &*get_switch().await;
     test_ingress_ipv6(switch, L4Protocol::Tcp).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_ingress_ipv6_icmp() -> TestResult {
+    let switch = &*get_switch().await;
+    test_ingress_ipv6(switch, L4Protocol::Icmp).await
 }
