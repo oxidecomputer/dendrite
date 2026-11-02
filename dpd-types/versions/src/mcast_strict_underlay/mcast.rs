@@ -286,7 +286,16 @@ pub const MAX_TAG_LENGTH: usize = 80;
 /// hyphens, underscores, colons, or periods. Default format is
 /// `{uuid}:{group_ip}`.
 #[derive(
-    Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Deserialize,
+    Serialize,
+    JsonSchema,
 )]
 #[serde(try_from = "String", into = "String")]
 pub struct MulticastTag(
@@ -342,6 +351,12 @@ impl AsRef<str> for MulticastTag {
     }
 }
 
+impl fmt::Display for MulticastTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 impl From<MulticastTag> for String {
     fn from(tag: MulticastTag) -> Self {
         tag.0
@@ -352,6 +367,14 @@ impl TryFrom<String> for MulticastTag {
     type Error = MulticastTagParseError;
 
     fn try_from(tag: String) -> Result<Self, Self::Error> {
+        tag.parse()
+    }
+}
+
+impl TryFrom<&str> for MulticastTag {
+    type Error = MulticastTagParseError;
+
+    fn try_from(tag: &str) -> Result<Self, Self::Error> {
         tag.parse()
     }
 }
