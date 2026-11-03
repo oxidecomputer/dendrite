@@ -57,9 +57,9 @@ enum Commands {
         cmd: arp::Arp,
     },
     Route {
-        /// router to operate on (nil uuid = default)
-        #[clap(long, global = true, default_value_t = Uuid::nil())]
-        router_id: Uuid,
+        /// router to operate on (default: the default routing table)
+        #[clap(long, global = true)]
+        router_id: Option<Uuid>,
         #[command(subcommand)]
         cmd: route::Route,
     },
@@ -247,6 +247,8 @@ async fn main_impl() -> anyhow::Result<()> {
         Commands::DpdBuildInfo => build_info(&client).await,
         Commands::Arp { cmd: a } => arp::arp_cmd(&client, a).await,
         Commands::Route { router_id, cmd: r } => {
+            // The nil uuid names the default routing table.
+            let router_id = router_id.unwrap_or(Uuid::nil());
             route::route_cmd(&client, router_id, r).await
         }
         Commands::Addr { cmd: p } => addr::addr_cmd(&client, p).await,
