@@ -5346,7 +5346,7 @@
       },
       "put": {
         "summary": "Create a router with the given endpoint.  An address can be the",
-        "description": "endpoint of only one router, and a router's endpoint can't be changed. The default router's uuid names table 0 and can't be used.",
+        "description": "endpoint of only one router, and a router's endpoint can't be changed. The default routing table's uuid can't be used.",
         "operationId": "router_create",
         "parameters": [
           {
@@ -5386,7 +5386,7 @@
       },
       "delete": {
         "summary": "Delete a router, along with its endpoint and routes.  The default",
-        "description": "router's uuid names table 0 and can't be used.",
+        "description": "routing table's uuid can't be used.",
         "operationId": "router_delete",
         "parameters": [
           {

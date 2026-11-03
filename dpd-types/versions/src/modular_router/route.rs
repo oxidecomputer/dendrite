@@ -74,7 +74,8 @@ pub struct RouteTargetIpv6Path {
     pub tgt_ip: Ipv6Addr,
 }
 
-// Paths from earlier versions have no router, and address the default router.
+// Paths from earlier versions have no router, and address the default routing
+// table.
 
 impl From<v1::route::RoutePathV4> for RoutePathV4 {
     fn from(old: v1::route::RoutePathV4) -> Self {

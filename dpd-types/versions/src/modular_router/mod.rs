@@ -4,10 +4,10 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-//! Version `MULTI_ROUTER` of the DPD API.
+//! Version `MODULAR_ROUTER` of the DPD API.
 //!
-//! Adds routers, each with its own routes and endpoint.  Route paths move
-//! under `/router/{router_id}/...`; earlier versions act on the default
-//! router.
+//! Adds routers, each with its own routes and endpoint, under
+//! `/router/{router_id}/...`.  The `/route/...` endpoints act on the default
+//! routing table.
 
 pub mod route;
