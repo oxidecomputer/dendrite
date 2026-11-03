@@ -50,6 +50,9 @@ fn spec_group_v4(addr: Ipv4Addr) -> Result<(), ExternalMulticastIpError> {
     if addr.octets() == [224, 0, 0, 0] {
         return Err(ExternalMulticastIpError::ReservedBaseAddress(ip));
     }
+    if u32::from(addr) & 0xffff_ff00 == 0xe000_0000 {
+        return Err(ExternalMulticastIpError::LocalIpv4Scope(ip));
+    }
     if addr.octets() == [232, 0, 0, 0] {
         return Err(ExternalMulticastIpError::ReservedSsmNull(ip));
     }

@@ -108,7 +108,7 @@ use crate::switch_port::FixedSideDevice;
 use crate::types::DpdError;
 use crate::{Switch, arp, loopback, ports, route};
 use common::attached_subnet::AttachedSubnetEntry;
-use common::nat::{Ipv4Nat, Ipv6Nat};
+use common::nat::IpNat;
 use common::network::{InstanceTarget, MacAddr, NatTarget};
 use common::ports::PortId;
 use common::ports::QsfpPort;
@@ -1407,7 +1407,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv6Path>,
         query: Query<PaginationParams<EmptyScanParams, NatToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Nat>>, HttpError> {
+    ) -> Result<HttpResponseOk<ResultsPage<IpNat<Ipv6Addr>>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
         let pag_params = query.into_inner();
@@ -1427,7 +1427,7 @@ impl DpdApi for DpdApiImpl {
         Ok(HttpResponseOk(ResultsPage::new(
             entries,
             &EmptyScanParams {},
-            |e: &Ipv6Nat, _| NatToken { port: e.low },
+            |e: &IpNat<Ipv6Addr>, _| NatToken { port: e.low },
         )?))
     }
 
@@ -1514,7 +1514,7 @@ impl DpdApi for DpdApiImpl {
         rqctx: RequestContext<Arc<Switch>>,
         path: Path<NatIpv4Path>,
         query: Query<PaginationParams<EmptyScanParams, NatToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Nat>>, HttpError> {
+    ) -> Result<HttpResponseOk<ResultsPage<IpNat<Ipv4Addr>>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
         let pag_params = query.into_inner();
@@ -1535,7 +1535,7 @@ impl DpdApi for DpdApiImpl {
         Ok(HttpResponseOk(ResultsPage::new(
             entries,
             &EmptyScanParams {},
-            |e: &Ipv4Nat, _| NatToken { port: e.low },
+            |e: &IpNat<Ipv4Addr>, _| NatToken { port: e.low },
         )?))
     }
 

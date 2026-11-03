@@ -17,9 +17,9 @@ use aal::{AsicError, AsicMulticastOps};
 use slog::{debug, error, warn};
 
 use super::{
-    Direction, GroupKind, IpSrc, MulticastGroup, MulticastGroupId,
-    MulticastGroupMember, MulticastReplicationInfo, Replication, SourceFilter,
-    add_group_bitmap_entries, add_replication_entry, add_source_filter,
+    Direction, ExternalMulticastIp, GroupKind, IpSrc, MulticastGroup,
+    MulticastGroupId, MulticastGroupMember, MulticastReplicationInfo,
+    Replication, SourceFilter, UnderlayMulticastIpv6, add_group_bitmap_entries, add_replication_entry, add_source_filter,
     remove_source_filter, restore_source_filters, update_fwding_tables,
     update_replication_tables,
 };
@@ -404,14 +404,14 @@ impl<'a> GroupCreateRollbackContext<'a> {
     /// Create rollback context for external group operations.
     pub(crate) fn new_external(
         switch: &'a Switch,
-        group_ip: IpAddr,
+        group_ip: ExternalMulticastIp,
         external_id: MulticastGroupId,
         underlay_id: MulticastGroupId,
         sources: &'a SourceFilter,
     ) -> Self {
         Self {
             switch,
-            group_ip,
+            group_ip: group_ip.into(),
             external_id,
             underlay_id,
             kind: CreateRollbackKind::External { sources },
@@ -421,13 +421,13 @@ impl<'a> GroupCreateRollbackContext<'a> {
     /// Create rollback context for underlay group operations.
     pub(crate) fn new_underlay(
         switch: &'a Switch,
-        group_ip: IpAddr,
+        group_ip: UnderlayMulticastIpv6,
         external_id: MulticastGroupId,
         underlay_id: MulticastGroupId,
     ) -> Self {
         Self {
             switch,
-            group_ip,
+            group_ip: group_ip.into(),
             external_id,
             underlay_id,
             kind: CreateRollbackKind::Underlay,

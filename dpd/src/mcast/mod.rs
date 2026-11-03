@@ -30,7 +30,9 @@
 //! forward past (RFC 4291 §2.7). Each group maps to an `ff04::` (scope-4)
 //! underlay address. A scope check on the outer header sees admin-local scope
 //! for scope-3, scope-5, and scope-8 external groups, while containment for the
-//! NAT path comes from both egress port and VLAN config.
+//! NAT path comes from the group's member ports. Any ingress VLAN tag is
+//! dropped at NAT ingress encapsulation, and the group's optional VLAN solely
+//! tags the external egress packet copies.
 //!
 //! [RFC 4291]: https://www.rfc-editor.org/rfc/rfc4291.html
 //! [RFC 7346]: https://www.rfc-editor.org/rfc/rfc7346.html
@@ -376,7 +378,7 @@ pub struct MulticastGroupData {
     /// Pre-populated with all IDs from GENERATOR_START to u16::MAX-1.
     free_group_ids: Arc<Mutex<Vec<MulticastGroupId>>>,
     /// 1:1 mapping from admin-local group IP to the external group that uses it
-    /// as NAT a target (admin_local_ip -> external_group_ip).
+    /// as a NAT target (admin_local_ip -> external_group_ip).
     nat_target_refs: BTreeMap<UnderlayMulticastIpv6, GroupKey>,
 }
 
@@ -552,7 +554,7 @@ pub(crate) fn add_group_external(
     // Create rollback context once for reuse throughout this function
     let rollback_ctx = GroupCreateRollbackContext::new_external(
         s,
-        group_addr,
+        group_ip,
         group.external_group_id(),
         group.underlay_group_id(),
         &sources,
@@ -615,7 +617,7 @@ pub(crate) fn add_group_underlay(
     // Create rollback context for cleanup if operations fail
     let rollback_ctx = GroupCreateRollbackContext::new_underlay(
         s,
-        group_ip.into(),
+        group_ip,
         scoped_external_id.id(),
         scoped_underlay_id.id(),
     );
@@ -713,11 +715,8 @@ fn del_group_locked(
     })?;
 
     // Check if this is an underlay group referenced by an external group.
-    // Underlay groups are identified by addresses in the reserved underlay
-    // subnet (i.e., ff04::/64).
-    if let IpAddr::V6(ipv6) = group_ip
-        && let Ok(admin_scoped) = UnderlayMulticastIpv6::new(ipv6)
-        && let Some(external_ip) = mcast.nat_target_refs.get(&admin_scoped)
+    if let GroupKind::Underlay { group_ip, .. } = &group.kind
+        && let Some(external_ip) = mcast.nat_target_refs.get(group_ip)
     {
         return Err(DpdError::Invalid(format!(
             "cannot delete underlay group {group_ip}: still referenced \
