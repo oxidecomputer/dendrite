@@ -15,7 +15,7 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use aal::{ActionParse, AsicError};
+use aal::ActionParse;
 use aal_macros::*;
 use dpd_types::mcast::UNDERLAY_MULTICAST_SUBNET;
 use dpd_types::table;
@@ -40,29 +40,6 @@ enum Ipv6Action {
     ForwardVLAN { vlan_id: u16 },
 }
 
-/// Add an IPv4 multicast route entry.
-///
-/// The action is selected based on VLAN configuration:
-/// - No VLAN: `forward` (no VLAN modification on egress)
-/// - With VLAN: `forward_vlan(vlan_id)` (add VLAN tag on egress)
-pub(crate) fn add_ipv4_entry(
-    s: &Switch,
-    route: Ipv4Addr,
-    vlan_id: Option<u16>,
-) -> DpdResult<()> {
-    let match_key = Ipv4MatchKey::new(route);
-    let action = match vlan_id {
-        None => Ipv4Action::Forward,
-        Some(vlan_id) => {
-            common::network::validate_vlan(vlan_id)?;
-            Ipv4Action::ForwardVLAN { vlan_id }
-        }
-    };
-
-    debug!(s.log, "add multicast route entry {match_key} -> {action:?}");
-    s.table_entry_add(TableType::RouteIpv4Mcast, &match_key, &action)
-}
-
 /// Update an IPv4 multicast route entry.
 ///
 /// Updates the action when VLAN configuration changes. Since the match key
@@ -81,26 +58,17 @@ pub(crate) fn update_ipv4_entry(
 }
 
 /// Insert a missing IPv4 multicast route or update its forwarding action.
-pub(crate) fn ensure_ipv4_entry(
+///
+/// The action is selected based on the VLAN configuration:
+/// - no VLAN: `forward` (no VLAN modification on egress)
+/// - with VLAN: `forward_vlan(vlan_id)` (add VLAN tag on egress)
+pub(crate) fn set_ipv4_entry(
     s: &Switch,
     route: Ipv4Addr,
     vlan_id: Option<u16>,
 ) -> DpdResult<()> {
-    match set_ipv4_entry(s, route, vlan_id) {
-        Err(DpdError::Switch(AsicError::Missing(_))) => {
-            add_ipv4_entry(s, route, vlan_id)
-        }
-        res => res,
-    }
-}
-
-fn set_ipv4_entry(
-    s: &Switch,
-    route: Ipv4Addr,
-    new_vlan_id: Option<u16>,
-) -> DpdResult<()> {
     let match_key = Ipv4MatchKey::new(route);
-    let action = match new_vlan_id {
+    let action = match vlan_id {
         None => Ipv4Action::Forward,
         Some(vlan_id) => {
             common::network::validate_vlan(vlan_id)?;
@@ -109,14 +77,13 @@ fn set_ipv4_entry(
     };
 
     debug!(s.log, "update multicast route entry {match_key} -> {action:?}");
-    s.table_entry_update(TableType::RouteIpv4Mcast, &match_key, &action)
+    s.table_entry_set(TableType::RouteIpv4Mcast, &match_key, &action)
 }
 
-/// Delete an IPv4 multicast route entry.
-pub(crate) fn del_ipv4_entry(s: &Switch, route: Ipv4Addr) -> DpdResult<()> {
+/// Clear an IPv4 multicast route entry.
+pub(crate) fn clear_ipv4_entry(s: &Switch, route: Ipv4Addr) -> DpdResult<()> {
     let match_key = Ipv4MatchKey::new(route);
-    debug!(s.log, "delete multicast route entry {match_key}");
-    s.table_entry_del(TableType::RouteIpv4Mcast, &match_key)
+    s.table_entry_clear(TableType::RouteIpv4Mcast, &match_key)
 }
 
 /// Dump the IPv4 multicast routing table's contents.
@@ -143,16 +110,31 @@ pub(crate) fn reset_ipv4(s: &Switch) -> DpdResult<()> {
     s.table_clear(TableType::RouteIpv4Mcast)
 }
 
-/// Add an IPv6 multicast route entry.
+/// Update an IPv6 multicast route entry.
 ///
-/// The action is selected based on VLAN configuration:
-/// - No VLAN: `forward` (no VLAN modification on egress)
-/// - With VLAN: `forward_vlan(vlan_id)` (add VLAN tag on egress)
+/// Updates the action when VLAN configuration changes. Since the match key
+/// is just the destination address, this can be done in place.
+pub(crate) fn update_ipv6_entry(
+    s: &Switch,
+    route: Ipv6Addr,
+    old_vlan_id: Option<u16>,
+    new_vlan_id: Option<u16>,
+) -> DpdResult<()> {
+    if old_vlan_id == new_vlan_id {
+        return Ok(());
+    }
+
+    set_ipv6_entry(s, route, new_vlan_id)
+}
+
+/// Insert a missing IPv6 multicast route or update its forwarding action.
 ///
-/// Reserved underlay multicast subnet (ff04::/64) is internal to the rack
-/// and always uses Forward without VLAN tagging, regardless of the vlan_id
-/// parameter.
-pub(crate) fn add_ipv6_entry(
+/// The action is selected based on the VLAN configuration:
+/// - no VLAN: `forward` (no VLAN modification on egress)
+/// - with VLAN: `forward_vlan(vlan_id)` (add VLAN tag on egress)
+///
+/// Underlay routes use `forward`, regardless of `vlan_id`.
+pub(crate) fn set_ipv6_entry(
     s: &Switch,
     route: Ipv6Addr,
     vlan_id: Option<u16>,
@@ -173,73 +155,14 @@ pub(crate) fn add_ipv6_entry(
         }
     };
 
-    debug!(s.log, "add multicast route entry {match_key} -> {action:?}");
-    s.table_entry_add(TableType::RouteIpv6Mcast, &match_key, &action)
-}
-
-/// Update an IPv6 multicast route entry.
-///
-/// Updates the action when VLAN configuration changes. Since the match key
-/// is just the destination address, this can be done in place.
-pub(crate) fn update_ipv6_entry(
-    s: &Switch,
-    route: Ipv6Addr,
-    old_vlan_id: Option<u16>,
-    new_vlan_id: Option<u16>,
-) -> DpdResult<()> {
-    if old_vlan_id == new_vlan_id {
-        return Ok(());
-    }
-
-    set_ipv6_entry(s, route, new_vlan_id)
-}
-
-/// Insert a missing IPv6 multicast route or update its forwarding action.
-///
-/// Underlay routes use `forward`, regardless of `vlan_id`.
-pub(crate) fn ensure_ipv6_entry(
-    s: &Switch,
-    route: Ipv6Addr,
-    vlan_id: Option<u16>,
-) -> DpdResult<()> {
-    match set_ipv6_entry(s, route, vlan_id) {
-        Err(DpdError::Switch(AsicError::Missing(_))) => {
-            add_ipv6_entry(s, route, vlan_id)
-        }
-        res => res,
-    }
-}
-
-fn set_ipv6_entry(
-    s: &Switch,
-    route: Ipv6Addr,
-    new_vlan_id: Option<u16>,
-) -> DpdResult<()> {
-    let match_key = Ipv6MatchKey::new(route);
-
-    // Reserved underlay multicast subnet (ff04::/64) is internal to the rack
-    // and doesn't require VLAN tagging.
-    let action: Ipv6Action = if UNDERLAY_MULTICAST_SUBNET.contains(route) {
-        Ipv6Action::Forward
-    } else {
-        match new_vlan_id {
-            None => Ipv6Action::Forward,
-            Some(vlan_id) => {
-                common::network::validate_vlan(vlan_id)?;
-                Ipv6Action::ForwardVLAN { vlan_id }
-            }
-        }
-    };
-
     debug!(s.log, "update multicast route entry {match_key} -> {action:?}");
-    s.table_entry_update(TableType::RouteIpv6Mcast, &match_key, &action)
+    s.table_entry_set(TableType::RouteIpv6Mcast, &match_key, &action)
 }
 
-/// Delete an IPv6 multicast route entry.
-pub(crate) fn del_ipv6_entry(s: &Switch, route: Ipv6Addr) -> DpdResult<()> {
+/// Clear an IPv6 multicast route entry.
+pub(crate) fn clear_ipv6_entry(s: &Switch, route: Ipv6Addr) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(route);
-    debug!(s.log, "delete multicast route entry {match_key}");
-    s.table_entry_del(TableType::RouteIpv6Mcast, &match_key)
+    s.table_entry_clear(TableType::RouteIpv6Mcast, &match_key)
 }
 
 /// Dump the IPv6 multicast routing table's contents.

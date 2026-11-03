@@ -55,7 +55,7 @@ fn mac_set_common(
 fn mac_clear_common(s: &Switch, type_: TableType, port: u16) -> DpdResult<()> {
     let match_key = MacMatchKey { port };
 
-    match s.table_entry_del(type_, &match_key) {
+    match s.table_entry_clear(type_, &match_key) {
         Ok(_) => {
             info!(s.log, "cleared mac on {port} in table {type_}",);
             Ok(())

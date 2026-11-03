@@ -75,6 +75,10 @@ impl AsicMulticastOps for StubHandle {
         let mc_data = self.mc_data.lock().unwrap();
         mc_data.domain_port_count(group_id)
     }
+    fn mc_port_list(&self, group_id: u16) -> AsicResult<Vec<u16>> {
+        let mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_list(group_id)
+    }
     fn mc_port_add(
         &self,
         group_id: u16,

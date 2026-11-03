@@ -7,6 +7,7 @@
 //! General types used throughout Dendrite.
 
 use aal::AsicError;
+use common::MCAST_REPAIR_PENDING_ERROR_CODE;
 use common::MISSING_NAT_TARGET_ERROR_CODE;
 use common::ROLLBACK_FAILURE_ERROR_CODE;
 use common::SmfError;
@@ -17,19 +18,15 @@ use nonempty::NonEmpty;
 use std::{convert, net::IpAddr};
 use transceiver_controller::Error as TransceiverError;
 
+/// Used as a `Retry-After` hint (in seconds) for a multicast group whose repair
+/// could not be completed within a request.
+///
+/// Repair only runs when a subsequent request touches the group, and the
+/// delay paces those attempts.
+const MCAST_REPAIR_RETRY_AFTER_SECS: u64 = 10;
+
 /// Result of any operation that can fail with a [`DpdError`].
 pub type DpdResult<T> = Result<T, DpdError>;
-
-/// Ignore the [`AsicError::Missing`] ASIC error, as deleting something
-/// already removed still counts as success.
-///
-/// Every other error is returned as-is.
-pub(crate) fn ignore_missing(res: DpdResult<()>) -> DpdResult<()> {
-    match res {
-        Err(DpdError::Switch(AsicError::Missing(_))) => Ok(()),
-        res => res,
-    }
-}
 
 /// Combine an initial failure with the outcome after unwinding it.
 ///
@@ -60,20 +57,6 @@ fn display_unwind(unwind: &NonEmpty<DpdError>) -> String {
     unwind.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")
 }
 
-/// Ignore `Exists` errors from the ASIC or from dpd itself, acting as
-/// the add-side counterpart to [`ignore_missing`].
-///
-/// The existing entry is left as is. If its action data differs from what the
-/// caller meant to program, then nothing warns.
-pub(crate) fn ignore_exists(res: DpdResult<()>) -> DpdResult<()> {
-    match res {
-        Err(DpdError::Switch(AsicError::Exists(_)) | DpdError::Exists(_)) => {
-            Ok(())
-        }
-        res => res,
-    }
-}
-
 /// The possible failures the dataplane daemon can report.
 // The `From<DpdError> for dropshot::HttpError` implementation maps each
 // variant to a status code; each new variant added here needs a decision about
@@ -88,6 +71,8 @@ pub enum DpdError {
     Exists(String),
     #[error("Resource is busy: {0}")]
     Busy(String),
+    #[error("Multicast repair pending: {0}")]
+    McastRepairPending(String),
     #[error("Missing NAT target: {0}")]
     MissingNatTarget(String),
     #[error("Resource is missing: {0}")]
@@ -267,6 +252,18 @@ impl convert::From<DpdError> for dropshot::HttpError {
             ),
             DpdError::Busy(e) => {
                 dropshot::HttpError::for_unavail(None, e.to_string())
+            }
+            DpdError::McastRepairPending(e) => {
+                let mut err = dropshot::HttpError::for_unavail(
+                    Some(MCAST_REPAIR_PENDING_ERROR_CODE.into()),
+                    e,
+                );
+                err.add_header(
+                    "retry-after",
+                    MCAST_REPAIR_RETRY_AFTER_SECS.to_string(),
+                )
+                .expect("retry-after is a valid header");
+                err
             }
             DpdError::MissingNatTarget(e) => {
                 dropshot::HttpError::for_client_error(

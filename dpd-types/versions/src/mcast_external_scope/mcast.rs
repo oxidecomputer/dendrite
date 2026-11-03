@@ -6,22 +6,26 @@
 
 //! Multicast types added or changed in API version `MCAST_EXTERNAL_SCOPE`.
 //!
-//! This version validates external multicast requests at deserialization.
-//! [`ExternalMulticastIp`] carries a customer-visible group address,
-//! [`ExactSource`] (built on [`UnicastAddrV4`] and [`UnicastAddrV6`]) a
-//! source address, and [`ExternalNatTarget`] the group's underlay target in
-//! `ff04::/64`. Requests keep the flat wire form, and
-//! [`MulticastGroupCreateExternalEntry`] classifies each one as any-source
-//! (ASM) or source-specific (SSM) multicast from its group address, using
-//! [`is_ssm_address`].
+//! This version validates external multicast requests during deserialization.
+//!
+//! [`ExternalMulticastIp`] wraps a customer-visible group address,
+//! [`ExactSource`] (built on [`UnicastAddrV4`] and [`UnicastAddrV6`]) a source
+//! address, and [`ExternalNatTarget`] the group's underlay target in the
+//! `ff04::/64` subnet.
+//!
+//! Requests retain their flat wire structure.
+//! [`MulticastGroupCreateExternalEntry`] uses [`is_ssm_address`] to label
+//! each request as either any-source (ASM) or source-specific (SSM) multicast
+//! from its group address.
 //!
 //! # Group addresses
 //!
-//! An address is rejected when it cannot name a group, when a router must not
-//! or should not forward it, or when it lies in Oxide's `ff04::/64` underlay
-//! subnet, which belongs to the internal multicast API. Everything else is
-//! accepted. An IANA allocation window, or a router's permission to drop an
-//! address, does not make that address invalid at this layer.
+//! An address can be rejected for a variety of reasons: when it cannot name a
+//! group, when a router must not or should not forward it, or when it lies in
+//! Oxide's `ff04::/64` underlay subnet, which belongs to the internal multicast
+//! API. Everything else is game. An IANA allocation window, or a router's
+//! permission to drop based on IP address, does not make this address
+//! invalid at this layer.
 //!
 //! IPv6 flags sit above the scope nibble as `|X|R|P|T|` ([RFC 7371] §4.2.1):
 //! T marks a transient address, P a prefix-based one, and R an embedded
@@ -57,12 +61,12 @@
 //!   exclude `::`, `::1`, `fe80::/10`, and IPv4-mapped or IPv4-compatible
 //!   addresses.
 //! - A source's address family must match the group's.
-//! - An SSM group requires at least one exact source and rejects `Any`, since
-//!   routers ignore an SSM request that names no source ([RFC 4607] §2). An ASM
-//!   group accepts exact sources, `Any`, or no list, the latter two meaning
-//!   any source.
-//! - The NAT target's internal IP lies in `ff04::/64`, and its inner MAC is a
-//!   multicast MAC.
+//! - An SSM group requires at least one exact source and rejects `Any` because
+//!   routers ignore an SSM requests without a source ([RFC 4607] §2). An ASM
+//!   group accepts exact sources, `Any` or no source list allows traffic
+//!   from any source.
+//! - The NAT target's internal IP falls within `ff04::/64`, and its inner MAC
+//!   is a multicast MAC.
 //!
 //! [RFC 1112]: https://www.rfc-editor.org/rfc/rfc1112.html
 //! [RFC 3306]: https://www.rfc-editor.org/rfc/rfc3306.html

@@ -9,7 +9,10 @@
 use common::counters;
 use common::network;
 use common::ports;
-pub use common::{MISSING_NAT_TARGET_ERROR_CODE, ROLLBACK_FAILURE_ERROR_CODE};
+pub use common::{
+    MCAST_REPAIR_PENDING_ERROR_CODE, MISSING_NAT_TARGET_ERROR_CODE,
+    ROLLBACK_FAILURE_ERROR_CODE,
+};
 use slog::Logger;
 use std::cmp::Ordering;
 use std::fmt;

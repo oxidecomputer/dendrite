@@ -36,6 +36,10 @@ pub const ROLLBACK_FAILURE_ERROR_CODE: &str = "rollback failure";
 /// group's NAT target (its underlay group) is absent from the switch.
 pub const MISSING_NAT_TARGET_ERROR_CODE: &str = "missing nat target";
 
+/// The `error_code` sent in an HTTP error response when a multicast group's
+/// switch state is unconfirmed and its repair could not complete successfully.
+pub const MCAST_REPAIR_PENDING_ERROR_CODE: &str = "multicast repair pending";
+
 /// Given two arrays, return two vectors containing only the unique items from each array.
 pub fn purge_common<T>(a: &[T], b: &[T]) -> (Vec<T>, Vec<T>)
 where

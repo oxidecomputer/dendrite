@@ -1448,13 +1448,9 @@ async fn test_multicast_tagged_groups_management() {
         additional_internal_ips[0],
         additional_internal_ips[1],
     ] {
-        cleanup_test_group(
-            switch,
-            IpAddr::V6(internal_ip),
-            &internal_tag,
-        )
-        .await
-        .unwrap();
+        cleanup_test_group(switch, IpAddr::V6(internal_ip), &internal_tag)
+            .await
+            .unwrap();
     }
 }
 
@@ -5898,11 +5894,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
 
     switch
         .client
-        .multicast_group_update_underlay(
-            &ipv6_update,
-            &TEST_TAG,
-            &update_entry,
-        )
+        .multicast_group_update_underlay(&ipv6_update, &TEST_TAG, &update_entry)
         .await
         .expect("Should update internal group with members");
 
@@ -6083,11 +6075,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
 
     switch
         .client
-        .multicast_group_update_underlay(
-            &ipv6_update,
-            &TEST_TAG,
-            &readd_entry,
-        )
+        .multicast_group_update_underlay(&ipv6_update, &TEST_TAG, &readd_entry)
         .await
         .expect("Should re-add members after removing all");
 
@@ -6292,11 +6280,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
 
     switch
         .client
-        .multicast_group_update_underlay(
-            &ipv6_update,
-            &TEST_TAG,
-            &update_entry,
-        )
+        .multicast_group_update_underlay(&ipv6_update, &TEST_TAG, &update_entry)
         .await
         .expect("Should update internal group with members");
 
@@ -8306,11 +8290,7 @@ async fn test_tag_immutability_on_update() -> TestResult {
 
     let result = switch
         .client
-        .multicast_group_update_underlay(
-            &group_ip,
-            &TAG_WRONG,
-            &update_entry,
-        )
+        .multicast_group_update_underlay(&group_ip, &TAG_WRONG, &update_entry)
         .await;
 
     match &result {
@@ -8535,8 +8515,7 @@ async fn test_tag_validation() -> TestResult {
 
     // Case: Reset by non-existent tag (no-op)
 
-    let nonexistent_tag: MulticastTag =
-        "nonexistent_tag_xyz".parse().unwrap();
+    let nonexistent_tag: MulticastTag = "nonexistent_tag_xyz".parse().unwrap();
     switch
         .client
         .multicast_reset_by_tag(&nonexistent_tag)

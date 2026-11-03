@@ -84,35 +84,6 @@ enum PortIdAction {
     SetPortNumber { port_number: u8 },
 }
 
-/// Add a multicast entry to the decap table, keyed on
-/// `mcast_external_grp` and setting the port bitmap.
-pub(crate) fn add_bitmap_entry(
-    s: &Switch,
-    mcast_external_grp: MulticastGroupId,
-    port_bitmap: &PortBitmap,
-    vlan_id: Option<u16>,
-) -> DpdResult<()> {
-    let match_key = MatchKeyDecapPorts::new(mcast_external_grp);
-
-    let action_data = match vlan_id {
-        None => port_bitmap.to_action(),
-        Some(vlan_id) => {
-            common::network::validate_vlan(vlan_id)?;
-            port_bitmap.to_action_vlan(vlan_id)
-        }
-    };
-    debug!(
-        s.log,
-        "add multicast egress entry for decap {match_key} -> {action_data:?}"
-    );
-
-    s.table_entry_add(
-        TableType::McastEgressDecapPorts,
-        &match_key,
-        &action_data,
-    )
-}
-
 /// Update a multicast entry in the decap table, keyed on
 /// `mcast_external_grp` and setting the port bitmap.
 pub(crate) fn update_bitmap_entry(
@@ -135,27 +106,50 @@ pub(crate) fn update_bitmap_entry(
         "update multicast egress entry for decap {match_key} -> {action_data:?}"
     );
 
-    s.table_entry_update(
+    s.try_table_entry_update(
         TableType::McastEgressDecapPorts,
         &match_key,
         &action_data,
     )
 }
 
-/// Delete a multicast entry from the decap table, keyed on
+/// Set a multicast entry in the decap table, keyed on
+/// `mcast_external_grp`, which updates the port bitmap.
+pub(crate) fn set_bitmap_entry(
+    s: &Switch,
+    mcast_external_grp: MulticastGroupId,
+    port_bitmap: &PortBitmap,
+    vlan_id: Option<u16>,
+) -> DpdResult<()> {
+    let match_key = MatchKeyDecapPorts::new(mcast_external_grp);
+    let action_data = match vlan_id {
+        None => port_bitmap.to_action(),
+        Some(vlan_id) => {
+            common::network::validate_vlan(vlan_id)?;
+            port_bitmap.to_action_vlan(vlan_id)
+        }
+    };
+
+    debug!(
+        s.log,
+        "set multicast egress entry for decap {match_key} -> {action_data:?}"
+    );
+
+    s.table_entry_set(
+        TableType::McastEgressDecapPorts,
+        &match_key,
+        &action_data,
+    )
+}
+
+/// Clear a multicast entry from the decap table, keyed on
 /// `mcast_external_grp`.
-pub(crate) fn del_bitmap_entry(
+pub(crate) fn clear_bitmap_entry(
     s: &Switch,
     mcast_external_grp: MulticastGroupId,
 ) -> DpdResult<()> {
     let match_key = MatchKeyDecapPorts::new(mcast_external_grp);
-
-    debug!(
-        s.log,
-        "delete multicast egress entry for decap {match_key} -> {mcast_external_grp}"
-    );
-
-    s.table_entry_del(TableType::McastEgressDecapPorts, &match_key)
+    s.table_entry_clear(TableType::McastEgressDecapPorts, &match_key)
 }
 
 /// Dump the multicast decap table.
@@ -185,9 +179,9 @@ pub(crate) fn reset_bitmap_table(s: &Switch) -> DpdResult<()> {
     s.table_clear(TableType::McastEgressDecapPorts)
 }
 
-/// Add a port ID entry to the port ID table for converting ASIC port IDs
+/// Set a port ID entry to the port ID table for converting ASIC port IDs
 /// to port numbers.
-pub(crate) fn add_port_mapping_entry(
+pub(crate) fn set_port_mapping_entry(
     s: &Switch,
     asic_port_id: u16,
 ) -> DpdResult<()> {
@@ -199,7 +193,7 @@ pub(crate) fn add_port_mapping_entry(
 
     debug!(s.log, "add port id entry {match_key} -> {action_data:?}");
 
-    s.table_entry_add(
+    s.table_entry_set(
         TableType::McastEgressPortMapping,
         &match_key,
         &action_data,
@@ -230,7 +224,7 @@ pub(crate) fn update_port_mapping_entry(
 
 /// Delete a port ID entry from the port ID table for converting ASIC port IDs
 /// to port numbers.
-pub(crate) fn del_port_mapping_entry(
+pub(crate) fn clear_port_mapping_entry(
     s: &Switch,
     asic_port_id: u16,
 ) -> DpdResult<()> {
@@ -238,7 +232,7 @@ pub(crate) fn del_port_mapping_entry(
 
     debug!(s.log, "delete port id entry {match_key} -> {asic_port_id}");
 
-    s.table_entry_del(TableType::McastEgressPortMapping, &match_key)
+    s.table_entry_clear(TableType::McastEgressPortMapping, &match_key)
 }
 
 /// Dump the multicast port mapping table.

@@ -32,6 +32,14 @@ impl McGroupData {
         }
     }
 
+    pub fn domain_port_list(&self, group_id: u16) -> AsicResult<Vec<u16>> {
+        let group =
+            self.groups.get(&group_id).ok_or_else(|| no_group(group_id))?;
+        let mut ports: Vec<u16> = group.iter().copied().collect();
+        ports.sort_unstable();
+        Ok(ports)
+    }
+
     /// Add a port to a multicast domain.
     pub fn domain_port_add(
         &mut self,

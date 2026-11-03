@@ -2014,10 +2014,8 @@ impl DpdApi for DpdApiImpl {
         let switch: &Switch = rqctx.context();
         let ip = path.into_inner().group_ip;
 
-        let existing_tag = mcast::get_group(switch, ip)
-            .map_err(HttpError::from)?
-            .tag()
-            .to_string();
+        let existing_tag =
+            mcast::group_tag(switch, ip).map_err(HttpError::from)?;
 
         mcast::del_group(switch, ip, &existing_tag)
             .map(|_| HttpResponseDeleted())
@@ -2088,11 +2086,8 @@ impl DpdApi for DpdApiImpl {
 
         let tag = match entry.tag.take() {
             Some(t) => t,
-            None => {
-                mcast::get_group_underlay(switch, underlay)
-                    .map_err(HttpError::from)?
-                    .tag
-            }
+            None => mcast::group_tag(switch, IpAddr::V6(underlay.into()))
+                .map_err(HttpError::from)?,
         };
 
         mcast::modify_group_underlay(switch, underlay, &tag, entry.into())
@@ -2142,10 +2137,7 @@ impl DpdApi for DpdApiImpl {
 
         let tag = match entry.tag.take() {
             Some(t) => t,
-            None => mcast::get_group(switch, ip)
-                .map_err(HttpError::from)?
-                .tag()
-                .to_string(),
+            None => mcast::group_tag(switch, ip).map_err(HttpError::from)?,
         };
 
         let entry = v8::mcast::MulticastGroupUpdateExternalEntry::from(entry);
@@ -2178,10 +2170,7 @@ impl DpdApi for DpdApiImpl {
 
         let tag = match entry.tag.take() {
             Some(t) => t,
-            None => mcast::get_group(switch, ip)
-                .map_err(HttpError::from)?
-                .tag()
-                .to_string(),
+            None => mcast::group_tag(switch, ip).map_err(HttpError::from)?,
         };
 
         let v7_entry =
