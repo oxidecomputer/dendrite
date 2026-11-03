@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -100,34 +100,6 @@ pub fn resolution_needed(
     }
 }
 
-pub fn handle_neighbor_needed(g: &Global, p: packet::Packet) {
-    if p.hdrs.ipv6_hdr.is_none() {
-        return error!(g.log, "not an ipv6 packet");
-    }
-
-    let sc = p.hdrs.sidecar_hdr.unwrap();
-    let asic_id = p.hdrs.sidecar_hdr.as_ref().unwrap().sc_egress;
-    let ipv6 = {
-        let x = u128::from_be_bytes(sc.sc_payload[0..16].try_into().unwrap());
-        x.into()
-    };
-    resolution_needed(g, asic_id, IpAddr::V6(ipv6), p);
-}
-
-pub fn handle_arp_needed(g: &Global, p: packet::Packet) {
-    if p.hdrs.ipv4_hdr.is_none() {
-        return error!(g.log, "not an ipv4 packet: {:?}", p);
-    }
-
-    let sc = p.hdrs.sidecar_hdr.unwrap();
-    let asic_id = p.hdrs.sidecar_hdr.as_ref().unwrap().sc_egress;
-    let ipv4 = {
-        let x = u32::from_be_bytes(sc.sc_payload[12..16].try_into().unwrap());
-        x.into()
-    };
-    resolution_needed(g, asic_id, IpAddr::V4(ipv4), p);
-}
-
 fn handle_packet(g: &Global, p: packet::Packet) {
     let sc_code = match &p.hdrs.sidecar_hdr {
         Some(sc) => sc.sc_code,
@@ -142,8 +114,15 @@ fn handle_packet(g: &Global, p: packet::Packet) {
             // These packets were addressed to a port that doesn't have a corresponding
             // tfport link.  There's nothing we want to do with them.
         }
-        sidecar::SC_ARP_NEEDED => handle_arp_needed(g, p),
-        sidecar::SC_NEIGHBOR_NEEDED => handle_neighbor_needed(g, p),
+        sidecar::SC_ARP_NEEDED | sidecar::SC_NEIGHBOR_NEEDED => {
+            match sidecar::nexthop_needed(&p) {
+                Some((asic_id, ip)) => resolution_needed(g, asic_id, ip, p),
+                None => error!(
+                    g.log,
+                    "not an ip packet (sc_code: {sc_code}): {p:?}"
+                ),
+            }
+        }
         // TODO-completeness: implement this as per dendrite#156
         sidecar::SC_ICMP_NEEDED => {}
         x => debug!(g.log, "unrecognized sidecar code: {:x}", x),

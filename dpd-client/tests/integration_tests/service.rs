@@ -277,6 +277,62 @@ async fn test_ndp_needed() -> TestResult {
     Ok(())
 }
 
+// An IPv4 packet routed via an IPv6 nexthop (e.g. BGP unnumbered) with no
+// neighbor entry should come up to the service port asking for NDP resolution
+// of the IPv6 nexthop.
+#[tokio::test]
+#[ignore]
+async fn test_ndp_needed_ipv4_via_ipv6() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let ingress_port = PhysPort(10);
+    let egress_port = PhysPort(15);
+    let router_ip = "fe80::50";
+    let src_mac = "e0:d5:5e:67:89:ab";
+    let router_mac = switch.get_port_mac(ingress_port).unwrap();
+
+    common::set_route_ipv4_over_ipv6(
+        switch,
+        "10.10.50.0/24",
+        egress_port,
+        router_ip,
+    )
+    .await?;
+
+    let (send_pkt, mut recv_pkt) = common::gen_udp_routed_pair(
+        switch,
+        egress_port,
+        router_mac,
+        Endpoint::parse(src_mac, "10.10.10.10", 3333).unwrap(),
+        Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.50.11", 4444).unwrap(),
+    );
+
+    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress_port };
+
+    let payload = router_ip.parse::<Ipv6Addr>().unwrap().octets();
+    common::add_sidecar_hdr(
+        switch,
+        &mut recv_pkt,
+        sidecar::SC_NEIGHBOR_NEEDED,
+        ingress_port,
+        egress_port,
+        Some(&payload[..]),
+    );
+
+    // Because the packet wasn't successfully routed, the src/dst mac addresses
+    // should be unchanged.
+    let src_eth = send.packet.hdrs.eth_hdr.as_ref().unwrap();
+    eth::EthHdr::rewrite_smac(&mut recv_pkt, src_eth.eth_smac);
+    eth::EthHdr::rewrite_dmac(&mut recv_pkt, src_eth.eth_dmac);
+
+    let expected =
+        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
+
+    assert!(one_counted_test(switch, send, Some(expected), "ndp_miss").await?);
+
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore]
 async fn test_ttl_exceeded() -> TestResult {
