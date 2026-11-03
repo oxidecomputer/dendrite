@@ -17,8 +17,7 @@ use uuid::Uuid;
 use crate::v1::link::LinkId;
 
 /// The logical router used for backwards compatibility, sharing routing table
-/// 0 with the underlay routes. This is to be removed when compatibility in a
-/// subsequent version.
+/// 0 with the underlay routes. This is to be removed in a subsequent version.
 pub const DEFAULT_ROUTER: Uuid = Uuid::nil();
 
 #[derive(Deserialize, Serialize, JsonSchema)]
