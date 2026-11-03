@@ -4,6 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use crate::router::RoutingTableId;
 use crate::{DpdError, DpdResult, Switch, table};
 use aal::AsicError;
 use common::ports::{Ipv4Entry, Ipv6Entry};
@@ -73,16 +74,30 @@ pub fn delete_loopback_ipv4(switch: &Switch, addr: &Ipv4Addr) -> DpdResult<()> {
 }
 
 /// Add a loopback IPv6 address to the switch.
-pub fn add_loopback_ipv6(switch: &Switch, addr: &Ipv6Entry) -> DpdResult<()> {
+///
+/// We won't "inherit" a loopback if we're adding a new endpoint.
+pub fn add_loopback_ipv6(
+    switch: &Switch,
+    addr: &Ipv6Entry,
+    table_id: RoutingTableId,
+) -> DpdResult<()> {
     let mut loopback_data = switch.loopback.lock().unwrap();
     if loopback_data.v6_addrs.contains(addr) {
+        if table_id != RoutingTableId::default() {
+            return Err(DpdError::Exists(format!(
+                "{} is already a loopback",
+                addr.addr
+            )));
+        }
         debug!(switch.log, "loopback entry {} already set", addr.addr);
         return Ok(());
     }
 
-    match table::port_ip::loopback_ipv6_add(switch, addr.addr) {
+    match table::port_ip::loopback_ipv6_add(switch, addr.addr, table_id) {
         Ok(()) => _ = loopback_data.v6_addrs.insert(addr.clone()),
-        Err(DpdError::Switch(AsicError::Exists)) => {
+        Err(DpdError::Switch(AsicError::Exists))
+            if table_id == RoutingTableId::default() =>
+        {
             if !loopback_data.v6_addrs.contains(addr) {
                 warn!(
                     switch.log,

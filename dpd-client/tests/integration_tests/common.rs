@@ -23,6 +23,7 @@ use dpd_client::Client;
 use dpd_client::ClientInfo;
 use dpd_client::ClientState;
 use dpd_client::types;
+pub use dpd_types::route::DEFAULT_ROUTER;
 use packet::Endpoint;
 use packet::Packet;
 use packet::arp;
@@ -1514,6 +1515,7 @@ pub fn tofino_flow_hash(
 
 pub mod prelude {
     pub use super::ADMIN_LOCAL_MULTICAST_PREFIX;
+    pub use super::DEFAULT_ROUTER;
     pub use super::L4Protocol;
     pub use super::NO_PORT;
     pub use super::PhysPort;

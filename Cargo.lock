@@ -1741,6 +1741,7 @@ dependencies = [
  "dpd-types-versions",
  "dropshot 0.18.0",
  "dropshot-api-manager-types",
+ "uuid",
 ]
 
 [[package]]
@@ -7401,6 +7402,7 @@ dependencies = [
  "tabwriter",
  "thiserror 2.0.18",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
