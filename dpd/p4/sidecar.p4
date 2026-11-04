@@ -1662,6 +1662,11 @@ control MulticastIngress (
 		meta.dropped = true;
 	}
 
+	action drop_mcast_from_userspace() {
+		meta.drop_reason = DROP_MULTICAST_FROM_USERSPACE;
+		meta.dropped = true;
+	}
+
 	// Drop action for IPv6 multicast packets with no group
 	// that is a valid admin-scoped multicast group.
 	action drop_mcastv6_admin_scoped_no_group() {
@@ -1833,7 +1838,10 @@ control MulticastIngress (
 
 	// Note: SSM tables currently take one extra stage in the pipeline (17->18).
 	apply {
-		if (hdr.geneve.isValid() && hdr.inner_ipv4.isValid()) {
+		if (ig_intr_md.ingress_port == USER_SPACE_SERVICE_PORT &&
+		    hdr.sidecar.isValid()) {
+			drop_mcast_from_userspace();
+		} else if (hdr.geneve.isValid() && hdr.inner_ipv4.isValid()) {
 			// Check if the inner destination address is an IPv4 multicast
 			// address (224.0.0.0/4). Apply source filtering for both SSM
 			// (232.0.0.0/8) and ASM ranges.

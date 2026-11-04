@@ -3601,6 +3601,134 @@ async fn test_link_local_multicast_counter_attribution() -> TestResult {
     Ok(())
 }
 
+async fn run_userspace_multicast_drop_test(
+    switch: &Switch,
+    src: Endpoint,
+    dst: Endpoint,
+    nat_target: types::ExternalNatTarget,
+) -> TestResult {
+    let egress1 = PhysPort(15);
+    let egress2 = PhysPort(17);
+    let egress3 = PhysPort(19);
+
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some(&TEST_TAG),
+        &[
+            (egress1, types::Direction::Underlay),
+            (egress3, types::Direction::Underlay),
+        ],
+        None,
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
+    let multicast_ip = dst.get_ip("destination").unwrap();
+    create_test_multicast_group(
+        switch,
+        multicast_ip,
+        Some(&TEST_TAG),
+        &[
+            (egress1, types::Direction::External),
+            (egress2, types::Direction::External),
+        ],
+        Some(nat_target),
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
+    let mut send = common::gen_udp_packet(src, dst);
+    common::add_sidecar_hdr(
+        switch,
+        &mut send,
+        sidecar::SC_FWD_FROM_USERSPACE,
+        NO_PORT,
+        PhysPort(10),
+        None,
+    );
+    let test_pkt = TestPacket { packet: Arc::new(send), port: SERVICE_PORT };
+
+    let ctr_baseline_userspace =
+        switch.get_counter("multicast_from_userspace", None).await.unwrap();
+    let ctr_baseline_no_group =
+        switch.get_counter("multicast_no_group", None).await.unwrap();
+
+    switch.packet_test(vec![test_pkt], Vec::new()).unwrap();
+
+    check_counter_incremented(
+        switch,
+        "multicast_from_userspace",
+        ctr_baseline_userspace,
+        1,
+        None,
+    )
+    .await
+    .unwrap();
+    check_counter_incremented(
+        switch,
+        "multicast_no_group",
+        ctr_baseline_no_group,
+        0,
+        None,
+    )
+    .await
+    .unwrap();
+
+    cleanup_test_group(switch, multicast_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_userspace_multicast_v4_dropped() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let src =
+        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap();
+    let dst = Endpoint::parse(
+        "01:00:5e:00:01:00",
+        &MULTICAST_TEST_IPV4.to_string(),
+        4444,
+    )
+    .unwrap();
+
+    run_userspace_multicast_drop_test(
+        switch,
+        src,
+        dst,
+        create_nat_target_ipv4(),
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_userspace_multicast_v6_dropped() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let src =
+        Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0101::4", 3333)
+            .unwrap();
+    let dst = Endpoint::parse(
+        "33:33:00:01:10:10",
+        &MULTICAST_TEST_IPV6.to_string(),
+        4444,
+    )
+    .unwrap();
+
+    run_userspace_multicast_drop_test(
+        switch,
+        src,
+        dst,
+        create_nat_target_ipv6(),
+    )
+    .await
+}
+
 #[tokio::test]
 #[ignore]
 async fn test_link_local_multicast_inbound_counter_attribution() -> TestResult {

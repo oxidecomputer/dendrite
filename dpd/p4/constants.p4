@@ -115,5 +115,6 @@ const bit<8> DROP_SCTP                          = 0x1B;
 // TTL/hop limit of 1 in the parser, or inner TTL/hop limit of 0 or 1
 // on the decapsulation path (see RFC 1812 §4.3.2.7, §5.3.1; RFC 4443 §2.4(e.3))
 const bit<8> DROP_MULTICAST_TTL_EXCEEDED        = 0x1C;
+const bit<8> DROP_MULTICAST_FROM_USERSPACE      = 0x1D;
 // MAX(DROP_xxx) + 1
-const bit<32> DROP_REASON_MAX                   = 0x1D;
+const bit<32> DROP_REASON_MAX                   = 0x1E;
