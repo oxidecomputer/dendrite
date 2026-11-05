@@ -216,8 +216,15 @@ enum Replication {
 impl Replication {
     fn new(
         info: MulticastReplicationInfo,
-        members: Vec<MulticastGroupMember>,
+        members: impl IntoIterator<Item = MulticastGroupMember>,
     ) -> Self {
+        // We store members in canonical (port, link, direction) order. Reading
+        // back from the ASIC rebuilds membership with external members first.
+        // Without sorting, the response order would depend on the backend and
+        // on whether a read re-synced or not.
+        let mut members = members.into_iter().collect::<Vec<_>>();
+        members.sort_unstable();
+        members.dedup();
         match NonEmpty::from_vec(members) {
             Some(members) => Self::Active { info, members },
             None => Self::Empty,
@@ -246,12 +253,7 @@ impl Replication {
         added: &[MulticastGroupMember],
     ) {
         let info = self.info().cloned().unwrap_or(default_info);
-        let mut members = self.members().cloned().collect::<Vec<_>>();
-        for member in added {
-            if !members.contains(member) {
-                members.push(member.clone());
-            }
-        }
+        let members = self.members().chain(added).cloned().collect::<Vec<_>>();
         *self = Self::new(info, members);
     }
 }

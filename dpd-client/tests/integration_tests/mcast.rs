@@ -1506,7 +1506,10 @@ async fn test_api_internal_ipv6_bifurcated_replication() -> TestResult {
     );
 
     // Verify members are preserved
-    assert_eq!(created.members, admin_scoped_group.members);
+    assert_eq!(
+        created.members.iter().collect::<HashSet<_>>(),
+        admin_scoped_group.members.iter().collect::<HashSet<_>>(),
+    );
 
     cleanup_test_group(switch, IpAddr::from(created.group_ip), &TEST_TAG).await
 }
