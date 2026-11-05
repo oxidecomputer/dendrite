@@ -205,6 +205,11 @@ impl AsicMulticastOps for Handle {
         mc_data.domain_port_count(group_id)
     }
 
+    fn mc_port_list(&self, _group_id: u16) -> AsicResult<Vec<u16>> {
+        // TODO: Read members from replication table bitmaps via DumpRequest.
+        Err(AsicError::OperationUnsupported)
+    }
+
     fn mc_port_add(
         &self,
         group_id: u16,

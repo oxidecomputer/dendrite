@@ -141,8 +141,7 @@ pub mod nat {
     pub use crate::v1::nat::NatIpv6RangePath;
     pub use crate::v1::nat::NatToken;
 
-    pub use crate::v14::nat::Ipv4Nat;
-    pub use crate::v14::nat::Ipv6Nat;
+    pub use crate::v14::nat::IpNat;
 }
 
 pub mod network {

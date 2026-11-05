@@ -219,7 +219,7 @@ impl From<u64> for MacAddr {
     Serialize,
 )]
 #[serde(try_from = "u32")]
-pub struct Vni(u32);
+pub struct Vni(pub(crate) u32);
 
 /// Error raised while validating a [`Vni`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
@@ -265,12 +265,6 @@ impl core::convert::TryFrom<u32> for Vni {
 
     fn try_from(vni: u32) -> Result<Self, Self::Error> {
         Self::new(vni)
-    }
-}
-
-impl From<Vni> for u32 {
-    fn from(vni: Vni) -> Self {
-        vni.0
     }
 }
 

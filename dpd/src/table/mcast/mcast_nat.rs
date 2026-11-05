@@ -13,7 +13,7 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use aal::{ActionParse, AsicError};
+use aal::ActionParse;
 use aal_macros::*;
 use common::network::{MacAddr, NatTarget};
 use dpd_types::table;
@@ -34,25 +34,8 @@ enum Ipv6Action {
     Forward { target: Ipv6Addr, inner_mac: MacAddr, vni: u32 },
 }
 
-/// Add a NAT entry for IPv4 multicast traffic.
-pub(crate) fn add_ipv4_entry(
-    s: &Switch,
-    ip: Ipv4Addr,
-    tgt: NatTarget,
-) -> DpdResult<()> {
-    let match_key = Ipv4MatchKey::new(ip);
-    let action_key = Ipv4Action::Forward {
-        target: tgt.internal_ip,
-        inner_mac: tgt.inner_mac,
-        vni: tgt.vni.as_u32(),
-    };
-
-    debug!(s.log, "add ingress mcast entry {match_key} -> {action_key:?}");
-    s.table_entry_add(TableType::NatIngressIpv4Mcast, &match_key, &action_key)
-}
-
-/// Update a NAT entry for IPv4 multicast traffic.
-pub(crate) fn update_ipv4_entry(
+/// Set a NAT entry for IPv4 multicast traffic.
+pub(crate) fn set_ipv4_entry(
     s: &Switch,
     ip: Ipv4Addr,
     new_tgt: NatTarget,
@@ -65,23 +48,13 @@ pub(crate) fn update_ipv4_entry(
     };
 
     debug!(s.log, "update ingress mcast entry {match_key} -> {action_key:?}");
-    match s.table_entry_update(
-        TableType::NatIngressIpv4Mcast,
-        &match_key,
-        &action_key,
-    ) {
-        Err(DpdError::Switch(AsicError::Missing(_))) => {
-            add_ipv4_entry(s, ip, new_tgt)
-        }
-        res => res,
-    }
+    s.table_entry_set(TableType::NatIngressIpv4Mcast, &match_key, &action_key)
 }
 
-/// Delete a NAT entry for IPv4 multicast traffic.
-pub(crate) fn del_ipv4_entry(s: &Switch, ip: Ipv4Addr) -> DpdResult<()> {
+/// Clear a NAT entry for IPv4 multicast traffic.
+pub(crate) fn clear_ipv4_entry(s: &Switch, ip: Ipv4Addr) -> DpdResult<()> {
     let match_key = Ipv4MatchKey::new(ip);
-    debug!(s.log, "delete ingress mcast entry {match_key}");
-    s.table_entry_del(TableType::NatIngressIpv4Mcast, &match_key)
+    s.table_entry_clear(TableType::NatIngressIpv4Mcast, &match_key)
 }
 
 /// Dump the IPv4 NAT table's contents.
@@ -108,25 +81,8 @@ pub(crate) fn reset_ipv4(s: &Switch) -> DpdResult<()> {
     s.table_clear(TableType::NatIngressIpv4Mcast)
 }
 
-/// Add a NAT entry for IPv6 multicast traffic.
-pub(crate) fn add_ipv6_entry(
-    s: &Switch,
-    ip: Ipv6Addr,
-    tgt: NatTarget,
-) -> DpdResult<()> {
-    let match_key = Ipv6MatchKey::new(ip);
-    let action_key = Ipv6Action::Forward {
-        target: tgt.internal_ip,
-        inner_mac: tgt.inner_mac,
-        vni: tgt.vni.as_u32(),
-    };
-
-    debug!(s.log, "add ingress mcast entry {match_key} -> {action_key:?}");
-    s.table_entry_add(TableType::NatIngressIpv6Mcast, &match_key, &action_key)
-}
-
-/// Update a NAT entry for IPv6 multicast traffic.
-pub(crate) fn update_ipv6_entry(
+/// Set a NAT entry for IPv6 multicast traffic.
+pub(crate) fn set_ipv6_entry(
     s: &Switch,
     ip: Ipv6Addr,
     new_tgt: NatTarget,
@@ -139,23 +95,13 @@ pub(crate) fn update_ipv6_entry(
     };
 
     debug!(s.log, "update ingress mcast entry {match_key} -> {action_key:?}");
-    match s.table_entry_update(
-        TableType::NatIngressIpv6Mcast,
-        &match_key,
-        &action_key,
-    ) {
-        Err(DpdError::Switch(AsicError::Missing(_))) => {
-            add_ipv6_entry(s, ip, new_tgt)
-        }
-        res => res,
-    }
+    s.table_entry_set(TableType::NatIngressIpv6Mcast, &match_key, &action_key)
 }
 
-/// Delete a NAT entry for IPv6 multicast traffic.
-pub(crate) fn del_ipv6_entry(s: &Switch, ip: Ipv6Addr) -> DpdResult<()> {
+/// Clear a NAT entry for IPv6 multicast traffic.
+pub(crate) fn clear_ipv6_entry(s: &Switch, ip: Ipv6Addr) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(ip);
-    debug!(s.log, "delete ingress mcast entry {match_key}");
-    s.table_entry_del(TableType::NatIngressIpv6Mcast, &match_key)
+    s.table_entry_clear(TableType::NatIngressIpv6Mcast, &match_key)
 }
 
 /// Dump the IPv6 NAT table's contents.

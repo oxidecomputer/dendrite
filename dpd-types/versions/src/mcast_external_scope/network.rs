@@ -6,15 +6,13 @@
 
 //! Network types modified in API version `MCAST_EXTERNAL_SCOPE`.
 
-use std::fmt;
 use std::net::Ipv6Addr;
-use std::str::FromStr;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::v1;
-use crate::v1::network::{MacAddr, VniError, VniParseError};
+use crate::v1::network::{MacAddr, VniError};
 use crate::v3;
 
 /// A validated Geneve Virtual Network Identifier.
@@ -41,7 +39,7 @@ use crate::v3;
     Serialize,
 )]
 #[serde(try_from = "u32", into = "u32")]
-pub struct Vni(#[schemars(range(max = 0xFF_FFFF))] u32);
+pub struct Vni(#[schemars(range(max = 0xFF_FFFF))] pub(crate) u32);
 
 impl Vni {
     /// Maximum Geneve VNI value.
@@ -51,33 +49,6 @@ impl Vni {
     ///
     /// [RFC 8926]: https://www.rfc-editor.org/rfc/rfc8926.html
     pub const MAX_VNI: u32 = 0xFF_FFFF;
-
-    /// Create a validated VNI.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VniError::OutOfRange`] if `value` exceeds [`Vni::MAX_VNI`].
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use dpd_types_versions::latest::network::Vni;
-    ///
-    /// assert!(Vni::new(77).is_ok());
-    /// assert!(Vni::new(Vni::MAX_VNI + 1).is_err());
-    /// ```
-    pub const fn new(value: u32) -> Result<Self, VniError> {
-        if value > Self::MAX_VNI {
-            return Err(VniError::OutOfRange { value });
-        }
-        Ok(Self(value))
-    }
-
-    /// Return the inner 24-bit value.
-    #[inline]
-    pub const fn as_u32(self) -> u32 {
-        self.0
-    }
 }
 
 impl TryFrom<u32> for Vni {
@@ -91,23 +62,6 @@ impl TryFrom<u32> for Vni {
 impl From<Vni> for u32 {
     fn from(vni: Vni) -> Self {
         vni.0
-    }
-}
-
-impl FromStr for Vni {
-    type Err = VniParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let vni = s
-            .parse::<u32>()
-            .map_err(|e| VniParseError::InvalidInt(s.to_string(), e))?;
-        Ok(Self::new(vni)?)
-    }
-}
-
-impl fmt::Display for Vni {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
     }
 }
 

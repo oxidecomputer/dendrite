@@ -61,7 +61,7 @@ where
 
     keys.iter().try_for_each(|key| {
         debug!(s.log, "delete {table} entry {key}");
-        s.table_entry_del(table, key)
+        s.table_entry_clear(table, key)
     })
 }
 

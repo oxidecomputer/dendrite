@@ -6,70 +6,67 @@
 
 //! Multicast types added or changed in API version `MCAST_EXTERNAL_SCOPE`.
 //!
-//! Requests keep the flat wire form and are classified as any-source (ASM) or
-//! source-specific (SSM) multicast at deserialization.
+//! This version validates external multicast requests during deserialization.
 //!
-//! Validation of an external group address is limited to what the RFCs
-//! require, with one Oxide exception: `ff04::/64` is our underlay subnet
-//! and belongs to the internal multicast API. We reject addresses on this
-//! subnet, even though the rest of admin-local `ff04::/16` is permitted.
+//! [`ExternalMulticastIp`] wraps a customer-visible group address,
+//! [`ExactSource`] (built on [`UnicastAddrV4`] and [`UnicastAddrV6`]) a source
+//! address, and [`ExternalNatTarget`] the group's underlay target in the
+//! `ff04::/64` subnet.
 //!
-//! All IPv6 scopes are admitted except for the reserved scope of `0x0` and
-//! the interface-local `0x1` and link-local `0x2` ones, which a router must
-//! not forward past ([RFC 4291] §2.7). Scope `0xf` is retained because
-//! [RFC 4291] §2.7 treats it as global when it is sent or received. IPv4 admits
-//! the whole multicast range apart from the base address of `224.0.0.0`,
-//! which [RFC 1112] §4 guarantees is never assigned to a group, and the
-//! SSM null address of `232.0.0.0` ([RFC 4607] §4.3).
+//! Requests retain their flat wire structure.
+//! [`MulticastGroupCreateExternalEntry`] uses [`is_ssm_address`] to label
+//! each request as either any-source (ASM) or source-specific (SSM) multicast
+//! from its group address.
 //!
-//! The four flag bits above the scope nibble are `|X|R|P|T|` ([RFC 7371]
-//! §4.2.1): T marks a transient address, P a prefix-based one, R an embedded
-//! rendezvous point, and X may be either zero or one. [RFC 7371] §4.1.1
-//! names the same field `|X|Y|P|T|`, where Y is the bit that [RFC 3956]
-//! defines as the R flag.
+//! # Group addresses
 //!
-//! Prefix-based addresses require only that the P flag implies the T flag
-//! ([RFC 7371] §4.1.1, which replaces that passage of [RFC 3306] §4). The
-//! replacement drops the "reserved field MUST be zero" rule: the `ff2` and
-//! `rsvd` nibbles are sent as zero and ignored on receipt instead, per
-//! [RFC 7371] §4.1.1 and [RFC 3956] §3, so neither is validated here. The
-//! prefix length is otherwise unbounded, since the `plen` ceiling of 64
-//! comes from [RFC 3956] §4 and applies to embedded rendezvous point (RP)
-//! addresses only. [RFC 3306] §4 notes the same 64-bit ceiling on the
-//! network prefix without requiring it.
+//! An address can be rejected for a variety of reasons: when it cannot name a
+//! group, when a router must not or should not forward it, or when it lies in
+//! Oxide's `ff04::/64` underlay subnet, which belongs to the internal multicast
+//! API. Everything else is game. An IANA allocation window, or a router's
+//! permission to drop based on IP address, does not make this address
+//! invalid at this layer.
 //!
-//! Embedded RP addresses require the R, P, and T flags ([RFC 7371] §4.2.2
-//! and §4.2.3), a prefix length from 1 through 64, a nonzero RP interface ID
-//! ([RFC 3956] §6.3), and a derived RP address outside `::/16`, link-local
-//! space, and the multicast range. [RFC 3956] §4 states those exclusions
-//! as requirements; §10 repeats them as a security consideration.
+//! IPv6 flags sit above the scope nibble as `|X|R|P|T|` ([RFC 7371] §4.2.1):
+//! T marks a transient address, P a prefix-based one, and R an embedded
+//! rendezvous point (RP). X may be either value.
 //!
-//! Classifying SSM addresses follows [RFC 4607] and [RFC 7371]. IPv4 SSM uses
-//! `232.0.0.0/8` ([RFC 4607] §1). IPv6 SSM covers `ff3x::/32` and
-//! `ffbx::/32`, the latter with the X flag set ([RFC 7371] §4.1.2). Both IPv6
-//! ranges require R=0, P=T=1 ([RFC 7371] §4.1.2), and a zero prefix length
-//! ([RFC 3306] §6). The SSM validation check masks the `ff2` and `rsvd`
-//! nibbles off before confirming range membership, and an address that sets
-//! either of them is still considered an SSM one.
+//! | Address or condition | Outcome | Basis |
+//! | --- | --- | --- |
+//! | Not multicast | Reject | A group address must be multicast. |
+//! | `224.0.0.0` | Reject | [RFC 1112] §4: never assigned to a group. |
+//! | `224.0.0.1` through `224.0.0.255` | Reject | [RFC 5771] §4: control traffic not forwarded off link. The IANA registry, citing [RFC 1112], notes that routers should not forward it regardless of TTL. IPv4 has no scope field, making this the counterpart to IPv6 link-local scope. |
+//! | `232.0.0.0` | Reject | [RFC 4607] §4.3: SSM null address. |
+//! | `232.0.0.1` through `232.0.0.255` | Accept | [RFC 4607] §4.3: reserved for IANA allocation. |
+//! | `232.0.0.0/8` | SSM | [RFC 4607] §1. |
+//! | IPv6 scope `0` | Reject | [RFC 4291] §2.7: reserved. |
+//! | IPv6 scopes `1` and `2` | Reject | [RFC 4291] §2.7: routers must not forward past interface-local or link-local scope. |
+//! | IPv6 scopes `3` through `f` | Accept | [RFC 4291] §2.7; [RFC 7346]. Scope `f` is treated as global when sent or received. |
+//! | `ff04::/64` | Reject | Oxide underlay subnet. The rest of `ff04::/16` is accepted. |
+//! | `ff0x::` with no flags and an all-zero group ID | Reject | [RFC 4291] §2.7.1: never assigned. |
+//! | Permanent addresses (T=0, P=R=0) | Accept | [RFC 4291] §2.7: a registered meaning is independent of scope, such as `ff0e::101` or `ff05::fb`. |
+//! | P set without T | Reject | [RFC 7371] §4.1.1. |
+//! | R set without both P and T | Reject | [RFC 3956] §3; [RFC 7371] §4.2.2. |
+//! | R set with a prefix length outside 1 through 64, a zero RP interface ID, or a derived RP in `::/16`, `fe80::/10`, or `ff00::/8` | Reject | [RFC 3956] §4, §6.3. |
+//! | Prefix-based `ff2` and `rsvd` nibbles | Ignored | [RFC 7371] §4.1.1; [RFC 3956] §3: sent as zero, ignored on receipt. |
+//! | `ff3x::/32`, and `ffbx::/32` with X set, with R=0, P=T=1, and a zero prefix length | SSM | [RFC 4607] §1; [RFC 7371] §4.1.2; [RFC 3306] §6. |
+//! | `ff3x::4000:0` | Reject | [RFC 4607] §4.3: SSM null address. |
+//! | Other SSM group IDs: below `4000:0`, the IANA window `4000:1` through `7fff:ffff`, and the dynamic range from `8000:0` | Accept | [RFC 3307] §4; [RFC 4607] §1 lets routers drop the invalid low range; [RFC 10028] §3 partitions the dynamic range. |
+//! | Network prefix of an SSM address | Not checked | [RFC 3306] §6 governs the node forming the address. |
 //!
-//! The only SSM address rejected is the reserved null address of
-//! `ff3x::4000:0` from [RFC 4607] §4.3. The network prefix is unchecked
-//! otherwise: [RFC 3306] §6 applies to the node that's forming the address,
-//! and [RFC 4607] §1 has a system treat all of the `ff3x::/32` block as SSM.
-//! Group IDs below `4000:0` are assigned with flags P=T=0 ([RFC 3307] §4.1),
-//! making them invalid SSM addresses that routers may drop ([RFC 4607] §1).
-//! The band just above it, `4000:0001` through `7fff:ffff`, is reserved for
-//! IANA allocation ([RFC 4607] §4.3, [RFC 3307] §4.2) rather than forbidden
-//! as a destination. From `8000:0` up is the dynamic range of [RFC 3307]
-//! §4.3, which [RFC 10028] §3 partitions; host SSM allocation sits at
-//! `f000:0` through `fcff:ffff`. All of these are accepted.
+//! # Sources and requests
 //!
-//! Permanently assigned addresses (T=0) with the P and R flags cleared are
-//! permitted. They face the same `ff04::/64` underlay reservation as any
-//! other address, and the all-zero group ID `ff0x::` is refused outright,
-//! since [RFC 4291] §2.7.1 reserves it and never assigns it. A registered
-//! meaning is independent of scope ([RFC 4291] §2.7), so `ff0e::101` and
-//! `ff05::fb` keep those meanings in the overlay.
+//! - Sources are unicast. IPv4 sources exclude `0.0.0.0/8`, `127.0.0.0/8`,
+//!   `169.254.0.0/16`, `240.0.0.0/4`, and `255.255.255.255`. IPv6 sources
+//!   exclude `::`, `::1`, `fe80::/10`, and IPv4-mapped or IPv4-compatible
+//!   addresses.
+//! - A source's address family must match the group's.
+//! - An SSM group requires at least one exact source and rejects `Any` because
+//!   routers ignore an SSM requests without a source ([RFC 4607] §2). An ASM
+//!   group accepts exact sources, `Any` or no source list allows traffic
+//!   from any source.
+//! - The NAT target's internal IP falls within `ff04::/64`, and its inner MAC
+//!   is a multicast MAC.
 //!
 //! [RFC 1112]: https://www.rfc-editor.org/rfc/rfc1112.html
 //! [RFC 3306]: https://www.rfc-editor.org/rfc/rfc3306.html
@@ -77,11 +74,11 @@
 //! [RFC 3956]: https://www.rfc-editor.org/rfc/rfc3956.html
 //! [RFC 4291]: https://www.rfc-editor.org/rfc/rfc4291.html
 //! [RFC 4607]: https://www.rfc-editor.org/rfc/rfc4607.html
+//! [RFC 5771]: https://www.rfc-editor.org/rfc/rfc5771.html
+//! [RFC 7346]: https://www.rfc-editor.org/rfc/rfc7346.html
 //! [RFC 7371]: https://www.rfc-editor.org/rfc/rfc7371.html
 //! [RFC 10028]: https://www.rfc-editor.org/rfc/rfc10028.html
 
-use std::collections::BTreeSet;
-use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use schemars::JsonSchema;
@@ -111,9 +108,9 @@ use crate::v14::network::{NatTarget, Vni};
 ///
 /// JSON uses the ordinary IP-address string form. Deserialization rejects
 /// addresses that are not multicast, use a reserved, interface-local, or
-/// link-local scope, fall in the `ff04::/64` underlay subnet, are a reserved
-/// base or SSM null address, or carry malformed prefix-based or embedded-RP
-/// flags.
+/// link-local IPv6 scope, fall in the IPv4 local network control block
+/// (`224.0.0.0/24`) or the `ff04::/64` underlay subnet, are a reserved base
+/// or SSM null address, or carry malformed prefix-based or embedded-RP flags.
 #[derive(
     Clone,
     Copy,
@@ -128,7 +125,7 @@ use crate::v14::network::{NatTarget, Vni};
     JsonSchema,
 )]
 #[serde(try_from = "IpAddr", into = "IpAddr")]
-pub struct ExternalMulticastIp(IpAddr);
+pub struct ExternalMulticastIp(pub(crate) IpAddr);
 
 impl TryFrom<IpAddr> for ExternalMulticastIp {
     type Error = ExternalMulticastIpError;
@@ -144,67 +141,21 @@ impl From<ExternalMulticastIp> for IpAddr {
     }
 }
 
-impl std::str::FromStr for ExternalMulticastIp {
-    type Err = ExternalMulticastIpError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let addr: IpAddr = s.parse().map_err(|e| {
-            ExternalMulticastIpError::InvalidIpAddress(s.to_string(), e)
-        })?;
-        Self::new(addr)
-    }
-}
-
-impl ExternalMulticastIp {
-    /// Create a new `ExternalMulticastIp` if the address is valid for an
-    /// external multicast group.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ExternalMulticastIpError`] if `addr` cannot identify an
-    /// external multicast group.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::net::IpAddr;
-    /// use dpd_types_versions::latest::mcast::ExternalMulticastIp;
-    ///
-    /// let global: IpAddr = "ff0e::1".parse().unwrap();
-    /// assert!(ExternalMulticastIp::new(global).is_ok());
-    ///
-    /// let underlay: IpAddr = "ff04::1".parse().unwrap();
-    /// assert!(ExternalMulticastIp::new(underlay).is_err());
-    /// ```
-    pub fn new(addr: IpAddr) -> Result<Self, ExternalMulticastIpError> {
-        validate_external_multicast_ip(addr)?;
-        Ok(Self(addr))
-    }
-
-    /// Return the inner IP address.
-    #[inline]
-    pub const fn ip(&self) -> IpAddr {
-        self.0
-    }
-
-    /// Check whether this address is a Source-Specific Multicast address.
-    pub fn is_ssm(&self) -> bool {
-        is_ssm_address(self.0)
-    }
-}
-
-impl fmt::Display for ExternalMulticastIp {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
 /// Errors returned when parsing or validating an [`ExternalMulticastIp`].
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ExternalMulticastIpError {
     /// The address is not a multicast address.
     #[error("Address {0} is not a multicast address")]
     NotMulticast(IpAddr),
+
+    /// The address contains the IPv4 Local Network Control Block
+    /// (`224.0.0.0/24`), which routers should not forward off link
+    /// (RFC 5771 §4).
+    #[error(
+        "Address {0} is in the link-local IPv4 multicast block 224.0.0.0/24, \
+         which is not forwarded off-link (RFC 5771 §4)"
+    )]
+    LocalIpv4Scope(IpAddr),
 
     /// The IPv6 multicast scope value zero is reserved.
     #[error("Address {0} uses reserved IPv6 multicast scope 0")]
@@ -357,23 +308,6 @@ pub enum InvalidMulticastSource {
     Reserved,
 }
 
-impl fmt::Display for InvalidMulticastSource {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unspecified => write!(f, "is the unspecified address"),
-            Self::Loopback => write!(f, "is a loopback address"),
-            Self::Broadcast => write!(f, "is the broadcast address"),
-            Self::LinkLocal => write!(f, "is a link-local address"),
-            Self::ThisNetwork => {
-                write!(f, "is in 0.0.0.0/8 (this host on this network)")
-            }
-            Self::Reserved => {
-                write!(f, "is in the reserved class E block (240.0.0.0/4)")
-            }
-        }
-    }
-}
-
 /// The reason an IPv6 group address with the R flag set cannot embed a
 /// rendezvous point (RP) address ([RFC 7371] §4.2.2, §4.2.3; [RFC 3956] §4,
 /// §6.3, §10).
@@ -402,27 +336,6 @@ pub enum InvalidEmbeddedRp {
     UnusableAddress(Ipv6Addr),
 }
 
-impl fmt::Display for InvalidEmbeddedRp {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::RequiresPrefixBased => write!(f, "the P flag is required"),
-            Self::RequiresTransient => write!(f, "the T flag is required"),
-            Self::PrefixLengthOutOfRange(plen) => write!(
-                f,
-                "the prefix length {plen} is outside the range 1 through 64"
-            ),
-            Self::ZeroInterfaceId => {
-                write!(f, "the RP interface ID must be nonzero")
-            }
-            Self::UnusableAddress(rp) => write!(
-                f,
-                "the derived RP address {rp} is in ::/16, link-local, or \
-                 multicast space"
-            ),
-        }
-    }
-}
-
 /// The IPv6 representation of an embedded IPv4 address.
 ///
 /// Both variants carry the IPv4 address within the low 32 bits and differ only
@@ -440,19 +353,6 @@ pub enum EmbeddedIpv4 {
     ///
     /// [RFC 4291]: https://www.rfc-editor.org/rfc/rfc4291.html
     Compatible,
-}
-
-impl fmt::Display for EmbeddedIpv4 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Mapped => {
-                write!(f, "IPv4-mapped (::ffff:0:0/96, RFC 4291 §2.5.5.2)")
-            }
-            Self::Compatible => {
-                write!(f, "IPv4-compatible (::/96, RFC 4291 §2.5.5.1)")
-            }
-        }
-    }
 }
 
 /// Errors raised while validating a multicast source address.
@@ -542,27 +442,7 @@ pub enum MulticastSourceParseError {
     JsonSchema,
 )]
 #[serde(try_from = "Ipv4Addr", into = "Ipv4Addr")]
-pub struct UnicastAddrV4(Ipv4Addr);
-
-impl UnicastAddrV4 {
-    /// Create a validated IPv4 unicast address.
-    ///
-    /// # Errors
-    ///
-    /// - [`MulticastSourceError::NotUnicast`] for a multicast address.
-    /// - [`MulticastSourceError::InvalidIpv4`] for the first
-    ///   [`InvalidMulticastSource`] rule the address hits.
-    pub fn new(addr: Ipv4Addr) -> Result<Self, MulticastSourceError> {
-        validate_unicast_source_ipv4(addr)?;
-        Ok(Self(addr))
-    }
-
-    /// Return the inner IPv4 address.
-    #[inline]
-    pub const fn ip(&self) -> Ipv4Addr {
-        self.0
-    }
-}
+pub struct UnicastAddrV4(pub(crate) Ipv4Addr);
 
 /// A validated IPv6 unicast address for multicast source fields.
 ///
@@ -584,35 +464,7 @@ impl UnicastAddrV4 {
     JsonSchema,
 )]
 #[serde(try_from = "Ipv6Addr", into = "Ipv6Addr")]
-pub struct UnicastAddrV6(Ipv6Addr);
-
-impl UnicastAddrV6 {
-    /// Create a validated IPv6 unicast address.
-    ///
-    /// # Errors
-    ///
-    /// - [`MulticastSourceError::NotUnicast`] for a multicast address.
-    /// - [`MulticastSourceError::InvalidIpv6`] for the first
-    ///   [`InvalidMulticastSource`] rule the address hits.
-    /// - [`MulticastSourceError::Ipv4Embedded`] for an IPv4-mapped or
-    ///   IPv4-compatible address.
-    pub fn new(addr: Ipv6Addr) -> Result<Self, MulticastSourceError> {
-        validate_unicast_source_ipv6(addr)?;
-        Ok(Self(addr))
-    }
-
-    /// Return the inner IPv6 address.
-    #[inline]
-    pub const fn ip(&self) -> Ipv6Addr {
-        self.0
-    }
-}
-
-impl fmt::Display for UnicastAddrV4 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
+pub struct UnicastAddrV6(pub(crate) Ipv6Addr);
 
 impl TryFrom<Ipv4Addr> for UnicastAddrV4 {
     type Error = MulticastSourceError;
@@ -625,18 +477,6 @@ impl TryFrom<Ipv4Addr> for UnicastAddrV4 {
 impl From<UnicastAddrV4> for Ipv4Addr {
     fn from(addr: UnicastAddrV4) -> Self {
         addr.0
-    }
-}
-
-impl From<UnicastAddrV4> for IpAddr {
-    fn from(addr: UnicastAddrV4) -> Self {
-        IpAddr::V4(addr.0)
-    }
-}
-
-impl fmt::Display for UnicastAddrV6 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
     }
 }
 
@@ -654,12 +494,6 @@ impl From<UnicastAddrV6> for Ipv6Addr {
     }
 }
 
-impl From<UnicastAddrV6> for IpAddr {
-    fn from(addr: UnicastAddrV6) -> Self {
-        IpAddr::V6(addr.0)
-    }
-}
-
 /// A validated external SSM group address.
 ///
 /// IPv4 SSM addresses must be within the `232.0.0.0/8` range, excluding the
@@ -670,7 +504,7 @@ impl From<UnicastAddrV6> for IpAddr {
 /// SSM channels are identified by an `(S,G)` pairing; an any-source (ASM)
 /// filter is invalid for this type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SsmMulticastIp(ExternalMulticastIp);
+pub struct SsmMulticastIp(pub(crate) ExternalMulticastIp);
 
 /// A validated exact multicast source address.
 ///
@@ -692,12 +526,12 @@ pub struct SsmMulticastIp(ExternalMulticastIp);
 /// source on network 0 (RFC 1812 §5.3.7). Neither could ever match a source
 /// filter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ExactSource(IpAddr);
+pub struct ExactSource(pub(crate) IpAddr);
 
 /// A non-empty list of validated exact multicast source addresses
 /// (sorted and deduplicated).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NonEmptyExactSources(Vec<ExactSource>);
+pub struct NonEmptyExactSources(pub(crate) Vec<ExactSource>);
 
 /// Stored source filter for an external multicast group.
 ///
@@ -787,7 +621,7 @@ impl From<SourceEntry> for IpSrc {
 )]
 #[serde(try_from = "NatTarget", into = "NatTarget")]
 pub struct ExternalNatTarget {
-    internal_ip: UnderlayMulticastIpv6,
+    pub(crate) internal_ip: UnderlayMulticastIpv6,
     inner_mac: MacAddr,
     vni: Vni,
 }
@@ -857,12 +691,6 @@ impl From<ExternalNatTarget> for NatTarget {
     }
 }
 
-impl From<ExternalNatTarget> for UnderlayMulticastIpv6 {
-    fn from(target: ExternalNatTarget) -> Self {
-        target.internal_ip
-    }
-}
-
 impl TryFrom<InternalForwarding> for ExternalInternalForwarding {
     type Error = ExternalInternalForwardingError;
 
@@ -879,109 +707,6 @@ impl From<ExternalInternalForwarding> for InternalForwarding {
     fn from(forwarding: ExternalInternalForwarding) -> Self {
         let nat_target = NatTarget::from(forwarding.nat_target);
         Self { nat_target: Some(nat_target.into()) }
-    }
-}
-
-impl NonEmptyExactSources {
-    /// Create a sorted, deduplicated list, while returning `None` for empty
-    /// input(s).
-    pub(crate) fn new(sources: Vec<ExactSource>) -> Option<Self> {
-        let sources: Vec<_> =
-            sources.into_iter().collect::<BTreeSet<_>>().into_iter().collect();
-        (!sources.is_empty()).then_some(Self(sources))
-    }
-
-    fn into_vec(self) -> Vec<ExactSource> {
-        self.0
-    }
-
-    /// Return the sources as a slice representation.
-    pub fn as_slice(&self) -> &[ExactSource] {
-        &self.0
-    }
-}
-
-impl SsmMulticastIp {
-    /// Return the SSM form of an [`ExternalMulticastIp`] or `None` for ASM.
-    pub fn new(addr: ExternalMulticastIp) -> Option<Self> {
-        addr.is_ssm().then_some(Self(addr))
-    }
-
-    /// Return the underlying external multicast address.
-    pub fn ip(&self) -> ExternalMulticastIp {
-        self.0
-    }
-}
-
-impl From<SsmMulticastIp> for ExternalMulticastIp {
-    fn from(addr: SsmMulticastIp) -> Self {
-        addr.0
-    }
-}
-
-impl From<SsmMulticastIp> for IpAddr {
-    fn from(addr: SsmMulticastIp) -> Self {
-        addr.0.into()
-    }
-}
-
-impl fmt::Display for SsmMulticastIp {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl ExactSource {
-    /// Validate an exact multicast source address.
-    ///
-    /// # Errors
-    ///
-    /// - [`MulticastSourceError::NotUnicast`] for a multicast address.
-    /// - [`MulticastSourceError::InvalidIpv4`] or
-    ///   [`MulticastSourceError::InvalidIpv6`] for the first
-    ///   [`InvalidMulticastSource`] rule the address hits.
-    /// - [`MulticastSourceError::Ipv4Embedded`] for an IPv4-mapped or
-    ///   IPv4-compatible IPv6 address.
-    pub fn new(ip: IpAddr) -> Result<Self, MulticastSourceError> {
-        let ip = match ip {
-            IpAddr::V4(addr) => UnicastAddrV4::new(addr)?.into(),
-            IpAddr::V6(addr) => UnicastAddrV6::new(addr)?.into(),
-        };
-        Ok(Self(ip))
-    }
-
-    /// Return the source address.
-    pub fn ip(&self) -> IpAddr {
-        self.0
-    }
-}
-
-impl std::str::FromStr for ExactSource {
-    type Err = MulticastSourceParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let addr: IpAddr = s.parse().map_err(|e| {
-            MulticastSourceParseError::InvalidIp(s.to_string(), e)
-        })?;
-        Ok(Self::new(addr)?)
-    }
-}
-
-impl From<ExactSource> for IpAddr {
-    fn from(source: ExactSource) -> Self {
-        source.0
-    }
-}
-
-impl From<ExactSource> for IpSrc {
-    fn from(source: ExactSource) -> Self {
-        IpSrc::Exact(source.0)
-    }
-}
-
-impl fmt::Display for ExactSource {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
     }
 }
 
@@ -1116,7 +841,7 @@ pub struct SsmMulticastGroupCreate {
 /// let MulticastGroupCreateExternalEntry::Asm(group) = &entry else {
 ///     panic!("239.1.2.3 is an ASM address");
 /// };
-/// assert_eq!(group.sources().unwrap().len(), 2);
+/// assert_eq!(group.sources().unwrap().count(), 2);
 ///
 /// for sources in [
 ///     serde_json::json!(["Any", { "Exact": "10.0.0.1" }]),
@@ -1550,8 +1275,10 @@ pub fn validate_external_multicast_ip(
 /// # Errors
 ///
 /// Returns [`ExternalMulticastIpError::NotMulticast`] outside `224.0.0.0/4`,
-/// [`ExternalMulticastIpError::ReservedBaseAddress`] for `224.0.0.0`, or
-/// [`ExternalMulticastIpError::ReservedSsmNull`] for `232.0.0.0`.
+/// [`ExternalMulticastIpError::ReservedBaseAddress`] for `224.0.0.0`,
+/// [`ExternalMulticastIpError::LocalIpv4Scope`] for the rest of
+/// `224.0.0.0/24`, or [`ExternalMulticastIpError::ReservedSsmNull`] for
+/// `232.0.0.0`.
 pub fn validate_external_multicast_ipv4(
     ipv4: Ipv4Addr,
 ) -> Result<(), ExternalMulticastIpError> {
@@ -1561,6 +1288,9 @@ pub fn validate_external_multicast_ipv4(
     }
     if ipv4 == IPV4_RESERVED_BASE {
         return Err(ExternalMulticastIpError::ReservedBaseAddress(addr));
+    }
+    if matches!(ipv4.octets(), [224, 0, 0, _]) {
+        return Err(ExternalMulticastIpError::LocalIpv4Scope(addr));
     }
     if ipv4 == IPV4_SSM_RESERVED_NULL {
         return Err(ExternalMulticastIpError::ReservedSsmNull(addr));

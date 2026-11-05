@@ -7,7 +7,7 @@
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 use anyhow::anyhow;
@@ -17,12 +17,13 @@ use oxnet::MulticastMac;
 use ::common::counters::SERVICE_PORT_LABEL;
 use ::common::network::MacAddr;
 use dpd_client::Error;
+use dpd_client::MCAST_TAG_MISMATCH_ERROR_CODE;
 use dpd_client::MISSING_NAT_TARGET_ERROR_CODE;
 use dpd_client::types;
 use dpd_types::mcast::{
     ExternalMulticastIp, MulticastTag, UnderlayMulticastIpv6,
 };
-use packet::{Endpoint, eth, geneve, ipv4, ipv6, sidecar, udp};
+use packet::{Endpoint, L4Endpoint, eth, geneve, ipv4, ipv6, sidecar, udp};
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
@@ -36,18 +37,22 @@ const MULTICAST_TEST_IPV6_SSM: Ipv6Addr =
     Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0xf000, 0x1111);
 const MULTICAST_NAT_IP: Ipv6Addr =
     Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 1);
-const GIMLET_MAC: &str = "11:22:33:44:55:66";
+const GIMLET_MAC: [u8; 6] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
 const GIMLET_IP: Ipv6Addr =
     Ipv6Addr::new(0xfd00, 0x1122, 0x7788, 0x0101, 0, 0, 0, 4);
 
 /// Tag used for multicast group validation in tests.
-const TEST_TAG: &str = "mcast_integration_test";
+static TEST_TAG: LazyLock<MulticastTag> =
+    LazyLock::new(|| "mcast_integration_test".parse().unwrap());
 
-// Tag validation test consts
-const TAG_A: &str = "tag_a";
-const TAG_B: &str = "tag_b";
-const TAG_WRONG: &str = "wrong_tag";
-const TAG_DIFFERENT: &str = "different_tag";
+static TAG_A: LazyLock<MulticastTag> =
+    LazyLock::new(|| "tag_a".parse().unwrap());
+static TAG_B: LazyLock<MulticastTag> =
+    LazyLock::new(|| "tag_b".parse().unwrap());
+static TAG_WRONG: LazyLock<MulticastTag> =
+    LazyLock::new(|| "wrong_tag".parse().unwrap());
+static TAG_DIFFERENT: LazyLock<MulticastTag> =
+    LazyLock::new(|| "different_tag".parse().unwrap());
 
 /// Count table entries matching a specific IP address in any key field.
 fn count_entries_for_ip(entries: &[types::TableEntry], ip: &str) -> usize {
@@ -73,7 +78,7 @@ fn has_vlan_action_for_ip(
 async fn create_test_multicast_group(
     switch: &Switch,
     group_ip: IpAddr,
-    tag: Option<&str>,
+    tag: Option<&MulticastTag>,
     ports: &[(PhysPort, types::Direction)],
     nat_target: Option<types::ExternalNatTarget>,
     external_forwarding: types::ExternalForwarding,
@@ -96,7 +101,7 @@ async fn create_test_multicast_group(
             // IPv4 groups are always external and require NAT targets
             let external_entry = types::MulticastGroupCreateExternalEntry {
                 group_ip: group_ip.try_into().unwrap(),
-                tag: tag.map(String::from),
+                tag: tag.map(ToString::to_string),
                 internal_forwarding: types::ExternalInternalForwarding {
                     nat_target: nat_target.expect(
                         "external multicast group requires a NAT target",
@@ -131,7 +136,7 @@ async fn create_test_multicast_group(
                     UnderlayMulticastIpv6::try_from(ipv6).unwrap();
                 let internal_entry = types::MulticastGroupCreateUnderlayEntry {
                     group_ip: admin_local_ip,
-                    tag: tag.map(String::from),
+                    tag: tag.map(ToString::to_string),
                     members,
                 };
 
@@ -153,7 +158,7 @@ async fn create_test_multicast_group(
                 // Non-admin-local IPv6 groups are external-only and require NAT targets
                 let external_entry = types::MulticastGroupCreateExternalEntry {
                     group_ip: group_ip.try_into().unwrap(),
-                    tag: tag.map(String::from),
+                    tag: tag.map(ToString::to_string),
                     internal_forwarding: types::ExternalInternalForwarding {
                         nat_target: nat_target.expect(
                             "external multicast group requires a NAT target",
@@ -183,20 +188,15 @@ async fn create_test_multicast_group(
     }
 }
 
-fn make_tag(tag: &str) -> MulticastTag {
-    tag.parse().expect("tag should parse")
-}
-
 /// Clean up a test group, failing if it cannot be deleted properly.
 async fn cleanup_test_group(
     switch: &Switch,
     group_ip: IpAddr,
-    tag: &str,
+    tag: &MulticastTag,
 ) -> TestResult {
-    let del_tag = make_tag(tag);
     switch
         .client
-        .multicast_group_delete(&group_ip, &del_tag)
+        .multicast_group_delete(&group_ip, tag)
         .await
         .map_err(|e| {
             anyhow!("Failed to delete test group {}: {:?}", group_ip, e)
@@ -317,15 +317,17 @@ fn create_ipv4_multicast_packet(
     ];
     let multicast_mac = MacAddr::from(mac_bytes);
 
-    let src_endpoint =
-        Endpoint::parse(&src_mac.to_string(), src_ip, src_port).unwrap();
+    let src_endpoint = Endpoint::L4(L4Endpoint {
+        mac: src_mac,
+        ip: src_ip.parse().unwrap(),
+        port: src_port,
+    });
 
-    let dst_endpoint = Endpoint::parse(
-        &multicast_mac.to_string(),
-        &multicast_ip.to_string(),
-        dst_port,
-    )
-    .unwrap();
+    let dst_endpoint = Endpoint::L4(L4Endpoint {
+        mac: multicast_mac,
+        ip: multicast_ip.into(),
+        port: dst_port,
+    });
 
     let mut pkt = common::gen_udp_packet(src_endpoint, dst_endpoint);
     if let Some(vlan_id) = vlan_id {
@@ -363,15 +365,17 @@ fn create_ipv6_multicast_packet(
     ];
     let multicast_mac = MacAddr::from(mac_bytes);
 
-    let src_endpoint =
-        Endpoint::parse(&src_mac.to_string(), src_ip, src_port).unwrap();
+    let src_endpoint = Endpoint::L4(L4Endpoint {
+        mac: src_mac,
+        ip: src_ip.parse().unwrap(),
+        port: src_port,
+    });
 
-    let dst_endpoint = Endpoint::parse(
-        &multicast_mac.to_string(),
-        &multicast_ip.to_string(),
-        dst_port,
-    )
-    .unwrap();
+    let dst_endpoint = Endpoint::L4(L4Endpoint {
+        mac: multicast_mac,
+        ip: multicast_ip.into(),
+        port: dst_port,
+    });
 
     let mut pkt = common::gen_udp_packet(src_endpoint, dst_endpoint);
     if let Some(vlan_id) = vlan_id {
@@ -406,29 +410,25 @@ fn prepare_expected_pkt(
                 encapped.deparse().unwrap().to_vec()
             };
 
-            let switch_port_mac =
-                switch.get_port_mac(switch_port).unwrap().to_string();
+            let switch_port_mac = switch.get_port_mac(switch_port).unwrap();
 
             let mut forward_pkt = common::gen_external_geneve_packet(
-                Endpoint::parse(
-                    &switch_port_mac,
-                    "::0",
-                    common::tofino_flow_hash(
+                Endpoint::L4(L4Endpoint {
+                    mac: switch_port_mac,
+                    ip: Ipv6Addr::UNSPECIFIED.into(),
+                    port: common::tofino_flow_hash(
                         send_pkt.src().unwrap(),
                         send_pkt.dst().unwrap(),
                         L4Protocol::Udp,
                     ),
-                )
-                .unwrap(),
-                Endpoint::parse(
-                    &MacAddr::from(
-                        Ipv6Addr::from(nat.internal_ip).derive_multicast_mac(),
-                    )
-                    .to_string(),
-                    &nat.internal_ip.to_string(),
-                    geneve::GENEVE_UDP_PORT,
-                )
-                .unwrap(),
+                }),
+                Endpoint::L4(L4Endpoint {
+                    mac: Ipv6Addr::from(nat.internal_ip)
+                        .derive_multicast_mac()
+                        .into(),
+                    ip: nat.internal_ip.into(),
+                    port: geneve::GENEVE_UDP_PORT,
+                }),
                 eth::ETHER_ETHER,
                 nat.vni.as_u32(),
                 &ingress_payload,
@@ -511,7 +511,7 @@ async fn test_group_creation_with_validation() -> TestResult {
     let internal_group = create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(egress1, types::Direction::Underlay)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -647,7 +647,7 @@ async fn test_group_creation_with_validation() -> TestResult {
         IpAddr::from(created.group_ip),
         IpAddr::V4(MULTICAST_TEST_IPV4_SSM)
     );
-    assert_eq!(created.tag, TEST_TAG);
+    assert_eq!(created.tag, TEST_TAG.as_ref());
     assert_eq!(created.internal_forwarding.nat_target, nat_target.clone());
     assert_eq!(created.external_forwarding.vlan_id, Some(10));
     assert_eq!(
@@ -658,10 +658,10 @@ async fn test_group_creation_with_validation() -> TestResult {
     );
 
     // Clean up external first (references internal via NAT target), then internal
-    cleanup_test_group(switch, created.group_ip.into(), TEST_TAG)
+    cleanup_test_group(switch, created.group_ip.into(), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -707,16 +707,16 @@ async fn test_underlay_ipv6_validation() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &created.group_ip,
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &update_entry,
         )
         .await
         .expect("Should update internal IPv6 group")
         .into_inner();
 
-    assert_eq!(updated.tag, TEST_TAG);
+    assert_eq!(updated.tag, TEST_TAG.as_ref());
 
-    cleanup_test_group(switch, IpAddr::from(created.group_ip), TEST_TAG).await
+    cleanup_test_group(switch, IpAddr::from(created.group_ip), &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -879,7 +879,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
             .client
             .multicast_group_update_external(
                 &created_external.group_ip,
-                &make_tag(TEST_TAG),
+                &TEST_TAG,
                 &update,
             )
             .await?
@@ -924,7 +924,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
 
     // Delete external group first since it references the internal group via
     // NAT target
-    cleanup_test_group(switch, created_external.group_ip.into(), TEST_TAG)
+    cleanup_test_group(switch, created_external.group_ip.into(), &TEST_TAG)
         .await
         .unwrap();
 
@@ -958,10 +958,10 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
         .unwrap();
     assert_eq!(entry.action, "set_decap_ports");
     assert_eq!(entry.action_args, port_args);
-    cleanup_test_group(switch, recreated.group_ip.into(), TEST_TAG).await?;
-    cleanup_test_group(switch, IpAddr::from(second_admin.group_ip), TEST_TAG)
+    cleanup_test_group(switch, recreated.group_ip.into(), &TEST_TAG).await?;
+    cleanup_test_group(switch, IpAddr::from(second_admin.group_ip), &TEST_TAG)
         .await?;
-    cleanup_test_group(switch, IpAddr::from(created_admin.group_ip), TEST_TAG)
+    cleanup_test_group(switch, IpAddr::from(created_admin.group_ip), &TEST_TAG)
         .await
 }
 
@@ -975,7 +975,7 @@ async fn test_group_api_lifecycle() {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(egress1, types::Direction::Underlay)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -1009,7 +1009,7 @@ async fn test_group_api_lifecycle() {
     let external_group_id = created.external_group_id;
 
     assert_eq!(IpAddr::from(created.group_ip), IpAddr::V4(MULTICAST_TEST_IPV4));
-    assert_eq!(created.tag, TEST_TAG);
+    assert_eq!(created.tag, TEST_TAG.as_ref());
     assert_eq!(created.internal_forwarding.nat_target, nat_target.clone());
     assert_eq!(created.external_forwarding.vlan_id, Some(vlan_id));
 
@@ -1064,7 +1064,7 @@ async fn test_group_api_lifecycle() {
     // Get groups by tag
     let tagged_groups = switch
         .client
-        .multicast_groups_list_by_tag_stream(&make_tag(TEST_TAG), None)
+        .multicast_groups_list_by_tag_stream(&TEST_TAG, None)
         .try_collect::<Vec<_>>()
         .await
         .expect("Should be able to get groups by tag");
@@ -1084,7 +1084,7 @@ async fn test_group_api_lifecycle() {
         .expect("Should be able to get group by ID");
 
     assert_eq!(get_external_group_id(&group[0]), external_group_id);
-    assert_eq!(get_tag(&group[0]), TEST_TAG);
+    assert_eq!(get_tag(&group[0]), TEST_TAG.as_ref());
 
     // Also test getting by IP address
     let group_by_ip = switch
@@ -1118,7 +1118,7 @@ async fn test_group_api_lifecycle() {
         .client
         .multicast_group_update_external(
             &group_ip.try_into().unwrap(),
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &external_update,
         )
         .await
@@ -1126,16 +1126,15 @@ async fn test_group_api_lifecycle() {
         .into_inner();
 
     assert_eq!(updated.external_group_id, external_group_id);
-    assert_eq!(updated.tag, TEST_TAG);
+    assert_eq!(updated.tag, TEST_TAG.as_ref());
     assert_eq!(updated.internal_forwarding.nat_target, updated_nat_target);
     assert_eq!(updated.external_forwarding.vlan_id, Some(20));
     assert_eq!(updated.sources, None);
 
     // Delete the group (must provide matching tag)
-    let del_tag = make_tag(TEST_TAG);
     switch
         .client
-        .multicast_group_delete(&group_ip, &del_tag)
+        .multicast_group_delete(&group_ip, &TEST_TAG)
         .await
         .expect("Should be able to delete group");
 
@@ -1174,7 +1173,7 @@ async fn test_group_api_lifecycle() {
     );
 
     // Clean up the internal group (external was already deleted above)
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await.unwrap();
 }
 
 /// Tests tag validation behavior on multicast group deletion.
@@ -1193,7 +1192,7 @@ async fn test_multicast_del_tag_validation() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(11), types::Direction::Underlay)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -1220,9 +1219,8 @@ async fn test_multicast_del_tag_validation() -> TestResult {
         .expect("Should create tagged group");
 
     // Attempt delete with wrong tag - should fail
-    let del_tag = make_tag(TAG_B);
     let wrong_tag_result =
-        switch.client.multicast_group_delete(&tagged_group_ip, &del_tag).await;
+        switch.client.multicast_group_delete(&tagged_group_ip, &TAG_B).await;
 
     match &wrong_tag_result {
         Err(Error::ErrorResponse(resp)) => {
@@ -1230,6 +1228,10 @@ async fn test_multicast_del_tag_validation() -> TestResult {
                 resp.status(),
                 400,
                 "Wrong tag should return 400 Bad Request"
+            );
+            assert_eq!(
+                resp.error_code.as_deref(),
+                Some(MCAST_TAG_MISMATCH_ERROR_CODE)
             );
         }
         _ => panic!(
@@ -1253,10 +1255,9 @@ async fn test_multicast_del_tag_validation() -> TestResult {
     );
 
     // Case: Delete with correct tag should succeed
-    let del_tag = make_tag(TAG_A);
     switch
         .client
-        .multicast_group_delete(&tagged_group_ip, &del_tag)
+        .multicast_group_delete(&tagged_group_ip, &TAG_A)
         .await
         .expect("Should delete group with matching tag");
 
@@ -1292,18 +1293,17 @@ async fn test_multicast_del_tag_validation() -> TestResult {
 
     // The group should have an auto-generated tag
     assert!(!created.tag.is_empty(), "Group should have auto-generated tag");
-    let auto_tag = created.tag.clone();
+    let auto_tag: MulticastTag = created.tag.parse().unwrap();
 
     // Delete with correct auto-generated tag should succeed
-    let del_tag = make_tag(auto_tag.as_str());
     switch
         .client
-        .multicast_group_delete(&auto_tagged_group_ip, &del_tag)
+        .multicast_group_delete(&auto_tagged_group_ip, &auto_tag)
         .await
         .expect("Should delete group with matching auto-generated tag");
 
     // Clean up internal group
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -1312,14 +1312,16 @@ async fn test_multicast_tagged_groups_management() {
     let switch = &*get_switch().await;
 
     // Create multiple groups with the same tag
-    let tag = "test_tag_management";
+    let tag: MulticastTag = "test_tag_management".parse().unwrap();
+    let internal_tag: MulticastTag =
+        format!("{}_internal", tag).parse().unwrap();
 
     //  Create admin-scoped IPv6 internal group for actual replication
     let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(&format!("{}_internal", tag)),
+        Some(&internal_tag),
         &[(PhysPort(11), types::Direction::Underlay)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -1334,7 +1336,7 @@ async fn test_multicast_tagged_groups_management() {
         create_test_multicast_group(
             switch,
             IpAddr::V6(internal_ip),
-            Some(&format!("{}_internal", tag)),
+            Some(&internal_tag),
             &[(PhysPort(11), types::Direction::Underlay)],
             None,
             types::ExternalForwarding { vlan_id: None },
@@ -1409,7 +1411,7 @@ async fn test_multicast_tagged_groups_management() {
     // List groups by tag
     let tagged_groups = switch
         .client
-        .multicast_groups_list_by_tag_stream(&make_tag(tag), None)
+        .multicast_groups_list_by_tag_stream(&tag, None)
         .try_collect::<Vec<_>>()
         .await
         .expect("Should list groups by tag");
@@ -1425,7 +1427,7 @@ async fn test_multicast_tagged_groups_management() {
     // Delete all groups with the tag
     switch
         .client
-        .multicast_reset_by_tag(&make_tag(tag))
+        .multicast_reset_by_tag(&tag)
         .await
         .expect("Should delete all groups with tag");
 
@@ -1443,7 +1445,7 @@ async fn test_multicast_tagged_groups_management() {
     assert!(!remaining_ips.contains(&IpAddr::from(created2.group_ip)));
     assert!(remaining_ips.contains(&IpAddr::from(created3.group_ip)));
 
-    cleanup_test_group(switch, IpAddr::from(created3.group_ip), TAG_DIFFERENT)
+    cleanup_test_group(switch, IpAddr::from(created3.group_ip), &TAG_DIFFERENT)
         .await
         .unwrap();
     for internal_ip in [
@@ -1451,13 +1453,9 @@ async fn test_multicast_tagged_groups_management() {
         additional_internal_ips[0],
         additional_internal_ips[1],
     ] {
-        cleanup_test_group(
-            switch,
-            IpAddr::V6(internal_ip),
-            &format!("{}_internal", tag),
-        )
-        .await
-        .unwrap();
+        cleanup_test_group(switch, IpAddr::V6(internal_ip), &internal_tag)
+            .await
+            .unwrap();
     }
 }
 
@@ -1510,7 +1508,7 @@ async fn test_api_internal_ipv6_bifurcated_replication() -> TestResult {
     // Verify members are preserved
     assert_eq!(created.members, admin_scoped_group.members);
 
-    cleanup_test_group(switch, IpAddr::from(created.group_ip), TEST_TAG).await
+    cleanup_test_group(switch, IpAddr::from(created.group_ip), &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -1542,7 +1540,7 @@ async fn test_api_internal_ipv6_underlay_only() -> TestResult {
     assert_eq!(created.members.len(), 1);
     assert_eq!(created.members[0].direction, types::Direction::Underlay);
 
-    cleanup_test_group(switch, IpAddr::from(created.group_ip), TEST_TAG).await
+    cleanup_test_group(switch, IpAddr::from(created.group_ip), &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -1575,7 +1573,7 @@ async fn test_api_internal_ipv6_external_only() -> TestResult {
     assert_eq!(created.members.len(), 1);
     assert_eq!(created.members[0].direction, types::Direction::External);
 
-    cleanup_test_group(switch, IpAddr::from(created.group_ip), TEST_TAG).await
+    cleanup_test_group(switch, IpAddr::from(created.group_ip), &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -1588,7 +1586,7 @@ async fn test_api_invalid_combinations() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(26), types::Direction::Underlay)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -1619,7 +1617,7 @@ async fn test_api_invalid_combinations() -> TestResult {
     create_test_multicast_group(
         switch,
         IpAddr::V6(internal_multicast_ip2),
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(26), types::Direction::Underlay)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -1650,14 +1648,14 @@ async fn test_api_invalid_combinations() -> TestResult {
 
     assert!("ff04::500".parse::<ExternalMulticastIp>().is_err());
 
-    cleanup_test_group(switch, created_ipv4.group_ip.into(), TEST_TAG)
+    cleanup_test_group(switch, created_ipv4.group_ip.into(), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, created_non_admin.group_ip.into(), TEST_TAG)
+    cleanup_test_group(switch, created_non_admin.group_ip.into(), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(switch, IpAddr::V6(internal_multicast_ip2), TEST_TAG)
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, IpAddr::V6(internal_multicast_ip2), &TEST_TAG)
         .await
 }
 
@@ -1677,7 +1675,7 @@ async fn test_ipv4_multicast_invalid_destination_mac() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(egress1, types::Direction::Underlay)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -1692,7 +1690,7 @@ async fn test_ipv4_multicast_invalid_destination_mac() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
@@ -1715,15 +1713,17 @@ async fn test_ipv4_multicast_invalid_destination_mac() -> TestResult {
     // Using a unicast MAC instead of the proper multicast MAC
     let invalid_mac = MacAddr::new(0x00, 0x11, 0x22, 0x33, 0x44, 0x55);
 
-    let src_endpoint =
-        Endpoint::parse(&src_mac.to_string(), src_ip, src_port).unwrap();
+    let src_endpoint = Endpoint::L4(L4Endpoint {
+        mac: src_mac,
+        ip: src_ip.parse().unwrap(),
+        port: src_port,
+    });
 
-    let dst_endpoint = Endpoint::parse(
-        &invalid_mac.to_string(),
-        &ipv4_addr.to_string(),
-        dst_port,
-    )
-    .unwrap();
+    let dst_endpoint = Endpoint::L4(L4Endpoint {
+        mac: invalid_mac,
+        ip: ipv4_addr.into(),
+        port: dst_port,
+    });
 
     // Generate packet with invalid MAC
     let to_send = common::gen_udp_packet(src_endpoint, dst_endpoint);
@@ -1749,10 +1749,10 @@ async fn test_ipv4_multicast_invalid_destination_mac() -> TestResult {
     .unwrap();
 
     // Cleanup: Remove both external IPv4 group and underlay IPv6 group
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -1770,7 +1770,7 @@ async fn test_ipv6_multicast_invalid_destination_mac() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(egress1, types::Direction::External)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -1789,12 +1789,17 @@ async fn test_ipv6_multicast_invalid_destination_mac() -> TestResult {
     // Using a unicast MAC instead of the proper 33:33:xx:xx:xx:xx format
     let invalid_mac = MacAddr::new(0x00, 0x11, 0x22, 0x33, 0x44, 0x55);
 
-    let src_endpoint =
-        Endpoint::parse(&src_mac.to_string(), "2001:db8::1", 3333).unwrap();
+    let src_endpoint = Endpoint::L4(L4Endpoint {
+        mac: src_mac,
+        ip: "2001:db8::1".parse().unwrap(),
+        port: 3333,
+    });
 
-    let dst_endpoint =
-        Endpoint::parse(&invalid_mac.to_string(), &ipv6_addr.to_string(), 4444)
-            .unwrap();
+    let dst_endpoint = Endpoint::L4(L4Endpoint {
+        mac: invalid_mac,
+        ip: ipv6_addr.into(),
+        port: 4444,
+    });
 
     // Generate packet with invalid MAC
     let to_send = common::gen_udp_packet(src_endpoint, dst_endpoint);
@@ -1838,7 +1843,7 @@ async fn test_ipv6_multicast_invalid_destination_mac() -> TestResult {
     .await
     .unwrap();
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG).await
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -1855,7 +1860,7 @@ async fn test_multicast_ttl_zero() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(egress1, types::Direction::Underlay)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -1869,7 +1874,7 @@ async fn test_multicast_ttl_zero() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
@@ -1915,10 +1920,10 @@ async fn test_multicast_ttl_zero() -> TestResult {
     .await
     .unwrap();
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -1935,7 +1940,7 @@ async fn test_multicast_ttl_one() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(egress1, types::Direction::Underlay)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -1949,7 +1954,7 @@ async fn test_multicast_ttl_one() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
@@ -1995,10 +2000,10 @@ async fn test_multicast_ttl_one() -> TestResult {
     .await
     .unwrap();
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -2023,7 +2028,7 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &underlay_members,
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -2043,7 +2048,7 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &external_members,
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: vlan },
@@ -2128,10 +2133,10 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
     .unwrap();
 
     // Cleanup external first, then internal
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -2155,7 +2160,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &replication_members,
         None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
@@ -2170,7 +2175,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: vlan },
@@ -2213,21 +2218,18 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
     // According to mcast_tag_check table, when geneve.isValid() is true and
     // mcast_tag is 0, it should invalidate the underlay group and set decap
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(
-                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
-            )
-            .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
+        Endpoint::L4(L4Endpoint {
+            mac: GIMLET_MAC.into(),
+            ip: GIMLET_IP.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
+        Endpoint::L4(L4Endpoint {
+            mac: Ipv6Addr::from(nat_target.internal_ip)
+                .derive_multicast_mac()
+                .into(),
+            ip: nat_target.internal_ip.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
         eth::ETHER_IPV4,
         nat_target.vni.as_u32(),
         0, // mcast_tag = 0
@@ -2344,10 +2346,10 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
         "decapped replicas must not hit the underlay counter"
     );
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, MULTICAST_NAT_IP.into(), TEST_TAG).await
+    cleanup_test_group(switch, MULTICAST_NAT_IP.into(), &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -2366,7 +2368,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress3, types::Direction::Underlay),
             (egress4, types::Direction::Underlay),
@@ -2383,7 +2385,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
@@ -2413,21 +2415,18 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
     let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
 
-    let geneve_src = Endpoint::parse(
-        GIMLET_MAC,
-        &GIMLET_IP.to_string(),
-        geneve::GENEVE_UDP_PORT,
-    )
-    .unwrap();
-    let geneve_dst = Endpoint::parse(
-        &MacAddr::from(
-            Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
-        )
-        .to_string(),
-        &nat_target.internal_ip.to_string(),
-        geneve::GENEVE_UDP_PORT,
-    )
-    .unwrap();
+    let geneve_src = Endpoint::L4(L4Endpoint {
+        mac: GIMLET_MAC.into(),
+        ip: GIMLET_IP.into(),
+        port: geneve::GENEVE_UDP_PORT,
+    });
+    let geneve_dst = Endpoint::L4(L4Endpoint {
+        mac: Ipv6Addr::from(nat_target.internal_ip)
+            .derive_multicast_mac()
+            .into(),
+        ip: nat_target.internal_ip.into(),
+        port: geneve::GENEVE_UDP_PORT,
+    });
 
     // Create the Geneve packet with mcast_tag = 1
     // According to mcast_tag_check table, when geneve.isValid() is true and
@@ -2529,10 +2528,10 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
         "underlay-tagged replicas must not hit the external counter"
     );
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, MULTICAST_NAT_IP.into(), TEST_TAG).await
+    cleanup_test_group(switch, MULTICAST_NAT_IP.into(), &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -2554,7 +2553,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
@@ -2574,7 +2573,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: vlan },
@@ -2609,21 +2608,18 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     // mcast_tag is 2, it should not invalidate any group, decapping only the
     // external group(s)
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(
-                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
-            )
-            .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
+        Endpoint::L4(L4Endpoint {
+            mac: GIMLET_MAC.into(),
+            ip: GIMLET_IP.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
+        Endpoint::L4(L4Endpoint {
+            mac: Ipv6Addr::from(nat_target.internal_ip)
+                .derive_multicast_mac()
+                .into(),
+            ip: nat_target.internal_ip.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
         eth::ETHER_IPV4,
         nat_target.vni.as_u32(),
         2, // mcast_tag = 2
@@ -2815,10 +2811,10 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
         "decapped replicas must not hit the underlay counter"
     );
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, MULTICAST_NAT_IP.into(), TEST_TAG).await
+    cleanup_test_group(switch, MULTICAST_NAT_IP.into(), &TEST_TAG).await
 }
 
 fn build_inner_ttl_geneve_pkt(
@@ -2882,21 +2878,18 @@ fn build_inner_ttl_geneve_pkt(
     };
 
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(
-                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
-            )
-            .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
+        Endpoint::L4(L4Endpoint {
+            mac: GIMLET_MAC.into(),
+            ip: GIMLET_IP.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
+        Endpoint::L4(L4Endpoint {
+            mac: Ipv6Addr::from(nat_target.internal_ip)
+                .derive_multicast_mac()
+                .into(),
+            ip: nat_target.internal_ip.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
         ether_type,
         nat_target.vni.as_u32(),
         mcast_tag,
@@ -2921,7 +2914,7 @@ async fn run_bifurcated_inner_ttl_test(
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress_external, types::Direction::External),
             (egress_underlay, types::Direction::Underlay),
@@ -2941,7 +2934,7 @@ async fn run_bifurcated_inner_ttl_test(
     let created_group = create_test_multicast_group(
         switch,
         external_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[],
         Some(nat_target.clone()),
         types::ExternalForwarding { vlan_id: vlan },
@@ -3073,10 +3066,10 @@ async fn run_bifurcated_inner_ttl_test(
         }
     }
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, MULTICAST_NAT_IP.into(), TEST_TAG).await
+    cleanup_test_group(switch, MULTICAST_NAT_IP.into(), &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -3178,7 +3171,7 @@ async fn run_external_only_inner_ttl_test(
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
@@ -3198,7 +3191,7 @@ async fn run_external_only_inner_ttl_test(
     let created_group = create_test_multicast_group(
         switch,
         external_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[],
         Some(nat_target.clone()),
         types::ExternalForwarding { vlan_id: vlan },
@@ -3323,10 +3316,10 @@ async fn run_external_only_inner_ttl_test(
         );
     }
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, MULTICAST_NAT_IP.into(), TEST_TAG).await
+    cleanup_test_group(switch, MULTICAST_NAT_IP.into(), &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -3674,7 +3667,7 @@ async fn test_ipv4_multicast_drops_ingress_is_egress_port() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(ingress, types::Direction::Underlay)],
         None,
         types::ExternalForwarding { vlan_id: None }, // No NAT target for admin-scoped group
@@ -3688,7 +3681,7 @@ async fn test_ipv4_multicast_drops_ingress_is_egress_port() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: None },
@@ -3731,10 +3724,10 @@ async fn test_ipv4_multicast_drops_ingress_is_egress_port() -> TestResult {
     .await
     .unwrap();
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -3752,7 +3745,7 @@ async fn test_ipv6_multicast_hop_limit_zero() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
@@ -3769,7 +3762,7 @@ async fn test_ipv6_multicast_hop_limit_zero() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
@@ -3811,10 +3804,10 @@ async fn test_ipv6_multicast_hop_limit_zero() -> TestResult {
     .await
     .unwrap();
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -3832,7 +3825,7 @@ async fn test_ipv6_multicast_hop_limit_one() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
@@ -3849,7 +3842,7 @@ async fn test_ipv6_multicast_hop_limit_one() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
@@ -3895,10 +3888,10 @@ async fn test_ipv6_multicast_hop_limit_one() -> TestResult {
     .await
     .unwrap();
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -3917,7 +3910,7 @@ async fn test_ipv6_multicast_basic_replication_nat_ingress() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &underlay_members,
         None,
         types::ExternalForwarding { vlan_id: None }, // Admin-scoped groups don't need NAT targets
@@ -3932,7 +3925,7 @@ async fn test_ipv6_multicast_basic_replication_nat_ingress() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: vlan },
@@ -3997,10 +3990,10 @@ async fn test_ipv6_multicast_basic_replication_nat_ingress() -> TestResult {
     .await
     .unwrap();
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -4020,7 +4013,7 @@ async fn test_ipv4_multicast_source_filtering_exact_match() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
@@ -4040,7 +4033,7 @@ async fn test_ipv4_multicast_source_filtering_exact_match() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
@@ -4112,10 +4105,10 @@ async fn test_ipv4_multicast_source_filtering_exact_match() -> TestResult {
     .await
     .unwrap();
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -4135,7 +4128,7 @@ async fn test_ipv4_multicast_source_filtering_multiple_exact() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
@@ -4162,7 +4155,7 @@ async fn test_ipv4_multicast_source_filtering_multiple_exact() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
@@ -4262,10 +4255,10 @@ async fn test_ipv4_multicast_source_filtering_multiple_exact() -> TestResult {
     .await
     .unwrap();
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -4285,7 +4278,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
@@ -4311,7 +4304,7 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: vlan },
@@ -4414,10 +4407,10 @@ async fn test_ipv6_multicast_multiple_source_filtering() -> TestResult {
     .await
     .unwrap();
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -4436,7 +4429,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
@@ -4454,7 +4447,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
@@ -4515,7 +4508,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
         .client
         .multicast_group_update_external(
             &get_group_ip(&created_group).try_into().unwrap(),
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &external_update_entry,
         )
         .await
@@ -4550,7 +4543,7 @@ async fn test_multicast_dynamic_membership() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &UnderlayMulticastIpv6::try_from(ipv6).unwrap(),
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &internal_update_entry,
         )
         .await
@@ -4581,10 +4574,10 @@ async fn test_multicast_dynamic_membership() -> TestResult {
 
     switch.packet_test(vec![test_pkt_new], expected_pkts_new).unwrap();
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -4604,7 +4597,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
@@ -4624,7 +4617,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
     let created_group1 = create_test_multicast_group(
         switch,
         multicast_ip1,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
@@ -4636,7 +4629,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
     create_test_multicast_group(
         switch,
         IpAddr::V6(internal_multicast_ip2),
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
@@ -4656,7 +4649,7 @@ async fn test_multicast_multiple_groups() -> TestResult {
     let created_group2 = create_test_multicast_group(
         switch,
         multicast_ip2,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(types::ExternalNatTarget {
             internal_ip: internal_multicast_ip2.try_into().unwrap(),
@@ -4770,14 +4763,14 @@ async fn test_multicast_multiple_groups() -> TestResult {
 
     switch.packet_test(test_pkts, expected_pkts).unwrap();
 
-    cleanup_test_group(switch, get_group_ip(&created_group1), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group1), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, get_group_ip(&created_group2), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group2), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(switch, IpAddr::V6(internal_multicast_ip2), TEST_TAG)
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, IpAddr::V6(internal_multicast_ip2), &TEST_TAG)
         .await
 }
 
@@ -4797,7 +4790,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress1, types::Direction::External),
             (egress2, types::Direction::External),
@@ -4815,7 +4808,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
         create_test_multicast_group(
             switch,
             IpAddr::V6(internal_ip),
-            Some(TEST_TAG),
+            Some(&TEST_TAG),
             &[
                 (egress1, types::Direction::External),
                 (egress2, types::Direction::External),
@@ -4834,7 +4827,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     let created_group1 = create_test_multicast_group(
         switch,
         multicast_ip1,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: vlan1 },
@@ -4849,7 +4842,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     let created_group2 = create_test_multicast_group(
         switch,
         multicast_ip2,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(types::ExternalNatTarget {
             internal_ip: additional_internal_ips[0].try_into().unwrap(),
@@ -4891,7 +4884,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     let created_group3 = create_test_multicast_group(
         switch,
         multicast_ip3,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(types::ExternalNatTarget {
             internal_ip: additional_internal_ips[1].try_into().unwrap(),
@@ -4911,7 +4904,7 @@ async fn test_multicast_reset_all_tables() -> TestResult {
     let created_group4 = create_test_multicast_group(
         switch,
         multicast_ip4,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(types::ExternalNatTarget {
             internal_ip: additional_internal_ips[2].try_into().unwrap(),
@@ -5140,7 +5133,7 @@ async fn test_multicast_multiple_packets() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (egress1, types::Direction::Underlay),
             (egress2, types::Direction::Underlay),
@@ -5159,7 +5152,7 @@ async fn test_multicast_multiple_packets() -> TestResult {
     let created_group = create_test_multicast_group(
         switch,
         multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // External groups have no members
         Some(create_nat_target_ipv4()),
         types::ExternalForwarding { vlan_id: Some(10) },
@@ -5240,10 +5233,10 @@ async fn test_multicast_multiple_packets() -> TestResult {
     .await
     .unwrap();
 
-    cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -5461,7 +5454,7 @@ async fn test_external_group_nat_target_validation() -> TestResult {
         .client
         .multicast_group_update_external(
             &created_external.group_ip,
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &update_with_missing_nat_target,
         )
         .await
@@ -5519,7 +5512,7 @@ async fn test_external_group_nat_target_validation() -> TestResult {
         .client
         .multicast_group_update_external(
             &created_external.group_ip,
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &update_with_missing_nat_target,
         )
         .await
@@ -5543,14 +5536,14 @@ async fn test_external_group_nat_target_validation() -> TestResult {
     );
 
     // Delete external group first since it references the internal group via NAT target
-    cleanup_test_group(switch, created_external.group_ip.into(), TEST_TAG)
+    cleanup_test_group(switch, created_external.group_ip.into(), &TEST_TAG)
         .await
         .unwrap();
-    cleanup_test_group(switch, second_external.group_ip.into(), TEST_TAG)
+    cleanup_test_group(switch, second_external.group_ip.into(), &TEST_TAG)
         .await?;
-    cleanup_test_group(switch, IpAddr::from(second_admin.group_ip), TEST_TAG)
+    cleanup_test_group(switch, IpAddr::from(second_admin.group_ip), &TEST_TAG)
         .await?;
-    cleanup_test_group(switch, IpAddr::from(created_admin.group_ip), TEST_TAG)
+    cleanup_test_group(switch, IpAddr::from(created_admin.group_ip), &TEST_TAG)
         .await
 }
 
@@ -5612,20 +5605,18 @@ async fn test_ipv6_multicast_scope_validation() {
     let admin_local_group = admin_local_result.unwrap().into_inner();
     let target_group = target_result.into_inner();
 
-    let del_tag = make_tag(TEST_TAG);
     switch
         .client
         .multicast_group_delete(
             &IpAddr::from(admin_local_group.group_ip),
-            &del_tag,
+            &TEST_TAG,
         )
         .await
         .ok();
 
-    let del_tag = make_tag(TEST_TAG);
     switch
         .client
-        .multicast_group_delete(&IpAddr::from(target_group.group_ip), &del_tag)
+        .multicast_group_delete(&IpAddr::from(target_group.group_ip), &TEST_TAG)
         .await
         .ok();
 }
@@ -5671,7 +5662,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
     let group1 = create_test_multicast_group(
         switch,
         group1_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(11), types::Direction::External)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -5683,7 +5674,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
     let group2 = create_test_multicast_group(
         switch,
         group2_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(12), types::Direction::External)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -5694,10 +5685,9 @@ async fn test_multicast_group_id_recycling() -> TestResult {
     assert_ne!(get_external_group_id(&group1), get_external_group_id(&group2));
 
     // Delete the first group
-    let del_tag = make_tag(TEST_TAG);
     switch
         .client
-        .multicast_group_delete(&group1_ip, &del_tag)
+        .multicast_group_delete(&group1_ip, &TEST_TAG)
         .await
         .expect("Should be able to delete first group");
 
@@ -5717,7 +5707,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
     let group3 = create_test_multicast_group(
         switch,
         group3_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(13), types::Direction::External)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -5734,10 +5724,9 @@ async fn test_multicast_group_id_recycling() -> TestResult {
     );
 
     // Create a fourth group after deleting group2, it should reuse group2's ID
-    let del_tag = make_tag(TEST_TAG);
     switch
         .client
-        .multicast_group_delete(&group2_ip, &del_tag)
+        .multicast_group_delete(&group2_ip, &TEST_TAG)
         .await
         .expect("Should be able to delete second group");
 
@@ -5766,7 +5755,7 @@ async fn test_multicast_group_id_recycling() -> TestResult {
     let group4 = create_test_multicast_group(
         switch,
         group4_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(14), types::Direction::External)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -5781,8 +5770,8 @@ async fn test_multicast_group_id_recycling() -> TestResult {
         "Fourth group should reuse Group2's underlay ID due to LIFO recycling"
     );
 
-    cleanup_test_group(switch, group3_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(switch, group4_ip, TEST_TAG).await
+    cleanup_test_group(switch, group3_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, group4_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -5807,7 +5796,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     create_test_multicast_group(
         &switch,
         internal_group_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // No members (Omicron setup)
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -5891,21 +5880,18 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(
-                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
-            )
-            .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
+        Endpoint::L4(L4Endpoint {
+            mac: GIMLET_MAC.into(),
+            ip: GIMLET_IP.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
+        Endpoint::L4(L4Endpoint {
+            mac: Ipv6Addr::from(nat_target.internal_ip)
+                .derive_multicast_mac()
+                .into(),
+            ip: nat_target.internal_ip.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
         eth::ETHER_IPV6,
         nat_target.vni.as_u32(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
@@ -5975,11 +5961,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
 
     switch
         .client
-        .multicast_group_update_underlay(
-            &ipv6_update,
-            &make_tag(TEST_TAG),
-            &update_entry,
-        )
+        .multicast_group_update_underlay(&ipv6_update, &TEST_TAG, &update_entry)
         .await
         .expect("Should update internal group with members");
 
@@ -6019,21 +6001,18 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     // Create Geneve packet for the underlay to underlay replication, no decap
     let payload2 = og_pkt2.deparse().unwrap()[eth_hdr_len..].to_vec();
     let to_send_again = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(
-                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
-            )
-            .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
+        Endpoint::L4(L4Endpoint {
+            mac: GIMLET_MAC.into(),
+            ip: GIMLET_IP.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
+        Endpoint::L4(L4Endpoint {
+            mac: Ipv6Addr::from(nat_target.internal_ip)
+                .derive_multicast_mac()
+                .into(),
+            ip: nat_target.internal_ip.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
         eth::ETHER_IPV6,
         nat_target.vni.as_u32(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
@@ -6107,7 +6086,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &ipv6_update,
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &empty_update_entry,
         )
         .await
@@ -6163,11 +6142,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
 
     switch
         .client
-        .multicast_group_update_underlay(
-            &ipv6_update,
-            &make_tag(TEST_TAG),
-            &readd_entry,
-        )
+        .multicast_group_update_underlay(&ipv6_update, &TEST_TAG, &readd_entry)
         .await
         .expect("Should re-add members after removing all");
 
@@ -6189,8 +6164,8 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         "Internal group should have 3 members after re-add"
     );
 
-    cleanup_test_group(&switch, external_group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(&switch, external_group_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -6214,7 +6189,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     create_test_multicast_group(
         &switch,
         internal_group_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[], // No members
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -6296,21 +6271,18 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
     let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(
-                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
-            )
-            .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
+        Endpoint::L4(L4Endpoint {
+            mac: GIMLET_MAC.into(),
+            ip: GIMLET_IP.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
+        Endpoint::L4(L4Endpoint {
+            mac: Ipv6Addr::from(nat_target.internal_ip)
+                .derive_multicast_mac()
+                .into(),
+            ip: nat_target.internal_ip.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
         eth::ETHER_IPV4,
         nat_target.vni.as_u32(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
@@ -6375,11 +6347,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
 
     switch
         .client
-        .multicast_group_update_underlay(
-            &ipv6_update,
-            &make_tag(TEST_TAG),
-            &update_entry,
-        )
+        .multicast_group_update_underlay(&ipv6_update, &TEST_TAG, &update_entry)
         .await
         .expect("Should update internal group with members");
 
@@ -6419,21 +6387,18 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     // Create Geneve packet for the second test
     let payload2 = og_pkt2.deparse().unwrap()[eth_hdr_len..].to_vec();
     let test_packet2 = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(
-                Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac(),
-            )
-            .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
+        Endpoint::L4(L4Endpoint {
+            mac: GIMLET_MAC.into(),
+            ip: GIMLET_IP.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
+        Endpoint::L4(L4Endpoint {
+            mac: Ipv6Addr::from(nat_target.internal_ip)
+                .derive_multicast_mac()
+                .into(),
+            ip: nat_target.internal_ip.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
         eth::ETHER_IPV4,
         nat_target.vni.as_u32(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
@@ -6507,7 +6472,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &ipv6_update,
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &empty_update_entry,
         )
         .await
@@ -6553,8 +6518,8 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
 
     switch.packet_test(vec![send_final], expected_final)?;
 
-    cleanup_test_group(&switch, external_group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(&switch, external_group_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -6579,7 +6544,7 @@ async fn test_multicast_create_missing_nat_target_preserves_state() -> TestResul
     create_test_multicast_group(
         &switch,
         internal_group_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (PhysPort(15), types::Direction::External),
             (PhysPort(17), types::Direction::Underlay),
@@ -6729,7 +6694,7 @@ async fn test_multicast_create_missing_nat_target_preserves_state() -> TestResul
         "Source filter table should be unchanged after rollback"
     );
 
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -6752,7 +6717,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
     create_test_multicast_group(
         &switch,
         internal_group_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (PhysPort(15), types::Direction::External),
             (PhysPort(17), types::Direction::Underlay),
@@ -6796,7 +6761,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &ipv6_update,
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &update_request,
         )
         .await;
@@ -6818,7 +6783,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
         "Member count should be unchanged after rollback"
     );
 
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -6842,7 +6807,7 @@ async fn test_multicast_update_invalid_nat_mac_preserves_state() -> TestResult {
     create_test_multicast_group(
         &switch,
         internal_group_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(15), types::Direction::External)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -6914,7 +6879,7 @@ async fn test_multicast_update_invalid_nat_mac_preserves_state() -> TestResult {
         .client
         .multicast_group_update_external(
             &external_group_ip.try_into().unwrap(),
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &invalid_update,
         )
         .await;
@@ -6962,8 +6927,8 @@ async fn test_multicast_update_invalid_nat_mac_preserves_state() -> TestResult {
         "NAT table should be unchanged after rollback"
     );
 
-    cleanup_test_group(&switch, external_group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(&switch, external_group_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -6977,7 +6942,7 @@ async fn test_multicast_update_invalid_source_preserves_state() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_multicast_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(egress1, types::Direction::External)],
         None,
         types::ExternalForwarding { vlan_id: None }, // No NAT needed for internal groups
@@ -7039,7 +7004,7 @@ async fn test_multicast_update_invalid_source_preserves_state() -> TestResult {
         .client
         .multicast_group_update_external(
             &group_ip.try_into().unwrap(),
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &failing_update_entry,
         )
         .await;
@@ -7081,8 +7046,8 @@ async fn test_multicast_update_invalid_source_preserves_state() -> TestResult {
     );
 
     // Clean up external group first (it references internal group via NAT target)
-    cleanup_test_group(&switch, group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(&switch, group_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(&switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -7105,7 +7070,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
     create_test_multicast_group(
         &switch,
         internal_group_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (PhysPort(15), types::Direction::External),
             (PhysPort(16), types::Direction::Underlay),
@@ -7165,7 +7130,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &ipv6_update,
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &update_request,
         )
         .await;
@@ -7190,7 +7155,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
         "Member count should be unchanged after partial addition rollback"
     );
 
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -7214,7 +7179,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
     let _created_group = create_test_multicast_group(
         &switch,
         internal_group_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[
             (PhysPort(10), types::Direction::External),
             (PhysPort(12), types::Direction::Underlay),
@@ -7243,7 +7208,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
 
     // Verify the response matches what we created
     assert_eq!(IpAddr::from(retrieved_underlay.group_ip), internal_group_ip);
-    assert_eq!(retrieved_underlay.tag, TEST_TAG);
+    assert_eq!(retrieved_underlay.tag, TEST_TAG.as_ref());
     assert_eq!(retrieved_underlay.members.len(), 2);
 
     // Compare with generic GET endpoint result
@@ -7275,7 +7240,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
             );
         }
     }
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
 }
 
 const SOURCE_FILTER_IPV4_TABLE: &str =
@@ -7310,7 +7275,7 @@ async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
     let _internal = create_test_multicast_group(
         switch,
         internal_group_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(10), types::Direction::External)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -7381,10 +7346,9 @@ async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
 
     // Verify deletion ordering: attempting to delete internal group first should fail
     // because the external group still references it via NAT target
-    let del_tag = make_tag(TEST_TAG);
     let delete_internal_first_result = switch
         .client
-        .multicast_group_delete(&internal_group_ip, &del_tag)
+        .multicast_group_delete(&internal_group_ip, &TEST_TAG)
         .await;
 
     if let Err(Error::ErrorResponse(resp)) = &delete_internal_first_result {
@@ -7398,8 +7362,8 @@ async fn test_source_filter_ipv4_collapses_to_any() -> TestResult {
     }
 
     // Cleanup in correct order: external first, then internal
-    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, external_group_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_group_ip, &TEST_TAG).await
 }
 
 /// Test IPv6 source filter collapsing when `IpSrc::Any` is present.
@@ -7426,7 +7390,7 @@ async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
     let _internal = create_test_multicast_group(
         switch,
         internal_group_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(10), types::Direction::External)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -7495,10 +7459,9 @@ async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
     // because the external group still references it via NAT target.
     // This is particularly important for IPv6 where external groups (ff0e::*)
     // sort AFTER internal groups (ff04::*) in BTreeMap iteration order.
-    let del_tag = make_tag(TEST_TAG);
     let delete_internal_first_result = switch
         .client
-        .multicast_group_delete(&internal_group_ip, &del_tag)
+        .multicast_group_delete(&internal_group_ip, &TEST_TAG)
         .await;
 
     if let Err(Error::ErrorResponse(resp)) = &delete_internal_first_result {
@@ -7512,8 +7475,8 @@ async fn test_source_filter_ipv6_collapses_to_any() -> TestResult {
     }
 
     // Cleanup in correct order: external first, then internal
-    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, external_group_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_group_ip, &TEST_TAG).await
 }
 
 /// Test that updating a group from specific sources to include `Any`
@@ -7539,7 +7502,7 @@ async fn test_source_filter_update_to_any() -> TestResult {
     let _internal = create_test_multicast_group(
         switch,
         internal_group_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(10), types::Direction::External)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -7613,7 +7576,7 @@ async fn test_source_filter_update_to_any() -> TestResult {
         .client
         .multicast_group_update_external(
             &external_group_ip.try_into().unwrap(),
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &update_entry,
         )
         .await
@@ -7732,8 +7695,8 @@ async fn test_source_filter_update_to_any() -> TestResult {
     );
 
     // Cleanup in correct order: external first, then internal
-    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, external_group_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_group_ip, &TEST_TAG).await
 }
 
 /// Test that source filter entries are properly cleaned up when a group is deleted.
@@ -7758,7 +7721,7 @@ async fn test_source_filter_cleanup_on_delete() -> TestResult {
     let _internal = create_test_multicast_group(
         switch,
         internal_group_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(10), types::Direction::External)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -7816,7 +7779,7 @@ async fn test_source_filter_cleanup_on_delete() -> TestResult {
     );
 
     // Delete the external group
-    cleanup_test_group(switch, external_group_ip, TEST_TAG)
+    cleanup_test_group(switch, external_group_ip, &TEST_TAG)
         .await
         .expect("Should delete external group");
 
@@ -7833,7 +7796,7 @@ async fn test_source_filter_cleanup_on_delete() -> TestResult {
         "Source filter entries should be cleaned up after group deletion"
     );
 
-    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, &TEST_TAG).await
 }
 
 /// Test that empty sources `Some(vec![])` is normalized to None and adds /0 entry.
@@ -7858,7 +7821,7 @@ async fn test_source_filter_empty_vec_normalizes_to_any() -> TestResult {
     let _internal = create_test_multicast_group(
         switch,
         internal_group_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(10), types::Direction::External)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -7921,7 +7884,7 @@ async fn test_source_filter_empty_vec_normalizes_to_any() -> TestResult {
     );
 
     // Cleanup
-    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, external_group_ip, &TEST_TAG).await.unwrap();
 
     // Verify the /0 entry was removed
     let after_delete_table = switch
@@ -7936,7 +7899,7 @@ async fn test_source_filter_empty_vec_normalizes_to_any() -> TestResult {
         "Source filter entry should be cleaned up after deletion"
     );
 
-    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, &TEST_TAG).await
 }
 
 /// Test that updating non-existent groups returns 404.
@@ -7944,6 +7907,7 @@ async fn test_source_filter_empty_vec_normalizes_to_any() -> TestResult {
 #[ignore]
 async fn test_update_nonexistent_group_returns_404() -> TestResult {
     let switch = &*get_switch().await;
+    let tag: MulticastTag = "nonexistent_test".parse().unwrap();
 
     // Case: Update non-existent underlay group
     let nonexistent_underlay: UnderlayMulticastIpv6 =
@@ -7964,7 +7928,7 @@ async fn test_update_nonexistent_group_returns_404() -> TestResult {
         .client
         .multicast_group_update_underlay(
             &nonexistent_underlay,
-            &make_tag("nonexistent_test"),
+            &tag,
             &underlay_update,
         )
         .await;
@@ -7997,7 +7961,7 @@ async fn test_update_nonexistent_group_returns_404() -> TestResult {
         .client
         .multicast_group_update_external(
             &nonexistent_external.try_into().unwrap(),
-            &make_tag("nonexistent_test"),
+            &tag,
             &external_update,
         )
         .await;
@@ -8025,7 +7989,7 @@ async fn test_delete_nonexistent_group_returns_404() -> TestResult {
     // Case: Delete non-existent group with a tag provided
     let nonexistent_ip = IpAddr::V4(Ipv4Addr::new(239, 255, 255, 253));
 
-    let del_tag = make_tag("some_tag");
+    let del_tag: MulticastTag = "some_tag".parse().unwrap();
     let result =
         switch.client.multicast_group_delete(&nonexistent_ip, &del_tag).await;
 
@@ -8056,7 +8020,7 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
         Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 0x501)
             .try_into()
             .unwrap();
-    let tag = "recovery_flow_test";
+    let tag: MulticastTag = "recovery_flow_test".parse().unwrap();
 
     // Case: Create underlay group with initial member
     let (port_id_1, link_id_1) = switch.link_id(PhysPort(15)).unwrap();
@@ -8079,10 +8043,9 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
     assert_eq!(created.into_inner().members.len(), 1);
 
     // Case: Delete the group (simulating recovery from stale state)
-    let del_tag = make_tag(tag);
     switch
         .client
-        .multicast_group_delete(&IpAddr::from(group_ip), &del_tag)
+        .multicast_group_delete(&IpAddr::from(group_ip), &tag)
         .await
         .expect("Should delete group during recovery");
 
@@ -8127,7 +8090,7 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
         2,
         "Recreated group should have 2 members"
     );
-    assert_eq!(recreated_inner.tag, tag);
+    assert_eq!(recreated_inner.tag, tag.as_ref());
 
     // Verify we can fetch it
     let fetched = switch
@@ -8141,7 +8104,7 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
     // Cleanup
     switch
         .client
-        .multicast_reset_by_tag(&make_tag(tag))
+        .multicast_reset_by_tag(&tag)
         .await
         .expect("Should cleanup by tag");
 
@@ -8154,7 +8117,7 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
 #[ignore]
 async fn test_vlan_lifecycle_route_entries() -> TestResult {
     let switch = &*get_switch().await;
-    let tag = "vlan_lifecycle_test";
+    let tag: MulticastTag = "vlan_lifecycle_test".parse().unwrap();
 
     // Setup: create internal admin-scoped group for NAT target
     let internal_ip = IpAddr::V6(MULTICAST_NAT_IP);
@@ -8162,7 +8125,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_ip,
-        Some(tag),
+        Some(&tag),
         &[(egress_port, types::Direction::Underlay)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -8204,7 +8167,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
         .client
         .multicast_group_update_external(
             &group_ip.try_into().unwrap(),
-            &make_tag(tag),
+            &tag,
             &update_add_vlan,
         )
         .await
@@ -8234,7 +8197,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
         .client
         .multicast_group_update_external(
             &group_ip.try_into().unwrap(),
-            &make_tag(tag),
+            &tag,
             &update_change_vlan,
         )
         .await
@@ -8268,7 +8231,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
         .client
         .multicast_group_update_external(
             &group_ip.try_into().unwrap(),
-            &make_tag(tag),
+            &tag,
             &update_remove_vlan,
         )
         .await
@@ -8288,7 +8251,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
     // Cleanup
     switch
         .client
-        .multicast_reset_by_tag(&make_tag(tag))
+        .multicast_reset_by_tag(&tag)
         .await
         .expect("Should cleanup by tag");
 
@@ -8302,7 +8265,7 @@ async fn test_vlan_lifecycle_route_entries() -> TestResult {
 #[ignore]
 async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
     let switch = &*get_switch().await;
-    let tag = "vlan_lifecycle_v6_test";
+    let tag: MulticastTag = "vlan_lifecycle_v6_test".parse().unwrap();
 
     // Setup: create internal admin-scoped group for NAT target
     let internal_ip = IpAddr::V6(MULTICAST_NAT_IP);
@@ -8310,7 +8273,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_ip,
-        Some(tag),
+        Some(&tag),
         &[(egress_port, types::Direction::Underlay)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -8353,7 +8316,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
         .client
         .multicast_group_update_external(
             &group_ip.try_into().unwrap(),
-            &make_tag(tag),
+            &tag,
             &update_add_vlan,
         )
         .await
@@ -8383,7 +8346,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
         .client
         .multicast_group_update_external(
             &group_ip.try_into().unwrap(),
-            &make_tag(tag),
+            &tag,
             &update_change_vlan,
         )
         .await
@@ -8417,7 +8380,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
         .client
         .multicast_group_update_external(
             &group_ip.try_into().unwrap(),
-            &make_tag(tag),
+            &tag,
             &update_remove_vlan,
         )
         .await
@@ -8437,7 +8400,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
     // Cleanup
     switch
         .client
-        .multicast_reset_by_tag(&make_tag(tag))
+        .multicast_reset_by_tag(&tag)
         .await
         .expect("Should cleanup by tag");
 
@@ -8450,7 +8413,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
 /// group's tag. This prevents unauthorized modifications.
 #[tokio::test]
 #[ignore]
-async fn test_tag_immutability_on_update() -> TestResult {
+async fn test_underlay_update_rejects_tag_mismatch() -> TestResult {
     let switch = &*get_switch().await;
 
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
@@ -8486,11 +8449,7 @@ async fn test_tag_immutability_on_update() -> TestResult {
 
     let result = switch
         .client
-        .multicast_group_update_underlay(
-            &group_ip,
-            &make_tag(TAG_WRONG),
-            &update_entry,
-        )
+        .multicast_group_update_underlay(&group_ip, &TAG_WRONG, &update_entry)
         .await;
 
     match &result {
@@ -8500,10 +8459,14 @@ async fn test_tag_immutability_on_update() -> TestResult {
                 400,
                 "Update with wrong tag should return 400"
             );
+            assert_eq!(
+                resp.error_code.as_deref(),
+                Some(MCAST_TAG_MISMATCH_ERROR_CODE)
+            );
             // Security: error should not reveal the correct tag
             let body = format!("{:?}", resp);
             assert!(
-                !body.contains(TAG_A),
+                !body.contains(TAG_A.as_ref()),
                 "Error message should not reveal correct tag"
             );
         }
@@ -8513,10 +8476,9 @@ async fn test_tag_immutability_on_update() -> TestResult {
     }
 
     // Cleanup
-    let del_tag = make_tag(TAG_A);
     switch
         .client
-        .multicast_group_delete(&IpAddr::from(group_ip), &del_tag)
+        .multicast_group_delete(&IpAddr::from(group_ip), &TAG_A)
         .await
         .expect("Should delete with correct tag");
 
@@ -8556,10 +8518,9 @@ async fn test_tag_validation_on_delete() -> TestResult {
     let group_ip = created.group_ip;
 
     // Attempt delete with wrong tag
-    let del_tag = make_tag(TAG_WRONG);
     let result = switch
         .client
-        .multicast_group_delete(&IpAddr::from(group_ip), &del_tag)
+        .multicast_group_delete(&IpAddr::from(group_ip), &TAG_WRONG)
         .await;
 
     match &result {
@@ -8568,6 +8529,10 @@ async fn test_tag_validation_on_delete() -> TestResult {
                 resp.status(),
                 400,
                 "Delete with wrong tag should return 400"
+            );
+            assert_eq!(
+                resp.error_code.as_deref(),
+                Some(MCAST_TAG_MISMATCH_ERROR_CODE)
             );
         }
         _ => {
@@ -8582,13 +8547,16 @@ async fn test_tag_validation_on_delete() -> TestResult {
         .await
         .expect("Group should still exist after failed delete");
 
-    assert_eq!(fetched.into_inner().tag, TAG_A, "Tag should be preserved");
+    assert_eq!(
+        fetched.into_inner().tag,
+        TAG_A.as_ref(),
+        "Tag should be preserved"
+    );
 
     // Delete with correct tag
-    let del_tag = make_tag(TAG_A);
     switch
         .client
-        .multicast_group_delete(&IpAddr::from(group_ip), &del_tag)
+        .multicast_group_delete(&IpAddr::from(group_ip), &TAG_A)
         .await
         .expect("Should delete with correct tag");
 
@@ -8611,7 +8579,7 @@ async fn test_tag_validation() -> TestResult {
     create_test_multicast_group(
         switch,
         internal_ip,
-        Some(TEST_TAG),
+        Some(&TEST_TAG),
         &[(PhysPort(11), types::Direction::Underlay)],
         None,
         types::ExternalForwarding { vlan_id: None },
@@ -8648,7 +8616,7 @@ async fn test_tag_validation() -> TestResult {
         .client
         .multicast_group_update_external(
             &external_ip.try_into().unwrap(),
-            &make_tag(TAG_WRONG),
+            &TAG_WRONG,
             &update_entry,
         )
         .await;
@@ -8660,24 +8628,29 @@ async fn test_tag_validation() -> TestResult {
                 400,
                 "Update with wrong tag should return 400"
             );
+            assert_eq!(
+                resp.error_code.as_deref(),
+                Some(MCAST_TAG_MISMATCH_ERROR_CODE)
+            );
             assert!(
-                !format!("{:?}", resp).contains(TAG_A),
+                !format!("{:?}", resp).contains(TAG_A.as_ref()),
                 "Error should not reveal tag"
             );
         }
         _ => panic!("Expected ErrorResponse for tag mismatch"),
     }
 
-    cleanup_test_group(switch, external_ip, TAG_A).await.unwrap();
-    cleanup_test_group(switch, internal_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, external_ip, &TAG_A).await.unwrap();
+    cleanup_test_group(switch, internal_ip, &TEST_TAG).await.unwrap();
 
     // Case: Case-sensitive tag matching
 
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
 
+    let case_tag: MulticastTag = "CaseSensitiveTag".parse().unwrap();
     let create_entry = types::MulticastGroupCreateUnderlayEntry {
         group_ip: "ff04::900".parse().unwrap(),
-        tag: Some("CaseSensitiveTag".to_string()),
+        tag: Some(case_tag.to_string()),
         members: vec![types::MulticastGroupMember {
             port_id: port_id.clone(),
             link_id,
@@ -8694,7 +8667,7 @@ async fn test_tag_validation() -> TestResult {
 
     let case_group_ip = created.group_ip;
 
-    let del_tag = make_tag("casesensitivetag");
+    let del_tag: MulticastTag = "casesensitivetag".parse().unwrap();
     let result = switch
         .client
         .multicast_group_delete(&IpAddr::from(case_group_ip), &del_tag)
@@ -8705,18 +8678,18 @@ async fn test_tag_validation() -> TestResult {
         "Case-insensitive tag should fail"
     );
 
-    let del_tag = make_tag("CaseSensitiveTag");
     switch
         .client
-        .multicast_group_delete(&IpAddr::from(case_group_ip), &del_tag)
+        .multicast_group_delete(&IpAddr::from(case_group_ip), &case_tag)
         .await
         .expect("Should delete with correct case");
 
     // Case: Reset by non-existent tag (no-op)
 
+    let nonexistent_tag: MulticastTag = "nonexistent_tag_xyz".parse().unwrap();
     switch
         .client
-        .multicast_reset_by_tag(&make_tag("nonexistent_tag_xyz"))
+        .multicast_reset_by_tag(&nonexistent_tag)
         .await
         .expect("Reset with non-existent tag should succeed");
 
