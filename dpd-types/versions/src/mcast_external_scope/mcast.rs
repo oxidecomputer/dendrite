@@ -173,8 +173,8 @@ pub enum ExternalMulticastIpError {
     /// routing.
     #[error(
         "Address {0} is in the reserved underlay multicast subnet (ff04::/64, \
-         within admin-local scope ff04::/16) and must be created via the \
-         internal multicast API"
+         within admin-local scope ff04::/16) and cannot be used as an \
+         external group"
     )]
     ReservedUnderlaySubnet(IpAddr),
 
