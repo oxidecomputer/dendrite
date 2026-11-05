@@ -7619,7 +7619,7 @@ async fn test_source_filter_update_to_any() -> TestResult {
         .client
         .multicast_group_update_external(
             &external_group_ip.try_into().unwrap(),
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &narrow_entry,
         )
         .await
@@ -7656,7 +7656,7 @@ async fn test_source_filter_update_to_any() -> TestResult {
         .client
         .multicast_group_update_external(
             &external_group_ip.try_into().unwrap(),
-            &make_tag(TEST_TAG),
+            &TEST_TAG,
             &keep_entry,
         )
         .await

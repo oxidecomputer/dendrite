@@ -274,6 +274,8 @@ pub struct AsicConfig {
     pub table_entry_update: TableChaos,
     pub table_entry_del: TableChaos,
     pub mc_config: AsicMulticastConfig,
+    #[serde(default)]
+    pub entries_unsupported: BTreeSet<TableType>,
 }
 
 impl AsicConfig {
@@ -318,6 +320,7 @@ impl AsicConfig {
                 faults: BTreeMap::new(),
                 unsupported: BTreeSet::new(),
             },
+            entries_unsupported: BTreeSet::new(),
         }
     }
 

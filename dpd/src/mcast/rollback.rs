@@ -1827,6 +1827,129 @@ mod chaos_tests {
         }
     }
 
+    const UNLISTED_SOURCE_CASES: [(&str, &str, &str); 2] = [
+        ("224.1.2.3", "192.0.2.1", "192.0.2.2"),
+        ("ff0e::1", "2001:db8::1", "2001:db8::2"),
+    ];
+
+    fn unlisted_source_filter_group(
+        external_ip: IpAddr,
+        tag: &str,
+        source_ips: &[IpAddr],
+    ) -> (Switch, NatTarget) {
+        let (_, source_table, _) = external_tables(external_ip);
+        let mut config = Config::default();
+        config.asic_config.entries_unsupported.insert(source_table);
+        let (switch, _logs) = chaos_switch(config);
+        let (underlay_ip, _) = install_underlay_group(&switch);
+        let nat_target = external_nat_target(external_ip, underlay_ip);
+        let sources: Vec<serde_json::Value> = source_ips
+            .iter()
+            .map(|source_ip| serde_json::json!({ "Exact": source_ip }))
+            .collect();
+        add_group_external(
+            &switch,
+            external_entry(
+                external_ip,
+                tag,
+                nat_target,
+                None,
+                serde_json::Value::Array(sources),
+            ),
+        )
+        .unwrap();
+        (switch, nat_target)
+    }
+
+    fn take_source_filter(
+        switch: &Switch,
+        external_ip: IpAddr,
+        source_ip: IpAddr,
+    ) -> bool {
+        let (_, source_table, _) = external_tables(external_ip);
+        let (_, _, deletes_before, _) = table_usage(switch, source_table);
+        clear_source_filter(switch, external_ip, IpSrc::Exact(source_ip))
+            .unwrap();
+        let (_, _, deletes_after, _) = table_usage(switch, source_table);
+        deletes_after > deletes_before
+    }
+
+    #[test]
+    fn test_external_create_with_unlisted_source_filters() {
+        for (group_ip, first_source, second_source) in UNLISTED_SOURCE_CASES {
+            let external_ip: IpAddr = group_ip.parse().unwrap();
+            let source_ips: [IpAddr; 2] =
+                [first_source.parse().unwrap(), second_source.parse().unwrap()];
+            let (switch, _) = unlisted_source_filter_group(
+                external_ip,
+                "external-unlisted-create-test",
+                &source_ips,
+            );
+
+            for source_ip in source_ips {
+                assert!(
+                    take_source_filter(&switch, external_ip, source_ip),
+                    "{source_ip} -> {external_ip}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_external_update_removes_unlisted_source_filters() {
+        for (group_ip, kept_source, removed_source) in UNLISTED_SOURCE_CASES {
+            let external_ip: IpAddr = group_ip.parse().unwrap();
+            let kept_source: IpAddr = kept_source.parse().unwrap();
+            let removed_source: IpAddr = removed_source.parse().unwrap();
+            let tag = "external-unlisted-update-test";
+            let (switch, nat_target) = unlisted_source_filter_group(
+                external_ip,
+                tag,
+                &[kept_source, removed_source],
+            );
+
+            modify_group_external(
+                &switch,
+                ExternalMulticastIp::new(external_ip).unwrap(),
+                tag,
+                MulticastGroupUpdateExternalEntry {
+                    internal_forwarding: ExternalInternalForwarding {
+                        nat_target: nat_target.try_into().unwrap(),
+                    },
+                    external_forwarding: ExternalForwarding { vlan_id: None },
+                    sources: Some(vec![SourceEntry::Exact(
+                        ExactSource::new(kept_source).unwrap(),
+                    )]),
+                },
+            )
+            .unwrap();
+
+            assert!(!take_source_filter(&switch, external_ip, removed_source));
+            assert!(take_source_filter(&switch, external_ip, kept_source));
+        }
+    }
+
+    #[test]
+    fn test_external_delete_removes_unlisted_source_filters() {
+        for (group_ip, first_source, second_source) in UNLISTED_SOURCE_CASES {
+            let external_ip: IpAddr = group_ip.parse().unwrap();
+            let source_ips: [IpAddr; 2] =
+                [first_source.parse().unwrap(), second_source.parse().unwrap()];
+            let tag = "external-unlisted-delete-test";
+            let (switch, _) =
+                unlisted_source_filter_group(external_ip, tag, &source_ips);
+
+            del_group(&switch, external_ip, tag).unwrap();
+
+            for source_ip in source_ips {
+                assert!(
+                    !take_source_filter(&switch, external_ip, source_ip),
+                    "{source_ip} -> {external_ip}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_external_delete_vlan_cleanup_failure_marks_group() {
         for group_ip in ["224.1.2.3", "ff0e::1"] {
