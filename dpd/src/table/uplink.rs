@@ -11,7 +11,7 @@ use slog::{error, info};
 
 use crate::Switch;
 use crate::table::*;
-use crate::types::{DpdError, after_unwind, ignore_missing};
+use crate::types::{DpdError, after_unwind};
 use aal::{ActionParse, AsicError, MatchParse};
 use aal_macros::*;
 
@@ -102,8 +102,7 @@ pub fn uplink_clear(s: &Switch, port: u16) -> DpdResult<()> {
     };
 
     let match_key = EgressMatchKey { out_port: port };
-    match ignore_missing(s.table_entry_del(TableType::UplinkEgress, &match_key))
-    {
+    match s.table_entry_clear(TableType::UplinkEgress, &match_key) {
         Ok(_) => {
             info!(s.log, "cleared guest_traffic_allowed on {}", port);
             Ok(())

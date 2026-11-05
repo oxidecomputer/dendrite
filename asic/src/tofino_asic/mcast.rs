@@ -282,23 +282,35 @@ pub fn domains(hdl: &Handle) -> Vec<u16> {
     list
 }
 
-#[allow(dead_code)]
-fn domain_ports(domain: &DomainState) -> Vec<u16> {
+fn domain_ports(hdl: &Handle, domain: &DomainState) -> AsicResult<Vec<u16>> {
     let mut list = Vec::new();
+    let bf = hdl.bf_get();
 
-    for port in domain.ports.keys() {
-        list.push(*port)
+    for (port, mc) in &domain.ports {
+        match node_is_associated(bf.mcast_hdl, bf.dev_id, mc.node_hdl) {
+            Ok(true) => list.push(*port),
+            Ok(false) | Err(AsicError::Missing(_)) => {}
+            Err(e) => return Err(e),
+        }
     }
 
     list.sort_unstable();
-    list
+    Ok(list)
 }
 
 /// Get the number of ports in a multicast domain.
 pub fn domain_port_count(hdl: &Handle, group_id: u16) -> AsicResult<usize> {
     let domains = hdl.domains.lock().unwrap();
     match domains.get(&group_id) {
-        Some(d) => Ok(d.ports.len()),
+        Some(d) => domain_ports(hdl, d).map(|ports| ports.len()),
+        None => Err(AsicError::Missing("no such domain".to_string())),
+    }
+}
+
+pub fn domain_port_list(hdl: &Handle, group_id: u16) -> AsicResult<Vec<u16>> {
+    let domains = hdl.domains.lock().unwrap();
+    match domains.get(&group_id) {
+        Some(d) => domain_ports(hdl, d),
         None => Err(AsicError::Missing("no such domain".to_string())),
     }
 }

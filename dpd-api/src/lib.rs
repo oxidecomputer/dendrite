@@ -1320,7 +1320,10 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::nat::NatIpv6Path>,
         query: Query<PaginationParams<EmptyScanParams, latest::nat::NatToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<latest::nat::Ipv6Nat>>, HttpError>;
+    ) -> Result<
+        HttpResponseOk<ResultsPage<latest::nat::IpNat<Ipv6Addr>>>,
+        HttpError,
+    >;
 
     /**
      * Get all of the external->internal NAT mappings for a given address.
@@ -1473,7 +1476,10 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::nat::NatIpv4Path>,
         query: Query<PaginationParams<EmptyScanParams, latest::nat::NatToken>>,
-    ) -> Result<HttpResponseOk<ResultsPage<latest::nat::Ipv4Nat>>, HttpError>;
+    ) -> Result<
+        HttpResponseOk<ResultsPage<latest::nat::IpNat<Ipv4Addr>>>,
+        HttpError,
+    >;
 
     /**
      * Get all of the external->internal NAT mappings for a given IPv4 address.

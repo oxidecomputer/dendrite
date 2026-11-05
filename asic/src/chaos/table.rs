@@ -10,7 +10,7 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Mutex;
 
-use crate::chaos::{Handle, table_unfurl};
+use crate::chaos::{Handle, TableOp, table_unfurl};
 use aal::{
     ActionData, ActionParse, AsicError, AsicResult, CounterData, MatchData,
     MatchParse, TableOps,
@@ -61,6 +61,7 @@ impl TableOps<Handle> for Table {
                 self.type_
             )));
         }
+        hdl.check_table_fault(self.type_, TableOp::EntryAdd)?;
         table_unfurl!(hdl, self.type_, table_entry_add);
         keys.insert(x, (key.key_to_ir()?, data.action_to_ir()?));
         Ok(())
@@ -82,6 +83,7 @@ impl TableOps<Handle> for Table {
                 "table entry not found".to_string(),
             ));
         };
+        hdl.check_table_fault(self.type_, TableOp::EntryUpdate)?;
         table_unfurl!(hdl, self.type_, table_entry_update);
         *action = data.action_to_ir()?;
         Ok(())
@@ -102,6 +104,7 @@ impl TableOps<Handle> for Table {
                 "table entry not found".to_string(),
             ));
         }
+        hdl.check_table_fault(self.type_, TableOp::EntryDel)?;
         table_unfurl!(hdl, self.type_, table_entry_del);
         keys.remove(&x);
         Ok(())

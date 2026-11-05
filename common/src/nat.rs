@@ -4,7 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-pub use dpd_types::nat::{Ipv4Nat, Ipv6Nat};
+pub use dpd_types::nat::IpNat;
 
 #[cfg(test)]
 mod tests {

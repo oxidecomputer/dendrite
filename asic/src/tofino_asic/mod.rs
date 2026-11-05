@@ -80,6 +80,10 @@ impl AsicMulticastOps for Handle {
         mcast::domain_port_count(self, group_id)
     }
 
+    fn mc_port_list(&self, group_id: u16) -> AsicResult<Vec<u16>> {
+        mcast::domain_port_list(self, group_id)
+    }
+
     fn mc_port_add(
         &self,
         group_id: u16,

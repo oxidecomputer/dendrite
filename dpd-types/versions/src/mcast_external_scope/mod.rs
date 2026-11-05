@@ -14,9 +14,10 @@
 //! `group_ip` and `internal_forwarding` fields to the validated types.
 //!
 //! `Vni` now advertises its 24-bit range in the schema. `NatTarget`,
-//! `InstanceTarget`, `Ipv4Nat`, `Ipv6Nat`, and `AttachedSubnetEntry` are
-//! updated to contain the new `Vni` type. `VniError` and `VniParseError`
-//! were added to the v1 `Vni`, whose `new` and `FromStr` can return them.
+//! `InstanceTarget`, `IpNat` (the `Ipv4Nat` and `Ipv6Nat` schemas), and
+//! `AttachedSubnetEntry` are updated to contain the new `Vni` type.
+//! `VniError` and `VniParseError` were added to the v1 `Vni`, whose `new` and
+//! `FromStr` can return them.
 
 pub mod attached_subnet;
 pub mod mcast;

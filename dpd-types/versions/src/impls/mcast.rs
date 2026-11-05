@@ -25,16 +25,26 @@
 use std::{
     fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    str::FromStr,
 };
 
 use oxnet::{Ipv4Net, Ipv6Net};
 
 use crate::latest::mcast::{
-    AsmMulticastGroupCreate, ExactSource, ExternalForwarding,
-    ExternalInternalForwarding, ExternalMulticastIp, IpSrc,
-    MulticastGroupCreateExternalEntry, MulticastGroupCreateExternalError,
-    MulticastGroupResponse, NonEmptyExactSources, SourceEntry, SourceFilter,
-    SsmMulticastGroupCreate, SsmMulticastIp,
+    AsmMulticastGroupCreate, EmbeddedIpv4, ExactSource, ExternalForwarding,
+    ExternalInternalForwarding, ExternalMulticastIp, ExternalMulticastIpError,
+    ExternalNatTarget, InvalidEmbeddedRp, InvalidMulticastSource, IpSrc,
+    MAX_TAG_LENGTH, MulticastGroupCreateExternalEntry,
+    MulticastGroupCreateExternalError, MulticastGroupResponse,
+    MulticastSourceError, MulticastSourceParseError, MulticastTag,
+    MulticastTagParseError, NonEmptyExactSources, SourceEntry, SourceFilter,
+    SsmMulticastGroupCreate, SsmMulticastIp, UNDERLAY_MULTICAST_SUBNET,
+    UnderlayMulticastError, UnderlayMulticastIpv6, UnderlayMulticastParseError,
+    UnicastAddrV4, UnicastAddrV6, is_ssm_address,
+    validate_external_multicast_ip,
+};
+use crate::v14::mcast::{
+    validate_unicast_source_ipv4, validate_unicast_source_ipv6,
 };
 
 /// IPv4 Source-Specific Multicast (SSM) subnet (`232.0.0.0/8`) per
@@ -285,8 +295,10 @@ impl AsmMulticastGroupCreate {
     }
 
     /// Return the source filter in its serialized form.
-    pub fn sources(&self) -> Option<Vec<IpSrc>> {
-        self.sources.to_ip_sources()
+    pub fn sources(&self) -> Option<impl Iterator<Item = IpSrc> + '_> {
+        self.sources
+            .exact_sources()
+            .map(|sources| sources.iter().copied().map(IpSrc::from))
     }
 
     /// Return whether the group accepts every source address.
@@ -356,13 +368,12 @@ impl MulticastGroupCreateExternalEntry {
     }
 
     /// Return the source filter in its serialized form.
-    pub fn sources(&self) -> Option<Vec<IpSrc>> {
-        match self {
-            Self::Asm(group) => group.sources.to_ip_sources(),
-            Self::Ssm(group) => {
-                Some(group.sources().iter().copied().map(IpSrc::from).collect())
-            }
-        }
+    pub fn sources(&self) -> Option<impl Iterator<Item = IpSrc> + '_> {
+        let sources = match self {
+            Self::Asm(group) => group.sources.exact_sources()?,
+            Self::Ssm(group) => group.sources(),
+        };
+        Some(sources.iter().copied().map(IpSrc::from))
     }
 }
 
@@ -390,6 +401,373 @@ impl fmt::Display for IpSrc {
             IpSrc::Exact(ip) => write!(f, "{ip}"),
             IpSrc::Any => write!(f, "any"),
         }
+    }
+}
+
+impl UnderlayMulticastIpv6 {
+    /// Create a new `UnderlayMulticastIpv6` if the address is within the
+    /// underlay multicast subnet (`ff04::/64`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnderlayMulticastError::InvalidUnderlayMulticastIp`] if
+    /// `addr` is outside [`UNDERLAY_MULTICAST_SUBNET`].
+    pub fn new(addr: Ipv6Addr) -> Result<Self, UnderlayMulticastError> {
+        if !UNDERLAY_MULTICAST_SUBNET.contains(addr) {
+            return Err(UnderlayMulticastError::InvalidUnderlayMulticastIp(
+                addr,
+            ));
+        }
+        Ok(Self(addr))
+    }
+
+    /// Return the inner IPv6 address.
+    #[inline]
+    pub const fn ip(&self) -> Ipv6Addr {
+        self.0
+    }
+}
+
+impl From<UnderlayMulticastIpv6> for IpAddr {
+    fn from(addr: UnderlayMulticastIpv6) -> Self {
+        IpAddr::V6(addr.0)
+    }
+}
+
+impl fmt::Display for UnderlayMulticastIpv6 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for UnderlayMulticastIpv6 {
+    type Err = UnderlayMulticastParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let addr: Ipv6Addr = s.parse().map_err(|e| {
+            UnderlayMulticastParseError::InvalidIpv6(s.to_string(), e)
+        })?;
+        Ok(Self::new(addr)?)
+    }
+}
+
+impl FromStr for MulticastTag {
+    type Err = MulticastTagParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Err(MulticastTagParseError::Empty);
+        }
+        if s.len() > MAX_TAG_LENGTH {
+            return Err(MulticastTagParseError::TooLong);
+        }
+        if !s.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'.')
+        }) {
+            return Err(MulticastTagParseError::InvalidCharacter);
+        }
+        Ok(MulticastTag(s.to_string()))
+    }
+}
+
+impl AsRef<str> for MulticastTag {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for MulticastTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl TryFrom<&str> for MulticastTag {
+    type Error = MulticastTagParseError;
+
+    fn try_from(tag: &str) -> Result<Self, Self::Error> {
+        tag.parse()
+    }
+}
+
+impl std::str::FromStr for ExternalMulticastIp {
+    type Err = ExternalMulticastIpError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let addr: IpAddr = s.parse().map_err(|e| {
+            ExternalMulticastIpError::InvalidIpAddress(s.to_string(), e)
+        })?;
+        Self::new(addr)
+    }
+}
+
+impl ExternalMulticastIp {
+    /// Create a new `ExternalMulticastIp` if the address is valid for an
+    /// external multicast group.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExternalMulticastIpError`] if `addr` cannot identify an
+    /// external multicast group.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::net::IpAddr;
+    /// use dpd_types_versions::latest::mcast::ExternalMulticastIp;
+    ///
+    /// let global: IpAddr = "ff0e::1".parse().unwrap();
+    /// assert!(ExternalMulticastIp::new(global).is_ok());
+    ///
+    /// let underlay: IpAddr = "ff04::1".parse().unwrap();
+    /// assert!(ExternalMulticastIp::new(underlay).is_err());
+    /// ```
+    pub fn new(addr: IpAddr) -> Result<Self, ExternalMulticastIpError> {
+        validate_external_multicast_ip(addr)?;
+        Ok(Self(addr))
+    }
+
+    /// Return the inner IP address.
+    #[inline]
+    pub const fn ip(&self) -> IpAddr {
+        self.0
+    }
+
+    /// Check whether this address is a Source-Specific Multicast address.
+    pub fn is_ssm(&self) -> bool {
+        is_ssm_address(self.0)
+    }
+}
+
+impl fmt::Display for ExternalMulticastIp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl fmt::Display for InvalidMulticastSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unspecified => write!(f, "is the unspecified address"),
+            Self::Loopback => write!(f, "is a loopback address"),
+            Self::Broadcast => write!(f, "is the broadcast address"),
+            Self::LinkLocal => write!(f, "is a link-local address"),
+            Self::ThisNetwork => {
+                write!(f, "is in 0.0.0.0/8 (this host on this network)")
+            }
+            Self::Reserved => {
+                write!(f, "is in the reserved class E block (240.0.0.0/4)")
+            }
+        }
+    }
+}
+
+impl fmt::Display for InvalidEmbeddedRp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RequiresPrefixBased => write!(f, "the P flag is required"),
+            Self::RequiresTransient => write!(f, "the T flag is required"),
+            Self::PrefixLengthOutOfRange(plen) => write!(
+                f,
+                "the prefix length {plen} is outside the range 1 through 64"
+            ),
+            Self::ZeroInterfaceId => {
+                write!(f, "the RP interface ID must be nonzero")
+            }
+            Self::UnusableAddress(rp) => write!(
+                f,
+                "the derived RP address {rp} is in ::/16, link-local, or \
+                 multicast space"
+            ),
+        }
+    }
+}
+
+impl fmt::Display for EmbeddedIpv4 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Mapped => {
+                write!(f, "IPv4-mapped (::ffff:0:0/96, RFC 4291 §2.5.5.2)")
+            }
+            Self::Compatible => {
+                write!(f, "IPv4-compatible (::/96, RFC 4291 §2.5.5.1)")
+            }
+        }
+    }
+}
+
+impl UnicastAddrV4 {
+    /// Create a validated IPv4 unicast address.
+    ///
+    /// # Errors
+    ///
+    /// - [`MulticastSourceError::NotUnicast`] for a multicast address.
+    /// - [`MulticastSourceError::InvalidIpv4`] for the first
+    ///   [`InvalidMulticastSource`] rule the address hits.
+    pub fn new(addr: Ipv4Addr) -> Result<Self, MulticastSourceError> {
+        validate_unicast_source_ipv4(addr)?;
+        Ok(Self(addr))
+    }
+
+    /// Return the inner IPv4 address.
+    #[inline]
+    pub const fn ip(&self) -> Ipv4Addr {
+        self.0
+    }
+}
+
+impl UnicastAddrV6 {
+    /// Create a validated IPv6 unicast address.
+    ///
+    /// # Errors
+    ///
+    /// - [`MulticastSourceError::NotUnicast`] for a multicast address.
+    /// - [`MulticastSourceError::InvalidIpv6`] for the first
+    ///   [`InvalidMulticastSource`] rule the address hits.
+    /// - [`MulticastSourceError::Ipv4Embedded`] for an IPv4-mapped or
+    ///   IPv4-compatible address.
+    pub fn new(addr: Ipv6Addr) -> Result<Self, MulticastSourceError> {
+        validate_unicast_source_ipv6(addr)?;
+        Ok(Self(addr))
+    }
+
+    /// Return the inner IPv6 address.
+    #[inline]
+    pub const fn ip(&self) -> Ipv6Addr {
+        self.0
+    }
+}
+
+impl fmt::Display for UnicastAddrV4 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl From<UnicastAddrV4> for IpAddr {
+    fn from(addr: UnicastAddrV4) -> Self {
+        IpAddr::V4(addr.0)
+    }
+}
+
+impl fmt::Display for UnicastAddrV6 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl From<UnicastAddrV6> for IpAddr {
+    fn from(addr: UnicastAddrV6) -> Self {
+        IpAddr::V6(addr.0)
+    }
+}
+
+impl From<ExternalNatTarget> for UnderlayMulticastIpv6 {
+    fn from(target: ExternalNatTarget) -> Self {
+        target.internal_ip
+    }
+}
+
+impl NonEmptyExactSources {
+    /// Create a sorted, deduplicated list, while returning `None` for empty
+    /// input(s).
+    pub(crate) fn new(mut sources: Vec<ExactSource>) -> Option<Self> {
+        sources.sort_unstable();
+        sources.dedup();
+        (!sources.is_empty()).then_some(Self(sources))
+    }
+
+    pub(crate) fn into_vec(self) -> Vec<ExactSource> {
+        self.0
+    }
+
+    /// Return the sources as a slice representation.
+    pub fn as_slice(&self) -> &[ExactSource] {
+        &self.0
+    }
+}
+
+impl SsmMulticastIp {
+    /// Return the SSM form of an [`ExternalMulticastIp`] or `None` for ASM.
+    pub fn new(addr: ExternalMulticastIp) -> Option<Self> {
+        addr.is_ssm().then_some(Self(addr))
+    }
+
+    /// Return the underlying external multicast address.
+    pub fn ip(&self) -> ExternalMulticastIp {
+        self.0
+    }
+}
+
+impl From<SsmMulticastIp> for ExternalMulticastIp {
+    fn from(addr: SsmMulticastIp) -> Self {
+        addr.0
+    }
+}
+
+impl From<SsmMulticastIp> for IpAddr {
+    fn from(addr: SsmMulticastIp) -> Self {
+        addr.0.into()
+    }
+}
+
+impl fmt::Display for SsmMulticastIp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl ExactSource {
+    /// Validate an exact multicast source address.
+    ///
+    /// # Errors
+    ///
+    /// - [`MulticastSourceError::NotUnicast`] for a multicast address.
+    /// - [`MulticastSourceError::InvalidIpv4`] or
+    ///   [`MulticastSourceError::InvalidIpv6`] for the first
+    ///   [`InvalidMulticastSource`] rule the address hits.
+    /// - [`MulticastSourceError::Ipv4Embedded`] for an IPv4-mapped or
+    ///   IPv4-compatible IPv6 address.
+    pub fn new(ip: IpAddr) -> Result<Self, MulticastSourceError> {
+        let ip = match ip {
+            IpAddr::V4(addr) => UnicastAddrV4::new(addr)?.into(),
+            IpAddr::V6(addr) => UnicastAddrV6::new(addr)?.into(),
+        };
+        Ok(Self(ip))
+    }
+
+    /// Return the source address.
+    pub fn ip(&self) -> IpAddr {
+        self.0
+    }
+}
+
+impl std::str::FromStr for ExactSource {
+    type Err = MulticastSourceParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let addr: IpAddr = s.parse().map_err(|e| {
+            MulticastSourceParseError::InvalidIp(s.to_string(), e)
+        })?;
+        Ok(Self::new(addr)?)
+    }
+}
+
+impl From<ExactSource> for IpAddr {
+    fn from(source: ExactSource) -> Self {
+        source.0
+    }
+}
+
+impl From<ExactSource> for IpSrc {
+    fn from(source: ExactSource) -> Self {
+        IpSrc::Exact(source.0)
+    }
+}
+
+impl fmt::Display for ExactSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -516,16 +894,21 @@ mod tests {
 
         // Invalid characters rejected
         assert!(parse("tag with spaces").is_err());
-        assert!(parse("tag/with/slashes").is_err());
+        assert!(parse("invalid/tag").is_err());
         assert!(parse("tag@with@at").is_err());
         assert!(parse("tag#with#hash").is_err());
     }
 
     #[test]
     fn accepts_ipv4_asm() {
-        for addr in
-            ["224.1.2.3", "239.255.255.250", "225.0.0.1", "231.255.255.255"]
-        {
+        for addr in [
+            "224.0.1.0",
+            "224.0.1.255",
+            "224.1.2.3",
+            "239.255.255.250",
+            "225.0.0.1",
+            "231.255.255.255",
+        ] {
             let parsed = addr.parse::<ExternalMulticastIp>().unwrap();
             assert_eq!(IpAddr::from(parsed), addr.parse::<IpAddr>().unwrap());
         }
@@ -921,7 +1304,7 @@ mod tests {
                 matches!(group, MulticastGroupCreateExternalEntry::Asm(_)),
                 "224.1.2.3 with {sources:?} should classify as ASM"
             );
-            assert_eq!(group.sources(), None);
+            assert!(group.sources().is_none());
         }
 
         assert!(matches!(
@@ -1197,17 +1580,28 @@ mod tests {
     }
 
     #[test]
-    fn accepts_ipv4_local_network_control_block() {
-        for addr in [
-            "224.0.0.1",
-            "224.0.0.22",
-            "224.0.0.251",
-            "224.0.0.255",
-            "224.0.1.0",
-        ] {
-            let parsed = addr.parse::<ExternalMulticastIp>().unwrap();
-            assert_eq!(IpAddr::from(parsed), addr.parse::<IpAddr>().unwrap());
+    fn rejects_ipv4_local_network_control_block() {
+        for host in 1..=u8::MAX {
+            let addr = IpAddr::V4(Ipv4Addr::new(224, 0, 0, host));
+            assert_eq!(
+                ExternalMulticastIp::new(addr),
+                Err(ExternalMulticastIpError::LocalIpv4Scope(addr)),
+                "{addr} should be rejected as link-local multicast"
+            );
         }
+
+        assert!(
+            serde_json::from_value::<MulticastGroupCreateExternalEntry>(
+                serde_json::json!({
+                    "group_ip": "224.0.0.5",
+                    "tag": null,
+                    "internal_forwarding": { "nat_target": nat_target_json() },
+                    "external_forwarding": { "vlan_id": null },
+                    "sources": null,
+                }),
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1221,7 +1615,7 @@ mod tests {
                 "{addr} should be rejected as a reserved base address"
             );
         }
-        for addr in ["224.0.0.1", "ff05::1", "ff0e::1", "ff1e::"] {
+        for addr in ["224.0.1.0", "ff05::1", "ff0e::1", "ff1e::"] {
             assert!(
                 addr.parse::<ExternalMulticastIp>().is_ok(),
                 "{addr} should be accepted"
