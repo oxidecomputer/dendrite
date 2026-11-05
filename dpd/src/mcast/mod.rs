@@ -324,6 +324,19 @@ impl MulticastGroup {
         );
         (widened != current).then_some(widened)
     }
+
+    /// Validates that the request tag matches the existing group's tag.
+    ///
+    /// Tags are immutable after group creation. A matching tag is evidence the
+    /// caller created the group.
+    fn validate_tag(&self, request_tag: &str) -> DpdResult<()> {
+        if request_tag != self.tag {
+            return Err(DpdError::McastTagMismatch(
+                "provided tag does not match the group's tag".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl TryFrom<&MulticastGroup> for MulticastGroupExternalResponse {
@@ -783,7 +796,7 @@ fn del_group_locked(
     }
 
     // Validate tag before removing the group.
-    validate_tag(&group.tag, tag)?;
+    group.validate_tag(tag)?;
 
     let nat_target_to_remove =
         group.nat_target().map(UnderlayMulticastIpv6::from);
@@ -1007,7 +1020,7 @@ pub(crate) fn modify_group_external(
                 "Multicast group for IP {group_addr} not found"
             ))
         })?;
-    validate_tag(&group_entry.tag, tag)?;
+    group_entry.validate_tag(tag)?;
 
     repair_pending_external_group(s, &mut mcast, group_addr)?;
 
@@ -1143,7 +1156,7 @@ pub(crate) fn modify_group_underlay(
         )));
     };
 
-    validate_tag(&existing_group.tag, tag)?;
+    existing_group.validate_tag(tag)?;
 
     if !matches!(existing_group.kind, GroupKind::Underlay { .. }) {
         return Err(DpdError::Invalid(format!(
@@ -1441,6 +1454,7 @@ fn resync_members_from_asic(
         };
 
         for asic_id in asic_ids {
+            // Connector/channel mappings survive link deletion.
             match s.asic_id_to_port_link(asic_id) {
                 Ok((port_id, link_id)) => {
                     members.push(MulticastGroupMember {
@@ -1837,20 +1851,6 @@ fn remove_unwanted_source_filters(
             )
         }
     }
-}
-
-/// Validates that the request tag matches the existing group's tag.
-///
-/// Tags are immutable after group creation. A matching tag is evidence the
-/// caller created the group.
-fn validate_tag(existing_tag: &str, request_tag: &str) -> DpdResult<()> {
-    if request_tag != existing_tag {
-        return Err(DpdError::Invalid(
-            "tag mismatch: provided tag does not match the group's tag"
-                .to_string(),
-        ));
-    }
-    Ok(())
 }
 
 /// Generate a default tag for a multicast group if none is provided.
@@ -2594,14 +2594,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_validate_tag() {
+    fn test_group_validate_tag_rejects_mismatch() {
+        let scoped_id =
+            || ScopedGroupId::from(ScopedIdInner(0, std::sync::Weak::new()));
+        let group = MulticastGroup {
+            external_scoped_group: scoped_id(),
+            underlay_scoped_group: scoped_id(),
+            tag: "owner-a".to_string(),
+            kind: GroupKind::Underlay {
+                group_ip: "ff04::1".parse().unwrap(),
+                replication: Replication::Empty,
+            },
+        };
+
         // Existing tag matches request tag
-        assert!(validate_tag("my-tag", "my-tag").is_ok());
+        assert!(group.validate_tag("owner-a").is_ok());
 
         // Existing tag but request has different tag
-        assert!(validate_tag("owner-a", "owner-b").is_err());
-        assert!(validate_tag("owner-a", "").is_err());
-        assert!(validate_tag("owner-a", "tag/with/slashes").is_err());
+        for tag in ["owner-b", "", "invalid/tag"] {
+            assert!(
+                matches!(
+                    group.validate_tag(tag),
+                    Err(DpdError::McastTagMismatch(_))
+                ),
+                "{tag:?}"
+            );
+        }
     }
 
     #[test]

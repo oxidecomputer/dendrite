@@ -10,8 +10,8 @@ use common::counters;
 use common::network;
 use common::ports;
 pub use common::{
-    MCAST_REPAIR_PENDING_ERROR_CODE, MISSING_NAT_TARGET_ERROR_CODE,
-    ROLLBACK_FAILURE_ERROR_CODE,
+    MCAST_REPAIR_PENDING_ERROR_CODE, MCAST_TAG_MISMATCH_ERROR_CODE,
+    MISSING_NAT_TARGET_ERROR_CODE, ROLLBACK_FAILURE_ERROR_CODE,
 };
 use slog::Logger;
 use std::cmp::Ordering;

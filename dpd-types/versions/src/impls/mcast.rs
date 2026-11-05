@@ -894,7 +894,7 @@ mod tests {
 
         // Invalid characters rejected
         assert!(parse("tag with spaces").is_err());
-        assert!(parse("tag/with/slashes").is_err());
+        assert!(parse("invalid/tag").is_err());
         assert!(parse("tag@with@at").is_err());
         assert!(parse("tag#with#hash").is_err());
     }

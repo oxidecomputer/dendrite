@@ -400,8 +400,14 @@ impl Switch {
         })
     }
 
-    fn log_entry_conflict(&self, op: &str, table_type: TableType, e: &DpdError) {
-        if let DpdError::Switch(AsicError::Exists(_) | AsicError::Missing(_)) = e
+    fn log_entry_conflict(
+        &self,
+        op: &str,
+        table_type: TableType,
+        e: &DpdError,
+    ) {
+        if let DpdError::Switch(AsicError::Exists(_) | AsicError::Missing(_)) =
+            e
         {
             error!(
                 self.log,

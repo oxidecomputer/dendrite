@@ -17,6 +17,7 @@ use oxnet::MulticastMac;
 use ::common::counters::SERVICE_PORT_LABEL;
 use ::common::network::MacAddr;
 use dpd_client::Error;
+use dpd_client::MCAST_TAG_MISMATCH_ERROR_CODE;
 use dpd_client::MISSING_NAT_TARGET_ERROR_CODE;
 use dpd_client::types;
 use dpd_types::mcast::{
@@ -1227,6 +1228,10 @@ async fn test_multicast_del_tag_validation() -> TestResult {
                 resp.status(),
                 400,
                 "Wrong tag should return 400 Bad Request"
+            );
+            assert_eq!(
+                resp.error_code.as_deref(),
+                Some(MCAST_TAG_MISMATCH_ERROR_CODE)
             );
         }
         _ => panic!(
@@ -8254,7 +8259,7 @@ async fn test_vlan_lifecycle_route_entries_ipv6() -> TestResult {
 /// group's tag. This prevents unauthorized modifications.
 #[tokio::test]
 #[ignore]
-async fn test_tag_immutability_on_update() -> TestResult {
+async fn test_underlay_update_rejects_tag_mismatch() -> TestResult {
     let switch = &*get_switch().await;
 
     let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
@@ -8299,6 +8304,10 @@ async fn test_tag_immutability_on_update() -> TestResult {
                 resp.status(),
                 400,
                 "Update with wrong tag should return 400"
+            );
+            assert_eq!(
+                resp.error_code.as_deref(),
+                Some(MCAST_TAG_MISMATCH_ERROR_CODE)
             );
             // Security: error should not reveal the correct tag
             let body = format!("{:?}", resp);
@@ -8366,6 +8375,10 @@ async fn test_tag_validation_on_delete() -> TestResult {
                 resp.status(),
                 400,
                 "Delete with wrong tag should return 400"
+            );
+            assert_eq!(
+                resp.error_code.as_deref(),
+                Some(MCAST_TAG_MISMATCH_ERROR_CODE)
             );
         }
         _ => {
@@ -8460,6 +8473,10 @@ async fn test_tag_validation() -> TestResult {
                 resp.status(),
                 400,
                 "Update with wrong tag should return 400"
+            );
+            assert_eq!(
+                resp.error_code.as_deref(),
+                Some(MCAST_TAG_MISMATCH_ERROR_CODE)
             );
             assert!(
                 !format!("{:?}", resp).contains(TAG_A.as_ref()),

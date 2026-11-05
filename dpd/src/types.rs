@@ -8,6 +8,7 @@
 
 use aal::AsicError;
 use common::MCAST_REPAIR_PENDING_ERROR_CODE;
+use common::MCAST_TAG_MISMATCH_ERROR_CODE;
 use common::MISSING_NAT_TARGET_ERROR_CODE;
 use common::ROLLBACK_FAILURE_ERROR_CODE;
 use common::SmfError;
@@ -18,11 +19,10 @@ use nonempty::NonEmpty;
 use std::{convert, net::IpAddr};
 use transceiver_controller::Error as TransceiverError;
 
-/// Used as a `Retry-After` hint (in seconds) for a multicast group whose repair
-/// could not be completed within a request.
+/// Suggested `Retry-After` delay (in seconds) for multicast repair.
 ///
-/// Repair only runs when a subsequent request touches the group, and the
-/// delay paces those attempts.
+/// The delay matches ddmd's periodic reconciliation interval. Clients may
+/// choose their own retry timing. Repair runs when a request touches the group.
 const MCAST_REPAIR_RETRY_AFTER_SECS: u64 = 10;
 
 /// Result of any operation that can fail with a [`DpdError`].
@@ -73,6 +73,8 @@ pub enum DpdError {
     Busy(String),
     #[error("Multicast repair pending: {0}")]
     McastRepairPending(String),
+    #[error("Multicast tag mismatch: {0}")]
+    McastTagMismatch(String),
     #[error("Missing NAT target: {0}")]
     MissingNatTarget(String),
     #[error("Resource is missing: {0}")]
@@ -275,6 +277,12 @@ impl convert::From<DpdError> for dropshot::HttpError {
             DpdError::Missing(e) => dropshot::HttpError::for_not_found(None, e),
             DpdError::Invalid(e) => {
                 dropshot::HttpError::for_bad_request(None, e)
+            }
+            DpdError::McastTagMismatch(e) => {
+                dropshot::HttpError::for_bad_request(
+                    Some(MCAST_TAG_MISMATCH_ERROR_CODE.into()),
+                    e,
+                )
             }
             DpdError::Faulted(e) => {
                 dropshot::HttpError::for_bad_request(None, e)
