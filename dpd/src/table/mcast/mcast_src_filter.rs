@@ -6,18 +6,19 @@
 
 //! Table operations for multicast source filter entries.
 
-use dpd_types::table;
 use std::{
+    collections::BTreeSet,
     fmt,
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use crate::{Switch, table::*};
-
 use aal::{ActionParse, MatchParse};
 use aal_macros::*;
+use dpd_types::table;
 use oxnet::{Ipv4Net, Ipv6Net};
 use slog::debug;
+
+use crate::{Switch, table::*};
 
 #[derive(MatchParse, Hash)]
 struct Ipv4MatchKey {
@@ -69,9 +70,9 @@ enum Ipv6Action {
     AllowSrc,
 }
 
-/// Add a source filter entry for IPv4 multicast traffic:
+/// Set a source filter entry for IPv4 multicast traffic:
 /// `src_addr, dst_addr -> allow_source_mcastv4`.
-pub(crate) fn add_ipv4_entry(
+pub(crate) fn set_ipv4_entry(
     s: &Switch,
     src_addr: Ipv4Net,
     dst_addr: Ipv4Addr,
@@ -79,23 +80,50 @@ pub(crate) fn add_ipv4_entry(
     let match_key = Ipv4MatchKey::new(src_addr, dst_addr);
     let action_data = Ipv4Action::AllowSrc;
 
-    debug!(s.log, "add source filter entry {src_addr} -> {action_data:?}");
+    debug!(s.log, "set source filter entry {src_addr} -> {action_data:?}");
 
-    s.table_entry_add(TableType::McastIpv4SrcFilter, &match_key, &action_data)
+    s.table_entry_set(TableType::McastIpv4SrcFilter, &match_key, &action_data)
 }
 
-/// Delete a source filter entry for IPv4 multicast traffic, keyed on
+/// Clear a source filter entry for IPv4 multicast traffic, keyed on
 /// `src_addr, dst_addr`.
-pub(crate) fn del_ipv4_entry(
+pub(crate) fn clear_ipv4_entry(
     s: &Switch,
     src_addr: Ipv4Net,
     dst_addr: Ipv4Addr,
 ) -> DpdResult<()> {
     let match_key = Ipv4MatchKey::new(src_addr, dst_addr);
 
-    debug!(s.log, "delete source filter entry {src_addr} -> {dst_addr}");
+    debug!(s.log, "clear source filter entry {src_addr} -> {dst_addr}");
 
-    s.table_entry_del(TableType::McastIpv4SrcFilter, &match_key)
+    s.table_entry_clear(TableType::McastIpv4SrcFilter, &match_key)
+}
+
+/// Delete every IPv4 multicast source filter entry for `dst_addr` whose
+/// source is not in `sources`.
+pub(crate) fn retain_ipv4_sources(
+    s: &Switch,
+    dst_addr: Ipv4Addr,
+    sources: &BTreeSet<Ipv4Net>,
+) -> DpdResult<()> {
+    super::del_entries_where::<Ipv4MatchKey, Ipv4Action>(
+        s,
+        TableType::McastIpv4SrcFilter,
+        |key| key.dst_addr == dst_addr && !sources.contains(&key.src_addr),
+    )
+}
+
+/// Delete every IPv4 multicast source filter entry for `dst_addr`, no matter
+/// its source.
+pub(crate) fn del_ipv4_entries(
+    s: &Switch,
+    dst_addr: Ipv4Addr,
+) -> DpdResult<()> {
+    super::del_entries_where::<Ipv4MatchKey, Ipv4Action>(
+        s,
+        TableType::McastIpv4SrcFilter,
+        |key| key.dst_addr == dst_addr,
+    )
 }
 
 /// Dump the IPv4 multicast source filter table's contents.
@@ -122,9 +150,9 @@ pub(crate) fn reset_ipv4(s: &Switch) -> DpdResult<()> {
     s.table_clear(TableType::McastIpv4SrcFilter)
 }
 
-/// Add a source filter entry for IPv6 multicast traffic:
+/// Set a source filter entry for IPv6 multicast traffic:
 /// `src_addr, dst_addr -> allow_source_mcastv6`.
-pub(crate) fn add_ipv6_entry(
+pub(crate) fn set_ipv6_entry(
     s: &Switch,
     src_addr: Ipv6Net,
     dst_addr: Ipv6Addr,
@@ -132,23 +160,50 @@ pub(crate) fn add_ipv6_entry(
     let match_key = Ipv6MatchKey::new(src_addr, dst_addr);
     let action_data = Ipv6Action::AllowSrc;
 
-    debug!(s.log, "add source filter entry {src_addr} -> {action_data:?}");
+    debug!(s.log, "set source filter entry {src_addr} -> {action_data:?}");
 
-    s.table_entry_add(TableType::McastIpv6SrcFilter, &match_key, &action_data)
+    s.table_entry_set(TableType::McastIpv6SrcFilter, &match_key, &action_data)
 }
 
-/// Delete a source filter entry for IPv6 multicast traffic, keyed on
+/// Clear a source filter entry for IPv6 multicast traffic, keyed on
 /// `src_addr, dst_addr`.
-pub(crate) fn del_ipv6_entry(
+pub(crate) fn clear_ipv6_entry(
     s: &Switch,
     src_addr: Ipv6Net,
     dst_addr: Ipv6Addr,
 ) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(src_addr, dst_addr);
 
-    debug!(s.log, "delete source filter entry {src_addr} -> {dst_addr}");
+    debug!(s.log, "clear source filter entry {src_addr} -> {dst_addr}");
 
-    s.table_entry_del(TableType::McastIpv6SrcFilter, &match_key)
+    s.table_entry_clear(TableType::McastIpv6SrcFilter, &match_key)
+}
+
+/// Delete every IPv6 multicast source filter entry for `dst_addr` whose
+/// source is not in `sources`.
+pub(crate) fn retain_ipv6_sources(
+    s: &Switch,
+    dst_addr: Ipv6Addr,
+    sources: &BTreeSet<Ipv6Net>,
+) -> DpdResult<()> {
+    super::del_entries_where::<Ipv6MatchKey, Ipv6Action>(
+        s,
+        TableType::McastIpv6SrcFilter,
+        |key| key.dst_addr == dst_addr && !sources.contains(&key.src_addr),
+    )
+}
+
+/// Delete every IPv6 multicast source filter entry for `dst_addr`, no matter
+/// its source.
+pub(crate) fn del_ipv6_entries(
+    s: &Switch,
+    dst_addr: Ipv6Addr,
+) -> DpdResult<()> {
+    super::del_entries_where::<Ipv6MatchKey, Ipv6Action>(
+        s,
+        TableType::McastIpv6SrcFilter,
+        |key| key.dst_addr == dst_addr,
+    )
 }
 
 /// Dump the IPv6 multicast source filter table's contents.

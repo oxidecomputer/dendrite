@@ -1641,23 +1641,15 @@ fn set_mac_config(
     clear_mac_config(switch, asic_id)?;
     mac::mac_set(switch, asic_id, mac)?;
     mac::mcast_mac_set(switch, asic_id, mac)?;
-    mcast::mcast_egress::add_port_mapping_entry(switch, asic_id)?;
+    mcast::mcast_egress::set_port_mapping_entry(switch, asic_id)?;
     Ok(())
 }
 
 fn clear_mac_config(switch: &Switch, asic_id: AsicId) -> DpdResult<()> {
-    fn already_cleared(res: DpdResult<()>) -> DpdResult<()> {
-        match res {
-            Err(DpdError::Switch(aal::AsicError::Missing(_))) => Ok(()),
-            res => res,
-        }
-    }
-
-    already_cleared(mac::mac_clear(switch, asic_id))?;
-    already_cleared(mac::mcast_mac_clear(switch, asic_id))?;
-    already_cleared(mcast::mcast_egress::del_port_mapping_entry(
-        switch, asic_id,
-    ))
+    mac::mac_clear(switch, asic_id)?;
+    mac::mcast_mac_clear(switch, asic_id)?;
+    mcast::mcast_egress::clear_port_mapping_entry(switch, asic_id)?;
+    Ok(())
 }
 
 fn unplumb_link(

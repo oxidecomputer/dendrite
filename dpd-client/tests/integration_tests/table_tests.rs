@@ -17,6 +17,7 @@ use reqwest::StatusCode;
 use dpd_client::ClientInfo;
 use dpd_client::ResponseValue;
 use dpd_client::types;
+use dpd_types::mcast::{MulticastTag, UnderlayMulticastIpv6};
 
 use crate::integration_tests::common::prelude::*;
 
@@ -314,7 +315,7 @@ impl TableTest for types::Ipv4Nat {
                 1,
             ),
             inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
-            vni: 0.into(),
+            vni: 0.try_into().unwrap(),
         };
         switch
             .client
@@ -352,7 +353,7 @@ impl TableTest for types::Ipv6Nat {
         let tgt = types::NatTarget {
             internal_ip: "fd00:1122:7788:0101::4".parse::<Ipv6Addr>().unwrap(),
             inner_mac: MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab).into(),
-            vni: 0.into(),
+            vni: 0.try_into().unwrap(),
         };
         switch
             .client
@@ -483,7 +484,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
 
         // Admin-local IPv6 groups are internal with replication info and members
         let internal_entry = types::MulticastGroupCreateUnderlayEntry {
-            group_ip: types::UnderlayMulticastIpv6(group_ip),
+            group_ip: UnderlayMulticastIpv6::try_from(group_ip).unwrap(),
             tag: Some(MCAST_TAG.to_string()),
             members: vec![
                 types::MulticastGroupMember {
@@ -503,7 +504,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let ip = IpAddr::V6(gen_ipv6_multicast_addr(idx));
-        let del_tag: types::MulticastTag =
+        let del_tag: MulticastTag =
             MCAST_TAG.parse().expect("tag should parse");
         switch.client.multicast_group_delete(&ip, &del_tag).await
     }
@@ -513,7 +514,7 @@ impl TableTest<types::MulticastGroupUnderlayResponse, ()>
         switch
             .client
             .multicast_groups_list_by_tag_stream(
-                &MCAST_TAG.parse::<types::MulticastTag>().unwrap(),
+                &MCAST_TAG.parse::<MulticastTag>().unwrap(),
                 None,
             )
             .try_collect::<Vec<_>>()

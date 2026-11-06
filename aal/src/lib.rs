@@ -109,11 +109,11 @@ pub enum AsicError {
     Synthetic(String),
     /// A general indication that a caller is trying to create something that
     /// already exists.
-    #[error("Already exists")]
-    Exists,
+    #[error("Already exists: {}", .0)]
+    Exists(String),
     /// A general indication that a caller is trying to modify something that
     /// is not present.
-    #[error("Missing")]
+    #[error("Missing: {}", .0)]
     Missing(String),
 }
 
@@ -125,6 +125,10 @@ pub trait AsicMulticastOps {
 
     /// For a given multicast group, return the number of ports assigned to it.
     fn mc_port_count(&self, group_id: u16) -> AsicResult<usize>;
+
+    /// For a given multicast group, return the ASIC identifiers of the ports
+    /// assigned to it.
+    fn mc_port_list(&self, group_id: u16) -> AsicResult<Vec<AsicId>>;
 
     /// Add a port to a multicast group. The port is identified using its ASIC
     /// identifier.

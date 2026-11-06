@@ -108,6 +108,8 @@ pub struct Ipv6RouteToken {
 }
 
 /// An object with IPv4 route settings used in concert with [`PortSettings`].
+///
+/// [`PortSettings`]: super::port::PortSettings
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 pub struct RouteSettingsV4 {
     pub link_id: u8,
@@ -115,6 +117,8 @@ pub struct RouteSettingsV4 {
 }
 
 /// An object with IPV6 route settings used in concert with [`PortSettings`].
+///
+/// [`PortSettings`]: super::port::PortSettings
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 pub struct RouteSettingsV6 {
     pub link_id: u8,

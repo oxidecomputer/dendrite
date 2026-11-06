@@ -15,6 +15,7 @@ use crate::Switch;
 use crate::table;
 use crate::table::nat::{NatAddress, add_entry, delete_entry};
 use crate::types::{DpdError, DpdResult};
+use common::nat::IpNat;
 use common::network::NatTarget;
 
 /// An inclusive range of ports, guaranteed by construction to have
@@ -229,7 +230,7 @@ pub(crate) fn get_mappings_range<A: NatFamily>(
     external: A,
     last_port: Option<u16>,
     max: usize,
-) -> Vec<A::Reservation> {
+) -> Vec<IpNat<A>> {
     let max = max.min(64);
 
     let port = match last_port {
@@ -245,7 +246,12 @@ pub(crate) fn get_mappings_range<A: NatFamily>(
                 .iter()
                 .filter(|e| e.l4_ports.low >= port)
                 .take(max)
-                .map(|e| external.reservation(e.l4_ports, e.tgt))
+                .map(|e| IpNat {
+                    external,
+                    low: e.l4_ports.low(),
+                    high: e.l4_ports.high(),
+                    target: e.tgt,
+                })
                 .collect()
         })
         .unwrap_or_default()
