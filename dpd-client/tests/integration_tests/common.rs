@@ -14,6 +14,7 @@ use std::{fmt, thread};
 
 use anyhow::Context;
 use anyhow::anyhow;
+use anyhow::bail;
 use oxnet::Ipv4Net;
 use oxnet::Ipv6Net;
 use slog::Drain;
@@ -791,16 +792,10 @@ impl Switch {
             }
         }
 
-        match errors.len() {
-            0 => Ok(()),
-            _ => Err(anyhow!(
-                errors
-                    .iter()
-                    .map(|e| e.to_string())
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            )),
+        if !errors.is_empty() {
+            bail!("{}", errors.join(", "));
         }
+        Ok(())
     }
 
     /// If no client_name is given, this returns the number of packets dropped
@@ -816,23 +811,20 @@ impl Switch {
         counter: &str,
         client_name: Option<&str>,
     ) -> anyhow::Result<u64> {
-        let client_name = if let Some(client_name) = client_name {
-            client_name.to_string()
-        } else {
-            "ingress_drop_reason".to_string()
-        };
+        let client_name = client_name.unwrap_or("ingress_drop_reason");
 
-        self.client
-            .counter_get(&client_name, true)
+        let entries = self
+            .client
+            .counter_get(client_name, true)
             .await
-            .map_err(|e| anyhow::anyhow!("failed to fetch counters: {e:?}"))
-            .and_then(|entries| {
-                entries
-                    .iter()
-                    .find(|e| e.keys.get("label").unwrap().as_str() == counter)
-                    .map(|e| e.data.pkts.unwrap())
-                    .ok_or(anyhow::anyhow!("no such counter: {counter}"))
-            })
+            .map_err(|e| anyhow!("failed to fetch counters: {e:?}"))?;
+        let Some(entry) = entries
+            .iter()
+            .find(|e| e.keys.get("label").unwrap().as_str() == counter)
+        else {
+            bail!("no such counter: {counter} in {client_name}");
+        };
+        Ok(entry.data.pkts.unwrap())
     }
 }
 

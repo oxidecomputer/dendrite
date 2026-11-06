@@ -13,6 +13,10 @@ pub use dpd_types::counters::{
     FecRSCounters, PcsCounters, RMonCounters, RMonCountersAll,
 };
 
+/// Per-port counter label for the userspace service port, which has no link
+/// of its own on the current switch.
+pub const SERVICE_PORT_LABEL: &str = "service";
+
 /// sidecar.p4 defines the following set of indirect counters.
 #[derive(
     Debug,
