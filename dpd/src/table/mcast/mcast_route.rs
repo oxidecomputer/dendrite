@@ -10,8 +10,8 @@
 //! - `forward`: Forward without VLAN modification
 //! - `forward_vlan(vlan_id)`: Add VLAN tag on egress
 //!
-//! VLAN-based access control (preventing VLAN translation) is handled by NAT
-//! ingress tables before encapsulation, not by route tables.
+//! NAT ingress also matches on destination address only. The group VLAN
+//! gets applied on egress.
 
 use dpd_types::table;
 use std::net::{Ipv4Addr, Ipv6Addr};

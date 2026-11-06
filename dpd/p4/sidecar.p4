@@ -631,16 +631,9 @@ control NatIngress (
 	}
 
 	// Separate table for IPv4 multicast packets that need to be encapsulated.
-	//
-	// Each group has a single entry keyed on (dst_addr, vlan_valid, vlan_id).
-	// Groups with a VLAN match on (addr, true, vlan_id). Groups without VLAN
-	// match on (addr, false, 0). Packets with the wrong VLAN miss and are
-	// not NAT encapsulated.
 	table ingress_ipv4_mcast {
 		key = {
 			hdr.ipv4.dst_addr : exact;
-			hdr.vlan.isValid() : exact;
-			hdr.vlan.vlan_id : exact;
 		}
 		actions = { mcast_forward_ipv4_to; }
 		const size = IPV4_MULTICAST_TABLE_SIZE;
@@ -658,12 +651,10 @@ control NatIngress (
 	}
 
 	// IPv6 counterpart of ingress_ipv4_mcast for IPv6 packets that need to be
-	// encapsulated. See ingress_ipv4_mcast for details on VLAN matching.
+	// encapsulated.
 	table ingress_ipv6_mcast {
 		key = {
 			hdr.ipv6.dst_addr : exact;
-			hdr.vlan.isValid() : exact;
-			hdr.vlan.vlan_id : exact;
 		}
 		actions = { mcast_forward_ipv6_to; }
 		const size = IPV6_MULTICAST_TABLE_SIZE;
@@ -1344,8 +1335,10 @@ control MulticastRouter4(
 		// If the packet came in with a VLAN tag, we need to invalidate
 		// the VLAN header before we do the lookup.  The VLAN header
 		// will be re-attached if set in the forward_vlan action (or
-		// untagged for groups without VLAN). This prevents unintended
-		// VLAN translation.
+		// untagged for groups without VLAN).
+		//
+		// As a router, we don't preserve the ingress VLAN across a routed
+		// boundary, as there's no concept of VLAN isolation within the rack.
 		if (hdr.vlan.isValid()) {
 			hdr.ethernet.ether_type = hdr.vlan.ether_type;
 			hdr.vlan.setInvalid();
@@ -1478,8 +1471,10 @@ control MulticastRouter6 (
 		// If the packet came in with a VLAN tag, we need to invalidate
 		// the VLAN header before we do the lookup.  The VLAN header
 		// will be re-attached if set in the forward_vlan action (or
-		// untagged for groups without VLAN). This prevents unintended
-		// VLAN translation.
+		// untagged for groups without VLAN).
+		//
+		// As a router, we don't preserve the ingress VLAN across a routed
+		// boundary, as there's no concept of VLAN isolation within the rack.
 		if (hdr.vlan.isValid()) {
 			hdr.ethernet.ether_type = hdr.vlan.ether_type;
 			hdr.vlan.setInvalid();
