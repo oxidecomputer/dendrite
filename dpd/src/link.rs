@@ -1638,6 +1638,7 @@ fn set_mac_config(
     asic_id: AsicId,
     mac: MacAddr,
 ) -> DpdResult<()> {
+    clear_mac_config(switch, asic_id)?;
     mac::mac_set(switch, asic_id, mac)?;
     mac::mcast_mac_set(switch, asic_id, mac)?;
     mcast::mcast_egress::set_port_mapping_entry(switch, asic_id)?;
