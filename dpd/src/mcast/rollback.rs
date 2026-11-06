@@ -3864,7 +3864,7 @@ mod chaos_tests {
             }
 
             let expected_members = if port_remove_fails {
-                vec![members[0].clone(), added_member, members[1].clone()]
+                vec![members[0].clone(), members[1].clone(), added_member]
             } else {
                 members
             };
@@ -4553,6 +4553,71 @@ mod chaos_tests {
             panic!("expected an underlay response");
         };
         assert_eq!(listed.members, stored_membership(switch));
+    }
+
+    #[test]
+    fn test_underlay_member_order_is_consistent() {
+        let unsorted = [
+            rear_member(2, Direction::Underlay),
+            rear_member(0, Direction::External),
+            rear_member(1, Direction::Underlay),
+            rear_member(0, Direction::Underlay),
+        ];
+        let sorted = [
+            rear_member(0, Direction::Underlay),
+            rear_member(0, Direction::External),
+            rear_member(1, Direction::Underlay),
+            rear_member(2, Direction::Underlay),
+        ];
+
+        let mut with_dup = unsorted.to_vec();
+        with_dup.push(unsorted[1].clone());
+
+        for readback in [true, false] {
+            let mut config = Config::default();
+            if !readback {
+                config
+                    .asic_config
+                    .mc_config
+                    .unsupported
+                    .insert(McOp::McPortList);
+            }
+            let (switch, _logs) = chaos_switch(config);
+
+            let created = add_group_underlay(
+                &switch,
+                MulticastGroupCreateUnderlayEntry {
+                    group_ip: membership_group_ip(),
+                    tag: Some(MEMBERSHIP_TEST_TAG.to_string()),
+                    members: unsorted.to_vec(),
+                },
+            )
+            .unwrap();
+            assert_eq!(created.members, sorted, "readback={readback}");
+            assert_consistent_membership(&switch, &sorted, readback);
+
+            let updated = put_membership(&switch, &with_dup).unwrap();
+            assert_eq!(updated.members, sorted, "readback={readback}");
+            assert_consistent_membership(&switch, &sorted, readback);
+        }
+    }
+
+    fn assert_consistent_membership(
+        switch: &Switch,
+        expected: &[MulticastGroupMember],
+        readback: bool,
+    ) {
+        assert_eq!(stored_membership(switch), expected, "readback={readback}");
+        for (reader, read) in READERS.into_iter().zip(read_memberships(switch))
+        {
+            assert_eq!(read, expected, "{reader:?} readback={readback}");
+        }
+        if readback {
+            assert_eq!(
+                asic_membership(switch),
+                expected_membership(switch, expected)
+            );
+        }
     }
 
     #[test]
