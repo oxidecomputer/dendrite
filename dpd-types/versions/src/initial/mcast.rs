@@ -36,7 +36,16 @@ pub struct ExternalForwarding {
 
 /// Represents a member of a multicast group.
 #[derive(
-    Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Deserialize,
+    Serialize,
+    JsonSchema,
 )]
 pub struct MulticastGroupMember {
     pub port_id: PortId,
@@ -49,7 +58,17 @@ pub struct MulticastGroupMember {
 /// `External` group members must have any packet encapsulation removed
 /// before packet delivery.
 #[derive(
-    Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Deserialize,
+    Serialize,
+    JsonSchema,
 )]
 pub enum Direction {
     Underlay,
