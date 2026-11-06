@@ -4,6 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use slog::debug;
 use slog::error;
 use slog::info;
 
@@ -59,6 +60,10 @@ fn mac_clear_common(s: &Switch, type_: TableType, port: u16) -> DpdResult<()> {
         Ok(_) => {
             info!(s.log, "cleared mac on {port} in table {type_}",);
             Ok(())
+        }
+        Err(e @ DpdError::Switch(aal::AsicError::Missing(_))) => {
+            debug!(s.log, "no mac on {port} in table {type_} to clear");
+            Err(e)
         }
         Err(e) => {
             error!(s.log, "clear mac on {port} in table {type_} failed: {e:?}",);
