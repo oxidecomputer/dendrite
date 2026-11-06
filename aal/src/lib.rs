@@ -119,7 +119,6 @@ pub enum AsicError {
 
 /// The `AsicMulticastOps` trait contains the multicast-related ASIC operations
 /// that the dataplane daemon requires.
-#[cfg(feature = "multicast")]
 pub trait AsicMulticastOps {
     /// Return a vector containing all of the defined multicast groups.
     fn mc_domains(&self) -> Vec<u16>;

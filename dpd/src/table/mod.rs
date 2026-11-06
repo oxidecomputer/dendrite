@@ -23,7 +23,6 @@ pub mod arp_ipv4;
 pub mod attached_subnet_v4;
 pub mod attached_subnet_v6;
 pub mod mac;
-#[cfg(feature = "multicast")]
 pub mod mcast;
 pub mod nat;
 pub mod neighbor_ipv6;
@@ -258,43 +257,33 @@ pub fn get_entries(
         TableType::UplinkIngress => {
             uplink::ingress_table_dump(switch, from_hardware)
         }
-        #[cfg(feature = "multicast")]
         TableType::McastIpv6 => {
             mcast::mcast_replication::ipv6_table_dump(switch, from_hardware)
         }
-        #[cfg(feature = "multicast")]
         TableType::McastIpv4SrcFilter => {
             mcast::mcast_src_filter::ipv4_table_dump(switch, from_hardware)
         }
-        #[cfg(feature = "multicast")]
         TableType::McastIpv6SrcFilter => {
             mcast::mcast_src_filter::ipv6_table_dump(switch, from_hardware)
         }
-        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv4Mcast => {
             mcast::mcast_nat::ipv4_table_dump(switch, from_hardware)
         }
-        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv6Mcast => {
             mcast::mcast_nat::ipv6_table_dump(switch, from_hardware)
         }
-        #[cfg(feature = "multicast")]
         TableType::RouteIpv4Mcast => {
             mcast::mcast_route::ipv4_table_dump(switch, from_hardware)
         }
-        #[cfg(feature = "multicast")]
         TableType::RouteIpv6Mcast => {
             mcast::mcast_route::ipv6_table_dump(switch, from_hardware)
         }
-        #[cfg(feature = "multicast")]
         TableType::PortMacAddressMcast => {
             mac::mcast_table_dump(switch, from_hardware)
         }
-        #[cfg(feature = "multicast")]
         TableType::McastEgressDecapPorts => {
             mcast::mcast_egress::bitmap_table_dump(switch, from_hardware)
         }
-        #[cfg(feature = "multicast")]
         TableType::McastEgressPortMapping => {
             mcast::mcast_egress::port_mapping_table_dump(switch, from_hardware)
         }
@@ -353,43 +342,33 @@ pub fn get_counters(
         TableType::UplinkIngress => {
             uplink::ingress_counter_fetch(switch, force_sync)
         }
-        #[cfg(feature = "multicast")]
         TableType::McastIpv6 => {
             mcast::mcast_replication::ipv6_counter_fetch(switch, force_sync)
         }
-        #[cfg(feature = "multicast")]
         TableType::McastIpv4SrcFilter => {
             mcast::mcast_src_filter::ipv4_counter_fetch(switch, force_sync)
         }
-        #[cfg(feature = "multicast")]
         TableType::McastIpv6SrcFilter => {
             mcast::mcast_src_filter::ipv6_counter_fetch(switch, force_sync)
         }
-        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv4Mcast => {
             mcast::mcast_nat::ipv4_counter_fetch(switch, force_sync)
         }
-        #[cfg(feature = "multicast")]
         TableType::NatIngressIpv6Mcast => {
             mcast::mcast_nat::ipv6_counter_fetch(switch, force_sync)
         }
-        #[cfg(feature = "multicast")]
         TableType::RouteIpv4Mcast => {
             mcast::mcast_route::ipv4_counter_fetch(switch, force_sync)
         }
-        #[cfg(feature = "multicast")]
         TableType::RouteIpv6Mcast => {
             mcast::mcast_route::ipv6_counter_fetch(switch, force_sync)
         }
-        #[cfg(feature = "multicast")]
         TableType::McastEgressDecapPorts => {
             mcast::mcast_egress::bitmap_counter_fetch(switch, force_sync)
         }
-        #[cfg(feature = "multicast")]
         TableType::McastEgressPortMapping => {
             mcast::mcast_egress::port_mapping_counter_fetch(switch, force_sync)
         }
-        #[cfg(feature = "multicast")]
         TableType::PortMacAddressMcast => {
             mac::mcast_counter_fetch(switch, force_sync)
         }
