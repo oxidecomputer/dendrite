@@ -13,12 +13,15 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use aal::{ActionParse, MatchParse};
+use aal::{ActionParse, AsicError, MatchParse};
 use aal_macros::*;
 use common::table::TableType;
 use slog::debug;
 
-use crate::{Switch, types::DpdResult};
+use crate::{
+    Switch,
+    types::{DpdError, DpdResult},
+};
 
 pub(crate) mod mcast_egress;
 pub(crate) mod mcast_nat;
@@ -39,9 +42,19 @@ where
     M: MatchParse + Hash + fmt::Display,
     A: ActionParse,
 {
-    let keys: Vec<M> = s
+    let entries = match s
         .table_get(table)?
-        .get_entries::<M, A>(&s.asic_hdl, false)?
+        .get_entries::<M, A>(&s.asic_hdl, false)
+    {
+        Ok(entries) => entries,
+        Err(DpdError::Switch(AsicError::OperationUnsupported)) => {
+            debug!(s.log, "{table} entry listing unsupported, skip clearing");
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
+
+    let keys: Vec<M> = entries
         .into_iter()
         .filter_map(|(key, _)| matches(&key).then_some(key))
         .collect();

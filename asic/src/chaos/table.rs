@@ -112,9 +112,12 @@ impl TableOps<Handle> for Table {
 
     fn get_entries<M: MatchParse, A: ActionParse>(
         &self,
-        _hdl: &Handle,
+        hdl: &Handle,
         _from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>> {
+        if hdl.config.entries_unsupported.contains(&self.type_) {
+            return Err(AsicError::OperationUnsupported);
+        }
         self.keys
             .lock()
             .unwrap()

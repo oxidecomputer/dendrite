@@ -1563,6 +1563,18 @@ pub(crate) fn reset(s: &Switch) -> DpdResult<()> {
     let keys = mcast.groups.keys().copied().collect::<Vec<_>>();
     mcast.pending_repairs.extend(keys);
 
+    // Remove each known group's entries before the table clears below, as
+    // SoftNPU's `clear` cannot empty its tables.
+    for group in mcast.groups.values() {
+        if let Err(e) = delete_group_tables(s, group, &mut Vec::new()) {
+            error!(
+                s.log,
+                "failed to delete table entries for multicast group {}: {e:?}",
+                group.ip()
+            );
+        }
+    }
+
     // Destroy ASIC groups
     let group_ids = s.asic_hdl.mc_domains();
     for group_id in group_ids {
@@ -1817,13 +1829,29 @@ fn clear_source_filter(
     SourceFilterKey::new(group_ip, source).and_then(|key| key.clear(s))
 }
 
-/// Remove ASIC source-filter entries for `group_ip` that are not in
-/// `sources`.
+/// Remove ASIC source-filter entries for `group` that are not in `sources`.
+///
+/// The group's stored sources missing from what `sources` contains are cleared
+/// first, then any other entry for the group address is swept from what the
+/// table lists.
+///
+/// Backends that don't list entries (e.g., SoftNPU) skip the periodic sweep.
 fn remove_unwanted_source_filters(
     s: &Switch,
-    group_ip: IpAddr,
+    group: &MulticastGroup,
     sources: &SourceFilter,
 ) -> DpdResult<()> {
+    let group_ip = group.ip();
+    if let GroupKind::External { sources: old_sources, .. } = &group.kind {
+        apply_each(
+            old_sources
+                .iter()
+                .filter(|old| !sources.iter().any(|new| new == *old)),
+            |source| clear_source_filter(s, group_ip, source),
+        )
+        .map_err(|failures| failures.head.1)?;
+    }
+
     let mut ipv4_sources = BTreeSet::new();
     let mut ipv6_sources = BTreeSet::new();
     for source in sources.iter() {
@@ -1838,17 +1866,17 @@ fn remove_unwanted_source_filters(
     }
 
     match group_ip {
-        IpAddr::V4(group) => {
+        IpAddr::V4(ipv4) => {
             table::mcast::mcast_src_filter::retain_ipv4_sources(
                 s,
-                group,
+                ipv4,
                 &ipv4_sources,
             )
         }
-        IpAddr::V6(group) => {
+        IpAddr::V6(ipv6) => {
             table::mcast::mcast_src_filter::retain_ipv6_sources(
                 s,
-                group,
+                ipv6,
                 &ipv6_sources,
             )
         }
@@ -2342,7 +2370,7 @@ fn update_external_tables(
         set_source_filter(s, group_ip, source)
     })
     .map_err(|failures| failures.head.1)?;
-    remove_unwanted_source_filters(s, group_ip, new_sources)?;
+    remove_unwanted_source_filters(s, group_entry, new_sources)?;
 
     let new_vlan_id = new_group_info.external_forwarding.vlan_id;
 
@@ -2464,20 +2492,15 @@ fn delete_group_tables(
     match &group.kind {
         GroupKind::External { sources, .. } => {
             deleted.push(DeleteStep::SourceFilters);
-            let removed = match group_ip {
+            remove_source_filters(s, group_ip, sources)?;
+            match group_ip {
                 IpAddr::V4(ipv4) => {
                     table::mcast::mcast_src_filter::del_ipv4_entries(s, ipv4)
                 }
                 IpAddr::V6(ipv6) => {
                     table::mcast::mcast_src_filter::del_ipv6_entries(s, ipv6)
                 }
-            };
-            match removed {
-                Err(DpdError::Switch(AsicError::OperationUnsupported)) => {
-                    remove_source_filters(s, group_ip, sources)?
-                }
-                res => res?,
-            }
+            }?;
             match group_ip {
                 IpAddr::V4(ipv4) => {
                     table::mcast::mcast_nat::clear_ipv4_entry(s, ipv4)
