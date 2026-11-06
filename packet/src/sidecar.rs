@@ -21,6 +21,31 @@ pub const SC_ARP_NEEDED: u8 = 3;
 pub const SC_NEIGHBOR_NEEDED: u8 = 4;
 
 const SC_HDR_SZ: usize = 24;
+const SC_VLAN_HDR_SZ: usize = 4;
+
+/// An 802.1q tag that follows the sidecar header.
+///
+/// Our headers.p4 declares the sidecar header ahead of the VLAN header, laying
+/// out a packet crossing the CPU port as `eth | sidecar | vlan | l3`,
+/// with the `sc_ether_type` set to the VLAN EtherType:
+///
+/// ```text
+/// struct sidecar_headers_t {
+///     ethernet_h  ethernet;
+///     sidecar_h   sidecar;
+///     dot1q_h     vlan;
+///     ...
+/// }
+/// ```
+///
+/// This is distinct from [`eth::EthHdr::eth_8021q`], which precedes the sidecar
+/// header, and conveys the inner EtherType that the sidecar header no longer
+/// possesses.
+#[derive(Eq, PartialEq, Copy, Clone, Debug)]
+pub struct SidecarVlanHdr {
+    pub tag: eth::EthQHdr,
+    pub ether_type: u16,
+}
 
 #[derive(Eq, PartialEq, Copy, Clone)]
 pub struct SidecarHdr {
@@ -48,13 +73,32 @@ impl Protocol for SidecarHdr {
             sc_payload: pb.get_bytes(16)?.try_into().unwrap(),
         };
 
-        let mut hdrs = match hdr.sc_ether_type {
+        let vlan = if hdr.sc_ether_type == eth::ETHER_VLAN {
+            if pb.bytes_left() < SC_VLAN_HDR_SZ {
+                return Err(crate::parse_error(
+                    pb,
+                    "sidecar vlan header too short",
+                ));
+            }
+            Some(SidecarVlanHdr {
+                tag: eth::EthQHdr::from(pb.get_u16()?),
+                ether_type: pb.get_u16()?,
+            })
+        } else {
+            None
+        };
+        let ether_type = vlan.map_or(hdr.sc_ether_type, |v| v.ether_type);
+
+        let mut hdrs = match ether_type {
             eth::ETHER_ARP => arp::ArpHdr::parse(pb),
             eth::ETHER_IPV4 => ipv4::Ipv4Hdr::parse(pb),
             eth::ETHER_IPV6 => ipv6::Ipv6Hdr::parse(pb),
             eth::ETHER_LLDP => lldp::LldpHdr::parse(pb),
             eth::ETHER_SIDECAR => {
                 Err(crate::parse_error(pb, "nested sidecar headers"))
+            }
+            eth::ETHER_VLAN => {
+                Err(crate::parse_error(pb, "nested sidecar vlan headers"))
             }
             _ => {
                 //   println!("unsupported ethertype: {:x}", hdr.sc_ether_type);
@@ -63,6 +107,7 @@ impl Protocol for SidecarHdr {
         }?;
 
         hdrs.sidecar_hdr = Some(hdr);
+        hdrs.sidecar_vlan_hdr = vlan;
         Ok(hdrs)
     }
 
@@ -90,7 +135,8 @@ impl Protocol for SidecarHdr {
 
     fn deparse(pkt: &Packet, hdr_size: usize) -> PacketResult<BytesMut> {
         let sidecar_hdr = pkt.hdrs.sidecar_hdr.as_ref().unwrap();
-        let mut v = eth::EthHdr::deparse(pkt, hdr_size + SC_HDR_SZ)?;
+        let mut v =
+            eth::EthHdr::deparse(pkt, hdr_size + SidecarHdr::header_size(pkt))?;
 
         v.put_u8(sidecar_hdr.sc_code);
         v.put_u8(0);
@@ -98,11 +144,18 @@ impl Protocol for SidecarHdr {
         v.put_u16(sidecar_hdr.sc_egress);
         v.put_u16(sidecar_hdr.sc_ether_type);
         v.put_slice(&sidecar_hdr.sc_payload);
+        if let Some(vlan) = pkt.hdrs.sidecar_vlan_hdr {
+            v.put_u16(vlan.tag.into());
+            v.put_u16(vlan.ether_type);
+        }
         Ok(v)
     }
 
     fn header_size(packet: &Packet) -> usize {
         match packet.hdrs.sidecar_hdr {
+            Some(_) if packet.hdrs.sidecar_vlan_hdr.is_some() => {
+                SC_HDR_SZ + SC_VLAN_HDR_SZ
+            }
             Some(_) => SC_HDR_SZ,
             None => 0,
         }
@@ -155,5 +208,105 @@ impl fmt::Debug for SidecarHdr {
             self.sc_ether_type,
             self.sc_payload
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const IPV4_UDP: [u8; 28] = [
+        0x45, 0x00, 0x00, 0x1c, 0x00, 0x01, 0x00, 0x00, 0x40, 0x11, 0x66, 0xde,
+        0x0a, 0x00, 0x00, 0x01, 0x0a, 0x00, 0x00, 0x02, 0x0d, 0x05, 0x11, 0x5c,
+        0x00, 0x08, 0x00, 0x00,
+    ];
+
+    fn sidecar_frame(vlan: Option<(u16, u16)>) -> Vec<u8> {
+        let mut raw = vec![
+            0x02,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x01,
+            0x02,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x02,
+            0x09,
+            0x01,
+            SC_ICMP_NEEDED,
+            0x00,
+            0x00,
+            0x11,
+            0x00,
+            0x00,
+        ];
+        let sc_ether_type = match vlan {
+            Some(_) => eth::ETHER_VLAN,
+            None => eth::ETHER_IPV4,
+        };
+        raw.extend_from_slice(&sc_ether_type.to_be_bytes());
+        raw.extend_from_slice(&[0u8; 16]);
+        if let Some((tci, ether_type)) = vlan {
+            raw.extend_from_slice(&tci.to_be_bytes());
+            raw.extend_from_slice(&ether_type.to_be_bytes());
+        }
+        raw.extend_from_slice(&IPV4_UDP);
+        raw
+    }
+
+    #[test]
+    fn tagged_sidecar_round_trip() {
+        let raw = sidecar_frame(Some((0x20c8, eth::ETHER_IPV4)));
+        let pkt = Packet::parse(&raw).unwrap();
+
+        let sc = pkt.hdrs.sidecar_hdr.unwrap();
+        assert_eq!(sc.sc_ether_type, eth::ETHER_VLAN);
+        let vlan = pkt.hdrs.sidecar_vlan_hdr.unwrap();
+        assert_eq!(vlan.tag.eth_pcp, 1);
+        assert_eq!(vlan.tag.eth_dei, 0);
+        assert_eq!(vlan.tag.eth_vlan_tag, 200);
+        assert_eq!(vlan.ether_type, eth::ETHER_IPV4);
+        assert!(pkt.hdrs.eth_hdr.unwrap().eth_8021q.is_none());
+        assert!(pkt.hdrs.ipv4_hdr.is_some());
+        assert!(pkt.hdrs.udp_hdr.is_some());
+
+        assert_eq!(SidecarHdr::header_size(&pkt), SC_HDR_SZ + SC_VLAN_HDR_SZ);
+        assert_eq!(&pkt.deparse().unwrap()[..], &raw[..]);
+    }
+
+    #[test]
+    fn untagged_sidecar_round_trip() {
+        let raw = sidecar_frame(None);
+        let pkt = Packet::parse(&raw).unwrap();
+
+        assert!(pkt.hdrs.sidecar_vlan_hdr.is_none());
+        assert!(pkt.hdrs.ipv4_hdr.is_some());
+        assert_eq!(SidecarHdr::header_size(&pkt), SC_HDR_SZ);
+        assert_eq!(&pkt.deparse().unwrap()[..], &raw[..]);
+    }
+
+    #[test]
+    fn eq_distinguishes_sidecar_vlan() {
+        let tagged =
+            Packet::parse(&sidecar_frame(Some((0x00c8, eth::ETHER_IPV4))))
+                .unwrap();
+        let untagged = Packet::parse(&sidecar_frame(None)).unwrap();
+        assert!(tagged != untagged);
+
+        let mut other_tag = tagged.clone();
+        other_tag.hdrs.sidecar_vlan_hdr.as_mut().unwrap().tag.eth_vlan_tag =
+            201;
+        assert!(tagged != other_tag);
+
+        let mut other_type = tagged.clone();
+        other_type.hdrs.sidecar_vlan_hdr.as_mut().unwrap().ether_type =
+            eth::ETHER_IPV6;
+        assert!(tagged != other_type);
+
+        assert!(tagged == tagged.clone());
     }
 }
