@@ -1,0 +1,4 @@
+Error: failed to get multicast group 232.123.45.99
+
+Caused by:
+    Error Response: status: 404 Not Found; 
