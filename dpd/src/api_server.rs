@@ -17,6 +17,8 @@ use std::sync::Arc;
 use asic::tofino_asic::serdes;
 #[cfg(feature = "tofino_asic")]
 use asic::tofino_asic::stats;
+use common::addr::IpAddrLike;
+use common::addr::RouterIfaceIpAddr;
 use dpd_types::arp::{
     ArpEntry, ArpToken, Ipv4ArpParam, Ipv4Token, Ipv6ArpParam, Ipv6Token,
 };
@@ -98,6 +100,9 @@ use common::ports::TxEq;
 #[cfg(any(feature = "softnpu", feature = "tofino_asic"))]
 use common::ports::TxEqSwHw;
 
+use crate::addr::AsicAddrIface;
+use crate::addr::OptTag;
+use crate::addr::SyncAddrMap;
 use crate::attached_subnet;
 use crate::counters;
 #[cfg(feature = "multicast")]
@@ -1124,12 +1129,19 @@ impl DpdApi for DpdApiImpl {
                 DpdError::Invalid("Invalid page limit".to_string()).into()
             );
         };
+
+        // TODO::cory: include tag in pagination token.
         let addr = match &pagination.page {
             WhichPage::First(..) => None,
-            WhichPage::Next(Ipv4Token { ip }) => Some(*ip),
+            WhichPage::Next(Ipv4Token { ip }) => Some((IpAddr::V4(*ip), "")),
         };
-        let entries =
-            switch.list_ipv4_addresses(port_id, link_id, addr, limit)?;
+        let entries = switch.list_ip_addresses(
+            port_id,
+            link_id,
+            addr,
+            limit,
+            |addr, tag| Ipv4Entry { addr: *addr, tag: tag.to_string() },
+        )?;
         ResultsPage::new(
             entries,
             &EmptyScanParams {},
@@ -1145,11 +1157,10 @@ impl DpdApi for DpdApiImpl {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
         let path = path.into_inner();
-        let port_id = path.port_id;
-        let link_id = path.link_id;
         let entry = entry.into_inner();
+        let addr = entry.addr.to_ip().try_into()?;
         switch
-            .create_ipv4_address(port_id, link_id, entry)
+            .create_ip_address(path.port_id, path.link_id, addr, entry.tag)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
@@ -1163,7 +1174,7 @@ impl DpdApi for DpdApiImpl {
         let port_id = path.port_id;
         let link_id = path.link_id;
         switch
-            .reset_ipv4_addresses(port_id, link_id)
+            .reset_addresses::<Ipv4Addr>(port_id, link_id)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
@@ -1176,9 +1187,9 @@ impl DpdApi for DpdApiImpl {
         let path = path.into_inner();
         let port_id = path.port_id;
         let link_id = path.link_id;
-        let address = path.address;
+        let address = path.address.to_ip().try_into()?;
         switch
-            .delete_ipv4_address(port_id, link_id, address)
+            .delete_ip_address(port_id, link_id, address, &OptTag::Any)
             .map(|_| HttpResponseDeleted())
             .map_err(|e| e.into())
     }
@@ -1199,12 +1210,19 @@ impl DpdApi for DpdApiImpl {
                 DpdError::Invalid("Invalid page limit".to_string()).into()
             );
         };
+        // TODO::cory: include tag in pagination token.
         let addr = match &pagination.page {
             WhichPage::First(..) => None,
-            WhichPage::Next(Ipv6Token { ip }) => Some(*ip),
+            WhichPage::Next(Ipv6Token { ip }) => Some((IpAddr::V6(*ip), "")),
         };
-        let entries =
-            switch.list_ipv6_addresses(port_id, link_id, addr, limit)?;
+        let entries = switch.list_ip_addresses(
+            port_id,
+            link_id,
+            addr,
+            limit,
+            |a: &Ipv6Addr, tag| Ipv6Entry { addr: *a, tag: tag.to_string() },
+        )?;
+
         ResultsPage::new(
             entries,
             &EmptyScanParams {},
@@ -1223,8 +1241,9 @@ impl DpdApi for DpdApiImpl {
         let port_id = path.port_id;
         let link_id = path.link_id;
         let entry = entry.into_inner();
+        let addr = entry.addr.to_ip().try_into()?;
         switch
-            .create_ipv6_address(port_id, link_id, entry)
+            .create_ip_address(port_id, link_id, addr, entry.tag)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
@@ -1238,7 +1257,7 @@ impl DpdApi for DpdApiImpl {
         let port_id = path.port_id;
         let link_id = path.link_id;
         switch
-            .reset_ipv6_addresses(port_id, link_id)
+            .reset_addresses::<Ipv6Addr>(port_id, link_id)
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
@@ -1251,9 +1270,9 @@ impl DpdApi for DpdApiImpl {
         let path = path.into_inner();
         let port_id = path.port_id;
         let link_id = path.link_id;
-        let address = path.address;
+        let address = path.address.to_ip().try_into()?;
         switch
-            .delete_ipv6_address(port_id, link_id, address)
+            .delete_ip_address(port_id, link_id, address, &OptTag::Any)
             .map(|_| HttpResponseDeleted())
             .map_err(|e| e.into())
     }
@@ -1336,13 +1355,19 @@ impl DpdApi for DpdApiImpl {
     async fn loopback_ipv4_list(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<Ipv4Entry>>, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let addrs = match switch.loopback.lock() {
-            Ok(loopback_data) => {
-                loopback_data.v4_addrs.iter().cloned().collect()
-            }
-            Err(e) => return Err(HttpError::for_internal_error(e.to_string())),
-        };
+        let addrs = rqctx
+            .context()
+            .addrs
+            .get()
+            .read()
+            .unwrap()
+            .iter_by_iface(AsicAddrIface::Loopback)
+            .flat_map(|(addr, tags)| {
+                tags.iter()
+                    .map(move |tag| Ipv4Entry { addr, tag: tag.to_string() })
+            })
+            .collect();
+
         Ok(HttpResponseOk(addrs))
     }
 
@@ -1351,9 +1376,10 @@ impl DpdApi for DpdApiImpl {
         val: TypedBody<Ipv4Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
-        let addr = val.into_inner();
+        let entry = val.into_inner();
+        let addr = IpAddr::V4(entry.addr).try_into().map_err(DpdError::from)?;
 
-        loopback::add_loopback_ipv4(switch, &addr)?;
+        loopback::set_loopback(switch, addr, entry.tag)?;
 
         Ok(HttpResponseUpdatedNoContent {})
     }
@@ -1363,8 +1389,11 @@ impl DpdApi for DpdApiImpl {
         path: Path<LoopbackIpv4Path>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
-        let addr = path.into_inner();
-        loopback::delete_loopback_ipv4(switch, &addr.ipv4)
+        let addr = IpAddr::V4(path.into_inner().ipv4)
+            .try_into()
+            .map_err(DpdError::from)?;
+
+        loopback::clear_loopback(switch, addr, &OptTag::Any)
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
     }
@@ -1372,13 +1401,19 @@ impl DpdApi for DpdApiImpl {
     async fn loopback_ipv6_list(
         rqctx: RequestContext<Arc<Switch>>,
     ) -> Result<HttpResponseOk<Vec<Ipv6Entry>>, HttpError> {
-        let switch: &Switch = rqctx.context();
-        let addrs = match switch.loopback.lock() {
-            Ok(loopback_data) => {
-                loopback_data.v6_addrs.iter().cloned().collect()
-            }
-            Err(e) => return Err(HttpError::for_internal_error(e.to_string())),
-        };
+        let addrs = rqctx
+            .context()
+            .addrs
+            .get()
+            .read()
+            .unwrap()
+            .iter_by_iface(AsicAddrIface::Loopback)
+            .flat_map(|(addr, tags)| {
+                tags.iter()
+                    .map(move |tag| Ipv6Entry { addr, tag: tag.to_string() })
+            })
+            .collect();
+
         Ok(HttpResponseOk(addrs))
     }
 
@@ -1387,9 +1422,10 @@ impl DpdApi for DpdApiImpl {
         val: TypedBody<Ipv6Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch: &Switch = rqctx.context();
-        let addr = val.into_inner();
+        let entry = val.into_inner();
+        let addr = IpAddr::V6(entry.addr).try_into().map_err(DpdError::from)?;
 
-        loopback::add_loopback_ipv6(switch, &addr)?;
+        loopback::set_loopback(switch, addr, entry.tag)?;
 
         Ok(HttpResponseUpdatedNoContent {})
     }
@@ -1399,8 +1435,11 @@ impl DpdApi for DpdApiImpl {
         path: Path<LoopbackIpv6Path>,
     ) -> Result<HttpResponseDeleted, HttpError> {
         let switch: &Switch = rqctx.context();
-        let addr = path.into_inner();
-        loopback::delete_loopback_ipv6(switch, &addr.ipv6)
+        let addr = IpAddr::V6(path.into_inner().ipv6)
+            .try_into()
+            .map_err(DpdError::from)?;
+
+        loopback::clear_loopback(switch, addr, &OptTag::Any)
             .map(|_| HttpResponseDeleted())
             .map_err(HttpError::from)
     }
@@ -1710,7 +1749,7 @@ impl DpdApi for DpdApiImpl {
         route::reset_ipv4_tag(switch, &tag).await;
         route::reset_ipv6_tag(switch, &tag).await;
         switch
-            .clear_link_addresses(Some(&tag))
+            .clear_link_addresses(&OptTag::exact(&tag))
             .map(|_| HttpResponseUpdatedNoContent())
             .map_err(|e| e.into())
     }
@@ -1734,7 +1773,7 @@ impl DpdApi for DpdApiImpl {
             error!(switch.log, "failed to reset route data: {:?}", e);
             err = Some(e);
         }
-        if let Err(e) = switch.clear_link_state() {
+        if let Err(e) = switch.clear_link_addresses(&OptTag::Any) {
             error!(switch.log, "failed to clear all link state: {:?}", e);
             err = Some(e);
         }
@@ -1842,9 +1881,10 @@ impl DpdApi for DpdApiImpl {
         let query = query.into_inner();
         let port_id = path.port_id;
         let settings = body.into_inner();
+        let tag = query.tag.as_deref().unwrap_or("");
 
         switch
-            .apply_port_settings(port_id, settings, query.tag)
+            .apply_port_settings(port_id, settings, tag)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -1859,9 +1899,10 @@ impl DpdApi for DpdApiImpl {
         let path = path.into_inner();
         let query = query.into_inner();
         let port_id = path.port_id;
+        let tag = query.tag.as_deref().unwrap_or("");
 
         switch
-            .clear_port_settings(port_id, query.tag)
+            .clear_port_settings(port_id, tag)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -1876,9 +1917,10 @@ impl DpdApi for DpdApiImpl {
         let path = path.into_inner();
         let query = query.into_inner();
         let port_id = path.port_id;
+        let tag = query.tag.as_deref().unwrap_or("");
 
         switch
-            .get_port_settings(port_id, query.tag)
+            .get_port_settings(port_id, tag)
             .await
             .map(HttpResponseOk)
             .map_err(HttpError::from)
@@ -2946,24 +2988,31 @@ pub(crate) fn build_info() -> BuildInfo {
     }
 }
 
-impl From<&crate::link::Link> for LinkSettings {
-    fn from(l: &crate::link::Link) -> Self {
-        let mut addrs: HashSet<IpAddr> = HashSet::new();
-        for a in &l.ipv4 {
-            addrs.insert(a.addr.into());
-        }
-        for a in &l.ipv6 {
-            addrs.insert(a.addr.into());
-        }
+impl crate::link::Link {
+    /// Creates a serializable [`LinkSettings`] representation with the
+    /// current link state and this tag's resources.
+    ///
+    /// These serialized link settings never include a link local
+    /// address. That's managed separately.
+    pub fn settings(&self, amap: &SyncAddrMap, tag: &str) -> LinkSettings {
+        let addrs: HashSet<IpAddr> = amap
+            .get()
+            .read()
+            .unwrap()
+            .iter_by_iface::<RouterIfaceIpAddr>(self.asic_addr_iface())
+            .filter(|(_, tags)| tags.contains(tag))
+            .map(|(addr, _)| addr.to_ip())
+            .collect();
+
         LinkSettings {
             params: LinkCreate {
-                lane: Some(l.link_id),
-                speed: l.config.speed,
-                fec: l.config.fec,
-                autoneg: l.config.autoneg,
-                kr: l.config.kr,
-                tx_eq: l.tx_eq,
-                allow_ddm_traffic: l.config.allow_ddm_traffic,
+                lane: Some(self.link_id),
+                speed: self.config.speed,
+                fec: self.config.fec,
+                autoneg: self.config.autoneg,
+                kr: self.config.kr,
+                tx_eq: self.tx_eq,
+                allow_ddm_traffic: self.config.allow_ddm_traffic,
             },
             addrs,
         }

@@ -8,6 +8,9 @@
 
 use crate::MacAddr;
 use crate::Switch;
+use crate::addr::OptTag;
+use crate::addr::SyncAddrMap;
+use crate::addr::TableIp;
 use crate::fault::AutonegTracker;
 use crate::fault::Faultable;
 use crate::fault::LinkUpTracker;
@@ -16,18 +19,17 @@ use crate::ports::Event;
 use crate::table::mac;
 #[cfg(feature = "multicast")]
 use crate::table::mcast;
-use crate::table::port_ip;
 use crate::table::uplink;
 use crate::transceivers::qsfp_xcvr_mpn;
 use crate::types::DpdError;
 use crate::types::DpdResult;
+use aal::AsicError;
 use aal::AsicId;
 use aal::AsicOps;
 use aal::AsicResult;
 use aal::PortHdl;
 use aal::PortUpdate;
-use common::ports::Ipv4Entry;
-use common::ports::Ipv6Entry;
+use common::addr::IpAddrLike;
 use common::ports::PortFec;
 use common::ports::PortId;
 use common::ports::PortMedia;
@@ -50,9 +52,11 @@ use slog::o;
 use slog_error_chain::InlineErrorChain;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::btree_map;
 use std::collections::btree_map::Entry;
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::net::Ipv6Addr;
+use std::ops::Bound;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -95,15 +99,30 @@ impl LinkMap {
     }
 
     /// Delete a specific link from the map.
+    ///
+    /// Fails if the link doesn't exist.
+    /// Fails if link resources couldn't be fully deleted.
     pub fn delete_link(
         &mut self,
-        port_id: PortId,
-        link_id: LinkId,
+        switch: &Switch,
+        link: &Link,
     ) -> DpdResult<()> {
-        match self.0.remove(&(port_id, link_id)) {
-            Some(_) => Ok(()),
-            None => Err(DpdError::NoSuchLink { port_id, link_id }),
-        }
+        let btree_map::Entry::Occupied(slot) =
+            self.0.entry((link.port_id, link.link_id))
+        else {
+            return Err(DpdError::NoSuchLink {
+                port_id: link.port_id,
+                link_id: link.link_id,
+            });
+        };
+        switch.addrs.clear_addrs::<IpAddr>(
+            switch,
+            link.asic_addr_iface(),
+            &OptTag::Any,
+        )?;
+        slot.remove();
+
+        Ok(())
     }
 
     /// Insert a new link into the map.  If the map already contains a link
@@ -206,9 +225,32 @@ impl Switch {
 
 /// A `Link` is a configured Ethernet link.
 ///
-/// This object exists to capture all the Tofino-facing information required to
+/// This object exists to capture the Tofino-facing information required to
 /// keep track of the logical link. It is converted to a `crate::LinkView` for
 /// exposure in the public API.
+///
+/// # Addresses
+///
+/// The switch (loopback) and its links may have addresses. Addresses from
+/// all these interfaces coexist on the asic, so each address necessarily
+/// belongs to exactly one interface. DPD encodes this by storing all
+/// addresses in a single mapping defined in [`crate::addr`].
+///
+/// That means a [`Link`]'s addresses are managed by keying into
+/// [`crate::addr::AddrMap`] using this link's [`crate::addr::AsicAddrIface`] id.
+/// And a link should not be considered "deleted" until its state
+/// has been removed from that map. (And by extension, from the asic).
+///
+/// ### Link Local
+///
+/// Spec: On the Oxide platform, a link shall have at most one
+/// IPv6 link local address. That address shall be EUI-64
+/// derived from the physical MAC address.
+///
+/// Because MAC addresses are unique, Oxide IPv6 link local
+/// addresses are necessarily also unique. By this property,
+/// we can reuse the existing [`crate::addr`] machinery
+/// to track a link's Link Local as well.
 #[derive(Debug)]
 pub struct Link {
     /// The switch port on which this logical link resides.
@@ -236,10 +278,6 @@ pub struct Link {
     pub link_state: LinkState,
     /// The kind of media in the link.
     pub media: PortMedia,
-    /// A list of IPv4 addresses assigned to this link.
-    pub ipv4: BTreeSet<Ipv4Entry>,
-    /// A list of IPv6 addresses assigned to this link.
-    pub ipv6: BTreeSet<Ipv6Entry>,
     /// Tracks the history of linkup/linkdown transitions, allowing us to
     /// detect flapping links.
     pub linkup_tracker: LinkUpTracker,
@@ -274,31 +312,6 @@ impl From<&Link> for LinkView {
             autoneg: m.config.autoneg,
             address: m.config.mac,
         }
-    }
-}
-
-impl From<Link> for LinkView {
-    fn from(m: crate::link::Link) -> Self {
-        Self::from(&m)
-    }
-}
-
-impl From<&Link> for TfportData {
-    fn from(m: &Link) -> Self {
-        Self {
-            port_id: m.port_id,
-            link_id: m.link_id,
-            asic_id: m.asic_port_id,
-            mac: m.config.mac,
-            ipv6_enabled: m.ipv6_enabled,
-            link_local: m.link_local(),
-        }
-    }
-}
-
-impl From<Link> for TfportData {
-    fn from(m: Link) -> Self {
-        Self::from(&m)
     }
 }
 
@@ -475,22 +488,12 @@ impl Link {
             fsm_state: asic::PortFsmState::default(),
             link_state: LinkState::Unknown,
             media: PortMedia::None,
-            ipv4: BTreeSet::new(),
-            ipv6: BTreeSet::new(),
             linkup_tracker: LinkUpTracker::default(),
             autoneg_tracker: AutonegTracker::default(),
 
             config,
             plumbed,
         }
-    }
-
-    /// Return the link-local address for this link, if one has been added.
-    pub fn link_local(&self) -> Option<Ipv6Addr> {
-        self.ipv6
-            .iter()
-            .find(|entry| (entry.addr.segments()[0] & 0xffc0) == 0xfe80)
-            .map(|entry| entry.addr)
     }
 
     /// Return the FEC scheme in use for this link.  If the link has not yet
@@ -504,6 +507,23 @@ impl Link {
             Some(self.plumbed.fec)
         } else {
             self.config.fec
+        }
+    }
+
+    /// Creates a [`TfportData`] view of this link.
+    pub fn tfport_data(&self, addrs: &SyncAddrMap) -> TfportData {
+        TfportData {
+            port_id: self.port_id,
+            link_id: self.link_id,
+            asic_id: self.asic_port_id,
+            mac: self.config.mac,
+            ipv6_enabled: self.ipv6_enabled,
+            link_local: addrs
+                .get()
+                .read()
+                .unwrap()
+                .get_link_local(self.asic_addr_iface())
+                .map(Ipv6Addr::from),
         }
     }
 }
@@ -681,7 +701,7 @@ impl Switch {
             .filter_map(|link_lock| {
                 let link = link_lock.lock().unwrap();
                 if link.port_id == port_id {
-                    Some(TfportData::from(&*link))
+                    Some(link.tfport_data(&self.addrs))
                 } else {
                     None
                 }
@@ -707,107 +727,53 @@ impl Switch {
         link_id: LinkId,
     ) -> DpdResult<()> {
         let link_lock = self.get_link_lock(port_id, link_id)?;
-        let mut link = link_lock.lock().unwrap();
-
-        // Delete all addresses in the switch tables for this link.
-        if !link.ipv4.is_empty() {
-            let to_delete = std::mem::take(&mut link.ipv4)
-                .into_iter()
-                .map(|entry| entry.addr);
-            port_ip::ipv4_delete_many(self, link.asic_port_id, to_delete)?;
-        }
-        if !link.ipv6.is_empty() {
-            let to_delete = std::mem::take(&mut link.ipv6)
-                .into_iter()
-                .map(|entry| entry.addr);
-            port_ip::ipv6_delete_many(self, link.asic_port_id, to_delete)?;
+        {
+            let mut link = link_lock.lock().unwrap();
+            self.addrs.clear_addrs::<IpAddr>(
+                self,
+                link.asic_addr_iface(),
+                &OptTag::Any,
+            )?;
+            link.config.delete_me = true;
         }
 
         // Notify the reconciliation task that this link's ASIC resources need
         // to be released.
-        link.config.delete_me = true;
         self.reconciler.trigger(port_id, link_id);
 
         Ok(())
     }
 
-    /// Clear all the state associated with all data links.
-    pub fn clear_link_state(&self) -> DpdResult<()> {
+    /// Clear all IP addresses belonging to all links on the switch.
+    ///
+    /// Optionally scoped to all IP addresses belonging to the specified tag.
+    pub fn clear_link_addresses(&self, tag: &OptTag) -> DpdResult<()> {
         let links = self.links.lock().unwrap();
+        let mut errors: Option<Vec<_>> = None;
+
         for link_lock in links.0.values() {
-            let mut link = link_lock.lock().unwrap();
-            // Clear all IP addresses.
-            //
-            // Swap out an empty map with the existing one, so that we can
-            // retain an iterable for calling `ipv{4,6}_delete_many`.
-            if !link.ipv4.is_empty() {
-                let to_delete = std::mem::take(&mut link.ipv4)
-                    .into_iter()
-                    .map(|entry| entry.addr);
-                port_ip::ipv4_delete_many(self, link.asic_port_id, to_delete)?;
-            }
-            if !link.ipv6.is_empty() {
-                let to_delete = std::mem::take(&mut link.ipv6)
-                    .into_iter()
-                    .map(|entry| entry.addr);
-                port_ip::ipv6_delete_many(self, link.asic_port_id, to_delete)?;
-            }
+            let cleared = {
+                let link = link_lock.lock().unwrap();
+                self.addrs.clear_addrs::<IpAddr>(
+                    self,
+                    link.asic_addr_iface(),
+                    tag,
+                )
+            };
+            match cleared {
+                Ok(()) => (),
+                Err(DpdError::AddrClear(failed)) => {
+                    errors.get_or_insert_default().extend(failed);
+                }
+                unexpected @ Err(_) => return unexpected,
+            };
         }
+
+        if let Some(failed) = errors {
+            return Err(DpdError::AddrClear(failed));
+        }
+
         Ok(())
-    }
-
-    /// Clear any IP addresses associated with all links, optionally restricted
-    /// to a specified string `tag`.
-    pub fn clear_link_addresses(&self, tag: Option<&str>) -> DpdResult<()> {
-        if let Some(tag) = tag {
-            let links = self.links.lock().unwrap();
-            for link_lock in links.0.values() {
-                let mut link = link_lock.lock().unwrap();
-                self.clear_link_addresses_locked(&mut link, tag);
-            }
-            Ok(())
-        } else {
-            self.clear_link_state()
-        }
-    }
-
-    fn clear_link_addresses_locked(&self, link: &mut Link, tag: &str) {
-        // Remove all entries from the set with the provided tag.
-        //
-        // TODO-cleanup: It'd be nice to use `drain_filter` here,
-        // but that is unstable.
-        let mut to_remove = Vec::new();
-        link.ipv4.retain(|entry| {
-            if entry.tag == tag {
-                to_remove.push(entry.addr);
-                false
-            } else {
-                true
-            }
-        });
-
-        // Delete the entries from the ASIC tables.
-        let _ = port_ip::ipv4_delete_many(
-            self,
-            link.asic_port_id,
-            to_remove.into_iter(),
-        );
-
-        // TODO-cleanup: See note above about `drain_filter`.
-        let mut to_remove = Vec::new();
-        link.ipv6.retain(|entry| {
-            if entry.tag == tag {
-                to_remove.push(entry.addr);
-                false
-            } else {
-                true
-            }
-        });
-        let _ = port_ip::ipv6_delete_many(
-            self,
-            link.asic_port_id,
-            to_remove.into_iter(),
-        );
     }
 
     // Update the state of a link with a closure.
@@ -1055,207 +1021,119 @@ impl Switch {
         self.link_fetch(port_id, link_id, |link| link.asic_port_id)
     }
 
-    /// Add an IPv4 address to the provided link.
-    pub fn create_ipv4_address_locked(
+    /// Adds an IP address to the provided link if it does not currently exist.
+    ///
+    /// On success, returns whether any tables were modified.
+    pub fn set_ip_address_locked(
         &self,
         link: &mut Link,
-        entry: Ipv4Entry,
-    ) -> DpdResult<()> {
-        if link.ipv4.contains(&entry) {
-            Err(DpdError::Exists(format!(
-                "IP address {} already exists",
-                entry.addr
-            )))
-        } else {
-            port_ip::ipv4_add(self, link.asic_port_id, entry.addr)?;
-            link.ipv4.insert(entry);
-            Ok(())
-        }
+        addr: TableIp,
+        tag: String,
+    ) -> DpdResult<bool> {
+        self.addrs.get().write().unwrap().try_set(
+            self,
+            addr,
+            link.asic_addr_iface(),
+            tag,
+        )
     }
 
-    /// Add an IPv4 address to the specified link.
-    pub fn create_ipv4_address(
+    pub fn create_ip_address(
         &self,
         port_id: PortId,
         link_id: LinkId,
-        entry: Ipv4Entry,
+        addr: TableIp,
+        tag: String,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            self.create_ipv4_address_locked(link, entry)
+            if !self.set_ip_address_locked(link, addr, tag)? {
+                return Err(DpdError::Exists(format!(
+                    "This tag has already registered address {addr:?}"
+                )));
+            }
+            Ok(())
         })
     }
 
-    /// List a page of IPv4 addresses associated with the link.
-    pub fn list_ipv4_addresses(
+    /// Delete one IP address on the specified link.
+    pub fn delete_ip_address(
         &self,
         port_id: PortId,
         link_id: LinkId,
-        last_address: Option<Ipv4Addr>,
+        addr: TableIp,
+        tag: &OptTag,
+    ) -> DpdResult<()> {
+        self.link_update(port_id, link_id, |link| {
+            let iface_id = link.asic_addr_iface();
+            if !self.addrs.clear_addr(self, iface_id, addr, tag)? {
+                return Err(DpdError::NoSuchAddress {
+                    port_id,
+                    link_id,
+                    address: addr.into(),
+                });
+            }
+            Ok(())
+        })
+    }
+
+    pub fn list_ip_addresses<A: IpAddrLike, T>(
+        &self,
+        port_id: PortId,
+        link_id: LinkId,
+        last_entry: Option<(IpAddr, &str)>,
         limit: usize,
-    ) -> DpdResult<Vec<Ipv4Entry>> {
+        convert: impl Fn(&A, &str) -> T,
+    ) -> DpdResult<Vec<T>> {
+        let mut start_addr = None;
+        let all_tags = (Bound::Unbounded, Bound::Unbounded);
+
+        let (addr_bounds, tag_bounds) = if let Some((addr, tag)) = last_entry {
+            start_addr = Some(addr);
+            let addr = (Bound::Excluded(addr), Bound::Unbounded);
+            let tag = (Bound::Excluded(tag), Bound::Unbounded);
+            (addr, tag)
+        } else {
+            let addr = (Bound::Unbounded, Bound::Unbounded);
+            let tag = (Bound::Unbounded, Bound::Unbounded);
+            (addr, tag)
+        };
+
         self.link_fetch(port_id, link_id, |link| {
-            if let Some(addr) = last_address {
-                // Equality only considers the address, so create an entry
-                // with an empty tag.
-                use std::ops::Bound;
-                let entry = Ipv4Entry { tag: String::new(), addr };
-                link.ipv4
-                    .range((Bound::Excluded(entry), Bound::Unbounded))
-                    .take(limit)
-                    .cloned()
-                    .collect()
-            } else {
-                link.ipv4.iter().take(limit).cloned().collect()
-            }
+            self.addrs
+                .get()
+                .read()
+                .unwrap()
+                .iface_addr_range(link.asic_addr_iface(), addr_bounds)
+                .flat_map(move |(addr, tags)| {
+                    let range = if start_addr.is_some_and(|a| a == addr) {
+                        tag_bounds
+                    } else {
+                        all_tags
+                    };
+                    tags.range::<str, _>(range).map(move |t| (addr, t.as_str()))
+                })
+                .filter_map(|(addr, tag)| {
+                    Some(convert(&A::from_ip(addr)?, tag))
+                })
+                .take(limit)
+                .collect()
         })
     }
 
-    /// Delete one IPv4 address on the provided link.
-    pub fn delete_ipv4_address_locked(
-        &self,
-        link: &mut Link,
-        address: Ipv4Addr,
-    ) -> DpdResult<()> {
-        let entry = Ipv4Entry { tag: String::new(), addr: address };
-
-        if link.ipv4.contains(&entry) {
-            port_ip::ipv4_delete(self, link.asic_port_id, address)?;
-            link.ipv4.remove(&entry);
-            Ok(())
-        } else {
-            Err(DpdError::NoSuchAddress {
-                port_id: link.port_id,
-                link_id: link.link_id,
-                address: address.into(),
-            })
-        }
-    }
-
-    /// Delete one IPv4 address on the specified link.
-    pub fn delete_ipv4_address(
-        &self,
-        port_id: PortId,
-        link_id: LinkId,
-        address: Ipv4Addr,
-    ) -> DpdResult<()> {
-        self.link_update(port_id, link_id, |link| {
-            self.delete_ipv4_address_locked(link, address)
-        })
-    }
-
-    /// Delete all IPv4 address on the specified link.
-    pub fn reset_ipv4_addresses(
+    /// Delete all addresses of the given type on the specified link.
+    ///
+    /// Returns [`DpdError::AddrClear`] if any addresses could not be deleted.
+    pub fn reset_addresses<A: IpAddrLike>(
         &self,
         port_id: PortId,
         link_id: LinkId,
     ) -> DpdResult<()> {
         self.link_update(port_id, link_id, |link| {
-            while let Some(Ipv4Entry { addr, .. }) = link.ipv4.pop_first() {
-                port_ip::ipv4_delete(self, link.asic_port_id, addr)?;
-            }
-            Ok(())
-        })
-    }
-
-    /// Add an IPv6 address to the provided link.
-    pub fn create_ipv6_address_locked(
-        &self,
-        link: &mut Link,
-        entry: Ipv6Entry,
-    ) -> DpdResult<()> {
-        if link.ipv6.contains(&entry) {
-            Err(DpdError::Exists(format!(
-                "IP address {} already exists",
-                entry.addr
-            )))
-        } else {
-            port_ip::ipv6_add(self, link.asic_port_id, entry.addr)?;
-            link.ipv6.insert(entry);
-            Ok(())
-        }
-    }
-
-    /// Add an IPv6 address to the specified link.
-    pub fn create_ipv6_address(
-        &self,
-        port_id: PortId,
-        link_id: LinkId,
-        entry: Ipv6Entry,
-    ) -> DpdResult<()> {
-        self.link_update(port_id, link_id, |link| {
-            self.create_ipv6_address_locked(link, entry)
-        })
-    }
-
-    /// List a page of IPv6 addresses associated with the link.
-    pub fn list_ipv6_addresses(
-        &self,
-        port_id: PortId,
-        link_id: LinkId,
-        last_address: Option<Ipv6Addr>,
-        limit: usize,
-    ) -> DpdResult<Vec<Ipv6Entry>> {
-        self.link_fetch(port_id, link_id, |link| {
-            if let Some(addr) = last_address {
-                // Equality only considers the address, so create an entry
-                // with an empty tag.
-                use std::ops::Bound;
-                let entry = Ipv6Entry { tag: String::new(), addr };
-                link.ipv6
-                    .range((Bound::Excluded(entry), Bound::Unbounded))
-                    .take(limit)
-                    .cloned()
-                    .collect()
-            } else {
-                link.ipv6.iter().take(limit).cloned().collect()
-            }
-        })
-    }
-
-    /// Delete one IPv6 address on the provided link.
-    pub fn delete_ipv6_address_locked(
-        &self,
-        link: &mut Link,
-        address: Ipv6Addr,
-    ) -> DpdResult<()> {
-        let entry = Ipv6Entry { tag: String::new(), addr: address };
-
-        if link.ipv6.contains(&entry) {
-            port_ip::ipv6_delete(self, link.asic_port_id, address)?;
-            link.ipv6.remove(&entry);
-            Ok(())
-        } else {
-            Err(DpdError::NoSuchAddress {
-                port_id: link.port_id,
-                link_id: link.link_id,
-                address: address.into(),
-            })
-        }
-    }
-
-    /// Delete one IPv6 address on the specified link.
-    pub fn delete_ipv6_address(
-        &self,
-        port_id: PortId,
-        link_id: LinkId,
-        address: Ipv6Addr,
-    ) -> DpdResult<()> {
-        self.link_update(port_id, link_id, |link| {
-            self.delete_ipv6_address_locked(link, address)
-        })
-    }
-
-    /// Delete all IPv6 address on the specified link.
-    pub fn reset_ipv6_addresses(
-        &self,
-        port_id: PortId,
-        link_id: LinkId,
-    ) -> DpdResult<()> {
-        self.link_update(port_id, link_id, |link| {
-            while let Some(Ipv6Entry { addr, .. }) = link.ipv6.pop_first() {
-                port_ip::ipv6_delete(self, link.asic_port_id, addr)?;
-            }
-            Ok(())
+            self.addrs.clear_addrs::<A>(
+                self,
+                link.asic_addr_iface(),
+                &OptTag::Any,
+            )
         })
     }
 
@@ -1644,7 +1522,7 @@ fn set_mac_config(
     #[cfg(feature = "multicast")]
     {
         mac::mcast_mac_set(switch, asic_id, mac)?;
-        mcast::mcast_egress::add_port_mapping_entry(switch, asic_id)?;
+        mcast::mcast_egress::set_port_mapping_entry(switch, asic_id)?;
     }
     Ok(())
 }
@@ -1655,7 +1533,7 @@ fn clear_mac_config(switch: &Switch, asic_id: AsicId) -> DpdResult<()> {
     #[cfg(feature = "multicast")]
     {
         mac::mcast_mac_clear(switch, asic_id)?;
-        mcast::mcast_egress::del_port_mapping_entry(switch, asic_id)?;
+        mcast::mcast_egress::clear_port_mapping_entry(switch, asic_id)?;
     }
     Ok(())
 }
@@ -1686,14 +1564,21 @@ fn unplumb_link(
     }
 
     if link.plumbed.link_created {
-        if let Err(e) = switch.asic_hdl.port_delete(link.port_hdl) {
-            error!(log, "failed to delete ASIC port: {e:?}");
-            return Err(e.into());
+        match switch.asic_hdl.port_delete(link.port_hdl) {
+            Ok(()) | Err(AsicError::Missing(_)) => {
+                link.plumbed.link_created = false;
+                switch.record_event(
+                    link.asic_port_id,
+                    Event::Admin(AdminEvent::Delete),
+                );
+            }
+            Err(e) => {
+                error!(log, "failed to delete ASIC port: {e:?}");
+                return Err(e.into());
+            }
         }
-        link.plumbed.link_created = false;
-        switch
-            .record_event(link.asic_port_id, Event::Admin(AdminEvent::Delete));
     }
+
     Ok(())
 }
 
@@ -1871,10 +1756,20 @@ async fn reconcile_link(
     }
 
     if link.config.delete_me {
+        if let Err(e) = links.delete_link(switch, &link) {
+            self::record_plumb_failure(
+                switch,
+                &mut link,
+                "releasing link addresses before deletion",
+                &e,
+            );
+            error!(
+                log,
+                "Failed to release addresses before link deletion: {e:?}"
+            );
+            return;
+        }
         switch.free_mac_address(link.config.mac);
-        links
-            .delete_link(port_id, link_id)
-            .expect("link must exist as the links map is locked");
         return;
     }
     drop(links);
