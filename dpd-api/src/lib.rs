@@ -11,9 +11,9 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 use dpd_types_versions::{latest, v1, v4, v7};
 use dropshot::{
-    EmptyScanParams, HttpError, HttpResponseCreated, HttpResponseDeleted,
-    HttpResponseOk, HttpResponseUpdatedNoContent, PaginationParams, Path,
-    Query, RequestContext, ResultsPage, TypedBody,
+    EmptyScanParams, ErrorStatusCode, HttpError, HttpResponseCreated,
+    HttpResponseDeleted, HttpResponseOk, HttpResponseUpdatedNoContent,
+    PaginationParams, Path, Query, RequestContext, ResultsPage, TypedBody,
 };
 use dropshot_api_manager_types::api_versions;
 
@@ -29,6 +29,7 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
+    (14, ADDRESS_TAGS),
     (13, ALLOW_DDM_TRAFFIC),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
@@ -1063,21 +1064,63 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv4",
+        versions = ..VERSION_ADDRESS_TAGS
     }]
     async fn link_ipv4_reset(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let _ = rqctx;
+        let _ = path;
 
-    /// Remove an IPv4 address from a link.
+        Err(HttpError {
+            status_code: ErrorStatusCode::GONE,
+            error_code: None,
+            external_message: ADDR_RESET_EMSG.to_string(),
+            internal_message: ADDR_RESET_EMSG.to_string(),
+            headers: None,
+        })
+    }
+
+    /// Remove an IPv4 address from this link.
+    ///
+    /// If a tag is provided, the address will only be deleted
+    /// if it belongs to the given tag.
+    ///
+    /// - Returns 404 NOT_FOUND if the address is not registered
+    ///   on the switch.
+    /// - Returns 409 CONFLICT if the address exists on the switch
+    ///   but is owned by something else (link, loopback, tag, etc).
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv4/{address}",
+        versions = VERSION_ADDRESS_TAGS..
     }]
     async fn link_ipv4_delete(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkIpv4Path>,
+        tag: Query<latest::misc::MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /// This version's replacement allows users to specify a tag
+    /// scope for deletion. That allows callers to cooperate more easily.
+    #[endpoint {
+        method = DELETE,
+        path = "/ports/{port_id}/links/{link_id}/ipv4/{address}",
+        versions = ..VERSION_ADDRESS_TAGS,
+        operation_id = "link_ipv4_delete"
+    }]
+    async fn link_ipv4_delete_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkIpv4Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Self::link_ipv4_delete(
+            rqctx,
+            path,
+            latest::misc::MaybeTagged::default().into(),
+        )
+        .await
+    }
 
     /// List the IPv6 addresses associated with a link.
     #[endpoint {
@@ -1105,21 +1148,62 @@ pub trait DpdApi {
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv6",
+        versions = ..VERSION_ADDRESS_TAGS
     }]
     async fn link_ipv6_reset(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        let _ = rqctx;
+        let _ = path;
 
-    /// Remove an IPv6 address from a link.
+        Err(HttpError {
+            status_code: ErrorStatusCode::GONE,
+            error_code: None,
+            external_message: ADDR_RESET_EMSG.to_string(),
+            internal_message: ADDR_RESET_EMSG.to_string(),
+            headers: None,
+        })
+    }
+
+    /// Remove an IPv6 address from this link.
+    ///
+    /// If a tag is provided, the address will only be deleted
+    /// if it belongs to the given tag.
+    ///
+    /// - Returns 404 NOT_FOUND if the address is not registered
+    ///   on the switch.
+    /// - Returns 409 CONFLICT if the address exists on the switch
+    ///   but is owned by something else (link, loopback, tag, etc).
     #[endpoint {
         method = DELETE,
         path = "/ports/{port_id}/links/{link_id}/ipv6/{address}",
+        versions = VERSION_ADDRESS_TAGS..,
     }]
     async fn link_ipv6_delete(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkIpv6Path>,
+        tag: Query<latest::misc::MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError>;
+
+    // Replaced for the same reason as [`link_ipv4_delete_v1`].
+    #[endpoint {
+        method = DELETE,
+        path = "/ports/{port_id}/links/{link_id}/ipv6/{address}",
+        versions = ..VERSION_ADDRESS_TAGS,
+        operation_id = "link_ipv6_delete"
+    }]
+    async fn link_ipv6_delete_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::link::LinkIpv6Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Self::link_ipv6_delete(
+            rqctx,
+            path,
+            latest::misc::MaybeTagged::default().into(),
+        )
+        .await
+    }
 
     /// Get a link's MAC address.
     #[endpoint {
@@ -1248,17 +1332,44 @@ pub trait DpdApi {
         val: TypedBody<latest::port::Ipv4Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /**
-     * Remove one loopback IPv4 address.
-     */
+    /// Remove a loopback IPv4 address.
+    ///
+    /// If a tag is provided, the address will only be deleted
+    /// if it belongs to the given tag.
+    ///
+    /// - Returns 404 NOT_FOUND if the address is not registered
+    ///   on the switch.
+    /// - Returns 409 CONFLICT if the address exists on the switch
+    ///   but is owned by something else (link, loopback, tag, etc).
     #[endpoint {
         method = DELETE,
         path = "/loopback/ipv4/{ipv4}",
+        versions = VERSION_ADDRESS_TAGS..
     }]
     async fn loopback_ipv4_delete(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::loopback::LoopbackIpv4Path>,
+        tag: Query<latest::misc::MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError>;
+
+    // Replaced for the same reason as [`link_ipv4_delete_v1`].
+    #[endpoint {
+        method = DELETE,
+        path = "/loopback/ipv4/{ipv4}",
+        versions = ..VERSION_ADDRESS_TAGS,
+        operation_id = "loopback_ipv4_delete"
+    }]
+    async fn loopback_ipv4_delete_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::loopback::LoopbackIpv4Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Self::loopback_ipv4_delete(
+            rqctx,
+            path,
+            latest::misc::MaybeTagged::default().into(),
+        )
+        .await
+    }
 
     /**
      * Get loopback IPv6 addresses.
@@ -1283,17 +1394,44 @@ pub trait DpdApi {
         val: TypedBody<latest::port::Ipv6Entry>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
-    /**
-     * Remove one loopback IPv6 address.
-     */
+    /// Remove a loopback IPv6 address.
+    ///
+    /// If a tag is provided, the address will only be deleted
+    /// if it belongs to the given tag.
+    ///
+    /// - Returns 404 NOT_FOUND if the address is not registered
+    ///   on the switch.
+    /// - Returns 409 CONFLICT if the address exists on the switch
+    ///   but is owned by something else (link, loopback, tag, etc).
     #[endpoint {
         method = DELETE,
         path = "/loopback/ipv6/{ipv6}",
+        versions = VERSION_ADDRESS_TAGS..,
     }]
     async fn loopback_ipv6_delete(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::loopback::LoopbackIpv6Path>,
+        tag: Query<latest::misc::MaybeTagged<()>>,
     ) -> Result<HttpResponseDeleted, HttpError>;
+
+    // Replaced for the same reason as [`link_ipv4_delete_v1`].
+    #[endpoint {
+        method = DELETE,
+        path = "/loopback/ipv6/{ipv6}",
+        versions = ..VERSION_ADDRESS_TAGS,
+        operation_id = "loopback_ipv6_delete"
+    }]
+    async fn loopback_ipv6_delete_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::loopback::LoopbackIpv6Path>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Self::loopback_ipv6_delete(
+            rqctx,
+            path,
+            latest::misc::MaybeTagged::default().into(),
+        )
+        .await
+    }
 
     /**
      * Get all of the external addresses in use for NAT mappings.
@@ -1646,26 +1784,61 @@ pub trait DpdApi {
         HttpError,
     >;
 
-    /**
-     * Apply port settings atomically.
-     *
-     * These settings will be applied holistically, and to the extent possible
-     * atomically to a given port. In the event of a failure a rollback is
-     * attempted. If the rollback fails there will be inconsistent state. This
-     * failure mode returns the error code "rollback failure". For more details see
-     * the docs on the [`PortSettings`] type.
-     */
+    /// Apply port settings atomically.
+    ///
+    /// These settings will be applied holistically, and to the extent possible
+    /// atomically to a given port. In the event of a failure, a rollback is
+    /// attempted. If the rollback fails, there will be inconsistent state. This
+    /// failure mode returns the error code "rollback failure". For more details see
+    /// the docs on the [`PortSettings`] type.
+    ///
+    /// Modifications within a link respect address tags. However, this may still
+    /// delete a link even if it contains addresses belonging to other tags.
     #[endpoint {
         method = POST,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
-        path = "/port/{port_id}/settings"
+        versions = VERSION_ADDRESS_TAGS..,
+        path = "/port/{port_id}/settings/{tag}"
     }]
     async fn port_settings_apply(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::misc::Tagged<latest::port::PortIdPathParams>>,
+        body: TypedBody<latest::port::PortSettings>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /// This was replaced by a version that requires a tag.
+    ///
+    /// - DPD tags all addresses, so allowing a `None` tag just used
+    ///   an implicit empty string tag. That's confusing and unnecessary.
+    /// - This method ostensibly only succeeds if all settings were
+    ///   idempotently applied. So returning those same settings
+    ///   isn't super useful. And doing so implicates awkward
+    ///   async reconciler assumptions.
+    #[endpoint {
+        method = POST,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_ADDRESS_TAGS,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_apply"
+    }]
+    async fn port_settings_apply_v2(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
         query: Query<latest::port::PortSettingsTag>,
         body: TypedBody<latest::port::PortSettings>,
-    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError> {
+        let tagged_port = path.map(|port| latest::misc::Tagged {
+            tag: query.into_inner().tag.unwrap_or_default(),
+            value: port,
+        });
+
+        let mut settings = latest::port::PortSettings::default();
+        let body = body.map(|s| {
+            settings = s.clone();
+            s
+        });
+
+        Self::port_settings_apply(rqctx, tagged_port, body).await?;
+        Ok(HttpResponseOk(settings))
+    }
 
     /**
      * Apply port settings atomically.
@@ -1688,24 +1861,49 @@ pub trait DpdApi {
         query: Query<v1::port::PortSettingsTag>,
         body: TypedBody<v1::port::PortSettings>,
     ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
-        Self::port_settings_apply(rqctx, path, query, body.map(Into::into))
+        Self::port_settings_apply_v2(rqctx, path, query, body.map(Into::into))
             .await
             .map(|resp| resp.map(Into::into))
     }
 
-    /**
-     * Clear port settings atomically.
-     */
+    /// Clears port settings atomically.
+    ///
+    /// This is similar to calling link_delete on all links of
+    /// a port, however it also attempts to roll back to the
+    /// previous state if something fails.
     #[endpoint {
         method = DELETE,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
+        versions = VERSION_ADDRESS_TAGS..,
         path = "/port/{port_id}/settings"
     }]
     async fn port_settings_clear(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
+    ) -> Result<HttpResponseDeleted, HttpError>;
+
+    /// This was replaced due to two issues:
+    /// - Tags have no effect on link deletion, and requiring
+    ///   an unused tag parameter was misleading.
+    /// - This returns PortSettings. It's unclear whether that's the previous
+    ///   settings or the resulting settings. The implementation chose the
+    ///   latter, which is pointless because a successful clear definitionally
+    ///   produces empty settings.
+    #[endpoint {
+        method = DELETE,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_ADDRESS_TAGS,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_clear"
+    }]
+    async fn port_settings_clear_v2(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<latest::port::PortIdPathParams>,
         query: Query<latest::port::PortSettingsTag>,
-    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError> {
+        let _ = query;
+        Self::port_settings_clear(rqctx, path)
+            .await
+            .map(|_| HttpResponseOk(latest::port::PortSettings::default()))
+    }
 
     /**
      * Clear port settings atomically.
@@ -1721,24 +1919,49 @@ pub trait DpdApi {
         path: Path<v1::port::PortIdPathParams>,
         query: Query<v1::port::PortSettingsTag>,
     ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
-        Self::port_settings_clear(rqctx, path, query)
+        Self::port_settings_clear_v2(rqctx, path, query)
             .await
             .map(|resp| resp.map(Into::into))
     }
 
-    /**
-     * Get port settings atomically.
-     */
+    /// Retrieves the settings for all links on this port.
+    ///
+    /// Among tagged resources, only those matching the given
+    /// tag are returned.
+    ///
+    /// Use link_ipv*_list if you want all addresses on a link
+    /// regardless of tag.
     #[endpoint {
         method = GET,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
-        path = "/port/{port_id}/settings"
+        versions = VERSION_ADDRESS_TAGS..,
+        path = "/port/{port_id}/settings/{tag}"
     }]
     async fn port_settings_get(
         rqctx: RequestContext<Self::Context>,
+        path: Path<latest::misc::Tagged<latest::port::PortIdPathParams>>,
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /// The version replacing this makes tag a required parameter.
+    /// Reconciler usage doesn't want tag `None` to return all addresses,
+    /// which forced dpd to implicitly unwrap tag `None` to a default `""`.
+    #[endpoint {
+        method = GET,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_ADDRESS_TAGS,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_get"
+    }]
+    async fn port_settings_get_v2(
+        rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
         query: Query<latest::port::PortSettingsTag>,
-    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError> {
+        let tagged_port = path.map(|port| latest::misc::Tagged {
+            tag: query.into_inner().tag.unwrap_or_default(),
+            value: port,
+        });
+
+        Self::port_settings_get(rqctx, tagged_port).await
+    }
 
     /**
      * Get port settings atomically.
@@ -1754,7 +1977,7 @@ pub trait DpdApi {
         path: Path<v1::port::PortIdPathParams>,
         query: Query<v1::port::PortSettingsTag>,
     ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
-        Self::port_settings_get(rqctx, path, query)
+        Self::port_settings_get_v2(rqctx, path, query)
             .await
             .map(|resp| resp.map(Into::into))
     }
@@ -2790,3 +3013,11 @@ pub trait DpdApi {
         HttpError,
     >;
 }
+
+const ADDR_RESET_EMSG: &str = "
+This endpoint was deprecated because it provides redundant functionality and interacts poorly with ownership tags. The following endpoints may also be used to delete addresses:
+
+- port_settings_apply
+- port_settings_clear
+- link_ipv*_list followed by link_ipv*_delete
+";

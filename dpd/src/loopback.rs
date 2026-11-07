@@ -8,10 +8,11 @@ use common::addr::RouterIfaceIpAddr;
 
 use crate::addr::AsicAddrIface;
 use crate::addr::OptTag;
+use crate::types::DpdError;
 use crate::{DpdResult, Switch};
 
 /// Add a loopback IPv4 address to the switch.
-pub fn set_loopback(
+pub fn set_loopback_addr(
     switch: &Switch,
     addr: RouterIfaceIpAddr,
     tag: String,
@@ -25,16 +26,30 @@ pub fn set_loopback(
     Ok(())
 }
 
-pub fn clear_loopback(
+/// Clears this loopback address from the switch address table.
+///
+/// If a tag is provided, the address is only deleted if it belongs
+/// to that tag.
+///
+/// Returns error if the address does not currently exist (under that tag).
+pub fn delete_loopback_addr(
     switch: &Switch,
     addr: RouterIfaceIpAddr,
     tag: &OptTag,
 ) -> DpdResult<()> {
-    switch.addrs.get().write().unwrap().try_clear(
+    let cleared = switch.addrs.clear_addr(
         switch,
-        addr.into(),
         AsicAddrIface::Loopback,
+        addr.into(),
         tag,
     )?;
+
+    if !cleared {
+        return Err(DpdError::NoSuchAddress {
+            iface: "loopback".into(),
+            address: addr.into(),
+        });
+    }
+
     Ok(())
 }
