@@ -1067,7 +1067,7 @@ impl Switch {
             let iface_id = link.asic_addr_iface();
             if !self.addrs.clear_addr(self, iface_id, addr, tag)? {
                 return Err(DpdError::NoSuchAddress {
-                    owner: format!("{port_id}/{link_id}").into(),
+                    iface: format!("{port_id}/{link_id}").into(),
                     address: addr.into(),
                 });
             }

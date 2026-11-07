@@ -241,14 +241,21 @@ impl AddrMap {
         let iface_id = iface.into();
         let addr_entry = match self.addr_to_iface.entry(addr) {
             hash_map::Entry::Vacant(empty) => empty,
-            hash_map::Entry::Occupied(mut addr_entry) => {
-                Self::cmp_iface(addr, &iface_id, addr_entry.get())?;
+            hash_map::Entry::Occupied(entry)
+                if entry.get().interface != iface_id =>
+            {
+                return Err(DpdError::AddrIfaceConflict {
+                    addr: addr.into(),
+                    interface: entry.get().interface.to_string().into(),
+                });
+            }
+            hash_map::Entry::Occupied(mut entry) => {
                 debug!(
                     switch.log,
                     "Table set: address {addr:?} already exists in soft state with config {:?}",
-                    addr_entry.get()
+                    entry.get()
                 );
-                let new_tag = addr_entry.get_mut().tags.insert(tag);
+                let new_tag = entry.get_mut().tags.insert(tag);
                 assert!(
                     self.iface_to_addr
                         .get(&iface_id)
@@ -317,7 +324,13 @@ impl AddrMap {
             return Ok(false);
         };
 
-        Self::cmp_iface(addr, &iface.into(), addr_entry.get())?;
+        if AddrIface::from(iface) != addr_entry.get().interface {
+            return Err(DpdError::NoSuchAddress {
+                iface: AddrIface::from(iface).to_string().into(),
+                address: addr.into(),
+            });
+        }
+
         match compare_tag {
             OptTag::Any => {
                 Self::clear_asic(switch, addr, &iface)?;
@@ -479,28 +492,6 @@ impl AddrMap {
             .copied()
     }
 
-    /// Returns err if the requested and current interface
-    /// entries do not match.
-    ///
-    /// Do not mutate an entry if this fails.
-    fn cmp_iface(
-        addr: TableIp,
-        request: &AddrIface,
-        current: &AddrSpec,
-    ) -> DpdResult<()> {
-        if request == &current.interface {
-            return Ok(());
-        }
-
-        let interface = match current.interface {
-            AddrIface::Loopback => "loopback".into(),
-            AddrIface::Link { port_id, link_id } => {
-                format!("{port_id}/{link_id}").into()
-            }
-        };
-        Err(DpdError::AddrIfaceConflict { addr: addr.into(), interface })
-    }
-
     /// Declares this entry in the corresponding asic table.
     /// No error if it already existed.
     fn set_asic(
@@ -608,6 +599,17 @@ pub enum AsicAddrIface {
 enum AddrIface {
     Loopback,
     Link { port_id: PortId, link_id: LinkId },
+}
+
+impl Display for AddrIface {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AddrIface::Loopback => write!(f, "loopback"),
+            AddrIface::Link { port_id, link_id } => {
+                write!(f, "{port_id}/{link_id}")
+            }
+        }
+    }
 }
 
 /// Clients may use DPD tags to cooperatively namespace CRUD

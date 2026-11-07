@@ -777,13 +777,13 @@ async fn address_cmds_respect_tags() -> anyhow::Result<()> {
     client
         .link_ipv4_delete(&QSFP0, &LINK0, &tag1.v4_entry.addr, Some(TAG2))
         .await
-        .expect_err("v4 addr shouldn't be deleted because it belongs to TAG1")
-        .expect_status(StatusCode::CONFLICT);
+        .expect_err("this v4 entry doesn't exist")
+        .expect_status(StatusCode::NOT_FOUND);
     client
         .link_ipv6_delete(&QSFP0, &LINK0, &tag1.v6_entry.addr, Some(TAG2))
         .await
-        .expect_err("v6 addr shouldn't be deleted because it belongs to TAG1")
-        .expect_status(StatusCode::CONFLICT);
+        .expect_err("this v6 entry doesn't exist")
+        .expect_status(StatusCode::NOT_FOUND);
 
     cxt.ensure_addrs([
         (tag1.tag(), tag1.v4_entry.addr.into()),
@@ -887,10 +887,10 @@ async fn loopback_respects_tags() -> anyhow::Result<()> {
 
     self::try_steal(&mut link, loop4.into(), TAG1.to_string())
         .await
-        .expect("Link must not steal v4 loopback addr");
+        .expect_err("Link must not steal v4 loopback addr");
     self::try_steal(&mut link, loop6.into(), TAG1.to_string())
         .await
-        .expect("Link must not steal v6 loopback addr");
+        .expect_err("Link must not steal v6 loopback addr");
 
     link.verify_addrs_exist(Verify::Exhaustive).await?;
 
@@ -898,12 +898,12 @@ async fn loopback_respects_tags() -> anyhow::Result<()> {
         .loopback_ipv4_delete(&link.v4_entry.addr, None)
         .await
         .expect_err("Loopback API must not delete a v4 link address")
-        .expect_status(StatusCode::CONFLICT);
+        .expect_status(StatusCode::NOT_FOUND);
     client
         .loopback_ipv6_delete(&link.v6_entry.addr, None)
         .await
         .expect_err("Loopback API must not delete a v6 link address")
-        .expect_status(StatusCode::CONFLICT);
+        .expect_status(StatusCode::NOT_FOUND);
 
     cxt.ensure_loopbacks([
         (Cow::Borrowed(TAG1), loop4.to_ip()),
@@ -1098,12 +1098,12 @@ async fn deleted_address_must_exist() -> anyhow::Result<()> {
         .link_ipv4_delete(&QSFP0, &LINK0, &tag1.v4_entry.addr, Some(TAG2))
         .await
         .expect_err("Must not delete an IPv4 address belonging to another tag")
-        .expect_status(StatusCode::CONFLICT);
+        .expect_status(StatusCode::NOT_FOUND);
     client
         .link_ipv6_delete(&QSFP0, &LINK0, &tag1.v6_entry.addr, Some(TAG2))
         .await
         .expect_err("Must not delete an IPv6 address belonging to another tag")
-        .expect_status(StatusCode::CONFLICT);
+        .expect_status(StatusCode::NOT_FOUND);
     tag1.verify_addrs_exist(Verify::NonExhaustive).await?;
 
     client

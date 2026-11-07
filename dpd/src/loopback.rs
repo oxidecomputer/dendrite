@@ -46,7 +46,7 @@ pub fn delete_loopback_addr(
 
     if !cleared {
         return Err(DpdError::NoSuchAddress {
-            owner: "loopback".into(),
+            iface: "loopback".into(),
             address: addr.into(),
         });
     }
