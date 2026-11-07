@@ -63,7 +63,7 @@ impl Chaos {
     /// Return a chaos error according to the underlying probability value.
     pub fn unfurled(&self, log: &Logger, message: &str) -> AsicResult<()> {
         if self.value > random() {
-            slog::error!(log, "chaos error: {}", message);
+            slog::error!(log, "chaos error: {message}");
             return Err(AsicError::Synthetic(message.into()));
         }
         Ok(())
@@ -150,7 +150,7 @@ impl TableChaos {
         if let Some(value) = self.values.get(&id)
             && *value > random()
         {
-            slog::error!(log, "chaos table error: {}", message);
+            slog::error!(log, "chaos table error: {message}");
             return Err(AsicError::Synthetic(message.into()));
         }
         Ok(())
@@ -201,6 +201,7 @@ pub enum TableOp {
     EntryAdd,
     EntryUpdate,
     EntryDel,
+    EntryList,
 }
 
 impl fmt::Display for TableOp {
@@ -209,6 +210,7 @@ impl fmt::Display for TableOp {
             Self::EntryAdd => "table_entry_add",
             Self::EntryUpdate => "table_entry_update",
             Self::EntryDel => "table_entry_del",
+            Self::EntryList => "table_entry_list",
         })
     }
 }
@@ -226,8 +228,6 @@ pub struct AsicMulticastConfig {
     pub mc_port_list: Chaos,
     #[serde(default)]
     pub faults: BTreeMap<McOp, CallRange>,
-    #[serde(default)]
-    pub unsupported: BTreeSet<McOp>,
 }
 
 impl AsicMulticastConfig {
@@ -274,8 +274,6 @@ pub struct AsicConfig {
     pub table_entry_update: TableChaos,
     pub table_entry_del: TableChaos,
     pub mc_config: AsicMulticastConfig,
-    #[serde(default)]
-    pub entries_unsupported: BTreeSet<TableType>,
 }
 
 impl AsicConfig {
@@ -318,9 +316,7 @@ impl AsicConfig {
                 mc_set_max_nodes: Chaos::new(v),
                 mc_port_list: Chaos::new(v),
                 faults: BTreeMap::new(),
-                unsupported: BTreeSet::new(),
             },
-            entries_unsupported: BTreeSet::new(),
         }
     }
 

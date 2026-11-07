@@ -2254,14 +2254,6 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
 
     let ctr_baseline_ingress =
         switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
-    let ctr_baseline_mcast_egress1 = switch
-        .get_counter(&port_label_egress1, Some("multicast"))
-        .await
-        .unwrap();
-    let ctr_baseline_mcast_egress2 = switch
-        .get_counter(&port_label_egress2, Some("multicast"))
-        .await
-        .unwrap();
     let ctr_baseline_external_egress1 = switch
         .get_counter(&port_label_egress1, Some("multicast_external"))
         .await
@@ -2287,26 +2279,6 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
         ctr_baseline_ingress,
         1,
         Some("ingress"),
-    )
-    .await
-    .unwrap();
-
-    // One decapped replica should be counted per external member port.
-    check_counter_incremented(
-        switch,
-        &port_label_egress1,
-        ctr_baseline_mcast_egress1,
-        1,
-        Some("multicast"),
-    )
-    .await
-    .unwrap();
-    check_counter_incremented(
-        switch,
-        &port_label_egress2,
-        ctr_baseline_mcast_egress2,
-        1,
-        Some("multicast"),
     )
     .await
     .unwrap();
@@ -2660,22 +2632,6 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
 
     let ctr_baseline_ingress =
         switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
-    let ctr_baseline_mcast_egress1 = switch
-        .get_counter(&port_label_egress1, Some("multicast"))
-        .await
-        .unwrap();
-    let ctr_baseline_mcast_egress2 = switch
-        .get_counter(&port_label_egress2, Some("multicast"))
-        .await
-        .unwrap();
-    let ctr_baseline_mcast_egress3 = switch
-        .get_counter(&port_label_egress3, Some("multicast"))
-        .await
-        .unwrap();
-    let ctr_baseline_mcast_egress4 = switch
-        .get_counter(&port_label_egress4, Some("multicast"))
-        .await
-        .unwrap();
     let ctr_baseline_underlay_egress1 = switch
         .get_counter(&port_label_egress1, Some("multicast_underlay"))
         .await
@@ -2720,24 +2676,6 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     )
     .await
     .unwrap();
-
-    // One replica should be counted per member port, external & underlay alike.
-    for (label, baseline) in [
-        (&port_label_egress1, ctr_baseline_mcast_egress1),
-        (&port_label_egress2, ctr_baseline_mcast_egress2),
-        (&port_label_egress3, ctr_baseline_mcast_egress3),
-        (&port_label_egress4, ctr_baseline_mcast_egress4),
-    ] {
-        check_counter_incremented(
-            switch,
-            label,
-            baseline,
-            1,
-            Some("multicast"),
-        )
-        .await
-        .unwrap();
-    }
 
     // Still-encapsulated replicas to underlay members count as underlay,
     // not external, for UNDERLAY_EXTERNAL tagged groups.

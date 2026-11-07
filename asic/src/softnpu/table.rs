@@ -7,7 +7,7 @@
 use std::hash::Hash;
 
 use slog::{error, trace};
-use softnpu_lib::{ManagementRequest, TableAdd, TableRemove};
+use softnpu_lib::{ManagementRequest, TableAdd, TableClear, TableRemove};
 
 use crate::softnpu::Handle;
 use aal::{
@@ -82,22 +82,15 @@ impl Table {
     }
 
     /// Translate a `configure_mcastv6` request into a sidecar-lite
-    /// `set_port_bitmap` addition, holding the replication tracking lock across
-    /// the entire op.
+    /// `set_port_bitmap` addition.
     ///
-    /// DPD sends `(mcast_grp_a, mcast_grp_b, rid, level1_excl_id,
-    /// level2_excl_id)`, while sidecar-lite expects `(external, underlay, rid)`,
-    /// from `McGroupData` membership. On SoftNPU, the bitmap is a write-time
-    /// snapshot, unlike the live replication engine on the sidecar, allowing
-    /// recorded group references to recompute later membership changes to the
-    /// entry.
+    /// dpd sends `(mcast_grp_a, mcast_grp_b, rid, level1_excl_id,
+    /// level2_excl_id)`, while sidecar-lite expects
+    /// `(external, underlay, rid)`, from `McGroupData` membership.
     ///
-    /// The lock is held from the bitmap snapshot through to the table write on
-    /// a concurrent membership refresh, which takes the same lock across its
-    /// own rewrite (see @ `mc_port_add`).
-    ///
-    /// This cannot interleave a newer bitmap that this older snapshot would
-    /// then overwrite.
+    /// SoftNPU's bitmap is a write-time snapshot (the Sidecar's replication
+    /// engine tracks membership live). dpd rewrites the entry after membership
+    /// changes to refresh it.
     fn mcast_replication_add(
         &self,
         hdl: &Handle,
@@ -110,15 +103,13 @@ impl Table {
         let underlay_grp = arg_u16(hdl, action_data, action, "mcast_grp_b")?;
         let rid = arg_u16(hdl, action_data, action, "rid")?;
 
-        let mut mc_data = hdl.mc_data.lock().unwrap();
-        let external_bitmap = mc_data.port_bitmap(external_grp);
-        let underlay_bitmap = mc_data.port_bitmap(underlay_grp);
-        mc_data.record_repl_entry(
-            keyset_data.clone(),
-            external_grp,
-            underlay_grp,
-            rid,
-        );
+        let (external_bitmap, underlay_bitmap) = {
+            let mc_data = hdl.mc_data.lock().unwrap();
+            (
+                mc_data.port_bitmap(external_grp),
+                mc_data.port_bitmap(underlay_grp),
+            )
+        };
 
         let parameter_data = [
             external_bitmap.to_le_bytes().as_slice(),
@@ -127,8 +118,6 @@ impl Table {
         ]
         .concat();
 
-        // Logged at debug for the initial bitmap snapshot to be visible in a
-        // release build.
         slog::debug!(
             hdl.log,
             "mcast replication add: external_grp={external_grp} \
@@ -139,46 +128,32 @@ impl Table {
         trace!(hdl.log, "keyset_data:\n{keyset_data:#?}");
         trace!(hdl.log, "parameter_data:\n{parameter_data:#?}");
 
-        replace_entry(
+        add_entry(
             hdl,
             table,
             crate::softnpu::mcast::SET_PORT_BITMAP_ACTION.to_string(),
             keyset_data,
             parameter_data,
-        );
-
-        Ok(())
+        )
     }
 }
 
-/// Write an entry, or replace any entry already associated with the key.
-///
-/// Note: SoftNPU's `TableAdd` retrains an existing entry in place and reports
-/// nothing back. The backend key lookup does not return `AsicError::Exists`,
-/// for example.
-///
-/// Removing the key before the add ensures that the pipeline is in agreement
-/// with what DPD wrote.
-fn replace_entry(
+/// Send a `TableAdd` request for `table`, which replaces any entry already
+/// under the key (oxidecomputer/p4#282), serving as both an add and an update.
+fn add_entry(
     hdl: &Handle,
     table: String,
     action: String,
     keyset_data: Vec<u8>,
     parameter_data: Vec<u8>,
-) {
-    let remove = ManagementRequest::TableRemove(TableRemove {
-        table: table.clone(),
-        keyset_data: keyset_data.clone(),
-    });
-    crate::softnpu::mgmt::write(remove, &hdl.mgmt_config);
-
+) -> AsicResult<()> {
     let add = ManagementRequest::TableAdd(TableAdd {
         table,
         action,
         keyset_data,
         parameter_data,
     });
-    crate::softnpu::mgmt::write(add, &hdl.mgmt_config);
+    crate::softnpu::mgmt::write(add, &hdl.mgmt_config)
 }
 
 // All tables are defined to be 4096 entries deep.
@@ -216,7 +191,11 @@ impl TableOps<Handle> for Table {
             }
         };
 
-        Ok(Table { type_, implemented, size: TABLE_SIZE })
+        let tbl = Table { type_, implemented, size: TABLE_SIZE };
+        // The SoftNPU pipeline outlives the dpd process. Clear each table
+        // before the control plane reapplies its configuration.
+        tbl.clear(hdl)?;
+        Ok(tbl)
     }
 
     fn size(&self) -> usize {
@@ -224,32 +203,13 @@ impl TableOps<Handle> for Table {
     }
 
     fn clear(&self, hdl: &Handle) -> AsicResult<()> {
-        // TODO: the management protocol has no clear message (yet).
-        //
-        // For now, only the multicast replication entries tracked in `mc_data`
-        // get removed here, one `TableRemove` per keyset, and every other
-        // table retains its entries.
-        //
-        // Send a `TableClear` once softnpu and propolis support one (the
-        // pipeline side landed in oxidecomputer/p4#278).
-        if self.type_ != TableType::McastIpv6 {
-            return Ok(());
-        }
-
         let Some(table) = self.softnpu_table_name() else {
             return Ok(());
         };
-
-        let mut mc_data = hdl.mc_data.lock().unwrap();
-        for keyset_data in mc_data.repl_keysets() {
-            let remove = ManagementRequest::TableRemove(TableRemove {
-                table: table.to_string(),
-                keyset_data: keyset_data.to_vec(),
-            });
-            crate::softnpu::mgmt::write(remove, &hdl.mgmt_config);
-        }
-        mc_data.clear_repl_entries();
-        Ok(())
+        let msg = ManagementRequest::TableClear(TableClear {
+            table: table.to_string(),
+        });
+        crate::softnpu::mgmt::write(msg, &hdl.mgmt_config)
     }
 
     fn entry_add<M: MatchParse, A: ActionParse>(
@@ -270,13 +230,13 @@ impl TableOps<Handle> for Table {
         trace!(hdl.log, "entry_add called");
         trace!(hdl.log, "table: {name}");
         trace!(hdl.log, "match_data: {fields:#?}");
-        trace!(hdl.log, "action_data:\n{:#?}", action_data);
+        trace!(hdl.log, "action_data:\n{action_data:#?}");
 
         let keyset_data = keyset_data(fields, self.type_);
 
-        // Multicast replication is handled ahead of the generic match so the
-        // replication tracking lock can be held from the bitmap snapshot through
-        // to the table write.
+        // Multicast replication entries get handled separately because
+        // sidecar-lite's `set_port_bitmap` op requires the port bitmaps
+        // for the group IDs that dpd sends in `configure_mcastv6`.
         if let (TableType::McastIpv6, "configure_mcastv6") =
             (self.type_, action_data.action.as_str())
         {
@@ -617,12 +577,7 @@ impl TableOps<Handle> for Table {
             | (TableType::McastIpv6SrcFilter, "allow_source_mcastv6") => {
                 ("allow_source", Vec::new())
             }
-            // Multicast egress decap: pack 8x32-bit bitmap into 128 bits.
-            //
-            // DPD sends set_decap_ports with 8x32-bit bitmap fields
-            // keyed on the RID. Sidecar-lite expects a single 128-bit
-            // bitmap. We pack the low 4 chunks (ports 0-127) into a
-            // u128 for sidecar-lite's bit<128> decap_bitmap field.
+            // Multicast egress decap: see `pack_decap_bitmap`.
             (TableType::McastEgressDecapPorts, "set_decap_ports") => {
                 ("set_decap_ports", pack_decap_bitmap(&action_data))
             }
@@ -651,7 +606,7 @@ impl TableOps<Handle> for Table {
             (TableType::McastEgressPortMapping, "set_port_number") => {
                 ("set_port_number", vec![port_number_param(&action_data)?])
             }
-            // Sidecar-lite's resolvers support drop (by default).
+            // sidecar-lite's resolvers support drop (by default).
             (TableType::ArpIpv4, "drop")
             | (TableType::NeighborIpv6, "drop") => ("drop", Vec::new()),
             // The local_v4/local_v6 tables have no drop action and dpd programs
@@ -668,13 +623,11 @@ impl TableOps<Handle> for Table {
         let action = action.to_string();
         trace!(hdl.log, "sending request to softnpu");
         trace!(hdl.log, "table: {table}");
-        trace!(hdl.log, "action: {:#?}", action);
-        trace!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
-        trace!(hdl.log, "parameter_data:\n{:#?}", parameter_data);
+        trace!(hdl.log, "action: {action:#?}");
+        trace!(hdl.log, "keyset_data:\n{keyset_data:#?}");
+        trace!(hdl.log, "parameter_data:\n{parameter_data:#?}");
 
-        replace_entry(hdl, table, action, keyset_data, parameter_data);
-
-        Ok(())
+        add_entry(hdl, table, action, keyset_data, parameter_data)
     }
 
     fn entry_update<M: MatchParse + Hash, A: ActionParse>(
@@ -683,12 +636,6 @@ impl TableOps<Handle> for Table {
         key: &M,
         data: &A,
     ) -> AsicResult<()> {
-        // SoftNPU does not currently support in-place updates. `entry_add`
-        // removes the key first before adding it back with the new action data.
-        //
-        // Note: this is not an atomic op, as a lookup between the two messages
-        // could miss the entry, and mgmt IO failures panic in mgmt::write
-        // rather than surface errors.
         self.entry_add(hdl, key, data)
     }
 
@@ -711,22 +658,14 @@ impl TableOps<Handle> for Table {
 
         let keyset_data = keyset_data(fields, self.type_);
 
-        // Stop tracking a replication entry once it leaves the pipeline so a
-        // later membership change does not resurrect a stale bitmap.
-        if self.type_ == TableType::McastIpv6 {
-            hdl.mc_data.lock().unwrap().forget_repl_entry(&keyset_data);
-        }
-
         trace!(hdl.log, "sending request to softnpu");
         trace!(hdl.log, "table: {table}");
-        trace!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
+        trace!(hdl.log, "keyset_data:\n{keyset_data:#?}");
 
         let msg =
             ManagementRequest::TableRemove(TableRemove { keyset_data, table });
 
-        crate::softnpu::mgmt::write(msg, &hdl.mgmt_config);
-
-        Ok(())
+        crate::softnpu::mgmt::write(msg, &hdl.mgmt_config)
     }
 
     fn get_entries<M: MatchParse, A: ActionParse>(
@@ -734,7 +673,7 @@ impl TableOps<Handle> for Table {
         _hdl: &Handle,
         _from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>> {
-        Err(aal::AsicError::OperationUnsupported)
+        Err(AsicError::OperationUnsupported)
     }
 
     fn get_counters<M: MatchParse>(
@@ -848,11 +787,11 @@ fn arg_ptr<'a>(
     }
 }
 
-/// Pack the low 4 chunks (ports 0-127) of DPD's 8x32-bit decap port
-/// bitmap into the 16 bytes of sidecar-lite's bit<128> decap_bitmap
+/// Pack the low 4 chunks (ports 0-127) of dpd's 8x32-bit decap port
+/// bitmap into the 16 bytes of sidecar-lite's `bit<128>` `decap_bitmap`
 /// field (in little-endian).
 ///
-/// Caveats: The high chunks are always zero on this backend and ports >= 128
+/// NOTE: The high chunks are always zero on this backend and ports >= 128
 /// are rejected when adding members. Emitting exactly 16 bytes keeps
 /// any following action parameter (the tagged variant's vlan_id) at
 /// the offset sidecar-lite reads it from.
