@@ -6,7 +6,7 @@
 
 use std::convert::TryInto;
 use std::fmt;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use bytes::BufMut;
 use bytes::BytesMut;
@@ -146,16 +146,13 @@ pub fn nexthop_needed(p: &Packet) -> Option<(u16, IpAddr)> {
 
     let sc = p.hdrs.sidecar_hdr.as_ref()?;
     let ip = match sc.sc_code {
+        // The P4 code zero-extends the 32-bit nexthop to fill the 128-bit
+        // payload, so the address is in the last four bytes.
         SC_ARP_NEEDED => {
-            let x =
-                u32::from_be_bytes(sc.sc_payload[12..16].try_into().unwrap());
-            IpAddr::V4(x.into())
+            let [.., a, b, c, d] = sc.sc_payload;
+            IpAddr::V4(Ipv4Addr::new(a, b, c, d))
         }
-        SC_NEIGHBOR_NEEDED => {
-            let x =
-                u128::from_be_bytes(sc.sc_payload[0..16].try_into().unwrap());
-            IpAddr::V6(x.into())
-        }
+        SC_NEIGHBOR_NEEDED => IpAddr::V6(Ipv6Addr::from(sc.sc_payload)),
         // wrong sidecar code, nothing to resolve
         _ => return None,
     };
@@ -191,7 +188,6 @@ impl fmt::Debug for SidecarHdr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{Ipv4Addr, Ipv6Addr};
 
     const SC_EGRESS: u16 = 7;
 
