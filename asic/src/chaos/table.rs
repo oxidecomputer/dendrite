@@ -115,9 +115,7 @@ impl TableOps<Handle> for Table {
         hdl: &Handle,
         _from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>> {
-        if hdl.config.entries_unsupported.contains(&self.type_) {
-            return Err(AsicError::OperationUnsupported);
-        }
+        hdl.check_table_fault(self.type_, TableOp::EntryList)?;
         self.keys
             .lock()
             .unwrap()

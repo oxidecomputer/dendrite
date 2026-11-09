@@ -4,14 +4,13 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-//! [Sidecar-lite] handles packet replication via port bitmaps in the P4
+//! [sidecar-lite] handles packet replication via port bitmaps in the P4
 //! pipeline. This module tracks group membership for the `AsicMulticastOps`
-//! contract and caches the installed replication entries for replaying
-//! membership updates into sidecar-lite.
+//! contract.
 //!
-//! [Sidecar-lite]: https://github.com/oxidecomputer/sidecar-lite
+//! [sidecar-lite]: https://github.com/oxidecomputer/sidecar-lite
 
-use std::collections::{BTreeMap, HashMap, hash_map::Entry};
+use std::collections::{HashMap, hash_map::Entry};
 
 use aal::{AsicError, AsicResult};
 
@@ -24,50 +23,18 @@ pub const MCAST_REPLICATION_V6_TABLE: &str =
 /// (and replication id) for a [`MCAST_REPLICATION_V6_TABLE`] entry.
 pub const SET_PORT_BITMAP_ACTION: &str = "set_port_bitmap";
 
-/// A replication table entry's group references, tracked for later
-/// membership changes to recompute port bitmaps when necessary.
-///
-/// On the production sidecar, the replication table holds a group identifier,
-/// while the replication engine tracks live membership subscriptions, which means
-/// that any port additions do not trigger table rewrites.
-///
-/// The SoftNPU pipeline, however, is built around a generic port bitmap
-/// structure, appended into the table entry at write time, forcing each
-/// membership change to rewrite each entry that references the mutated
-/// group.
-#[derive(Clone, Copy, Debug)]
-struct ReplEntryRef {
-    external_grp: u16,
-    underlay_grp: u16,
-    rid: u16,
-}
+/// The number of ports a group's bitmap can contain, matching sidecar-lite's
+/// `bit<128>` port bitmaps.
+const PORT_BITMAP_WIDTH: u16 = u128::BITS as u16;
 
-/// A replication entry refreshed against current membership, available to be
-/// rewritten into the SoftNPU pipeline.
-#[derive(Clone, Debug)]
-pub struct RefreshedReplEntry {
-    /// Match keyset bytes identifying the table entry (the underlay group's
-    /// destination address).
-    pub keyset: Vec<u8>,
-    /// Ports in the external replication group, as a port bitmap.
-    pub external_bitmap: u128,
-    /// Ports in the underlay replication group, as a port bitmap.
-    pub underlay_bitmap: u128,
-    /// Replication ID, which keys the egress decap-ports table.
-    pub rid: u16,
-}
-
-/// Multicast group membership and the replication entries derived from it.
+/// Multicast group membership, defined as a port bitmap per group.
 ///
-/// Unlike Tofino, SoftNPU has no PRE, leading us to track group membership
-/// here and rewrite the mutated replication entries' port bitmap when a
-/// group's membership change is triggered.
+/// SoftNPU has no replication engine to inherently support group membership,
+/// so we track it here instead. The bitmaps get resolved when dpd writes a
+/// replication entry, and dpd rewrites that entry after each membership change.
 #[derive(Default)]
 pub struct McGroupData {
     groups: HashMap<u16, u128>,
-    /// Replication table entries keyed on their matched keyset, recorded at
-    /// table-write time so membership changes can refresh bitmaps.
-    repl_entries: BTreeMap<Vec<u8>, ReplEntryRef>,
 }
 
 fn no_group(group_id: u16) -> AsicError {
@@ -96,6 +63,15 @@ impl McGroupData {
             .ok_or_else(|| no_group(group_id))
     }
 
+    /// List the ports in a multicast domain (in ascending order).
+    pub fn domain_port_list(&self, group_id: u16) -> AsicResult<Vec<u16>> {
+        let ports =
+            self.groups.get(&group_id).ok_or_else(|| no_group(group_id))?;
+        Ok((0..PORT_BITMAP_WIDTH)
+            .filter(|&port| *ports & (1u128 << port) != 0)
+            .collect())
+    }
+
     /// Add a port to a multicast domain. Port must be < 128 to fit
     /// within sidecar-lite's 128-bit replication bitmap.
     pub fn domain_port_add(
@@ -105,7 +81,7 @@ impl McGroupData {
         _rid: u16,
         _level1_excl_id: u16,
     ) -> AsicResult<()> {
-        if u32::from(port) >= u128::BITS {
+        if port >= PORT_BITMAP_WIDTH {
             return Err(AsicError::InvalidArg(format!(
                 "port {port} exceeds softnpu 128-port bitmap limit"
             )));
@@ -157,66 +133,12 @@ impl McGroupData {
     /// Destroy a multicast domain.
     pub fn domain_destroy(&mut self, group_id: u16) -> AsicResult<()> {
         self.groups.remove(&group_id).ok_or_else(|| no_group(group_id))?;
-        self.repl_entries.retain(|_, entry| {
-            entry.external_grp != group_id && entry.underlay_grp != group_id
-        });
         Ok(())
     }
 
     /// Get the total number of multicast domains.
     pub fn domains_count(&self) -> usize {
         self.groups.len()
-    }
-
-    /// Record a replication table entry's group references at (table-)write
-    /// time so that a later membership mutation can refresh its related
-    /// bitmaps.
-    pub fn record_repl_entry(
-        &mut self,
-        keyset: Vec<u8>,
-        external_grp: u16,
-        underlay_grp: u16,
-        rid: u16,
-    ) {
-        self.repl_entries
-            .insert(keyset, ReplEntryRef { external_grp, underlay_grp, rid });
-    }
-
-    /// Forget a replication table entry when it is removed from the pipeline.
-    pub fn forget_repl_entry(&mut self, keyset: &[u8]) {
-        self.repl_entries.remove(keyset);
-    }
-
-    /// Iterate over the keysets of every tracked replication entry.
-    pub fn repl_keysets(&self) -> impl Iterator<Item = &[u8]> + '_ {
-        self.repl_entries.keys().map(Vec::as_slice)
-    }
-
-    /// Forget every tracked replication entry once its pipeline entry has
-    /// been removed.
-    pub fn clear_repl_entries(&mut self) {
-        self.repl_entries.clear();
-    }
-
-    /// Recompute the bitmaps for every replication entry that references
-    /// `group_id` in either its external or underlay slot, returning the
-    /// refreshed [`RefreshedReplEntry`] values for the caller to rewrite into
-    /// the SoftNPU pipeline.
-    pub fn refresh_params_for_group(
-        &self,
-        group_id: u16,
-    ) -> impl Iterator<Item = RefreshedReplEntry> + '_ {
-        self.repl_entries
-            .iter()
-            .filter(move |(_, e)| {
-                e.external_grp == group_id || e.underlay_grp == group_id
-            })
-            .map(|(keyset, e)| RefreshedReplEntry {
-                keyset: keyset.clone(),
-                external_bitmap: self.port_bitmap(e.external_grp),
-                underlay_bitmap: self.port_bitmap(e.underlay_grp),
-                rid: e.rid,
-            })
     }
 
     /// Validate that the current group count does not exceed the limit.
@@ -246,11 +168,13 @@ mod tests {
         group_data.domain_port_add(100, 5, 0, 0).unwrap();
 
         assert_eq!(group_data.domain_port_count(100).unwrap(), 2);
+        assert_eq!(group_data.domain_port_list(100).unwrap(), vec![1, 5]);
         assert_eq!(group_data.domains_count(), 1);
 
         // Remove a port.
         group_data.domain_port_remove(100, 1).unwrap();
         assert_eq!(group_data.domain_port_count(100).unwrap(), 1);
+        assert_eq!(group_data.domain_port_list(100).unwrap(), vec![5]);
 
         // Destroy group.
         group_data.domain_destroy(100).unwrap();
@@ -292,19 +216,23 @@ mod tests {
     fn operations_on_missing_group_rejected() {
         let mut group_data = McGroupData::default();
         assert!(matches!(
-            group_data.domain_port_add(42, 1, 0, 0),
+            group_data.domain_port_add(404, 1, 0, 0),
             Err(AsicError::Missing(_))
         ));
         assert!(matches!(
-            group_data.domain_port_remove(42, 1),
+            group_data.domain_port_remove(404, 1),
             Err(AsicError::Missing(_))
         ));
         assert!(matches!(
-            group_data.domain_port_count(42),
+            group_data.domain_port_count(404),
             Err(AsicError::Missing(_))
         ));
         assert!(matches!(
-            group_data.domain_destroy(42),
+            group_data.domain_port_list(404),
+            Err(AsicError::Missing(_))
+        ));
+        assert!(matches!(
+            group_data.domain_destroy(404),
             Err(AsicError::Missing(_))
         ));
     }
@@ -341,6 +269,16 @@ mod tests {
     }
 
     #[test]
+    fn port_list_covers_bitmap_range() {
+        let mut group_data = McGroupData::default();
+        group_data.domain_create(1).unwrap();
+        assert!(group_data.domain_port_list(1).unwrap().is_empty());
+        group_data.domain_port_add(1, 127, 0, 0).unwrap();
+        group_data.domain_port_add(1, 0, 0, 0).unwrap();
+        assert_eq!(group_data.domain_port_list(1).unwrap(), vec![0, 127]);
+    }
+
+    #[test]
     fn port_add_rejects_ports_above_127() {
         let mut group_data = McGroupData::default();
         group_data.domain_create(1).unwrap();
@@ -363,120 +301,5 @@ mod tests {
         ));
         assert!(group_data.set_max_nodes(2).is_ok());
         assert!(group_data.set_max_nodes(100).is_ok());
-    }
-
-    #[test]
-    fn refresh_recomputes_bitmap_after_membership_change() {
-        let mut group_data = McGroupData::default();
-        // Underlay group with one member, recorded as a replication
-        // entry keyed by the underlay destination address bytes.
-        group_data.domain_create(65533).unwrap();
-        group_data.domain_port_add(65533, 1, 0, 0).unwrap();
-        // ff04::1, an admin-scoped IPv6 multicast destination, matching the
-        // 128-bit key of the sidecar-lite replication table.
-        let keyset = std::net::Ipv6Addr::new(0xff04, 0, 0, 0, 0, 0, 0, 1)
-            .octets()
-            .to_vec();
-        group_data.record_repl_entry(keyset.clone(), 0, 65533, 65533);
-
-        // Refreshed against current membership @ only port 1.
-        let initial: Vec<_> =
-            group_data.refresh_params_for_group(65533).collect();
-        assert_eq!(initial.len(), 1);
-        assert_eq!(initial[0].underlay_bitmap, 1u128 << 1);
-
-        // A later member add must surface in a fresh refresh.
-        group_data.domain_port_add(65533, 2, 0, 0).unwrap();
-        group_data.domain_port_add(65533, 3, 0, 0).unwrap();
-        let refreshed: Vec<_> =
-            group_data.refresh_params_for_group(65533).collect();
-        assert_eq!(refreshed.len(), 1);
-        assert_eq!(refreshed[0].keyset, keyset);
-        assert_eq!(refreshed[0].rid, 65533);
-        assert_eq!(
-            refreshed[0].underlay_bitmap,
-            (1u128 << 1) | (1u128 << 2) | (1u128 << 3)
-        );
-    }
-
-    #[test]
-    fn refresh_skips_unrelated_groups_and_forgotten_entries() {
-        let mut group_data = McGroupData::default();
-        group_data.domain_create(100).unwrap();
-        group_data.domain_create(200).unwrap();
-        group_data.domain_port_add(100, 4, 0, 0).unwrap();
-
-        // These are opaque single-byte keysets standing in for distinct
-        // replication entries (not any real address).
-        let key_a = vec![0xaa];
-        let key_b = vec![0xbb];
-
-        group_data.record_repl_entry(key_a.clone(), 0, 100, 7);
-        group_data.record_repl_entry(key_b, 0, 200, 8);
-
-        // Only the entry referencing group 100 is refreshed.
-        let refreshed: Vec<_> =
-            group_data.refresh_params_for_group(100).collect();
-        assert_eq!(refreshed.len(), 1);
-        assert_eq!(refreshed[0].keyset, key_a);
-
-        // After forgetting it, the group has no entries to refresh.
-        group_data.forget_repl_entry(&key_a);
-        assert!(group_data.refresh_params_for_group(100).next().is_none());
-    }
-
-    #[test]
-    fn refresh_matches_external_slot() {
-        let mut group_data = McGroupData::default();
-        group_data.domain_create(50).unwrap();
-        group_data.domain_port_add(50, 9, 0, 0).unwrap();
-        // Group 50 sits in the external slot here, not the underlay slot.
-        group_data.record_repl_entry(vec![0xcc], 50, 0, 1);
-
-        let refreshed: Vec<_> =
-            group_data.refresh_params_for_group(50).collect();
-        assert_eq!(refreshed.len(), 1);
-        assert_eq!(refreshed[0].external_bitmap, 1u128 << 9);
-        assert_eq!(refreshed[0].underlay_bitmap, 0);
-    }
-
-    #[test]
-    fn clear_repl_entries_after_listing_keysets() {
-        let mut group_data = McGroupData::default();
-        group_data.domain_create(100).unwrap();
-        group_data.domain_create(200).unwrap();
-        group_data.domain_port_add(100, 4, 0, 0).unwrap();
-        group_data.domain_port_add(200, 5, 0, 0).unwrap();
-        group_data.record_repl_entry(vec![0xaa], 0, 100, 7);
-        group_data.record_repl_entry(vec![0xbb], 0, 200, 8);
-
-        let keysets: Vec<_> =
-            group_data.repl_keysets().map(<[u8]>::to_vec).collect();
-        assert_eq!(keysets, vec![vec![0xaa], vec![0xbb]]);
-
-        group_data.clear_repl_entries();
-
-        assert_eq!(group_data.repl_keysets().count(), 0);
-        assert!(group_data.refresh_params_for_group(100).next().is_none());
-        assert!(group_data.refresh_params_for_group(200).next().is_none());
-        assert_eq!(group_data.domain_port_count(100).unwrap(), 1);
-        assert_eq!(group_data.domain_port_count(200).unwrap(), 1);
-    }
-
-    #[test]
-    fn destroy_group_drops_its_repl_entries() {
-        let mut group_data = McGroupData::default();
-        group_data.domain_create(1).unwrap();
-        group_data.domain_create(2).unwrap();
-        group_data.domain_port_add(2, 3, 0, 0).unwrap();
-        group_data.record_repl_entry(vec![0xaa], 1, 2, 7);
-        group_data.record_repl_entry(vec![0xbb], 2, 2, 8);
-
-        group_data.domain_destroy(1).unwrap();
-
-        let refreshed: Vec<_> =
-            group_data.refresh_params_for_group(2).collect();
-        assert_eq!(refreshed.len(), 1);
-        assert_eq!(refreshed[0].keyset, vec![0xbb]);
     }
 }

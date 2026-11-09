@@ -25,7 +25,7 @@ use common::ports::{
     PortFec, PortId, PortMedia, PortPrbsMode, PortSpeed, TxEq,
 };
 
-use softnpu_lib::ManagementRequest;
+use softnpu_lib::{ManagementRequest, ManagementResponse};
 
 pub mod mcast;
 pub mod mgmt;
@@ -144,54 +144,6 @@ impl Handle {
     }
 
     pub fn fini(&self) {}
-
-    /// Rewrite the replication entries refreshed after a membership change.
-    ///
-    /// SoftNPU fixes each entry's port bitmaps at write time and has no
-    /// in-place table update. Each affected entry is removed and re-added with
-    /// the recomputed bitmaps.
-    fn rewrite_replication_entries(
-        &self,
-        entries: impl IntoIterator<Item = mcast::RefreshedReplEntry>,
-    ) {
-        use softnpu_lib::{TableAdd, TableRemove};
-
-        for entry in entries {
-            // Logged at debug, not trace, to keep the recomputed membership
-            // visible in a release build. The bitmaps are the post-refresh
-            // output ports; an empty one means that the group has no members
-            // in it to replicate to.
-            debug!(
-                self.log,
-                "refreshing mcast replication entry: \
-                 external_bitmap={:#x} underlay_bitmap={:#x} rid={}",
-                entry.external_bitmap,
-                entry.underlay_bitmap,
-                entry.rid
-            );
-
-            let remove = ManagementRequest::TableRemove(TableRemove {
-                keyset_data: entry.keyset.clone(),
-                table: mcast::MCAST_REPLICATION_V6_TABLE.to_string(),
-            });
-            mgmt::write(remove, &self.mgmt_config);
-
-            let parameter_data = [
-                entry.external_bitmap.to_le_bytes().as_slice(),
-                entry.underlay_bitmap.to_le_bytes().as_slice(),
-                entry.rid.to_le_bytes().as_slice(),
-            ]
-            .concat();
-
-            let add = ManagementRequest::TableAdd(TableAdd {
-                table: mcast::MCAST_REPLICATION_V6_TABLE.to_string(),
-                action: mcast::SET_PORT_BITMAP_ACTION.to_string(),
-                keyset_data: entry.keyset,
-                parameter_data,
-            });
-            mgmt::write(add, &self.mgmt_config);
-        }
-    }
 }
 
 impl AsicMulticastOps for Handle {
@@ -205,9 +157,8 @@ impl AsicMulticastOps for Handle {
         mc_data.domain_port_count(group_id)
     }
 
-    fn mc_port_list(&self, _group_id: u16) -> AsicResult<Vec<u16>> {
-        // TODO: Read members from replication table bitmaps via DumpRequest.
-        Err(AsicError::OperationUnsupported)
+    fn mc_port_list(&self, group_id: u16) -> AsicResult<Vec<u16>> {
+        self.mc_data.lock().unwrap().domain_port_list(group_id)
     }
 
     fn mc_port_add(
@@ -221,15 +172,12 @@ impl AsicMulticastOps for Handle {
             self.log,
             "adding port {port} to multicast group {group_id}"
         );
-        // Hold the lock across the refresh and rewrite for the
-        // recomputation of the bitmap snapshot and its table writes are atomic
-        // concerning concurrent membership change(s). The rewrite touches only
-        // `mgmt_config`, not `mc_data`; therefore, no re-entrant lock.
-        let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_port_add(group_id, port, rid, level1_excl_id)?;
-        let refreshed = mc_data.refresh_params_for_group(group_id);
-        self.rewrite_replication_entries(refreshed);
-        Ok(())
+        self.mc_data.lock().unwrap().domain_port_add(
+            group_id,
+            port,
+            rid,
+            level1_excl_id,
+        )
     }
 
     fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
@@ -237,11 +185,7 @@ impl AsicMulticastOps for Handle {
             self.log,
             "removing port {port} from multicast group {group_id}"
         );
-        let mut mc_data = self.mc_data.lock().unwrap();
-        mc_data.domain_port_remove(group_id, port)?;
-        let refreshed = mc_data.refresh_params_for_group(group_id);
-        self.rewrite_replication_entries(refreshed);
-        Ok(())
+        self.mc_data.lock().unwrap().domain_port_remove(group_id, port)
     }
 
     fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
@@ -442,13 +386,28 @@ impl AsicOps for Handle {
     }
 
     fn get_connectors(&self) -> Vec<Connector> {
-        let msg = ManagementRequest::RadixRequest;
-        crate::softnpu::mgmt::write(msg, &self.mgmt_config);
         let response = crate::softnpu::mgmt::read(
             ManagementRequest::RadixRequest,
             &self.mgmt_config,
         );
-        let radix: u16 = response.trim().parse().unwrap();
+        // NOTE: propolis responds over the UART in ASCII, due to a guest tty
+        // without a raw mode.
+        //
+        // <https://github.com/oxidecomputer/propolis/blob/77848924fedc3e1439efb055f5459714c2bb322c/lib/propolis/src/hw/virtio/softnpu.rs#L778-L792>
+        //
+        // NOTE: standalone SoftNPU responds over UDS with a JSON
+        // `ManagementResponse`.
+        //
+        // <https://github.com/oxidecomputer/softnpu/blob/618a149ff169ed8a9c1620a3b1a2410f5cf5d53b/lib/src/lib.rs#L82-L85>
+        let radix: u16 = match &self.mgmt_config {
+            mgmt::ManagementConfig::UART => response.trim().parse().unwrap(),
+            mgmt::ManagementConfig::UDS { .. } => {
+                match serde_json::from_str(response.trim()).unwrap() {
+                    ManagementResponse::RadixResponse(radix) => radix,
+                    other => panic!("unexpected radix response: {other:?}"),
+                }
+            }
+        };
 
         let mut result = vec![Connector::CPU];
         for i in 1..radix + 1 {

@@ -42,17 +42,24 @@ where
     M: MatchParse + Hash + fmt::Display,
     A: ActionParse,
 {
-    let entries = match s
-        .table_get(table)?
-        .get_entries::<M, A>(&s.asic_hdl, false)
-    {
-        Ok(entries) => entries,
-        Err(DpdError::Switch(AsicError::OperationUnsupported)) => {
-            debug!(s.log, "{table} entry listing unsupported, skip clearing");
-            return Ok(());
-        }
-        Err(e) => return Err(e),
-    };
+    let entries =
+        match s.table_get(table)?.get_entries::<M, A>(&s.asic_hdl, false) {
+            Ok(entries) => entries,
+            // TODO: SoftNPU currently doesn't support per-table dumps.
+            //
+            // Its dump request returns all tables, and the UART reader can't
+            // reliably handle large responses. Add per-table dumps and read complete
+            // UART responses before removing the `OperationUnsupported` fallback.
+            Err(DpdError::Switch(AsicError::OperationUnsupported)) => {
+                debug!(
+                    s.log,
+                    "per-table dump unsupported, skip clearing";
+                    "table" => %table,
+                );
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        };
 
     let keys: Vec<M> = entries
         .into_iter()
