@@ -7302,7 +7302,7 @@ dependencies = [
 [[package]]
 name = "softnpu"
 version = "0.2.0"
-source = "git+https://github.com/oxidecomputer/softnpu?branch=zl%2Ftable-clear#618a149ff169ed8a9c1620a3b1a2410f5cf5d53b"
+source = "git+https://github.com/oxidecomputer/softnpu?branch=zl%2Ftable-clear#63687602f0d26add71d4dae4ac62d46563ba23f5"
 dependencies = [
  "p4rs 0.1.0 (git+https://github.com/oxidecomputer/p4?branch=zl%2Fupsert-table-entries)",
  "serde",
