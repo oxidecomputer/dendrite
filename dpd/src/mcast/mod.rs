@@ -1167,7 +1167,8 @@ pub(crate) fn modify_group_underlay(
     }
 
     // Repair the route before changing memberships or replication.
-    if mcast.pending_repairs.contains(&group_key) {
+    let repair = mcast.pending_repairs.contains(&group_key);
+    if repair {
         table::mcast::mcast_route::set_ipv6_entry(s, group_ip.into(), None)?;
         mc_group_set(s, existing_group.external_group_id())?;
         mc_group_set(s, existing_group.underlay_group_id())?;
@@ -1180,7 +1181,13 @@ pub(crate) fn modify_group_underlay(
     });
 
     let widened = (!members.is_empty())
-        .then(|| original.widened_external_bitmap(&members))
+        .then(|| {
+            original.widened_external_bitmap(&members).or_else(|| {
+                repair.then(|| {
+                    create_port_bitmap(original.members(), Direction::External)
+                })
+            })
+        })
         .flatten();
     let mut added_members = Vec::new();
     let mut removed_members = Vec::new();

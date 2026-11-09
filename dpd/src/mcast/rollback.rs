@@ -407,7 +407,23 @@ impl<'a> GroupCreateRollbackContext<'a> {
             return Ok(());
         };
 
-        unwind_outcome([
+        self.log_rollback_error(
+            "delete IPv6 replication entry",
+            &format!("for group {ipv6}"),
+            table::mcast::mcast_replication::clear_ipv6_entry(
+                self.switch,
+                ipv6,
+            ),
+        )
+        .inspect_err(|_| {
+            warn!(
+                self.switch.log,
+                "replication entry delete failed, skipping decap bitmap delete";
+                "group" => %ipv6,
+                "external_group_id" => %self.external_id,
+            );
+        })
+        .and_then(|_| {
             self.log_rollback_error(
                 "delete IPv6 egress bitmap entry",
                 &format!("for external group {}", self.external_id),
@@ -415,16 +431,8 @@ impl<'a> GroupCreateRollbackContext<'a> {
                     self.switch,
                     self.external_id,
                 ),
-            ),
-            self.log_rollback_error(
-                "delete IPv6 replication entry",
-                &format!("for group {ipv6}"),
-                table::mcast::mcast_replication::clear_ipv6_entry(
-                    self.switch,
-                    ipv6,
-                ),
-            ),
-        ])
+            )
+        })
     }
 
     fn remove_external_entries(&self) -> DpdResult<()> {
