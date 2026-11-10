@@ -20,7 +20,7 @@ use crate::v3;
 /// A Geneve VNI is a 24-bit value used to identify virtual networks
 /// encapsulated using the Generic Network Virtualization Encapsulation (Geneve)
 /// protocol (RFC 8926). Any value above the 24-bit maximum of 16777215 is
-/// rejected at both construction and deserialization.
+/// rejected outright, whether it is built directly or parsed from a request.
 // TODO: replace with a validated `Vni` newtype in oxnet, shared with
 // `omicron_common::api::external::Vni` and `oxide_vpc::api::Vni`.
 // This type checks only the 24-bit width. Reserved system and multicast VNI

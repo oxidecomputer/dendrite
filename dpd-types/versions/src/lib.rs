@@ -45,8 +45,10 @@ pub mod v11;
 pub mod v12;
 #[path = "allow_ddm_traffic/mod.rs"]
 pub mod v13;
-#[path = "mcast_external_scope/mod.rs"]
+#[path = "openapi_lint/mod.rs"]
 pub mod v14;
+#[path = "mcast_external_scope/mod.rs"]
+pub mod v15;
 #[path = "attached_subnets/mod.rs"]
 pub mod v3;
 #[path = "v4_over_v6_routes/mod.rs"]

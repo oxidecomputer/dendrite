@@ -44,6 +44,11 @@ pub const MCAST_REPAIR_PENDING_ERROR_CODE: &str = "multicast repair pending";
 /// not match the multicast group's tag.
 pub const MCAST_TAG_MISMATCH_ERROR_CODE: &str = "multicast tag mismatch";
 
+/// The `error_code` sent in an HTTP error response when deleting an underlay
+/// multicast group that an external group still references via its NAT target.
+pub const MCAST_GROUP_REFERENCED_ERROR_CODE: &str =
+    "multicast group referenced";
+
 /// Given two arrays, return two vectors containing only the unique items from each array.
 pub fn purge_common<T>(a: &[T], b: &[T]) -> (Vec<T>, Vec<T>)
 where

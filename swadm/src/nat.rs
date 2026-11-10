@@ -79,11 +79,13 @@ async fn nat_list(
         None => (
             client
                 .nat_ipv4_addresses_list_stream(None)
+                .map_ok(|nat_address| nat_address.address)
                 .try_collect()
                 .await
                 .context("failed to list IPv4 addresses for NAT")?,
             client
                 .nat_ipv6_addresses_list_stream(None)
+                .map_ok(|nat_address| nat_address.address)
                 .try_collect()
                 .await
                 .context("failed to list IPv6 addresses for NAT")?,

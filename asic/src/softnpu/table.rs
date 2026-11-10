@@ -630,6 +630,10 @@ impl TableOps<Handle> for Table {
         add_entry(hdl, table, action, keyset_data, parameter_data)
     }
 
+    // TODO: SoftNPU doesn't track installed keys, i.e., `entry_add` never
+    // returns `Exists`, and `entry_update` and `entry_del` never return
+    // `Missing`. This skews dpd's `TableUsage` counts for every type of
+    // SoftNPU table (unicast included, since oxidecomputer/dendrite#175).
     fn entry_update<M: MatchParse + Hash, A: ActionParse>(
         &self,
         hdl: &Handle,
