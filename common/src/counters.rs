@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 pub use dpd_types::counters::{
-    FecRSCounters, PcsCounters, RMonCounters, RMonCountersAll,
+    FecRsCounters, PcsCounters, RMonCounters, RMonCountersAll,
 };
 
 /// sidecar.p4 defines the following set of indirect counters.

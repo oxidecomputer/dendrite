@@ -23,19 +23,20 @@ pub mod counters {
     pub use crate::v1::counters::CounterData;
     pub use crate::v1::counters::CounterPath;
     pub use crate::v1::counters::CounterSync;
-    pub use crate::v1::counters::FecRSCounters;
-    pub use crate::v1::counters::LinkFecRSCounters;
     pub use crate::v1::counters::LinkPcsCounters;
     pub use crate::v1::counters::LinkRMonCounters;
     pub use crate::v1::counters::LinkRMonCountersAll;
     pub use crate::v1::counters::PcsCounters;
     pub use crate::v1::counters::RMonCounters;
     pub use crate::v1::counters::RMonCountersAll;
+
+    pub use crate::v14::counters::FecRsCounters;
+    pub use crate::v14::counters::LinkFecRsCounters;
 }
 
 pub mod fault {
-    pub use crate::v1::fault::Fault;
-    pub use crate::v1::fault::FaultCondition;
+    pub use crate::v14::fault::Fault;
+    pub use crate::v14::fault::FaultCondition;
 }
 
 pub mod link {
@@ -47,16 +48,16 @@ pub mod link {
     pub use crate::v1::link::LinkIpv4Path;
     pub use crate::v1::link::LinkIpv6Path;
     pub use crate::v1::link::LinkPath;
-    pub use crate::v1::link::LinkState;
     pub use crate::v1::link::LinkUpCounter;
     pub use crate::v1::link::TfportData;
 
     pub use crate::v11::link::LinkHistory;
 
-    pub use crate::v12::link::LinkView;
     pub use crate::v12::link::MsDuration;
 
-    pub use crate::v13::link::LinkCreate;
+    pub use crate::v14::link::LinkCreate;
+    pub use crate::v14::link::LinkState;
+    pub use crate::v14::link::LinkView;
 }
 
 pub mod loopback {
@@ -65,29 +66,29 @@ pub mod loopback {
 }
 
 pub mod mcast {
-    pub use crate::v1::mcast::Direction;
     pub use crate::v1::mcast::ExternalForwarding;
     pub use crate::v1::mcast::InternalForwarding;
     pub use crate::v1::mcast::MulticastGroupId;
     pub use crate::v1::mcast::MulticastGroupIdParam;
     pub use crate::v1::mcast::MulticastGroupIpParam;
-    pub use crate::v1::mcast::MulticastGroupMember;
-
-    pub use crate::v7::mcast::IpSrc;
-    pub use crate::v7::mcast::MulticastGroupCreateExternalEntry;
 
     pub use crate::v8::mcast::Error;
-    pub use crate::v8::mcast::MulticastGroupCreateUnderlayEntry;
-    pub use crate::v8::mcast::MulticastGroupExternalResponse;
-    pub use crate::v8::mcast::MulticastGroupResponse;
     pub use crate::v8::mcast::MulticastGroupTagQuery;
-    pub use crate::v8::mcast::MulticastGroupUnderlayResponse;
-    pub use crate::v8::mcast::MulticastGroupUpdateExternalEntry;
-    pub use crate::v8::mcast::MulticastGroupUpdateUnderlayEntry;
     pub use crate::v8::mcast::MulticastTag;
     pub use crate::v8::mcast::MulticastTagPath;
     pub use crate::v8::mcast::MulticastUnderlayGroupIpParam;
     pub use crate::v8::mcast::UnderlayMulticastIpv6;
+
+    pub use crate::v14::mcast::Direction;
+    pub use crate::v14::mcast::IpSrc;
+    pub use crate::v14::mcast::MulticastGroupCreateExternalEntry;
+    pub use crate::v14::mcast::MulticastGroupCreateUnderlayEntry;
+    pub use crate::v14::mcast::MulticastGroupExternalResponse;
+    pub use crate::v14::mcast::MulticastGroupMember;
+    pub use crate::v14::mcast::MulticastGroupResponse;
+    pub use crate::v14::mcast::MulticastGroupUnderlayResponse;
+    pub use crate::v14::mcast::MulticastGroupUpdateExternalEntry;
+    pub use crate::v14::mcast::MulticastGroupUpdateUnderlayEntry;
 
     pub use crate::impls::mcast::MAX_TAG_LENGTH;
     pub use crate::impls::mcast::MulticastTagParseError;
@@ -108,6 +109,9 @@ pub mod nat {
     pub use crate::v1::nat::NatIpv6PortPath;
     pub use crate::v1::nat::NatIpv6RangePath;
     pub use crate::v1::nat::NatToken;
+
+    pub use crate::v14::nat::NatIpv4Address;
+    pub use crate::v14::nat::NatIpv6Address;
 }
 
 pub mod network {
@@ -135,24 +139,24 @@ pub mod port {
     pub use crate::v1::port::PORT_COUNT_QSFP;
     pub use crate::v1::port::PORT_COUNT_REAR;
     pub use crate::v1::port::PortCreateParams;
-    pub use crate::v1::port::PortFec;
     pub use crate::v1::port::PortId;
     pub use crate::v1::port::PortIdPathParams;
     pub use crate::v1::port::PortIpv4Path;
     pub use crate::v1::port::PortIpv6Path;
-    pub use crate::v1::port::PortMedia;
     pub use crate::v1::port::PortSettingsTag;
-    pub use crate::v1::port::PortSpeed;
     pub use crate::v1::port::PortToken;
 
     pub use crate::v1::port::QsfpPort;
     pub use crate::v1::port::RearPort;
     pub use crate::v1::port::TxEq;
     pub use crate::v1::port::TxEqSwHw;
-    pub use crate::v13::port::LinkSettings;
-    pub use crate::v13::port::PortSettings;
 
-    pub use crate::v12::port::PortPrbsMode;
+    pub use crate::v14::port::LinkSettings;
+    pub use crate::v14::port::PortFec;
+    pub use crate::v14::port::PortMedia;
+    pub use crate::v14::port::PortPrbsMode;
+    pub use crate::v14::port::PortSettings;
+    pub use crate::v14::port::PortSpeed;
 }
 
 pub mod port_map {
@@ -180,12 +184,12 @@ pub mod route {
     pub use crate::v3::route::AttachedSubnetToken;
     pub use crate::v3::route::SubnetPath;
 
-    pub use crate::v4::route::Ipv4Routes;
-    pub use crate::v4::route::Route;
-    pub use crate::v4::route::RouteTarget;
-
-    pub use crate::v6::route::Ipv4RouteUpdate;
     pub use crate::v6::route::RouteTargetIpv4Path;
+
+    pub use crate::v14::route::Ipv4RouteUpdate;
+    pub use crate::v14::route::Ipv4Routes;
+    pub use crate::v14::route::Route;
+    pub use crate::v14::route::RouteTarget;
 }
 
 pub mod serdes {
@@ -193,28 +197,30 @@ pub mod serdes {
     pub use crate::v1::serdes::AnStatus;
     pub use crate::v1::serdes::Ber;
     pub use crate::v1::serdes::DfeAdaptationState;
-    pub use crate::v1::serdes::EncSpeed;
-    pub use crate::v1::serdes::LaneEncoding;
-    pub use crate::v1::serdes::LaneMap;
     pub use crate::v1::serdes::LaneStatus;
     pub use crate::v1::serdes::LpPages;
     pub use crate::v1::serdes::LtStatus;
-    pub use crate::v1::serdes::Polarity;
     pub use crate::v1::serdes::RxSigInfo;
-    pub use crate::v1::serdes::SerdesEye;
+
+    pub use crate::v14::serdes::EncSpeed;
+    pub use crate::v14::serdes::LaneEncoding;
+    pub use crate::v14::serdes::LaneMap;
+    pub use crate::v14::serdes::Polarity;
+    pub use crate::v14::serdes::SerdesEye;
 }
 
 pub mod snapshot {
-    pub use crate::v9::snapshot::SnapshotCreate;
-    pub use crate::v9::snapshot::SnapshotDirection;
     pub use crate::v9::snapshot::SnapshotFieldScope;
     pub use crate::v9::snapshot::SnapshotFieldValue;
     pub use crate::v9::snapshot::SnapshotResult;
-    pub use crate::v9::snapshot::SnapshotScopeRequest;
     pub use crate::v9::snapshot::SnapshotStageResult;
     pub use crate::v9::snapshot::SnapshotTableResult;
     pub use crate::v9::snapshot::SnapshotTrigger;
     pub use crate::v9::snapshot::TableDumpOptions;
+
+    pub use crate::v14::snapshot::SnapshotCreate;
+    pub use crate::v14::snapshot::SnapshotDirection;
+    pub use crate::v14::snapshot::SnapshotScopeRequest;
 }
 
 pub mod switch_identifiers {
@@ -232,7 +238,8 @@ pub mod switch_port {
     pub use crate::v1::switch_port::LedPolicy;
     pub use crate::v1::switch_port::LedState;
     pub use crate::v1::switch_port::ManagementMode;
-    pub use crate::v1::switch_port::SwitchPortView;
+
+    pub use crate::v14::switch_port::SwitchPortView;
 }
 
 pub mod table {
@@ -262,7 +269,6 @@ pub mod transceivers {
     pub use crate::v1::transceivers::CmisLaneStatus;
     pub use crate::v1::transceivers::ConnectorType;
     pub use crate::v1::transceivers::Datapath;
-    pub use crate::v1::transceivers::ElectricalMode;
     pub use crate::v1::transceivers::EthernetComplianceCode;
     pub use crate::v1::transceivers::ExtendedSpecificationComplianceCode;
     pub use crate::v1::transceivers::FaultReason;
@@ -277,13 +283,15 @@ pub mod transceivers {
     pub use crate::v1::transceivers::PassiveCopperMediaInterfaceId;
     pub use crate::v1::transceivers::PowerMode;
     pub use crate::v1::transceivers::PowerState;
-    pub use crate::v1::transceivers::QsfpDevice;
     pub use crate::v1::transceivers::ReceiverPower;
     pub use crate::v1::transceivers::Sff8636Datapath;
     pub use crate::v1::transceivers::SffComplianceCode;
     pub use crate::v1::transceivers::SmfMediaInterfaceId;
-    pub use crate::v1::transceivers::Transceiver;
-    pub use crate::v1::transceivers::TransceiverInfo;
     pub use crate::v1::transceivers::Vendor;
     pub use crate::v1::transceivers::VendorInfo;
+
+    pub use crate::v14::transceivers::ElectricalMode;
+    pub use crate::v14::transceivers::QsfpDevice;
+    pub use crate::v14::transceivers::Transceiver;
+    pub use crate::v14::transceivers::TransceiverInfo;
 }
