@@ -124,10 +124,6 @@ pub(crate) struct Opt {
     #[clap(long)]
     port_config: Option<String>,
 
-    /// file describing alternate settings for some transceivers
-    #[clap(long)]
-    xcvr_defaults: Option<String>,
-
     // TODO-completeness: This will ultimately go away in the product, or be
     // ignored, as the value will ideally be determined from the FRUID data in
     // the Sidecar itself.
@@ -274,10 +270,7 @@ impl Switch {
             Err(e) => panic!("unable to initialize bf: {e:?}"),
         };
 
-        let switch_ports = SwitchPorts::new(
-            get_sidecar_revision(&config)?,
-            &config.xcvr_defaults,
-        )?;
+        let switch_ports = SwitchPorts::new(get_sidecar_revision(&config)?);
 
         let counters = counters::init(&asic_hdl)
             .context("failed to initialize counters")?;

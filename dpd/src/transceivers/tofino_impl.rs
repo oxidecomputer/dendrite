@@ -3790,7 +3790,7 @@ mod tests {
         // We're going to alternate in the ordering of the switch ports as
         // enumerated by the port map, which is a permutation of the ordering in
         // terms of Tofino connectors.
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let mut n_ports = 0;
         for (i, (_, port)) in switch_ports.ports.iter().enumerate() {
             if let Some(device) = port.lock().await.as_backplane_mut() {
@@ -3833,7 +3833,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_detect_request_qsfp() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
 
         // Should access the controller exactly once for each module. Let's
         // pretend we have alternating presence.
@@ -3897,7 +3897,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_detect_request_invalid_port() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
 
         // Should never access the controller at all.
         let controller = Controller::default();
@@ -3919,7 +3919,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_detect_request_qsfp_invalid_interface() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
 
         // The controller will be used to detect one module, which we'll pretend
         // has an unsupported interface. We'll then check that we disable power
@@ -3967,7 +3967,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_presence_mask_request() {
         // Simulate all but the first backplane present.
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let backplane_port = PortId::Rear(RearPort::new(0).unwrap());
         {
             switch_ports
@@ -4030,7 +4030,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_lp_mode_mask_request() {
         // Simulate all but the first backplane in LPMode.
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let backplane_port = PortId::Rear(RearPort::new(0).unwrap());
         {
             switch_ports
@@ -4141,7 +4141,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_set_lp_mode_request_invalid_port() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
 
         // Should never access the controller at all.
         let controller = Controller::default();
@@ -4175,7 +4175,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_set_lp_mode_request() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
 
         // We'll expect to set every other module into LPMode.
         let mut sequence = mockall::Sequence::new();
@@ -4276,7 +4276,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_assert_reset_request() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
 
         // We'll expect to assert reset on every other module.
         let mut sequence = mockall::Sequence::new();
@@ -4381,7 +4381,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_backplane_write_request() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
 
         // We should never touch the controller.
         let controller = Controller::default();
@@ -4425,7 +4425,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_sff_8636_write_request() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let log = logger();
 
         // Describe the write operation that the SDE should send.
@@ -4491,7 +4491,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_sff_8636_write_request_with_nonzero_bank_fails() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let log = logger();
 
         // Describe the write operation that the SDE should send.
@@ -4543,7 +4543,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_sff_8636_upper_page_write_request() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let log = logger();
 
         // Describe the write operation that the SDE should send.
@@ -4611,7 +4611,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_cmis_small_write_request() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let log = logger();
 
         // Describe the write operation that the SDE should send.
@@ -4679,7 +4679,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_cmis_large_write_request() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let log = logger();
 
         // Describe the write operation that the SDE should send. It will
@@ -4755,7 +4755,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_backplane_read_request() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let port_id = PortId::Rear(RearPort::new(0).unwrap());
         let expected_data = vec![0, 1, 2, 3];
 
@@ -4806,7 +4806,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_sff_8636_read_request() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let log = logger();
 
         // Describe the read operation that the SDE should send.
@@ -4863,7 +4863,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_sff_8636_upper_page_read_request() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let log = logger();
 
         // Describe the read operation that the SDE should send.
@@ -4925,7 +4925,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_sff_8636_read_request_with_nonzero_bank_fails() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let log = logger();
 
         // Describe the read operation that the SDE should send.
@@ -4971,7 +4971,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_cmis_small_read_request() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let log = logger();
 
         // Describe the read operation that the SDE should send.
@@ -5029,7 +5029,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_cmis_large_read_request() {
-        let switch_ports = SwitchPorts::new(SidecarRevision::B, &None).unwrap();
+        let switch_ports = SwitchPorts::new(SidecarRevision::B);
         let log = logger();
 
         // Describe the read operation that the SDE should send. It will

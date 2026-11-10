@@ -47,7 +47,6 @@ fn collect_misc(dst: &str) -> Result<()> {
             "model_config.toml",
             "sidecar_config.toml",
             "softnpu_single_sled_config.toml",
-            "xcvr_defaults.csv",
         ],
     )?;
     collect("./dpd/misc", &svc_xml, vec!["dpd.xml", "dpd-softnpu.xml"])?;
