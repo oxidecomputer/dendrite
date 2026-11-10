@@ -9,7 +9,9 @@
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use dpd_types_versions::{latest, v1, v3, v4, v7, v8, v9, v14};
+use dpd_types_versions::{
+    latest, v1, v3, v4, v6, v7, v8, v9, v12, v13, v14, v15,
+};
 use dropshot::{
     EmptyScanParams, HttpError, HttpResponseCreated, HttpResponseDeleted,
     HttpResponseOk, HttpResponseUpdatedNoContent, PaginationParams, Path,
@@ -29,7 +31,8 @@ api_versions!([
     // |  example for the next person.
     // v
     // (next_int, IDENT),
-    (14, MCAST_EXTERNAL_SCOPE),
+    (15, MCAST_EXTERNAL_SCOPE),
+    (14, OPENAPI_LINT),
     (13, ALLOW_DDM_TRAFFIC),
     (12, PRBS_ERROR_TRACKING),
     (11, WALLCLOCK_HISTORY),
@@ -270,7 +273,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/route/ipv4",
-        versions = VERSION_V4_OVER_V6_ROUTES..
+        versions = VERSION_OPENAPI_LINT..
     }]
     async fn route_ipv4_list(
         rqctx: RequestContext<Self::Context>,
@@ -278,6 +281,30 @@ pub trait DpdApi {
             PaginationParams<EmptyScanParams, latest::route::Ipv4RouteToken>,
         >,
     ) -> Result<HttpResponseOk<ResultsPage<latest::route::Ipv4Routes>>, HttpError>;
+
+    /**
+     * Fetch the configured IPv4 routes, mapping IPv4 CIDR blocks to the switch port
+     * used for sending out that traffic, and optionally a gateway.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/route/ipv4",
+        versions = VERSION_V4_OVER_V6_ROUTES..VERSION_OPENAPI_LINT,
+        operation_id = "route_ipv4_list",
+    }]
+    async fn route_ipv4_list_v4(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<
+            PaginationParams<EmptyScanParams, v1::route::Ipv4RouteToken>,
+        >,
+    ) -> Result<HttpResponseOk<ResultsPage<v4::route::Ipv4Routes>>, HttpError>
+    {
+        let page = Self::route_ipv4_list(rqctx, query).await?.0;
+        Ok(HttpResponseOk(ResultsPage {
+            next_page: page.next_page,
+            items: page.items.into_iter().map(Into::into).collect(),
+        }))
+    }
 
     /**
      * Fetch the configured IPv4 routes, mapping IPv4 CIDR blocks to the switch port
@@ -295,7 +322,7 @@ pub trait DpdApi {
         >,
     ) -> Result<HttpResponseOk<ResultsPage<v1::route::Ipv4Routes>>, HttpError>
     {
-        let page = Self::route_ipv4_list(rqctx, query).await?.0;
+        let page = Self::route_ipv4_list_v4(rqctx, query).await?.0;
         Ok(HttpResponseOk(ResultsPage {
             next_page: page.next_page,
             items: page.items.into_iter().map(Into::into).collect(),
@@ -308,12 +335,29 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/route/ipv4/{cidr}",
-        versions = VERSION_V4_OVER_V6_ROUTES..
+        versions = VERSION_OPENAPI_LINT..
     }]
     async fn route_ipv4_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::route::RoutePathV4>,
     ) -> Result<HttpResponseOk<Vec<latest::route::Route>>, HttpError>;
+
+    /**
+     * Get the configured route for the given IPv4 subnet.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/route/ipv4/{cidr}",
+        versions = VERSION_V4_OVER_V6_ROUTES..VERSION_OPENAPI_LINT,
+        operation_id = "route_ipv4_get",
+    }]
+    async fn route_ipv4_get_v4(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::route::RoutePathV4>,
+    ) -> Result<HttpResponseOk<Vec<v4::route::Route>>, HttpError> {
+        let result = Self::route_ipv4_get(rqctx, path).await?.0;
+        Ok(HttpResponseOk(result.into_iter().map(Into::into).collect()))
+    }
 
     #[endpoint {
         method = GET,
@@ -324,13 +368,13 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<v1::route::RoutePathV4>,
     ) -> Result<HttpResponseOk<Vec<v1::route::Ipv4Route>>, HttpError> {
-        let result = Self::route_ipv4_get(rqctx, path).await?.0;
+        let result = Self::route_ipv4_get_v4(rqctx, path).await?.0;
         Ok(HttpResponseOk(
             result
                 .into_iter()
                 .filter_map(|r| match r {
-                    latest::route::Route::V4(r) => Some(r),
-                    latest::route::Route::V6(_) => None,
+                    v4::route::Route::V4(r) => Some(r),
+                    v4::route::Route::V6(_) => None,
                 })
                 .collect(),
         ))
@@ -345,12 +389,31 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/route/ipv4",
-        versions = VERSION_CONSOLIDATED_V4_ROUTES..
+        versions = VERSION_OPENAPI_LINT..
     }]
     async fn route_ipv4_add(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<latest::route::Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).
+     *
+     * This call can be used to create a new single-path route or to add new targets
+     * to a multipath route.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/route/ipv4",
+        versions = VERSION_CONSOLIDATED_V4_ROUTES..VERSION_OPENAPI_LINT,
+        operation_id = "route_ipv4_add",
+    }]
+    async fn route_ipv4_add_v6(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<v6::route::Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::route_ipv4_add(rqctx, update.map(Into::into)).await
+    }
 
     /**
      * Route an IPv4 subnet to a link and an IPv6 nexthop gateway.
@@ -368,7 +431,7 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<v4::route::Ipv4OverIpv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        Self::route_ipv4_add(rqctx, update.map(Into::into)).await
+        Self::route_ipv4_add_v6(rqctx, update.map(Into::into)).await
     }
 
     /**
@@ -387,7 +450,7 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<v1::route::Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        Self::route_ipv4_add(rqctx, update.map(Into::into)).await
+        Self::route_ipv4_add_v6(rqctx, update.map(Into::into)).await
     }
 
     /**
@@ -399,12 +462,31 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/route/ipv4",
-        versions = VERSION_CONSOLIDATED_V4_ROUTES..
+        versions = VERSION_OPENAPI_LINT..
     }]
     async fn route_ipv4_set(
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<latest::route::Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Route an IPv4 subnet to a link and a nexthop gateway (IPv4 or IPv6).
+     *
+     * This call can be used to create a new single-path route or to replace any
+     * existing routes with a new single-path route.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/route/ipv4",
+        versions = VERSION_CONSOLIDATED_V4_ROUTES..VERSION_OPENAPI_LINT,
+        operation_id = "route_ipv4_set",
+    }]
+    async fn route_ipv4_set_v6(
+        rqctx: RequestContext<Self::Context>,
+        update: TypedBody<v6::route::Ipv4RouteUpdate>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::route_ipv4_set(rqctx, update.map(Into::into)).await
+    }
 
     /**
      * Route an IPv4 subnet to a link and an IPv6 nexthop gateway.
@@ -422,7 +504,7 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<v4::route::Ipv4OverIpv6RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        Self::route_ipv4_set(rqctx, update.map(Into::into)).await
+        Self::route_ipv4_set_v6(rqctx, update.map(Into::into)).await
     }
 
     /**
@@ -441,7 +523,7 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         update: TypedBody<v1::route::Ipv4RouteUpdate>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        Self::route_ipv4_set(rqctx, update.map(Into::into)).await
+        Self::route_ipv4_set_v6(rqctx, update.map(Into::into)).await
     }
 
     /**
@@ -511,11 +593,27 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn port_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
     ) -> Result<HttpResponseOk<latest::switch_port::SwitchPortView>, HttpError>;
+
+    /// Return information about a single switch port.
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "port_get",
+    }]
+    async fn port_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::port::PortIdPathParams>,
+    ) -> Result<HttpResponseOk<v1::switch_port::SwitchPortView>, HttpError>
+    {
+        Self::port_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+    }
 
     /// Return the current management mode of a QSFP switch port.
     #[endpoint {
@@ -627,6 +725,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/transceivers",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn transceivers_list(
         rqctx: RequestContext<Self::Context>,
@@ -636,6 +735,31 @@ pub trait DpdApi {
         >,
         HttpError,
     >;
+
+    /// Return information about all QSFP transceivers.
+    #[endpoint {
+        method = GET,
+        path = "/transceivers",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "transceivers_list",
+    }]
+    async fn transceivers_list_v1(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<
+        HttpResponseOk<
+            BTreeMap<v1::port::PortId, v1::transceivers::Transceiver>,
+        >,
+        HttpError,
+    > {
+        Self::transceivers_list(rqctx).await.map(|resp| {
+            resp.map(|transceivers| {
+                transceivers
+                    .into_iter()
+                    .map(|(port_id, transceiver)| (port_id, transceiver.into()))
+                    .collect()
+            })
+        })
+    }
 
     /// Return the information about a port's transceiver.
     ///
@@ -648,11 +772,35 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/transceiver",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn transceiver_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
     ) -> Result<HttpResponseOk<latest::transceivers::Transceiver>, HttpError>;
+
+    /// Return the information about a port's transceiver.
+    ///
+    /// This returns the status (presence, power state, etc) of the transceiver
+    /// along with its identifying information. If the port is an optical switch
+    /// port, but has no transceiver, then the identifying information is empty.
+    ///
+    /// If the switch port is not a QSFP port, and thus could never have a
+    /// transceiver, then "Not Found" is returned.
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/transceiver",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "transceiver_get",
+    }]
+    async fn transceiver_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::port::PortIdPathParams>,
+    ) -> Result<HttpResponseOk<v1::transceivers::Transceiver>, HttpError> {
+        Self::transceiver_get(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
 
     /// Effect a module-level reset of a QSFP transceiver.
     ///
@@ -715,7 +863,7 @@ pub trait DpdApi {
     /// physical port to create an interface of the desired speed, if possible.
     #[endpoint {
         method = POST,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
+        versions = VERSION_OPENAPI_LINT..,
         path = "/ports/{port_id}/links"
     }]
     async fn link_create(
@@ -723,6 +871,25 @@ pub trait DpdApi {
         path: Path<latest::port::PortIdPathParams>,
         params: TypedBody<latest::link::LinkCreate>,
     ) -> Result<HttpResponseCreated<latest::link::LinkId>, HttpError>;
+
+    /// Create a link on a switch port.
+    ///
+    /// Create an interface that can be used for sending Ethernet frames on the
+    /// provided switch port. This will use the first available lanes in the
+    /// physical port to create an interface of the desired speed, if possible.
+    #[endpoint {
+        method = POST,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_OPENAPI_LINT,
+        path = "/ports/{port_id}/links",
+        operation_id = "link_create",
+    }]
+    async fn link_create_v13(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::port::PortIdPathParams>,
+        params: TypedBody<v13::link::LinkCreate>,
+    ) -> Result<HttpResponseCreated<v1::link::LinkId>, HttpError> {
+        Self::link_create(rqctx, path, params.map(Into::into)).await
+    }
 
     /// Create a link on a switch port.
     ///
@@ -740,19 +907,33 @@ pub trait DpdApi {
         path: Path<v1::port::PortIdPathParams>,
         params: TypedBody<v1::link::LinkCreate>,
     ) -> Result<HttpResponseCreated<v1::link::LinkId>, HttpError> {
-        Self::link_create(rqctx, path, params.map(Into::into)).await
+        Self::link_create_v13(rqctx, path, params.map(Into::into)).await
     }
 
     /// Get an existing link by ID.
     #[endpoint {
         method = GET,
-        versions = VERSION_PRBS_ERROR_TRACKING..,
+        versions = VERSION_OPENAPI_LINT..,
         path = "/ports/{port_id}/links/{link_id}"
     }]
     async fn link_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<latest::link::LinkView>, HttpError>;
+
+    /// Get an existing link by ID.
+    #[endpoint {
+        method = GET,
+        versions = VERSION_PRBS_ERROR_TRACKING..VERSION_OPENAPI_LINT,
+        path = "/ports/{port_id}/links/{link_id}",
+        operation_id = "link_get",
+    }]
+    async fn link_get_v12(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<v12::link::LinkView>, HttpError> {
+        Self::link_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+    }
 
     /// Get an existing link by ID.
     #[endpoint {
@@ -765,7 +946,7 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<v1::link::LinkPath>,
     ) -> Result<HttpResponseOk<v1::link::LinkView>, HttpError> {
-        Self::link_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+        Self::link_get_v12(rqctx, path).await.map(|resp| resp.map(Into::into))
     }
 
     /// Delete a link from a switch port.
@@ -781,13 +962,33 @@ pub trait DpdApi {
     /// List the links within a single switch port.
     #[endpoint {
         method = GET,
-        versions = VERSION_PRBS_ERROR_TRACKING..,
+        versions = VERSION_OPENAPI_LINT..,
         path = "/ports/{port_id}/links",
     }]
     async fn link_list(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::port::PortIdPathParams>,
     ) -> Result<HttpResponseOk<Vec<latest::link::LinkView>>, HttpError>;
+
+    /// List the links within a single switch port.
+    #[endpoint {
+        method = GET,
+        versions = VERSION_PRBS_ERROR_TRACKING..VERSION_OPENAPI_LINT,
+        path = "/ports/{port_id}/links",
+        operation_id = "link_list",
+    }]
+    async fn link_list_v12(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::port::PortIdPathParams>,
+    ) -> Result<HttpResponseOk<Vec<v12::link::LinkView>>, HttpError> {
+        Self::link_list(rqctx, path).await.map(|resp| {
+            resp.map(|list| {
+                list.into_iter()
+                    .map(Into::into)
+                    .collect::<Vec<v12::link::LinkView>>()
+            })
+        })
+    }
 
     /// List the links within a single switch port.
     #[endpoint {
@@ -800,7 +1001,7 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<v1::port::PortIdPathParams>,
     ) -> Result<HttpResponseOk<Vec<v1::link::LinkView>>, HttpError> {
-        Self::link_list(rqctx, path).await.map(|resp| {
+        Self::link_list_v12(rqctx, path).await.map(|resp| {
             resp.map(|list| {
                 list.into_iter()
                     .map(Into::into)
@@ -812,13 +1013,33 @@ pub trait DpdApi {
     /// List all links, on all switch ports.
     #[endpoint {
         method = GET,
-        versions = VERSION_PRBS_ERROR_TRACKING..,
+        versions = VERSION_OPENAPI_LINT..,
         path = "/links",
     }]
     async fn link_list_all(
         rqctx: RequestContext<Self::Context>,
         query: Query<latest::link::LinkFilter>,
     ) -> Result<HttpResponseOk<Vec<latest::link::LinkView>>, HttpError>;
+
+    /// List all links, on all switch ports.
+    #[endpoint {
+        method = GET,
+        versions = VERSION_PRBS_ERROR_TRACKING..VERSION_OPENAPI_LINT,
+        path = "/links",
+        operation_id = "link_list_all",
+    }]
+    async fn link_list_all_v12(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<v1::link::LinkFilter>,
+    ) -> Result<HttpResponseOk<Vec<v12::link::LinkView>>, HttpError> {
+        Self::link_list_all(rqctx, query).await.map(|resp| {
+            resp.map(|list| {
+                list.into_iter()
+                    .map(Into::into)
+                    .collect::<Vec<v12::link::LinkView>>()
+            })
+        })
+    }
 
     /// List all links, on all switch ports.
     #[endpoint {
@@ -831,7 +1052,7 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         query: Query<v1::link::LinkFilter>,
     ) -> Result<HttpResponseOk<Vec<v1::link::LinkView>>, HttpError> {
-        Self::link_list_all(rqctx, query).await.map(|resp| {
+        Self::link_list_all_v12(rqctx, query).await.map(|resp| {
             resp.map(|list| {
                 list.into_iter()
                     .map(Into::into)
@@ -864,23 +1085,54 @@ pub trait DpdApi {
     /// Return whether the link is configured to act as an IPv6 endpoint
     #[endpoint {
         method = GET,
-        path = "/ports/{port_id}/links/{link_id}/ipv6_enabled",
+        path = "/ports/{port_id}/links/{link_id}/ipv6-enabled",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn link_ipv6_enabled_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<bool>, HttpError>;
 
+    /// Return whether the link is configured to act as an IPv6 endpoint
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/ipv6_enabled",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "link_ipv6_enabled_get",
+    }]
+    async fn link_ipv6_enabled_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<bool>, HttpError> {
+        Self::link_ipv6_enabled_get(rqctx, path).await
+    }
+
     /// Set whether a port is configured to act as an IPv6 endpoint
     #[endpoint {
         method = PUT,
-        path = "/ports/{port_id}/links/{link_id}/ipv6_enabled",
+        path = "/ports/{port_id}/links/{link_id}/ipv6-enabled",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn link_ipv6_enabled_set(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
         body: TypedBody<bool>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /// Set whether a port is configured to act as an IPv6 endpoint
+    #[endpoint {
+        method = PUT,
+        path = "/ports/{port_id}/links/{link_id}/ipv6_enabled",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "link_ipv6_enabled_set",
+    }]
+    async fn link_ipv6_enabled_set_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+        body: TypedBody<bool>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::link_ipv6_enabled_set(rqctx, path, body).await
+    }
 
     /// Return whether the link is in KR mode.
     ///
@@ -935,7 +1187,7 @@ pub trait DpdApi {
     /// Set a link's PRBS speed and mode.
     #[endpoint {
         method = PUT,
-        versions = VERSION_PRBS_ERROR_TRACKING..,
+        versions = VERSION_OPENAPI_LINT..,
         path = "/ports/{port_id}/links/{link_id}/prbs",
     }]
     async fn link_prbs_set(
@@ -943,6 +1195,21 @@ pub trait DpdApi {
         path: Path<latest::link::LinkPath>,
         body: TypedBody<latest::port::PortPrbsMode>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /// Set a link's PRBS speed and mode.
+    #[endpoint {
+        method = PUT,
+        versions = VERSION_PRBS_ERROR_TRACKING..VERSION_OPENAPI_LINT,
+        path = "/ports/{port_id}/links/{link_id}/prbs",
+        operation_id = "link_prbs_set",
+    }]
+    async fn link_prbs_set_v12(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+        body: TypedBody<v12::port::PortPrbsMode>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::link_prbs_set(rqctx, path, body.map(Into::into)).await
+    }
 
     /// Set a link's PRBS speed and mode.
     #[endpoint {
@@ -956,12 +1223,12 @@ pub trait DpdApi {
         path: Path<v1::link::LinkPath>,
         body: TypedBody<v1::port::PortPrbsMode>,
     ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
-        let mode = latest::port::PortPrbsMode::try_from(body.into_inner())
+        let mode = v12::port::PortPrbsMode::try_from(body.into_inner())
             .map_err(|e| {
                 HttpError::for_bad_request(None, format!("bad PRBS mode: {e}"))
             })?;
 
-        Self::link_prbs_set(rqctx, path, TypedBody::from(mode)).await
+        Self::link_prbs_set_v12(rqctx, path, TypedBody::from(mode)).await
     }
 
     /// Return the link's PRBS speed and mode.
@@ -971,13 +1238,31 @@ pub trait DpdApi {
     /// underlying circuitry (such as filter gains).
     #[endpoint {
         method = GET,
-        versions = VERSION_PRBS_ERROR_TRACKING..,
+        versions = VERSION_OPENAPI_LINT..,
         path = "/ports/{port_id}/links/{link_id}/prbs",
     }]
     async fn link_prbs_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<latest::port::PortPrbsMode>, HttpError>;
+
+    /// Return the link's PRBS speed and mode.
+    ///
+    /// During link training, a pseudorandom bit sequence (PRBS) is used to allow
+    /// each side to synchronize their clocks and set various parameters on the
+    /// underlying circuitry (such as filter gains).
+    #[endpoint {
+        method = GET,
+        versions = VERSION_PRBS_ERROR_TRACKING..VERSION_OPENAPI_LINT,
+        path = "/ports/{port_id}/links/{link_id}/prbs",
+        operation_id = "link_prbs_get",
+    }]
+    async fn link_prbs_get_v12(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<v12::port::PortPrbsMode>, HttpError> {
+        Self::link_prbs_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+    }
 
     /// Return the link's PRBS speed and mode.
     ///
@@ -994,7 +1279,9 @@ pub trait DpdApi {
         rqctx: RequestContext<Self::Context>,
         path: Path<v1::link::LinkPath>,
     ) -> Result<HttpResponseOk<v1::port::PortPrbsMode>, HttpError> {
-        Self::link_prbs_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+        Self::link_prbs_get_v12(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
     }
 
     /// Return whether a link is up.
@@ -1011,11 +1298,26 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/fault",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn link_fault_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<latest::fault::FaultCondition>, HttpError>;
+
+    /// Return any fault currently set on this link
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/fault",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "link_fault_get",
+    }]
+    async fn link_fault_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<v1::fault::FaultCondition>, HttpError> {
+        Self::link_fault_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+    }
 
     /// Clear any fault currently set on this link
     #[endpoint {
@@ -1302,11 +1604,35 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/nat/ipv6",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn nat_ipv6_addresses_list(
         rqctx: RequestContext<Self::Context>,
         query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv6Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Addr>>, HttpError>;
+    ) -> Result<
+        HttpResponseOk<ResultsPage<latest::nat::NatIpv6Address>>,
+        HttpError,
+    >;
+
+    /**
+     * Get all of the external addresses in use for NAT mappings.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/nat/ipv6",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "nat_ipv6_addresses_list",
+    }]
+    async fn nat_ipv6_addresses_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<PaginationParams<EmptyScanParams, v1::arp::Ipv6Token>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Addr>>, HttpError> {
+        let page = Self::nat_ipv6_addresses_list(rqctx, query).await?.0;
+        Ok(HttpResponseOk(ResultsPage {
+            next_page: page.next_page,
+            items: page.items.into_iter().map(Into::into).collect(),
+        }))
+    }
 
     /**
      * Get all of the external->internal NAT mappings for a given address.
@@ -1458,11 +1784,35 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/nat/ipv4",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn nat_ipv4_addresses_list(
         rqctx: RequestContext<Self::Context>,
         query: Query<PaginationParams<EmptyScanParams, latest::arp::Ipv4Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Addr>>, HttpError>;
+    ) -> Result<
+        HttpResponseOk<ResultsPage<latest::nat::NatIpv4Address>>,
+        HttpError,
+    >;
+
+    /**
+     * Get all of the external addresses in use for IPv4 NAT mappings.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/nat/ipv4",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "nat_ipv4_addresses_list",
+    }]
+    async fn nat_ipv4_addresses_list_v1(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<PaginationParams<EmptyScanParams, v1::arp::Ipv4Token>>,
+    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Addr>>, HttpError> {
+        let page = Self::nat_ipv4_addresses_list(rqctx, query).await?.0;
+        Ok(HttpResponseOk(ResultsPage {
+            next_page: page.next_page,
+            items: page.items.into_iter().map(Into::into).collect(),
+        }))
+    }
 
     /**
      * Get all of the external->internal NAT mappings for a given IPv4 address.
@@ -1535,14 +1885,14 @@ pub trait DpdApi {
     /**
      * Add an external->internal NAT mapping for the given address/port range
      *
-     * This maps an external IPv6 address and L3 port range to:
-     *  - A gimlet's IPv6 address
-     *  - A gimlet's MAC address
+     * This maps an external IPv4 address and L3 port range to:
+     *  - A sled's IPv6 address
+     *  - The destination NIC's MAC address
      *  - A Geneve VNI
      *
-     * These identify the gimlet on which a guest is running, and gives OPTE the
-     * information it needs to  identify the guest VM that uses the external IPv6
-     * and port range when making connections outside of an Oxide rack.
+     * These identify the sled on which a guest is running, and give OPTE the
+     * information it needs to identify the guest VM that uses the external IPv4
+     * address and port range when making connections outside of an Oxide rack.
      */
 
     #[endpoint {
@@ -1610,7 +1960,7 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
-        path = "/attached_subnet",
+        path = "/attached-subnet",
         versions = VERSION_MCAST_EXTERNAL_SCOPE..,
     }]
     async fn attached_subnet_list(
@@ -1633,11 +1983,11 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
-        path = "/attached_subnet",
-        versions = VERSION_ATTACHED_SUBNETS..VERSION_MCAST_EXTERNAL_SCOPE,
+        path = "/attached-subnet",
+        versions = VERSION_OPENAPI_LINT..VERSION_MCAST_EXTERNAL_SCOPE,
         operation_id = "attached_subnet_list",
     }]
-    async fn attached_subnet_list_v3(
+    async fn attached_subnet_list_v14(
         rqctx: RequestContext<Self::Context>,
         query: Query<
             PaginationParams<EmptyScanParams, v3::route::AttachedSubnetToken>,
@@ -1655,11 +2005,32 @@ pub trait DpdApi {
     }
 
     /**
+     * Get all of the external subnets with internal mappings
+     */
+    #[endpoint {
+        method = GET,
+        path = "/attached_subnet",
+        versions = VERSION_ATTACHED_SUBNETS..VERSION_OPENAPI_LINT,
+        operation_id = "attached_subnet_list",
+    }]
+    async fn attached_subnet_list_v3(
+        rqctx: RequestContext<Self::Context>,
+        query: Query<
+            PaginationParams<EmptyScanParams, v3::route::AttachedSubnetToken>,
+        >,
+    ) -> Result<
+        HttpResponseOk<ResultsPage<v3::attached_subnet::AttachedSubnetEntry>>,
+        HttpError,
+    > {
+        Self::attached_subnet_list_v14(rqctx, query).await
+    }
+
+    /**
      * Get the mapping for the given external subnet.
      */
     #[endpoint {
         method = GET,
-        path = "/attached_subnet/{subnet}",
+        path = "/attached-subnet/{subnet}",
         versions = VERSION_MCAST_EXTERNAL_SCOPE..,
     }]
     async fn attached_subnet_get(
@@ -1672,17 +2043,33 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
-        path = "/attached_subnet/{subnet}",
-        versions = VERSION_ATTACHED_SUBNETS..VERSION_MCAST_EXTERNAL_SCOPE,
+        path = "/attached-subnet/{subnet}",
+        versions = VERSION_OPENAPI_LINT..VERSION_MCAST_EXTERNAL_SCOPE,
         operation_id = "attached_subnet_get",
     }]
-    async fn attached_subnet_get_v3(
+    async fn attached_subnet_get_v14(
         rqctx: RequestContext<Self::Context>,
         path: Path<v3::route::SubnetPath>,
     ) -> Result<HttpResponseOk<v3::network::InstanceTarget>, HttpError> {
         Self::attached_subnet_get(rqctx, path)
             .await
             .map(|resp| resp.map(Into::into))
+    }
+
+    /**
+     * Get the mapping for the given external subnet.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/attached_subnet/{subnet}",
+        versions = VERSION_ATTACHED_SUBNETS..VERSION_OPENAPI_LINT,
+        operation_id = "attached_subnet_get",
+    }]
+    async fn attached_subnet_get_v3(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v3::route::SubnetPath>,
+    ) -> Result<HttpResponseOk<v3::network::InstanceTarget>, HttpError> {
+        Self::attached_subnet_get_v14(rqctx, path).await
     }
 
     /**
@@ -1694,7 +2081,7 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = PUT,
-        path = "/attached_subnet/{subnet}",
+        path = "/attached-subnet/{subnet}",
         versions = VERSION_MCAST_EXTERNAL_SCOPE..,
     }]
     async fn attached_subnet_create(
@@ -1712,11 +2099,11 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = PUT,
-        path = "/attached_subnet/{subnet}",
-        versions = VERSION_ATTACHED_SUBNETS..VERSION_MCAST_EXTERNAL_SCOPE,
+        path = "/attached-subnet/{subnet}",
+        versions = VERSION_OPENAPI_LINT..VERSION_MCAST_EXTERNAL_SCOPE,
         operation_id = "attached_subnet_create",
     }]
-    async fn attached_subnet_create_v3(
+    async fn attached_subnet_create_v14(
         rqctx: RequestContext<Self::Context>,
         path: Path<v3::route::SubnetPath>,
         target: TypedBody<v3::network::InstanceTarget>,
@@ -1725,12 +2112,33 @@ pub trait DpdApi {
     }
 
     /**
+     * Add a mapping to an internal target for an external subnet address.
+     *
+     * These identify the gimlet on which a guest is running, and gives OPTE the
+     * information it needs to  identify the guest VM that uses the external
+     * subnet.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/attached_subnet/{subnet}",
+        versions = VERSION_ATTACHED_SUBNETS..VERSION_OPENAPI_LINT,
+        operation_id = "attached_subnet_create",
+    }]
+    async fn attached_subnet_create_v3(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v3::route::SubnetPath>,
+        target: TypedBody<v3::network::InstanceTarget>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::attached_subnet_create_v14(rqctx, path, target).await
+    }
+
+    /**
      * Delete the mapping for an external subnet
      */
     #[endpoint {
         method = DELETE,
-        path = "/attached_subnet/{subnet}",
-        versions = VERSION_ATTACHED_SUBNETS..,
+        path = "/attached-subnet/{subnet}",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn attached_subnet_delete(
         rqctx: RequestContext<Self::Context>,
@@ -1738,16 +2146,47 @@ pub trait DpdApi {
     ) -> Result<HttpResponseDeleted, HttpError>;
 
     /**
+     * Delete the mapping for an external subnet
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/attached_subnet/{subnet}",
+        versions = VERSION_ATTACHED_SUBNETS..VERSION_OPENAPI_LINT,
+        operation_id = "attached_subnet_delete",
+    }]
+    async fn attached_subnet_delete_v3(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v3::route::SubnetPath>,
+    ) -> Result<HttpResponseDeleted, HttpError> {
+        Self::attached_subnet_delete(rqctx, path).await
+    }
+
+    /**
+     * Clear all external subnet mappings
+     */
+    #[endpoint {
+        method = DELETE,
+        path = "/attached-subnet",
+        versions = VERSION_OPENAPI_LINT..,
+    }]
+    async fn attached_subnet_reset(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
      * Clear all external subnet mappings
      */
     #[endpoint {
         method = DELETE,
         path = "/attached_subnet",
-        versions = VERSION_ATTACHED_SUBNETS..,
+        versions = VERSION_ATTACHED_SUBNETS..VERSION_OPENAPI_LINT,
+        operation_id = "attached_subnet_reset",
     }]
-    async fn attached_subnet_reset(
+    async fn attached_subnet_reset_v3(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::attached_subnet_reset(rqctx).await
+    }
 
     /// Clear all settings associated with a specific tag.
     ///
@@ -1865,7 +2304,7 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = POST,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
+        versions = VERSION_OPENAPI_LINT..,
         path = "/port/{port_id}/settings"
     }]
     async fn port_settings_apply(
@@ -1874,6 +2313,32 @@ pub trait DpdApi {
         query: Query<latest::port::PortSettingsTag>,
         body: TypedBody<latest::port::PortSettings>,
     ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /**
+     * Apply port settings atomically.
+     *
+     * These settings will be applied holistically, and to the extent possible
+     * atomically to a given port. In the event of a failure a rollback is
+     * attempted. If the rollback fails there will be inconsistent state. This
+     * failure mode returns the error code "rollback failure". For more details see
+     * the docs on the [`PortSettings`] type.
+     */
+    #[endpoint {
+        method = POST,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_OPENAPI_LINT,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_apply",
+    }]
+    async fn port_settings_apply_v13(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::port::PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+        body: TypedBody<v13::port::PortSettings>,
+    ) -> Result<HttpResponseOk<v13::port::PortSettings>, HttpError> {
+        Self::port_settings_apply(rqctx, path, query, body.map(Into::into))
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
 
     /**
      * Apply port settings atomically.
@@ -1896,7 +2361,7 @@ pub trait DpdApi {
         query: Query<v1::port::PortSettingsTag>,
         body: TypedBody<v1::port::PortSettings>,
     ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
-        Self::port_settings_apply(rqctx, path, query, body.map(Into::into))
+        Self::port_settings_apply_v13(rqctx, path, query, body.map(Into::into))
             .await
             .map(|resp| resp.map(Into::into))
     }
@@ -1906,7 +2371,7 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = DELETE,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
+        versions = VERSION_OPENAPI_LINT..,
         path = "/port/{port_id}/settings"
     }]
     async fn port_settings_clear(
@@ -1914,6 +2379,25 @@ pub trait DpdApi {
         path: Path<latest::port::PortIdPathParams>,
         query: Query<latest::port::PortSettingsTag>,
     ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /**
+     * Clear port settings atomically.
+     */
+    #[endpoint {
+        method = DELETE,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_OPENAPI_LINT,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_clear",
+    }]
+    async fn port_settings_clear_v13(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::port::PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<v13::port::PortSettings>, HttpError> {
+        Self::port_settings_clear(rqctx, path, query)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
 
     /**
      * Clear port settings atomically.
@@ -1929,7 +2413,7 @@ pub trait DpdApi {
         path: Path<v1::port::PortIdPathParams>,
         query: Query<v1::port::PortSettingsTag>,
     ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
-        Self::port_settings_clear(rqctx, path, query)
+        Self::port_settings_clear_v13(rqctx, path, query)
             .await
             .map(|resp| resp.map(Into::into))
     }
@@ -1939,7 +2423,7 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
-        versions = VERSION_ALLOW_DDM_TRAFFIC..,
+        versions = VERSION_OPENAPI_LINT..,
         path = "/port/{port_id}/settings"
     }]
     async fn port_settings_get(
@@ -1947,6 +2431,25 @@ pub trait DpdApi {
         path: Path<latest::port::PortIdPathParams>,
         query: Query<latest::port::PortSettingsTag>,
     ) -> Result<HttpResponseOk<latest::port::PortSettings>, HttpError>;
+
+    /**
+     * Get port settings atomically.
+     */
+    #[endpoint {
+        method = GET,
+        versions = VERSION_ALLOW_DDM_TRAFFIC..VERSION_OPENAPI_LINT,
+        path = "/port/{port_id}/settings",
+        operation_id = "port_settings_get",
+    }]
+    async fn port_settings_get_v13(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::port::PortIdPathParams>,
+        query: Query<v1::port::PortSettingsTag>,
+    ) -> Result<HttpResponseOk<v13::port::PortSettings>, HttpError> {
+        Self::port_settings_get(rqctx, path, query)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
 
     /**
      * Get port settings atomically.
@@ -1962,7 +2465,7 @@ pub trait DpdApi {
         path: Path<v1::port::PortIdPathParams>,
         query: Query<v1::port::PortSettingsTag>,
     ) -> Result<HttpResponseOk<v1::port::PortSettings>, HttpError> {
-        Self::port_settings_get(rqctx, path, query)
+        Self::port_settings_get_v13(rqctx, path, query)
             .await
             .map(|resp| resp.map(Into::into))
     }
@@ -2009,11 +2512,28 @@ pub trait DpdApi {
     /// per-switch request.
     #[endpoint {
         method = GET,
-        path = "/links/tfport_data",
+        path = "/links/tfport-data",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn tfport_data(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseOk<Vec<latest::link::TfportData>>, HttpError>;
+
+    /// Collect the link data consumed by `tfportd`.  This app-specific convenience
+    /// routine is meant to reduce the time and traffic expended on this once-per-
+    /// second operation, by consolidating multiple per-link requests into a single
+    /// per-switch request.
+    #[endpoint {
+        method = GET,
+        path = "/links/tfport_data",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "tfport_data",
+    }]
+    async fn tfport_data_v1(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<Vec<v1::link::TfportData>>, HttpError> {
+        Self::tfport_data(rqctx).await
+    }
 
     /**
      * Get NAT generation number
@@ -2048,11 +2568,27 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/rpw/nat/trigger",
-        versions = VERSION_DUAL_STACK_NAT_WORKFLOW..
+        versions = VERSION_OPENAPI_LINT..
     }]
     async fn nat_trigger_update(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<()>, HttpError>;
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
+
+    /**
+     * Trigger NAT Reconciliation
+     */
+    #[endpoint {
+        method = POST,
+        path = "/rpw/nat/trigger",
+        versions = VERSION_DUAL_STACK_NAT_WORKFLOW..VERSION_OPENAPI_LINT,
+        operation_id = "nat_trigger_update",
+    }]
+    async fn nat_trigger_update_v2(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<()>, HttpError> {
+        Self::nat_trigger_update(rqctx).await?;
+        Ok(HttpResponseOk(()))
+    }
 
     /**
      * Trigger NATv4 Reconciliation
@@ -2066,7 +2602,7 @@ pub trait DpdApi {
     async fn ipv4_nat_trigger_update_v1(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<HttpResponseOk<()>, HttpError> {
-        Self::nat_trigger_update(rqctx).await
+        Self::nat_trigger_update_v2(rqctx).await
     }
 
     /**
@@ -2187,7 +2723,7 @@ pub trait DpdApi {
      * The group address determines whether the group is any-source (ASM) or
      * source-specific (SSM). An SSM group requires at least one exact source.
      *
-     * These groups do not carry member subscribers, as membership lives
+     * These groups have no member subscribers, as membership lives
      * only on the underlay group mapped to by the required NAT target.
      *
      * The NAT target must reference an existing underlay group. The underlay
@@ -2216,7 +2752,40 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/multicast/external-groups",
-        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_MCAST_EXTERNAL_SCOPE,
+        versions = VERSION_OPENAPI_LINT..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "multicast_group_create_external",
+    }]
+    async fn multicast_group_create_external_v14(
+        rqctx: RequestContext<Self::Context>,
+        group: TypedBody<v14::mcast::MulticastGroupCreateExternalEntry>,
+    ) -> Result<
+        HttpResponseCreated<v14::mcast::MulticastGroupExternalResponse>,
+        HttpError,
+    > {
+        let body = group
+            .try_map(|entry| {
+                v15::mcast::MulticastGroupCreateExternalEntry::try_from(entry)
+            })
+            .map_err(|e: v15::mcast::MulticastGroupCreateExternalError| {
+                HttpError::for_bad_request(None, e.to_string())
+            })?;
+
+        Self::multicast_group_create_external(rqctx, body)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /**
+     * Create an external-only multicast group configuration.
+     *
+     * External-only groups are used for IPv4 and non-admin-local IPv6 multicast
+     * traffic that doesn't require replication infrastructure. These groups use
+     * simple forwarding tables and require a NAT target.
+     */
+    #[endpoint {
+        method = POST,
+        path = "/multicast/external-groups",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_OPENAPI_LINT,
         operation_id = "multicast_group_create_external",
     }]
     async fn multicast_group_create_external_v8(
@@ -2226,15 +2795,7 @@ pub trait DpdApi {
         HttpResponseCreated<v8::mcast::MulticastGroupExternalResponse>,
         HttpError,
     > {
-        let body = group
-            .try_map(|entry| {
-                v14::mcast::MulticastGroupCreateExternalEntry::try_from(entry)
-            })
-            .map_err(|e: v14::mcast::MulticastGroupCreateExternalError| {
-                HttpError::for_bad_request(None, e.to_string())
-            })?;
-
-        Self::multicast_group_create_external(rqctx, body)
+        Self::multicast_group_create_external_v14(rqctx, group.map(Into::into))
             .await
             .map(|resp| resp.map(Into::into))
     }
@@ -2287,7 +2848,7 @@ pub trait DpdApi {
     #[endpoint {
         method = POST,
         path = "/multicast/underlay-groups",
-        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn multicast_group_create_underlay(
         rqctx: RequestContext<Self::Context>,
@@ -2296,6 +2857,25 @@ pub trait DpdApi {
         HttpResponseCreated<latest::mcast::MulticastGroupUnderlayResponse>,
         HttpError,
     >;
+
+    /// Create an underlay (internal) multicast group configuration.
+    #[endpoint {
+        method = POST,
+        path = "/multicast/underlay-groups",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_OPENAPI_LINT,
+        operation_id = "multicast_group_create_underlay",
+    }]
+    async fn multicast_group_create_underlay_v8(
+        rqctx: RequestContext<Self::Context>,
+        group: TypedBody<v8::mcast::MulticastGroupCreateUnderlayEntry>,
+    ) -> Result<
+        HttpResponseCreated<v8::mcast::MulticastGroupUnderlayResponse>,
+        HttpError,
+    > {
+        Self::multicast_group_create_underlay(rqctx, group.map(Into::into))
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
 
     /**
      * Create an underlay (internal) multicast group configuration.
@@ -2328,7 +2908,7 @@ pub trait DpdApi {
                 })
             })
             .map_err(|e: String| HttpError::for_bad_request(None, e))?;
-        Self::multicast_group_create_underlay(rqctx, v4_body)
+        Self::multicast_group_create_underlay_v8(rqctx, v4_body)
             .await
             .map(|resp| resp.map(Into::into))
     }
@@ -2398,7 +2978,26 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups/{group_ip}",
-        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_MCAST_EXTERNAL_SCOPE,
+        versions = VERSION_OPENAPI_LINT..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "multicast_group_get",
+    }]
+    async fn multicast_group_get_v14(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::mcast::MulticastGroupIpParam>,
+    ) -> Result<HttpResponseOk<v14::mcast::MulticastGroupResponse>, HttpError>
+    {
+        Self::multicast_group_get(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /**
+     * Get the multicast group configuration for a given group IP address.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/multicast/groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_OPENAPI_LINT,
         operation_id = "multicast_group_get",
     }]
     async fn multicast_group_get_v8(
@@ -2406,7 +3005,7 @@ pub trait DpdApi {
         path: Path<v1::mcast::MulticastGroupIpParam>,
     ) -> Result<HttpResponseOk<v8::mcast::MulticastGroupResponse>, HttpError>
     {
-        Self::multicast_group_get(rqctx, path)
+        Self::multicast_group_get_v14(rqctx, path)
             .await
             .map(|resp| resp.map(Into::into))
     }
@@ -2451,7 +3050,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/underlay-groups/{group_ip}",
-        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn multicast_group_get_underlay(
         rqctx: RequestContext<Self::Context>,
@@ -2460,6 +3059,25 @@ pub trait DpdApi {
         HttpResponseOk<latest::mcast::MulticastGroupUnderlayResponse>,
         HttpError,
     >;
+
+    /// Get an underlay (internal) multicast group configuration.
+    #[endpoint {
+        method = GET,
+        path = "/multicast/underlay-groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_OPENAPI_LINT,
+        operation_id = "multicast_group_get_underlay",
+    }]
+    async fn multicast_group_get_underlay_v8(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v8::mcast::MulticastUnderlayGroupIpParam>,
+    ) -> Result<
+        HttpResponseOk<v8::mcast::MulticastGroupUnderlayResponse>,
+        HttpError,
+    > {
+        Self::multicast_group_get_underlay(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
 
     /**
      * Get an underlay (internal) multicast group configuration by admin-scoped
@@ -2494,7 +3112,7 @@ pub trait DpdApi {
                 })
         })?;
 
-        Self::multicast_group_get_underlay(rqctx, v4_path)
+        Self::multicast_group_get_underlay_v8(rqctx, v4_path)
             .await
             .map(|resp| resp.map(Into::into))
     }
@@ -2505,7 +3123,7 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/multicast/underlay-groups/{group_ip}",
-        versions = VERSION_MCAST_STRICT_UNDERLAY..,
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn multicast_group_update_underlay(
         rqctx: RequestContext<Self::Context>,
@@ -2516,6 +3134,34 @@ pub trait DpdApi {
         HttpResponseOk<latest::mcast::MulticastGroupUnderlayResponse>,
         HttpError,
     >;
+
+    /// Update an underlay (internal) multicast group configuration.
+    ///
+    /// The `tag` query parameter must match the group's existing tag.
+    #[endpoint {
+        method = PUT,
+        path = "/multicast/underlay-groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_OPENAPI_LINT,
+        operation_id = "multicast_group_update_underlay",
+    }]
+    async fn multicast_group_update_underlay_v8(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v8::mcast::MulticastUnderlayGroupIpParam>,
+        query: Query<v8::mcast::MulticastGroupTagQuery>,
+        group: TypedBody<v8::mcast::MulticastGroupUpdateUnderlayEntry>,
+    ) -> Result<
+        HttpResponseOk<v8::mcast::MulticastGroupUnderlayResponse>,
+        HttpError,
+    > {
+        Self::multicast_group_update_underlay(
+            rqctx,
+            path,
+            query,
+            group.map(Into::into),
+        )
+        .await
+        .map(|resp| resp.map(Into::into))
+    }
 
     /**
      * Update an underlay (internal) multicast group configuration for a given
@@ -2586,7 +3232,48 @@ pub trait DpdApi {
     #[endpoint {
         method = PUT,
         path = "/multicast/external-groups/{group_ip}",
-        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_MCAST_EXTERNAL_SCOPE,
+        versions = VERSION_OPENAPI_LINT..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "multicast_group_update_external",
+    }]
+    async fn multicast_group_update_external_v14(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::mcast::MulticastGroupIpParam>,
+        query: Query<v8::mcast::MulticastGroupTagQuery>,
+        group: TypedBody<v14::mcast::MulticastGroupUpdateExternalEntry>,
+    ) -> Result<
+        HttpResponseOk<v14::mcast::MulticastGroupExternalResponse>,
+        HttpError,
+    > {
+        let path = path.try_map(|param| {
+            v15::mcast::MulticastExternalGroupIpParam::try_from(param)
+                .map_err(|e| HttpError::for_bad_request(None, e.to_string()))
+        })?;
+
+        let group = group
+            .try_map(|entry| {
+                v15::mcast::MulticastGroupUpdateExternalEntry::try_from(entry)
+            })
+            .map_err(|e: v15::mcast::MulticastGroupCreateExternalError| {
+                HttpError::for_bad_request(None, e.to_string())
+            })?;
+
+        Self::multicast_group_update_external(rqctx, path, query, group)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
+
+    /**
+     * Update an external-only multicast group configuration for a given group IP address.
+     *
+     * External-only groups are used for IPv4 and non-admin-local IPv6 multicast
+     * traffic that doesn't require replication infrastructure.
+     *
+     * The `tag` query parameter must match the group's existing tag.
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/multicast/external-groups/{group_ip}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_OPENAPI_LINT,
         operation_id = "multicast_group_update_external",
     }]
     async fn multicast_group_update_external_v8(
@@ -2598,22 +3285,14 @@ pub trait DpdApi {
         HttpResponseOk<v8::mcast::MulticastGroupExternalResponse>,
         HttpError,
     > {
-        let path = path.try_map(|param| {
-            v14::mcast::MulticastExternalGroupIpParam::try_from(param)
-                .map_err(|e| HttpError::for_bad_request(None, e.to_string()))
-        })?;
-
-        let group = group
-            .try_map(|entry| {
-                v14::mcast::MulticastGroupUpdateExternalEntry::try_from(entry)
-            })
-            .map_err(|e: v14::mcast::MulticastGroupCreateExternalError| {
-                HttpError::for_bad_request(None, e.to_string())
-            })?;
-
-        Self::multicast_group_update_external(rqctx, path, query, group)
-            .await
-            .map(|resp| resp.map(Into::into))
+        Self::multicast_group_update_external_v14(
+            rqctx,
+            path,
+            query,
+            group.map(Into::into),
+        )
+        .await
+        .map(|resp| resp.map(Into::into))
     }
 
     /**
@@ -2690,7 +3369,33 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/groups",
-        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_MCAST_EXTERNAL_SCOPE,
+        versions = VERSION_OPENAPI_LINT..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "multicast_groups_list",
+    }]
+    async fn multicast_groups_list_v14(
+        rqctx: RequestContext<Self::Context>,
+        query_params: Query<
+            PaginationParams<EmptyScanParams, v1::mcast::MulticastGroupIpParam>,
+        >,
+    ) -> Result<
+        HttpResponseOk<ResultsPage<v14::mcast::MulticastGroupResponse>>,
+        HttpError,
+    > {
+        let HttpResponseOk(page) =
+            Self::multicast_groups_list(rqctx, query_params).await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
+    }
+
+    /**
+     * List all multicast groups.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/multicast/groups",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_OPENAPI_LINT,
         operation_id = "multicast_groups_list",
     }]
     async fn multicast_groups_list_v8(
@@ -2703,7 +3408,7 @@ pub trait DpdApi {
         HttpError,
     > {
         let HttpResponseOk(page) =
-            Self::multicast_groups_list(rqctx, query_params).await?;
+            Self::multicast_groups_list_v14(rqctx, query_params).await?;
         Ok(HttpResponseOk(ResultsPage {
             items: page.items.into_iter().map(Into::into).collect(),
             next_page: page.next_page,
@@ -2796,7 +3501,39 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/multicast/tags/{tag}",
-        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_MCAST_EXTERNAL_SCOPE,
+        versions = VERSION_OPENAPI_LINT..VERSION_MCAST_EXTERNAL_SCOPE,
+        operation_id = "multicast_groups_list_by_tag",
+    }]
+    async fn multicast_groups_list_by_tag_v14(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v8::mcast::MulticastTagPath>,
+        query_params: Query<
+            PaginationParams<EmptyScanParams, v1::mcast::MulticastGroupIpParam>,
+        >,
+    ) -> Result<
+        HttpResponseOk<ResultsPage<v14::mcast::MulticastGroupResponse>>,
+        HttpError,
+    > {
+        let HttpResponseOk(page) =
+            Self::multicast_groups_list_by_tag(rqctx, path, query_params)
+                .await?;
+        Ok(HttpResponseOk(ResultsPage {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_page: page.next_page,
+        }))
+    }
+
+    /**
+     * List all multicast groups with a given tag.
+     *
+     * Returns paginated multicast groups matching the specified tag. Tags are
+     * assigned at group creation and are immutable. Use this endpoint to find
+     * all groups associated with a specific client or component.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/multicast/tags/{tag}",
+        versions = VERSION_MCAST_STRICT_UNDERLAY..VERSION_OPENAPI_LINT,
         operation_id = "multicast_groups_list_by_tag",
     }]
     async fn multicast_groups_list_by_tag_v8(
@@ -2810,7 +3547,7 @@ pub trait DpdApi {
         HttpError,
     > {
         let HttpResponseOk(page) =
-            Self::multicast_groups_list_by_tag(rqctx, path, query_params)
+            Self::multicast_groups_list_by_tag_v14(rqctx, path, query_params)
                 .await?;
         Ok(HttpResponseOk(ResultsPage {
             items: page.items.into_iter().map(Into::into).collect(),
@@ -2969,13 +3706,32 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/counters/fec",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn fec_rs_counters_list(
         rqctx: RequestContext<Self::Context>,
     ) -> Result<
-        HttpResponseOk<Vec<latest::counters::LinkFecRSCounters>>,
+        HttpResponseOk<Vec<latest::counters::LinkFecRsCounters>>,
         HttpError,
     >;
+
+    /**
+     * Get the FEC RS counters for all links.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/counters/fec",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "fec_rs_counters_list",
+    }]
+    async fn fec_rs_counters_list_v1(
+        rqctx: RequestContext<Self::Context>,
+    ) -> Result<HttpResponseOk<Vec<v1::counters::LinkFecRSCounters>>, HttpError>
+    {
+        Self::fec_rs_counters_list(rqctx).await.map(|resp| {
+            resp.map(|list| list.into_iter().map(Into::into).collect())
+        })
+    }
 
     /**
      * Get the FEC RS counters for the given link.
@@ -2983,11 +3739,31 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/counters/fec/{port_id}/{link_id}",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn fec_rs_counters_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
-    ) -> Result<HttpResponseOk<latest::counters::LinkFecRSCounters>, HttpError>;
+    ) -> Result<HttpResponseOk<latest::counters::LinkFecRsCounters>, HttpError>;
+
+    /**
+     * Get the FEC RS counters for the given link.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/counters/fec/{port_id}/{link_id}",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "fec_rs_counters_get",
+    }]
+    async fn fec_rs_counters_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<v1::counters::LinkFecRSCounters>, HttpError>
+    {
+        Self::fec_rs_counters_get(rqctx, path)
+            .await
+            .map(|resp| resp.map(Into::into))
+    }
 
     /**
      * Get the most relevant subset of traffic counters for the given link.
@@ -3018,7 +3794,8 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
-        path = "/ports/{port_id}/links/{link_id}/serdes/lane_map",
+        path = "/ports/{port_id}/links/{link_id}/serdes/lane-map",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn lane_map_get(
         rqctx: RequestContext<Self::Context>,
@@ -3026,11 +3803,28 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<latest::serdes::LaneMap>, HttpError>;
 
     /**
+     * Get the logical->physical mappings for each lane in this port
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/serdes/lane_map",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "lane_map_get",
+    }]
+    async fn lane_map_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<v1::serdes::LaneMap>, HttpError> {
+        Self::lane_map_get(rqctx, path).await.map(|resp| resp.map(Into::into))
+    }
+
+    /**
      * Get the per-lane tx eq settings for each lane on this link
      */
     #[endpoint {
         method = GET,
-        path = "/ports/{port_id}/links/{link_id}/serdes/tx_eq",
+        path = "/ports/{port_id}/links/{link_id}/serdes/tx-eq",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn link_tx_eq_get(
         rqctx: RequestContext<Self::Context>,
@@ -3038,11 +3832,28 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<Vec<latest::port::TxEqSwHw>>, HttpError>;
 
     /**
+     * Get the per-lane tx eq settings for each lane on this link
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/serdes/tx_eq",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "link_tx_eq_get",
+    }]
+    async fn link_tx_eq_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<v1::port::TxEqSwHw>>, HttpError> {
+        Self::link_tx_eq_get(rqctx, path).await
+    }
+
+    /**
      * Update the per-lane tx eq settings for all lanes on this link
      */
     #[endpoint {
         method = PUT,
-        path = "/ports/{port_id}/links/{link_id}/serdes/tx_eq",
+        path = "/ports/{port_id}/links/{link_id}/serdes/tx-eq",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn link_tx_eq_set(
         rqctx: RequestContext<Self::Context>,
@@ -3051,16 +3862,50 @@ pub trait DpdApi {
     ) -> Result<HttpResponseUpdatedNoContent, HttpError>;
 
     /**
+     * Update the per-lane tx eq settings for all lanes on this link
+     */
+    #[endpoint {
+        method = PUT,
+        path = "/ports/{port_id}/links/{link_id}/serdes/tx_eq",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "link_tx_eq_set",
+    }]
+    async fn link_tx_eq_set_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+        args: TypedBody<v1::port::TxEq>,
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
+        Self::link_tx_eq_set(rqctx, path, args).await
+    }
+
+    /**
      * Get the per-lane rx signal info for each lane on this link
      */
     #[endpoint {
         method = GET,
-        path = "/ports/{port_id}/links/{link_id}/serdes/rx_sig",
+        path = "/ports/{port_id}/links/{link_id}/serdes/rx-sig",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn link_rx_sig_info_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<Vec<latest::serdes::RxSigInfo>>, HttpError>;
+
+    /**
+     * Get the per-lane rx signal info for each lane on this link
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/serdes/rx_sig",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "link_rx_sig_info_get",
+    }]
+    async fn link_rx_sig_info_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<v1::serdes::RxSigInfo>>, HttpError> {
+        Self::link_rx_sig_info_get(rqctx, path).await
+    }
 
     /**
      * Get the per-lane adaptation counts for each lane on this link
@@ -3083,6 +3928,7 @@ pub trait DpdApi {
     #[endpoint {
         method = GET,
         path = "/ports/{port_id}/links/{link_id}/serdes/eye",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn link_eye_get(
         rqctx: RequestContext<Self::Context>,
@@ -3090,11 +3936,30 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<Vec<latest::serdes::SerdesEye>>, HttpError>;
 
     /**
+     * Get the per-lane eye measurements for each lane on this link
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/serdes/eye",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "link_eye_get",
+    }]
+    async fn link_eye_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<v1::serdes::SerdesEye>>, HttpError> {
+        Self::link_eye_get(rqctx, path).await.map(|resp| {
+            resp.map(|eyes| eyes.into_iter().map(Into::into).collect())
+        })
+    }
+
+    /**
      * Get the per-lane speed and encoding for each lane on this link
      */
     #[endpoint {
         method = GET,
-        path = "/ports/{port_id}/links/{link_id}/serdes/enc_speed",
+        path = "/ports/{port_id}/links/{link_id}/serdes/enc-speed",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn link_enc_speed_get(
         rqctx: RequestContext<Self::Context>,
@@ -3102,16 +3967,51 @@ pub trait DpdApi {
     ) -> Result<HttpResponseOk<Vec<latest::serdes::EncSpeed>>, HttpError>;
 
     /**
+     * Get the per-lane speed and encoding for each lane on this link
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/serdes/enc_speed",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "link_enc_speed_get",
+    }]
+    async fn link_enc_speed_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<Vec<v1::serdes::EncSpeed>>, HttpError> {
+        Self::link_enc_speed_get(rqctx, path).await.map(|resp| {
+            resp.map(|speeds| speeds.into_iter().map(Into::into).collect())
+        })
+    }
+
+    /**
      * Get the per-lane AN/LT status for each lane on this link
      */
     #[endpoint {
         method = GET,
-        path = "/ports/{port_id}/links/{link_id}/serdes/anlt_status",
+        path = "/ports/{port_id}/links/{link_id}/serdes/anlt-status",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn link_an_lt_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<latest::link::LinkPath>,
     ) -> Result<HttpResponseOk<latest::serdes::AnLtStatus>, HttpError>;
+
+    /**
+     * Get the per-lane AN/LT status for each lane on this link
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/serdes/anlt_status",
+        versions = ..VERSION_OPENAPI_LINT,
+        operation_id = "link_an_lt_get",
+    }]
+    async fn link_an_lt_get_v1(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+    ) -> Result<HttpResponseOk<v1::serdes::AnLtStatus>, HttpError> {
+        Self::link_an_lt_get(rqctx, path).await
+    }
 
     /**
      * Return the estimated bit-error rate (BER) for a link.
@@ -3131,8 +4031,8 @@ pub trait DpdApi {
      */
     #[endpoint {
         method = GET,
-        path = "/ports/{port_id}/links/{link_id}/prbs_get_err",
-        versions = VERSION_PRBS_ERROR_TRACKING..,
+        path = "/ports/{port_id}/links/{link_id}/prbs-get-err",
+        versions = VERSION_OPENAPI_LINT..,
     }]
     async fn link_prbs_get_err(
         rqctx: RequestContext<Self::Context>,
@@ -3140,23 +4040,56 @@ pub trait DpdApi {
         body: TypedBody<latest::link::MsDuration>,
     ) -> Result<HttpResponseOk<Vec<u32>>, HttpError>;
 
+    /**
+     * Return the measured bit-error rate for a link with an active PRBS
+     * connection to another switch.
+     */
+    #[endpoint {
+        method = GET,
+        path = "/ports/{port_id}/links/{link_id}/prbs_get_err",
+        versions = VERSION_PRBS_ERROR_TRACKING..VERSION_OPENAPI_LINT,
+        operation_id = "link_prbs_get_err",
+    }]
+    async fn link_prbs_get_err_v12(
+        rqctx: RequestContext<Self::Context>,
+        path: Path<v1::link::LinkPath>,
+        body: TypedBody<v12::link::MsDuration>,
+    ) -> Result<HttpResponseOk<Vec<u32>>, HttpError> {
+        Self::link_prbs_get_err(rqctx, path, body).await
+    }
+
     /// Capture a PHV snapshot: create snapshot, set triggers, arm, wait
     /// for trigger, read capture, decode fields, and clean up.
     #[endpoint {
         method = POST,
         path = "/snapshot/capture",
-        versions = VERSION_SNAPSHOT..
+        versions = VERSION_OPENAPI_LINT..
     }]
     async fn snapshot_capture(
         rqctx: RequestContext<Self::Context>,
         body: TypedBody<latest::snapshot::SnapshotCreate>,
     ) -> Result<HttpResponseOk<latest::snapshot::SnapshotResult>, HttpError>;
 
+    /// Capture a PHV snapshot: create snapshot, set triggers, arm, wait
+    /// for trigger, read capture, decode fields, and clean up.
+    #[endpoint {
+        method = POST,
+        path = "/snapshot/capture",
+        versions = VERSION_SNAPSHOT..VERSION_OPENAPI_LINT,
+        operation_id = "snapshot_capture",
+    }]
+    async fn snapshot_capture_v9(
+        rqctx: RequestContext<Self::Context>,
+        body: TypedBody<v9::snapshot::SnapshotCreate>,
+    ) -> Result<HttpResponseOk<v9::snapshot::SnapshotResult>, HttpError> {
+        Self::snapshot_capture(rqctx, body.map(Into::into)).await
+    }
+
     /// Check which fields are in scope at a given stage.
     #[endpoint {
         method = POST,
         path = "/snapshot/scope",
-        versions = VERSION_SNAPSHOT..
+        versions = VERSION_OPENAPI_LINT..
     }]
     async fn snapshot_scope(
         rqctx: RequestContext<Self::Context>,
@@ -3165,4 +4098,19 @@ pub trait DpdApi {
         HttpResponseOk<Vec<latest::snapshot::SnapshotFieldScope>>,
         HttpError,
     >;
+
+    /// Check which fields are in scope at a given stage.
+    #[endpoint {
+        method = POST,
+        path = "/snapshot/scope",
+        versions = VERSION_SNAPSHOT..VERSION_OPENAPI_LINT,
+        operation_id = "snapshot_scope",
+    }]
+    async fn snapshot_scope_v9(
+        rqctx: RequestContext<Self::Context>,
+        body: TypedBody<v9::snapshot::SnapshotScopeRequest>,
+    ) -> Result<HttpResponseOk<Vec<v9::snapshot::SnapshotFieldScope>>, HttpError>
+    {
+        Self::snapshot_scope(rqctx, body.map(Into::into)).await
+    }
 }

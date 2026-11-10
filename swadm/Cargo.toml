@@ -21,10 +21,12 @@ regex.workspace = true
 reqwest.workspace = true
 slog.workspace = true
 tabwriter.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+dpd-types-versions = { workspace = true, features = ["testing"] }
 expectorate.workspace = true
 predicates.workspace = true
+proptest.workspace = true
 serial_test.workspace = true
-thiserror.workspace = true
