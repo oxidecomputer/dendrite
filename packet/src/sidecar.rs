@@ -6,7 +6,6 @@
 
 use std::convert::TryInto;
 use std::fmt;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use bytes::BufMut;
 use bytes::BytesMut;
@@ -133,32 +132,6 @@ pub fn code_to_str(code: u8) -> String {
     .to_string()
 }
 
-/// For an SC_ARP_NEEDED or SC_NEIGHBOR_NEEDED packet, returns the egress
-/// ASIC port and the nexthop address awaiting resolution.  The nexthop's
-/// address family comes from the sidecar code rather than the encapsulated
-/// packet, since a route may have a nexthop of the other address family
-/// (e.g. 10.0.0.0/8 via fe80::1).
-pub fn nexthop_needed(p: &Packet) -> Option<(u16, IpAddr)> {
-    if p.hdrs.ipv4_hdr.is_none() && p.hdrs.ipv6_hdr.is_none() {
-        // not an IP packet, nothing to resolve
-        return None;
-    }
-
-    let sc = p.hdrs.sidecar_hdr.as_ref()?;
-    let ip = match sc.sc_code {
-        // The P4 code zero-extends the 32-bit nexthop to fill the 128-bit
-        // payload, so the address is in the last four bytes.
-        SC_ARP_NEEDED => {
-            let [.., a, b, c, d] = sc.sc_payload;
-            IpAddr::V4(Ipv4Addr::new(a, b, c, d))
-        }
-        SC_NEIGHBOR_NEEDED => IpAddr::V6(Ipv6Addr::from(sc.sc_payload)),
-        // wrong sidecar code, nothing to resolve
-        _ => return None,
-    };
-    Some((sc.sc_egress, ip))
-}
-
 impl fmt::Display for SidecarHdr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -182,112 +155,5 @@ impl fmt::Debug for SidecarHdr {
             self.sc_ether_type,
             self.sc_payload
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const SC_EGRESS: u16 = 7;
-
-    fn endpoints(src: &str, dst: &str) -> (Endpoint, Endpoint) {
-        (
-            Endpoint::parse("e0:d5:5e:67:89:ab", src, 3333).unwrap(),
-            Endpoint::parse("e0:d5:5e:67:89:ac", dst, 4444).unwrap(),
-        )
-    }
-
-    fn udp_pkt(src: &str, dst: &str) -> Packet {
-        let (src_ep, dst_ep) = endpoints(src, dst);
-        let stack = if src.contains(':') {
-            vec![ipv6::IPPROTO_UDP.into(), eth::ETHER_IPV6]
-        } else {
-            vec![ipv4::IPPROTO_UDP.into(), eth::ETHER_IPV4]
-        };
-        Packet::generate(src_ep, dst_ep, stack, None).unwrap()
-    }
-
-    // Wrap `p` in a sidecar header, as the switch does when it punts a packet
-    // to userspace.
-    fn add_sidecar(mut p: Packet, sc_code: u8, sc_payload: [u8; 16]) -> Packet {
-        let eth = p.hdrs.eth_hdr.as_mut().unwrap();
-        p.hdrs.sidecar_hdr = Some(SidecarHdr {
-            sc_code,
-            sc_pad: 0,
-            sc_ingress: 1,
-            sc_egress: SC_EGRESS,
-            sc_ether_type: eth.eth_type,
-            sc_payload,
-        });
-        eth.eth_type = eth::ETHER_SIDECAR;
-        p
-    }
-
-    // The P4 code widens the 32-bit IPv4 nexthop to 128 bits, so the address
-    // lands in the last four bytes of the payload.
-    fn v4_payload(ip: Ipv4Addr) -> [u8; 16] {
-        let mut payload = [0u8; 16];
-        payload[12..].copy_from_slice(&ip.octets());
-        payload
-    }
-
-    #[test]
-    fn nexthop_needed_ipv4_via_ipv4() {
-        let nh: Ipv4Addr = "192.0.2.1".parse().unwrap();
-        let p = add_sidecar(
-            udp_pkt("10.0.0.1", "10.0.0.2"),
-            SC_ARP_NEEDED,
-            v4_payload(nh),
-        );
-        assert_eq!(nexthop_needed(&p), Some((SC_EGRESS, nh.into())));
-    }
-
-    #[test]
-    fn nexthop_needed_ipv6_via_ipv6() {
-        let nh: Ipv6Addr = "fd00:1122:3344::1".parse().unwrap();
-        let p = add_sidecar(
-            udp_pkt("fd00::1", "fd00::2"),
-            SC_NEIGHBOR_NEEDED,
-            nh.octets(),
-        );
-        assert_eq!(nexthop_needed(&p), Some((SC_EGRESS, nh.into())));
-    }
-
-    #[test]
-    fn nexthop_needed_ipv4_via_ipv6() {
-        let nh: Ipv6Addr = "fe80::1".parse().unwrap();
-        let p = add_sidecar(
-            udp_pkt("10.0.0.1", "10.0.0.2"),
-            SC_NEIGHBOR_NEEDED,
-            nh.octets(),
-        );
-        assert_eq!(nexthop_needed(&p), Some((SC_EGRESS, nh.into())));
-    }
-
-    #[test]
-    fn nexthop_needed_ipv6_via_ipv4() {
-        let nh: Ipv4Addr = "192.0.2.1".parse().unwrap();
-        let p = add_sidecar(
-            udp_pkt("fd00::1", "fd00::2"),
-            SC_ARP_NEEDED,
-            v4_payload(nh),
-        );
-        assert_eq!(nexthop_needed(&p), Some((SC_EGRESS, nh.into())));
-    }
-
-    #[test]
-    fn nexthop_needed_non_ip_pkt() {
-        let (src, dst) = endpoints("10.0.0.1", "10.0.0.2");
-        let arp_pkt = Packet::generate(
-            src,
-            dst,
-            vec![arp::ARPOP_REQUEST, eth::ETHER_ARP],
-            None,
-        )
-        .unwrap();
-        let nh: Ipv4Addr = "192.0.2.1".parse().unwrap();
-        let p = add_sidecar(arp_pkt, SC_ARP_NEEDED, v4_payload(nh));
-        assert_eq!(nexthop_needed(&p), None);
     }
 }

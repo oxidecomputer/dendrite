@@ -101,10 +101,11 @@ pub fn resolution_needed(
 }
 
 fn handle_packet(g: &Global, p: packet::Packet) {
-    let sc_code = match &p.hdrs.sidecar_hdr {
-        Some(sc) => sc.sc_code,
+    let sc = match &p.hdrs.sidecar_hdr {
+        Some(sc) => sc,
         None => return debug!(g.log, "received a non-sidecar packet"),
     };
+    let sc_code = sc.sc_code;
 
     match sc_code {
         sidecar::SC_FWD_FROM_USERSPACE => {
@@ -114,14 +115,22 @@ fn handle_packet(g: &Global, p: packet::Packet) {
             // These packets were addressed to a port that doesn't have a corresponding
             // tfport link.  There's nothing we want to do with them.
         }
-        sidecar::SC_ARP_NEEDED | sidecar::SC_NEIGHBOR_NEEDED => {
-            match sidecar::nexthop_needed(&p) {
-                Some((asic_id, ip)) => resolution_needed(g, asic_id, ip, p),
-                None => error!(
-                    g.log,
-                    "not an ip packet (sc_code: {sc_code}): {p:?}"
-                ),
+        sidecar::SC_ARP_NEEDED => {
+            if p.hdrs.ipv4_hdr.is_none() && p.hdrs.ipv6_hdr.is_none() {
+                error!(g.log, "not an ip packet (sc_code: {sc_code}): {p:?}");
+                return None;
             }
+            let [.., a, b, c, d] = sc.sc_payload;
+            let ip = IpAddr::V4(Ipv4Addr::new(a, b, c, d));
+            resolution_needed(g, sc.sc_egress, ip, p)
+        }
+        sidecar::SC_NEIGHBOR_NEEDED => {
+            if p.hdrs.ipv6_hdr.is_none() {
+                error!(g.log, "not an ipv6 packet (sc_code: {sc_code}): {p:?}");
+                return None;
+            }
+            let ip = IpAddr::V6(Ipv6Addr::from(sc.sc_payload));
+            resolution_needed(g, sc.sc_egress, ip, p)
         }
         // TODO-completeness: implement this as per dendrite#156
         sidecar::SC_ICMP_NEEDED => {}
