@@ -170,7 +170,11 @@ impl Protocol for EthHdr {
         }
         let mut v = BytesMut::with_capacity(total_size);
 
-        let hdr = &(packet.hdrs.eth_hdr.as_ref().unwrap());
+        let hdr = packet
+            .hdrs
+            .eth_hdr
+            .as_ref()
+            .ok_or_else(|| crate::deparse_error("no Ethernet header"))?;
         v.put_slice(&hdr.eth_dmac.to_vec());
         v.put_slice(&hdr.eth_smac.to_vec());
         if let Some(q) = hdr.eth_8021q {
@@ -228,5 +232,35 @@ impl fmt::Display for EthHdr {
             "eth smac: {} dmac: {} type: 0x{:0x}",
             self.eth_smac, self.eth_dmac, self.eth_type
         )
+    }
+}
+
+#[cfg(test)]
+mod eth_tests {
+    use common::network::MacAddr;
+
+    use crate::Packet;
+    use crate::PacketError;
+    use crate::Protocol;
+    use crate::eth::EthHdr;
+
+    /// Exercises basic deparse on an ethernet header.
+    #[test]
+    fn basic_deparse() {
+        let mut pkt = Packet::default();
+        // Sanity check
+        pkt.hdrs.eth_hdr = Some(EthHdr {
+            eth_dmac: MacAddr::ZERO,
+            eth_smac: MacAddr::ZERO,
+            eth_8021q: None,
+            eth_type: 0x88B5,
+            eth_size: 1500,
+        });
+        EthHdr::deparse(&pkt, 0).expect("Should deparse with good inputs");
+
+        pkt.hdrs.eth_hdr = None;
+        let err =
+            EthHdr::deparse(&pkt, 0).expect_err("No eth header to deparse");
+        assert!(matches!(err, PacketError::Deparse(_)));
     }
 }

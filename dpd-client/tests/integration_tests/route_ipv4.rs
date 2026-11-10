@@ -10,9 +10,11 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 use oxnet::Ipv4Net;
+use packet::eth;
 use reqwest::StatusCode;
 
 use crate::integration_tests::common;
+use crate::integration_tests::common::PktCallbacks;
 use crate::integration_tests::common::prelude::*;
 use crate::integration_tests::counters::one_counted_test;
 use packet::Endpoint;
@@ -27,7 +29,7 @@ const SHRINK_TEST_PROBE_TARGETS: u8 = SHRINK_TEST_FILLER_TARGETS - 1;
 const IPV4_ROUTE_TARGET_TABLE: &str =
     "Ingress.l3_router.Router4.lookup_idx.route";
 
-struct Router {
+pub struct Router {
     pub port: u16,
     pub ip: String,
     pub mac: ::common::network::MacAddr,
@@ -76,7 +78,7 @@ fn build_route_update(
     replace: bool,
 ) -> types::Ipv4RouteUpdate {
     types::Ipv4RouteUpdate {
-        cidr: subnet.into(),
+        cidr: subnet,
         target: types::RouteTarget::V4(target.clone()),
         replace,
     }
@@ -97,7 +99,7 @@ async fn validate_routes(
         }
     } else {
         // Verify that the set of routes on the switch match those we just set
-        let found = client.route_ipv4_get(&cidr).await?;
+        let found = client.route_ipv4_get(cidr).await?;
         assert_eq!(found.len(), expected.len());
         for target in expected {
             assert!(
@@ -108,41 +110,76 @@ async fn validate_routes(
     }
 }
 
-async fn test_route_ipv4_unicast_impl(switch: &Switch) -> TestResult {
-    let ingress = PhysPort(10);
-    let egress = PhysPort(14);
+/// Configuration for a point to point IPv4 routing test.
+struct RouteTest {
+    ingress: PhysPort,
+    egress: PhysPort,
+    router: Router,
+    router_subnet: &'static str,
+    src: Endpoint,
+    dst: Endpoint,
+    modify: PktCallbacks,
+}
 
-    let router = Router::new(10, "10.10.10.1", "02:78:39:45:b9:00", None);
+impl Default for RouteTest {
+    fn default() -> Self {
+        Self {
+            ingress: PhysPort(10),
+            egress: PhysPort(14),
+            router: Router::new(10, "10.10.10.1", "02:78:39:45:b9:00", None),
+            router_subnet: "10.10.10.0/24",
+            src: Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333)
+                .unwrap(),
+            dst: Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444)
+                .unwrap(),
+            modify: PktCallbacks::default(),
+        }
+    }
+}
 
-    common::set_route_ipv4(switch, "10.10.10.0/24", egress, &router.ip).await?;
-    common::add_arp_ipv4(switch, &router.ip, router.mac).await?;
-
-    let (to_send, to_recv) = common::gen_udp_routed_pair(
+/// Executes a routing test according to the given configuration.
+async fn test_route_ipv4_unicast_impl(
+    switch: &Switch,
+    conf: RouteTest,
+) -> TestResult {
+    common::set_route_ipv4(
         switch,
-        egress,
-        router.mac,
-        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
-        Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444).unwrap(),
-    );
+        conf.router_subnet,
+        conf.egress,
+        &conf.router.ip,
+    )
+    .await?;
+    common::add_arp_ipv4(switch, &conf.router.ip, conf.router.mac).await?;
 
-    let send = TestPacket { packet: Arc::new(to_send), port: ingress };
-    let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
-    switch.packet_test(vec![send], vec![expected])
+    let mut to_send = common::gen_udp_packet_loaded(conf.src, conf.dst, &[]);
+    eth::EthHdr::rewrite_dmac(&mut to_send, conf.router.mac);
+    (conf.modify.tx_pkt)(&mut to_send)?;
+
+    let to_recv = common::gen_packet_routed(switch, conf.egress, &to_send);
+
+    let mut send =
+        vec![TestPacket { packet: Arc::new(to_send), port: conf.ingress }];
+    let mut expected =
+        vec![TestPacket { packet: Arc::new(to_recv), port: conf.egress }];
+    (conf.modify.exchanged)(&mut send, &mut expected)?;
+
+    switch.packet_test(send, expected)
 }
 
 #[tokio::test]
 #[ignore]
 async fn test_route_ipv4_unicast() -> TestResult {
     let switch = &*get_switch().await;
-    test_route_ipv4_unicast_impl(switch).await
+    test_route_ipv4_unicast_impl(switch, RouteTest::default()).await
 }
 
 async fn test_deleted_route_ipv4_impl(switch: &Switch) -> TestResult {
-    let ingress = PhysPort(10);
+    let conf = RouteTest::default();
+    let ingress = conf.ingress;
     let egress = SERVICE_PORT;
 
     // Verify that we can still unicast via the correctly set-up route.
-    test_route_ipv4_unicast_impl(switch).await?;
+    test_route_ipv4_unicast_impl(switch, conf).await?;
 
     // Delete that route entry, and check that we cannot send out the egress
     // port.
@@ -501,8 +538,7 @@ fn shrink_test_route(
         tag: "testing".into(),
         port_id,
         link_id,
-        tgt_ip: Ipv4Addr::new(ip_prefix.0, ip_prefix.1, ip_prefix.2, target)
-            .into(),
+        tgt_ip: Ipv4Addr::new(ip_prefix.0, ip_prefix.1, ip_prefix.2, target),
         vlan_id: None,
     }
 }
@@ -550,8 +586,7 @@ async fn add_ipv4_over_ipv6_route_target(
 async fn fill_until_ipv4_filler_alloc_unavailable(
     switch: &Switch,
 ) -> Result<Vec<Ipv4Net>, anyhow::Error> {
-    let client = &switch.client;
-    assert!(
+    const _: () = assert!(
         SHRINK_TEST_VICTIM_TARGETS > SHRINK_TEST_FILLER_TARGETS,
         "victim route must be wider than filler routes"
     );
@@ -560,11 +595,12 @@ async fn fill_until_ipv4_filler_alloc_unavailable(
         SHRINK_TEST_FILLER_TARGETS,
         "filler width must match the victim's post-shrink width"
     );
-    assert!(
+    const _: () = assert!(
         SHRINK_TEST_FILLER_TARGETS > SHRINK_TEST_PROBE_TARGETS,
         "filler route must be wider than its setup probe"
     );
 
+    let client = &switch.client;
     let mut fillers = Vec::new();
     for i in 0..MAX_ROUTE_TARGET_FILLERS {
         let cidr = route_target_filler_cidr(i);

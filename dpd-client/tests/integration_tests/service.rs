@@ -4,17 +4,51 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use std::net::Ipv6Addr;
+use std::net::{IpAddr, Ipv6Addr};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use ::common::network::MacAddr;
+use anyhow::bail;
 use dpd_client::ClientInfo;
 use dpd_client::types::Ipv4Entry;
-use packet::{Endpoint, eth, icmp, ipv4, ipv6, sidecar};
+use packet::{Endpoint, L4Endpoint, eth, icmp, ipv4, ipv6, sidecar};
 
-use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
+use crate::integration_tests::common::{self, PktCallbacks};
 use crate::integration_tests::counters::one_counted_test;
+
+struct ServiceTest {
+    ingress: PhysPort,
+    service_ip: IpAddr,
+    src: Endpoint,
+    dst: Endpoint,
+    modify: PktCallbacks,
+}
+
+impl ServiceTest {
+    /// Constructs a test config with inbound control plane
+    /// traffic to a switch zone address.
+    pub fn service_ingress() -> Self {
+        let ingress = PhysPort(12);
+        let service_ip = IpAddr::from_str("10.10.10.1").unwrap();
+        let service_mac = MacAddr::from_str("02:78:39:45:b9:00").unwrap();
+        let dst = Endpoint::L4(L4Endpoint {
+            port: 4444,
+            mac: service_mac,
+            ip: service_ip,
+        });
+
+        Self {
+            ingress,
+            service_ip,
+            src: Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333)
+                .unwrap(),
+            dst,
+            modify: PktCallbacks::default(),
+        }
+    }
+}
 
 // Packets sent to an IP address assigned to a switch port should be forwarded
 // to the service port with an added sidecar header.
@@ -22,41 +56,49 @@ use crate::integration_tests::counters::one_counted_test;
 #[ignore]
 async fn test_service_ipv4_unicast() -> TestResult {
     let switch = &*get_switch().await;
+    let conf = ServiceTest::service_ingress();
+    self::run_unicast_ipv4_service(switch, conf).await?;
+    Ok(())
+}
 
-    let ingress = PhysPort(12);
-    let router_ip = "10.10.10.1";
-    let router_mac = "02:78:39:45:b9:00";
-
-    let (port_id, link_id) = switch.link_id(ingress).unwrap();
-    let entry = Ipv4Entry {
-        addr: router_ip.parse().unwrap(),
-        tag: switch.client.inner().tag.clone(),
+/// Runs a unicast IPv4 test from src to dst using the given config.
+async fn run_unicast_ipv4_service(
+    switch: &Switch,
+    conf: ServiceTest,
+) -> anyhow::Result<()> {
+    let Some((port_id, link_id)) = switch.link_id(conf.ingress) else {
+        bail!("link_id not found for port {:?}", conf.ingress);
     };
+    let IpAddr::V4(service_ip) = conf.service_ip else {
+        bail!("service ip must be IPv4. Found {:?}", conf.service_ip);
+    };
+    let entry =
+        Ipv4Entry { addr: service_ip, tag: switch.client.inner().tag.clone() };
     switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
 
-    let send_pkt = common::gen_udp_packet(
-        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap(),
-        Endpoint::parse(router_mac, router_ip, 4444).unwrap(),
-    );
+    let mut send_pkt = common::gen_udp_packet(conf.src, conf.dst);
+    (conf.modify.tx_pkt)(&mut send_pkt)?;
     let mut recv_pkt = send_pkt.clone();
 
-    let send = TestPacket { packet: Arc::new(send_pkt), port: ingress };
+    let send = TestPacket { packet: Arc::new(send_pkt), port: conf.ingress };
 
     // The packet that gets delivered to the service port should be identical to
     // the one arriving at the ingress port, with the additional sidecar header.
-    //
     common::add_sidecar_hdr(
         switch,
         &mut recv_pkt,
         sidecar::SC_FWD_TO_USERSPACE,
-        ingress,
+        conf.ingress,
         NO_PORT,
         None,
     );
-    let expected =
-        TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
+    let mut send = vec![send];
+    let mut expected =
+        vec![TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT }];
 
-    switch.packet_test(vec![send], vec![expected])
+    (conf.modify.exchanged)(&mut send, &mut expected)?;
+
+    switch.packet_test(send, expected)
 }
 
 // Packets sent to an IP address assigned to a switch port should be forwarded
