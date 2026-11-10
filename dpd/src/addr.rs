@@ -7,7 +7,6 @@
 //! This module defines the mapping by which DPD tracks
 //! Address + Interface relations.
 
-use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::hash_map;
@@ -25,6 +24,8 @@ use common::addr::IpAddrLike;
 use common::addr::RouterIfaceIpAddr;
 use common::ports::PortId;
 use dpd_types::link::LinkId;
+use dpd_types::misc::CmdAck;
+use dpd_types::misc::OptTag;
 use oxnet::UnicastLinkLocalIpv6Addr;
 
 use crate::DpdError;
@@ -670,46 +671,6 @@ impl Display for AddrIface {
             }
         }
     }
-}
-
-/// Clients may use DPD tags to cooperatively namespace CRUD
-/// operations and avoid disrupting eachother.
-///
-/// This type may be used in APIs where tag usage is optional.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum OptTag<'a> {
-    /// The action or result applies only to resources with this tag.
-    Tag(Cow<'a, str>),
-
-    /// The action or result applies to this resource regardless of tag(s).
-    Any,
-}
-
-impl<'a> OptTag<'a> {
-    /// Constructs a new [`OptTag`] selector matching only
-    /// the given tag string.
-    pub const fn exact(tag: &'a str) -> Self {
-        Self::Tag(Cow::Borrowed(tag))
-    }
-
-    /// Returns true if this tag applies to the given tag str.
-    pub fn matches(&self, other: &str) -> bool {
-        match self {
-            Self::Any => true,
-            Self::Tag(tag) => *tag == other,
-        }
-    }
-}
-
-/// Conveys whether a successful API call caused a change of state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CmdAck {
-    /// The action caused some some change in internal state.
-    Updated,
-
-    /// The action caused no change in internal state. What was
-    /// requested matches what already exists.
-    NoChange,
 }
 
 /// Maps a [`Bound`] of type `In` to one of type `Out`.

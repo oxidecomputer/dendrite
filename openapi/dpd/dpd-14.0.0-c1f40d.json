@@ -7,7 +7,7 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "13.0.0"
+    "version": "14.0.0"
   },
   "paths": {
     "/all-settings": {
@@ -1112,7 +1112,8 @@
         }
       },
       "post": {
-        "summary": "Add a loopback IPv4.",
+        "summary": "Creates an IPv4 loopback address if one does not yet exist.",
+        "description": "Returns CONFLICT 409 if this address already belongs to another interface.",
         "operationId": "loopback_ipv4_create",
         "requestBody": {
           "content": {
@@ -1125,8 +1126,15 @@
           "required": true
         },
         "responses": {
-          "204": {
-            "description": "resource updated"
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CmdAck"
+                }
+              }
+            }
           },
           "4XX": {
             "$ref": "#/components/responses/Error"
@@ -1139,7 +1147,8 @@
     },
     "/loopback/ipv4/{ipv4}": {
       "delete": {
-        "summary": "Remove one loopback IPv4 address.",
+        "summary": "Remove a loopback IPv4 address.",
+        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\nReturns 200 for any exit condition in which this address does not exist on loopback, even if the address still exists on another interface.",
         "operationId": "loopback_ipv4_delete",
         "parameters": [
           {
@@ -1150,11 +1159,26 @@
               "type": "string",
               "format": "ipv4"
             }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
           }
         ],
         "responses": {
-          "204": {
-            "description": "successful deletion"
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CmdAck"
+                }
+              }
+            }
           },
           "4XX": {
             "$ref": "#/components/responses/Error"
@@ -1193,7 +1217,8 @@
         }
       },
       "post": {
-        "summary": "Add a loopback IPv6.",
+        "summary": "Creates an IPv6 loopback address if one does not yet exist.",
+        "description": "Returns CONFLICT 409 if this address already belongs to another interface.",
         "operationId": "loopback_ipv6_create",
         "requestBody": {
           "content": {
@@ -1206,8 +1231,15 @@
           "required": true
         },
         "responses": {
-          "204": {
-            "description": "resource updated"
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CmdAck"
+                }
+              }
+            }
           },
           "4XX": {
             "$ref": "#/components/responses/Error"
@@ -1220,7 +1252,8 @@
     },
     "/loopback/ipv6/{ipv6}": {
       "delete": {
-        "summary": "Remove one loopback IPv6 address.",
+        "summary": "Remove a loopback IPv6 address.",
+        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\nReturns 200 for any exit condition in which this address does not exist on loopback, even if the address still exists on another interface.",
         "operationId": "loopback_ipv6_delete",
         "parameters": [
           {
@@ -1231,11 +1264,26 @@
               "type": "string",
               "format": "ipv6"
             }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
           }
         ],
         "responses": {
-          "204": {
-            "description": "successful deletion"
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CmdAck"
+                }
+              }
+            }
           },
           "4XX": {
             "$ref": "#/components/responses/Error"
@@ -2370,8 +2418,38 @@
       }
     },
     "/port/{port_id}/settings": {
+      "delete": {
+        "summary": "Clears port settings atomically.",
+        "description": "This is similar to calling link_delete on all links of a port, however it also attempts to roll back to the previous state if something fails.",
+        "operationId": "port_settings_clear",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "port_id",
+            "description": "The switch port on which to operate.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PortId"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "successful deletion"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/port/{port_id}/settings/{tag}": {
       "get": {
-        "summary": "Get port settings atomically.",
+        "summary": "Retrieves the settings for all links on this port.",
+        "description": "Among tagged resources, only those matching the given tag are returned.\n\nUse link_ipv*_list if you want all addresses on a link regardless of tag.",
         "operationId": "port_settings_get",
         "parameters": [
           {
@@ -2384,11 +2462,10 @@
             }
           },
           {
-            "in": "query",
+            "in": "path",
             "name": "tag",
-            "description": "Restrict operations on this port to the provided tag.",
+            "required": true,
             "schema": {
-              "nullable": true,
               "type": "string"
             }
           }
@@ -2414,7 +2491,7 @@
       },
       "post": {
         "summary": "Apply port settings atomically.",
-        "description": "These settings will be applied holistically, and to the extent possible atomically to a given port. In the event of a failure a rollback is attempted. If the rollback fails there will be inconsistent state. This failure mode returns the error code \"rollback failure\". For more details see the docs on the [`PortSettings`] type.",
+        "description": "These settings will be applied holistically, and to the extent possible atomically to a given port. In the event of a failure, a rollback is attempted. If the rollback fails, there will be inconsistent state. This failure mode returns the error code \"rollback failure\". For more details see the docs on the [`PortSettings`] type.\n\nModifications within a link respect address tags. However, this may still delete a link even if it contains addresses belonging to other tags.",
         "operationId": "port_settings_apply",
         "parameters": [
           {
@@ -2427,11 +2504,10 @@
             }
           },
           {
-            "in": "query",
+            "in": "path",
             "name": "tag",
-            "description": "Restrict operations on this port to the provided tag.",
+            "required": true,
             "schema": {
-              "nullable": true,
               "type": "string"
             }
           }
@@ -2447,57 +2523,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "successful operation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PortSettings"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Clear port settings atomically.",
-        "operationId": "port_settings_clear",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "port_id",
-            "description": "The switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/PortId"
-            }
-          },
-          {
-            "in": "query",
-            "name": "tag",
-            "description": "Restrict operations on this port to the provided tag.",
-            "schema": {
-              "nullable": true,
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "successful operation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PortSettings"
-                }
-              }
-            }
+          "204": {
+            "description": "resource updated"
           },
           "4XX": {
             "$ref": "#/components/responses/Error"
@@ -3340,46 +3367,12 @@
             "$ref": "#/components/responses/Error"
           }
         }
-      },
-      "delete": {
-        "summary": "Clear all IPv4 addresses from a link.",
-        "operationId": "link_ipv4_reset",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "link_id",
-            "description": "The link in the switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/LinkId"
-            }
-          },
-          {
-            "in": "path",
-            "name": "port_id",
-            "description": "The switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/PortId"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "resource updated"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
       }
     },
     "/ports/{port_id}/links/{link_id}/ipv4/{address}": {
       "delete": {
-        "summary": "Remove an IPv4 address from a link.",
+        "summary": "Remove an IPv4 address from this link.",
+        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\n- Returns 404 NOT_FOUND if the address is not registered on the switch. - Returns 409 CONFLICT if the address exists on the switch but is owned by something else (link, loopback, tag, etc).",
         "operationId": "link_ipv4_delete",
         "parameters": [
           {
@@ -3408,6 +3401,14 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/PortId"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "schema": {
+              "nullable": true,
+              "type": "string"
             }
           }
         ],
@@ -3534,46 +3535,12 @@
             "$ref": "#/components/responses/Error"
           }
         }
-      },
-      "delete": {
-        "summary": "Clear all IPv6 addresses from a link.",
-        "operationId": "link_ipv6_reset",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "link_id",
-            "description": "The link in the switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/LinkId"
-            }
-          },
-          {
-            "in": "path",
-            "name": "port_id",
-            "description": "The switch port on which to operate.",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/PortId"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "resource updated"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/Error"
-          },
-          "5XX": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
       }
     },
     "/ports/{port_id}/links/{link_id}/ipv6/{address}": {
       "delete": {
-        "summary": "Remove an IPv6 address from a link.",
+        "summary": "Remove an IPv6 address from this link.",
+        "description": "If a tag is provided, the address will only be deleted if it belongs to the given tag.\n\n- Returns 404 NOT_FOUND if the address is not registered on the switch. - Returns 409 CONFLICT if the address exists on the switch but is owned by something else (link, loopback, tag, etc).",
         "operationId": "link_ipv6_delete",
         "parameters": [
           {
@@ -3602,6 +3569,14 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/PortId"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "schema": {
+              "nullable": true,
+              "type": "string"
             }
           }
         ],
@@ -6097,6 +6072,25 @@
           "device_id",
           "rev",
           "rev_num"
+        ]
+      },
+      "CmdAck": {
+        "description": "Conveys whether a successful API call caused a change of state.",
+        "oneOf": [
+          {
+            "description": "The action caused some some change in internal state.",
+            "type": "string",
+            "enum": [
+              "Updated"
+            ]
+          },
+          {
+            "description": "The action caused no change in internal state. What was requested matches what already exists.",
+            "type": "string",
+            "enum": [
+              "NoChange"
+            ]
+          }
         ]
       },
       "CmisDatapath": {
@@ -10428,8 +10422,11 @@
           "link_local": {
             "nullable": true,
             "description": "The IPv6 link-local address of the link, if it exists.",
-            "type": "string",
-            "format": "ipv6"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UnicastLinkLocalIpv6Addr"
+              }
+            ]
           },
           "mac": {
             "description": "The MAC address for the link.",
@@ -10610,6 +10607,19 @@
         "description": "A validated underlay multicast IPv6 address.\n\nUnderlay multicast addresses must be within the subnet allocated by Omicron for rack-internal multicast traffic (ff04::/64). This is a subset of the admin-local scope (ff04::/16) defined in RFC 4291.",
         "type": "string",
         "format": "ipv6"
+      },
+      "UnicastLinkLocalIpv6Addr": {
+        "example": "fe80::1",
+        "title": "A unicast link-local IPv6 address",
+        "description": "An IPv6 address in fe80::/10",
+        "x-rust-type": {
+          "crate": "oxnet",
+          "path": "oxnet::UnicastLinkLocalIpv6Addr",
+          "version": "0.1.7"
+        },
+        "type": "string",
+        "format": "ipv6",
+        "pattern": "^[fF][eE][89aAbB][0-9a-fA-F]:"
       },
       "Vendor": {
         "description": "Vendor-specific information about a transceiver module.",

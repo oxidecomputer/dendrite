@@ -39,7 +39,7 @@ progenitor::generate_api!(
         PortId = {derives = [PartialOrd, Ord, PartialEq, Eq, Hash, Clone] },
     },
     crates = {
-        "oxnet" = "0.1.0",
+        "oxnet" = "0.1.7",
     },
 );
 
@@ -415,6 +415,31 @@ impl fmt::Display for types::MediaInterfaceId {
                 write!(f, "{inner} (BASE-T)")
             }
         }
+    }
+}
+
+impl types::CmdAck {
+    /// A test helper that returns err if `self` is not [`CmdAck::Updated`].
+    pub fn verify_updated(&self, msg: impl AsRef<str>) -> anyhow::Result<()> {
+        self.verify_state(msg, Self::Updated)
+    }
+
+    /// A test helper that returns err if `self` is not [`CmdAck::NoChange`].
+    pub fn verify_no_change(&self, msg: impl AsRef<str>) -> anyhow::Result<()> {
+        self.verify_state(msg, Self::NoChange)
+    }
+
+    fn verify_state(
+        &self,
+        msg: impl AsRef<str>,
+        want: types::CmdAck,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self == &want,
+            "Expectation failed, {self:?} != {want:?}: {}",
+            msg.as_ref()
+        );
+        Ok(())
     }
 }
 

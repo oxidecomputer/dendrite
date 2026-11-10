@@ -5,12 +5,12 @@
 // Copyright 2026 Oxide Computer Company
 
 use std::collections::BTreeMap;
-use std::net::Ipv6Addr;
 
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use anyhow::bail;
+use oxnet::UnicastLinkLocalIpv6Addr;
 use slog::debug;
 use slog::error;
 use slog::info;
@@ -38,7 +38,7 @@ pub struct TfportInfo {
     /// index of the interface created by `ipadm`
     pub ifindex: Option<u32>,
     /// link-local address assigned to the tfport interface by Illumos
-    pub link_local: Option<Ipv6Addr>,
+    pub link_local: Option<UnicastLinkLocalIpv6Addr>,
 }
 
 // Parse a single line of dladm output to extract the 3 different expected

@@ -5,10 +5,10 @@
 // Copyright 2025 Oxide Computer Company
 
 use std::collections::BTreeMap;
-use std::net::Ipv6Addr;
 
 use anyhow::Result;
 use anyhow::anyhow;
+use oxnet::UnicastLinkLocalIpv6Addr;
 use slog::debug;
 use slog::error;
 
@@ -20,7 +20,9 @@ use common::illumos::IPV6_LINK_LOCAL_NAME;
 // address.  This function returns an error if the ipadm command fails or the
 // output is malformed.  If it finds a valid line of data that is not a
 // link-local address, it returns None.
-fn parse_ipadm_line(line: &str) -> Result<Option<(String, Ipv6Addr)>> {
+fn parse_ipadm_line(
+    line: &str,
+) -> Result<Option<(String, UnicastLinkLocalIpv6Addr)>> {
     // parse ipadm's "addrobj:address" into distinct components
     let Some((addrobj, addr)) = line.split_once(':') else {
         return Err(anyhow!("malformed ipadm output: {line}"));
@@ -48,7 +50,7 @@ fn parse_ipadm_line(line: &str) -> Result<Option<(String, Ipv6Addr)>> {
 
     // The parseable output of `ipadm show-addr` uses `:` as the field
     // separator, so the `:` punctuating the IPv6 address octets is escaped.
-    match addr.parse::<Ipv6Addr>() {
+    match addr.parse::<UnicastLinkLocalIpv6Addr>() {
         Ok(addr) => Ok(Some((iface.to_string(), addr))),
         Err(_) => Err(anyhow!(
             "ipadm returned invalid ipv6 address for {addrobj}: {addr}"
@@ -57,7 +59,7 @@ fn parse_ipadm_line(line: &str) -> Result<Option<(String, Ipv6Addr)>> {
 }
 
 /// Return a map of all the per-tfport link-local addresses known to ipadm.
-pub async fn get_all() -> Result<BTreeMap<String, Ipv6Addr>> {
+pub async fn get_all() -> Result<BTreeMap<String, UnicastLinkLocalIpv6Addr>> {
     let args = vec!["show-addr", "-p", "-o", "addrobj,addr"];
 
     let mut rval = BTreeMap::new();
@@ -87,7 +89,8 @@ pub async fn create(g: &Global, iface: &str) -> anyhow::Result<()> {
 
 #[test]
 fn test_parse_ipadm() -> Result<()> {
-    let good_addr: Ipv6Addr = "fe80::aa40:25ff:fe04:392".parse().unwrap();
+    let good_addr: UnicastLinkLocalIpv6Addr =
+        "fe80::aa40:25ff:fe04:392".parse().unwrap();
 
     // test a valid line
     let (addrobj, addr) = parse_ipadm_line(
