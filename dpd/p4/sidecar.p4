@@ -121,6 +121,11 @@ control Filter(
 		meta.dropped = true;
 	}
 
+	action decap_sidecar() {
+		hdr.ethernet.ether_type = hdr.sidecar.sc_ether_type;
+		hdr.sidecar.setInvalid();
+	}
+
 	action claimv4() {
 		meta.is_switch_address = true;
 		ipv4_ctr.count();
@@ -231,6 +236,11 @@ control Filter(
 					drop_mcast_ctr.count(ig_intr_md.ingress_port);
 					return;
 				}
+
+				if (ig_intr_md.ingress_port == USER_SPACE_SERVICE_PORT &&
+					hdr.sidecar.isValid()) {
+					decap_sidecar();
+				}
 			} else {
 				switch_ipv4_addr.apply();
 			}
@@ -265,6 +275,12 @@ control Filter(
 						drop_bad_mac();
 						drop_mcast_ctr.count(ig_intr_md.ingress_port);
 						return;
+				}
+
+				if (!meta.is_link_local_mcastv6 &&
+					ig_intr_md.ingress_port == USER_SPACE_SERVICE_PORT &&
+					hdr.sidecar.isValid()) {
+					decap_sidecar();
 				}
 			}
 

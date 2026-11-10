@@ -3539,6 +3539,156 @@ async fn test_link_local_multicast_counter_attribution() -> TestResult {
     Ok(())
 }
 
+async fn run_userspace_multicast_decap_test(
+    switch: &Switch,
+    to_send: packet::Packet,
+    nat_target: types::ExternalNatTarget,
+) -> TestResult {
+    let egress1 = PhysPort(15);
+    let egress3 = PhysPort(19);
+
+    let multicast_ip = to_send.dst().unwrap().get_ip("destination").unwrap();
+    let eth_hdr = to_send.hdrs.eth_hdr.as_ref().unwrap();
+    let payload = to_send.deparse().unwrap()[eth_hdr.hdr_len()..].to_vec();
+    let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
+        Endpoint::L4(L4Endpoint {
+            mac: GIMLET_MAC.into(),
+            ip: GIMLET_IP.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
+        Endpoint::L4(L4Endpoint {
+            mac: Ipv6Addr::from(nat_target.internal_ip)
+                .derive_multicast_mac()
+                .into(),
+            ip: nat_target.internal_ip.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
+        eth_hdr.eth_type,
+        nat_target.vni.as_u32(),
+        1,
+        &payload,
+    );
+
+    let packets = [to_send, geneve_pkt];
+    let from_userspace = |mut packet: packet::Packet| {
+        common::add_sidecar_hdr(
+            switch,
+            &mut packet,
+            sidecar::SC_FWD_FROM_USERSPACE,
+            NO_PORT,
+            PhysPort(10),
+            None,
+        );
+        TestPacket { packet: Arc::new(packet), port: SERVICE_PORT }
+    };
+
+    switch.packet_test(
+        packets.iter().cloned().map(from_userspace).collect(),
+        Vec::new(),
+    )?;
+
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some(&TEST_TAG),
+        &[
+            (egress1, types::Direction::Underlay),
+            (egress3, types::Direction::Underlay),
+        ],
+        None,
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
+    let created_group = create_test_multicast_group(
+        switch,
+        multicast_ip,
+        Some(&TEST_TAG),
+        &[],
+        Some(nat_target),
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
+    for egress in [egress1, egress3] {
+        let (port_id, link_id) = switch.link_id(egress).unwrap();
+        let port_mac = switch.get_port_mac(egress).unwrap();
+        switch
+            .client
+            .link_mac_set(&port_id, &link_id, &port_mac.into())
+            .await
+            .expect("Should set link MAC");
+    }
+
+    for (packet, nat_target) in
+        packets.into_iter().zip([get_nat_target(&created_group), None])
+    {
+        let expected_pkts = [egress1, egress3]
+            .into_iter()
+            .map(|egress| TestPacket {
+                packet: Arc::new(prepare_expected_pkt(
+                    switch, &packet, None, nat_target, egress,
+                )),
+                port: egress,
+            })
+            .collect();
+
+        switch.packet_test(vec![from_userspace(packet)], expected_pkts)?;
+    }
+
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
+        .await
+        .unwrap();
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_userspace_multicast_v4_decap_replicas() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let to_send = create_ipv4_multicast_packet(
+        IpAddr::V4(MULTICAST_TEST_IPV4),
+        switch.get_port_mac(PhysPort(10)).unwrap(),
+        "10.10.10.10",
+        3333,
+        4444,
+        None,
+    );
+
+    run_userspace_multicast_decap_test(
+        switch,
+        to_send,
+        create_nat_target_ipv4(),
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_userspace_multicast_v6_decap_replicas() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let to_send = create_ipv6_multicast_packet(
+        IpAddr::V6(MULTICAST_TEST_IPV6),
+        switch.get_port_mac(PhysPort(10)).unwrap(),
+        "fd00:1122:7788:101::4",
+        3333,
+        4444,
+        None,
+    );
+
+    run_userspace_multicast_decap_test(
+        switch,
+        to_send,
+        create_nat_target_ipv6(),
+    )
+    .await
+}
+
 #[tokio::test]
 #[ignore]
 async fn test_link_local_multicast_inbound_counter_attribution() -> TestResult {
