@@ -100,7 +100,7 @@ impl From<InstanceTarget> for NatTarget {
 mod arbitrary_impls {
     use proptest::prelude::*;
 
-    use crate::v14::network::Vni;
+    use crate::v15::network::Vni;
 
     /// Generate valid `Vni` values in `[0, Vni::MAX_VNI]`.
     impl Arbitrary for Vni {

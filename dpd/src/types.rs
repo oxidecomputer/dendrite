@@ -7,6 +7,7 @@
 //! General types used throughout Dendrite.
 
 use aal::AsicError;
+use common::MCAST_GROUP_REFERENCED_ERROR_CODE;
 use common::MCAST_REPAIR_PENDING_ERROR_CODE;
 use common::MCAST_TAG_MISMATCH_ERROR_CODE;
 use common::MISSING_NAT_TARGET_ERROR_CODE;
@@ -31,7 +32,7 @@ pub type DpdResult<T> = Result<T, DpdError>;
 /// Combine an initial failure with the outcome after unwinding it.
 ///
 /// Returns `initial` when the undo succeeded, and a [`DpdError::Unwind`]
-/// carrying the initial error and rollback failures when it did not. The HTTP
+/// containing the initial error and rollback failures when it did not. The HTTP
 /// mapping keeps the initial error's status and flags the rollback through the
 /// `ROLLBACK_FAILURE_ERROR_CODE` error code.
 ///
@@ -75,6 +76,8 @@ pub enum DpdError {
     McastRepairPending(String),
     #[error("Multicast tag mismatch: {0}")]
     McastTagMismatch(String),
+    #[error("Multicast group referenced: {0}")]
+    McastGroupReferenced(String),
     #[error("Missing NAT target: {0}")]
     MissingNatTarget(String),
     #[error("Resource is missing: {0}")]
@@ -281,6 +284,12 @@ impl convert::From<DpdError> for dropshot::HttpError {
             DpdError::McastTagMismatch(e) => {
                 dropshot::HttpError::for_bad_request(
                     Some(MCAST_TAG_MISMATCH_ERROR_CODE.into()),
+                    e,
+                )
+            }
+            DpdError::McastGroupReferenced(e) => {
+                dropshot::HttpError::for_bad_request(
+                    Some(MCAST_GROUP_REFERENCED_ERROR_CODE.into()),
                     e,
                 )
             }

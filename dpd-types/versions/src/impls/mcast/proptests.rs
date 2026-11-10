@@ -16,7 +16,7 @@ use test_strategy::{Arbitrary, proptest};
 
 use crate::impls::test_util::{json_round_trip, outcome, shrink_fully};
 use crate::latest::mcast::{
-    EmbeddedIpv4, ExternalMulticastIp, ExternalMulticastIpError,
+    EmbeddedIpv4, ExactSource, ExternalMulticastIp, ExternalMulticastIpError,
     InvalidEmbeddedRp, InvalidMulticastSource, MAX_TAG_LENGTH,
     MulticastSourceError, MulticastTag, UnderlayMulticastIpv6, UnicastAddrV4,
     UnicastAddrV6, is_ssm_address,
@@ -539,6 +539,50 @@ fn prop_source_v6_matches_spec(
         "{}: deserialization disagrees with construction",
         addr
     );
+}
+
+fn exact_source_candidate_strategy() -> impl Strategy<Value = IpAddr> {
+    prop_oneof![
+        source_v4_candidate_strategy()
+            .prop_map(|bits| IpAddr::V4(Ipv4Addr::from(bits))),
+        source_v6_candidate_strategy().prop_map(IpAddr::V6),
+    ]
+}
+
+/// Property: parsing an `ExactSource` succeeds iff the source spec for its
+/// address family accepts the address, and `Display` round-trips through
+#[proptest]
+fn prop_exact_source_parse_matches_spec(
+    #[strategy(exact_source_candidate_strategy())] addr: IpAddr,
+) {
+    let got = addr.to_string().parse::<ExactSource>();
+    let want = match addr {
+        IpAddr::V4(v4) => spec_source_v4(v4).is_ok(),
+        IpAddr::V6(v6) => spec_source_v6(v6).is_ok(),
+    };
+    prop_assert_eq!(got.is_ok(), want, "{}", addr);
+    if let Ok(source) = got {
+        prop_assert_eq!(IpAddr::from(source), addr);
+        prop_assert_eq!(source.to_string(), addr.to_string());
+    }
+}
+
+fn group_address_strategy() -> impl Strategy<Value = IpAddr> {
+    prop_oneof![
+        ipv4_asm_group_strategy().prop_map(IpAddr::V4),
+        ipv4_ssm_group_strategy().prop_map(IpAddr::V4),
+        ipv6_asm_group_strategy().prop_map(IpAddr::V6),
+        ipv6_ssm_group_strategy().prop_map(IpAddr::V6),
+        any::<UnderlayMulticastIpv6>().prop_map(IpAddr::from),
+    ]
+}
+
+/// Property: no multicast group address parses as an `ExactSource`
+#[proptest]
+fn prop_exact_source_rejects_groups(
+    #[strategy(group_address_strategy())] addr: IpAddr,
+) {
+    prop_assert!(addr.to_string().parse::<ExactSource>().is_err(), "{}", addr);
 }
 
 /// Property: `is_ssm_address` matches `spec_is_ssm`

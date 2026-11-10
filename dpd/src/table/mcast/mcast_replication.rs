@@ -32,7 +32,7 @@ enum Ipv6Action {
     },
 }
 
-/// Set an IPv6 multicast entries in the replication table:
+/// Set an IPv6 multicast entry in the replication table:
 /// `dst_addr -> underlay_mcast_grp && external_mcast_grp, replication_id,
 /// level1_excl_id, level2_excl_id`.
 ///
@@ -71,7 +71,7 @@ pub(crate) fn set_ipv6_entry(
     s.table_entry_set(TableType::McastIpv6, &match_key, &action_data)
 }
 
-/// Clear an IPv6 multicast entries from replication table, keyed on
+/// Clear an IPv6 multicast entry from the replication table, keyed on
 /// `dst_addr`.
 pub(crate) fn clear_ipv6_entry(
     s: &Switch,

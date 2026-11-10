@@ -49,7 +49,7 @@ pub struct AsicLinkStats {
     start_time: DateTime<Utc>,
     rmon: RMonCounters,
     pcs: PcsCounters,
-    fec: FecRSCounters,
+    fec: FecRsCounters,
     fsm_states: BTreeMap<&'static str, u64>,
 }
 
@@ -1201,7 +1201,7 @@ pub fn port_get_pcs_counters(
 pub fn port_get_fec_rs_counters(
     hdl: &Handle,
     port: PortHdl,
-) -> AsicResult<FecRSCounters> {
+) -> AsicResult<FecRsCounters> {
     let mut hi_ser = false;
     let mut fec_align_status = false;
     let mut fec_corr_cnt = 0u32;
@@ -1235,7 +1235,7 @@ pub fn port_get_fec_rs_counters(
         )
     }
     .check_error("fetching fec RS stats")?;
-    Ok(FecRSCounters {
+    Ok(FecRsCounters {
         port: port.to_string(),
         hi_ser,
         fec_align_status,
@@ -1274,7 +1274,7 @@ pub fn port_get_pcs_counters_all(hdl: &Handle) -> AsicResult<Vec<PcsCounters>> {
 /// Fetch the FEC/RS counters for all of the ports on the switch
 pub fn port_get_fec_rs_counters_all(
     hdl: &Handle,
-) -> AsicResult<BTreeMap<PortHdl, FecRSCounters>> {
+) -> AsicResult<BTreeMap<PortHdl, FecRsCounters>> {
     let rval = {
         let mut counters = BTreeMap::new();
         let ports = {

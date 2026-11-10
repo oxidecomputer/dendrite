@@ -63,7 +63,7 @@ trait RollbackOps {
     fn external_group_id(&self) -> MulticastGroupId;
     fn underlay_group_id(&self) -> MulticastGroupId;
 
-    /// ASIC group that carries members of `direction`.
+    /// ASIC group with members of `direction`.
     fn group_id(&self, direction: Direction) -> MulticastGroupId {
         match direction {
             Direction::External => self.external_group_id(),
@@ -72,8 +72,7 @@ trait RollbackOps {
     }
 
     /// Undo port changes in reverse: first remove `added_ports`, then re-add
-    /// `removed_ports`. Every port is tried through and  the first error is
-    /// returned.
+    /// `removed_ports`. Every port is attempted; the first error is returned.
     fn undo_port_changes(
         &self,
         added_ports: &[MulticastGroupMember],
@@ -1432,14 +1431,14 @@ mod chaos_tests {
         };
 
         let nat_target = external_nat_target(external_ip, underlay_ip);
+        let sources = source_ips
+            .map(|ip| serde_json::json!({ "type": "exact", "value": ip }));
         let entry = external_entry(
             external_ip,
             "external-rollback-test",
             nat_target,
             None,
-            serde_json::json!(
-                source_ips.map(|ip| serde_json::json!({ "Exact": ip }))
-            ),
+            serde_json::json!(sources),
         );
 
         let err = add_group_external(&switch, entry).unwrap_err();
@@ -1552,7 +1551,7 @@ mod chaos_tests {
             "external-vlan-propagation-test",
             nat_target,
             Some(10),
-            serde_json::json!([{ "Exact": "192.0.2.1" }]),
+            serde_json::json!([{ "type": "exact", "value": "192.0.2.1" }]),
         );
 
         let err = add_group_external(&switch, entry).unwrap_err();
@@ -1882,7 +1881,9 @@ mod chaos_tests {
                     tag,
                     nat_target,
                     None,
-                    serde_json::json!([{ "Exact": source_ip }]),
+                    serde_json::json!([
+                        { "type": "exact", "value": source_ip }
+                    ]),
                 ),
             )
             .unwrap();
@@ -2004,7 +2005,9 @@ mod chaos_tests {
                     tag,
                     external_nat_target(external_ip, underlay_ip),
                     None,
-                    serde_json::json!([{ "Exact": source_ip }]),
+                    serde_json::json!([
+                        { "type": "exact", "value": source_ip }
+                    ]),
                 ),
             )
             .unwrap();
@@ -2042,8 +2045,8 @@ mod chaos_tests {
                     external_nat_target(external_ip, underlay_ip),
                     None,
                     serde_json::json!([
-                        { "Exact": first_source },
-                        { "Exact": second_source },
+                        { "type": "exact", "value": first_source },
+                        { "type": "exact", "value": second_source },
                     ]),
                 ),
             )
@@ -2389,7 +2392,7 @@ mod chaos_tests {
             let err = del_group(&switch, underlay_key.ip(), &underlay_tag)
                 .unwrap_err();
             assert!(
-                matches!(err, DpdError::Invalid(ref message)
+                matches!(err, DpdError::McastGroupReferenced(ref message)
                     if message.contains("still referenced")),
                 "{err:?}"
             );
@@ -2964,7 +2967,7 @@ mod chaos_tests {
                 "tag": "external-orphan-test",
                 "internal_forwarding": { "nat_target": nat_target },
                 "external_forwarding": { "vlan_id": 20 },
-                "sources": [{ "Exact": source }],
+                "sources": [{ "type": "exact", "value": source }],
             }))
             .unwrap();
             add_group_external(&switch, entry).unwrap();
@@ -3949,6 +3952,9 @@ mod chaos_tests {
                 let nat_target = external_nat_target(external_ip, underlay_ip);
                 let tag = "external-readd-sources-test";
                 let initial_sources = [first, second];
+                let init_sources = initial_sources.map(
+                    |ip| serde_json::json!({ "type": "exact", "value": ip }),
+                );
                 add_group_external(
                     &switch,
                     external_entry(
@@ -3956,11 +3962,7 @@ mod chaos_tests {
                         tag,
                         nat_target,
                         Some(10),
-                        serde_json::json!(
-                            initial_sources.map(|ip| {
-                                serde_json::json!({ "Exact": ip })
-                            })
-                        ),
+                        serde_json::json!(init_sources),
                     ),
                 )
                 .unwrap();

@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 pub use dpd_types::counters::{
-    FecRSCounters, PcsCounters, RMonCounters, RMonCountersAll,
+    FecRsCounters, PcsCounters, RMonCounters, RMonCountersAll,
 };
 
 /// Per-port counter label for the userspace service port, which has no link

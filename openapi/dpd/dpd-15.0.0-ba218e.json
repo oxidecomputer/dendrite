@@ -7,7 +7,7 @@
       "url": "https://oxide.computer",
       "email": "api@oxide.computer"
     },
-    "version": "14.0.0"
+    "version": "15.0.0"
   },
   "paths": {
     "/all-settings": {
@@ -206,7 +206,7 @@
         }
       }
     },
-    "/attached_subnet": {
+    "/attached-subnet": {
       "get": {
         "summary": "Get all of the external subnets with internal mappings",
         "operationId": "attached_subnet_list",
@@ -270,7 +270,7 @@
         }
       }
     },
-    "/attached_subnet/{subnet}": {
+    "/attached-subnet/{subnet}": {
       "get": {
         "summary": "Get the mapping for the given external subnet.",
         "operationId": "attached_subnet_get",
@@ -495,10 +495,10 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "title": "Array_of_LinkFecRSCounters",
+                  "title": "Array_of_LinkFecRsCounters",
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/LinkFecRSCounters"
+                    "$ref": "#/components/schemas/LinkFecRsCounters"
                   }
                 }
               }
@@ -543,7 +543,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LinkFecRSCounters"
+                  "$ref": "#/components/schemas/LinkFecRsCounters"
                 }
               }
             }
@@ -1055,7 +1055,7 @@
         }
       }
     },
-    "/links/tfport_data": {
+    "/links/tfport-data": {
       "get": {
         "summary": "Collect the link data consumed by `tfportd`.  This app-specific convenience",
         "description": "routine is meant to reduce the time and traffic expended on this once-per-second operation, by consolidating multiple per-link requests into a single per-switch request.",
@@ -1249,7 +1249,7 @@
     "/multicast/external-groups": {
       "post": {
         "summary": "Create an external-only multicast group configuration.",
-        "description": "External-only groups carry either IPv4 or IPv6 traffic and share their NAT target's replication groups. Any admitted IPv6 scope can be used, including admin-local, except for the reserved underlay subnet of ff04::/64, which belongs specifically to the internal multicast API.\n\nThe group address determines whether the group is any-source (ASM) or source-specific (SSM). An SSM group requires at least one exact source.\n\nThese groups do not carry member subscribers, as membership lives only on the underlay group mapped to by the required NAT target.\n\nThe NAT target must reference an existing underlay group. The underlay group cannot already be referenced by another external group.",
+        "description": "External-only groups carry either IPv4 or IPv6 traffic and share their NAT target's replication groups. Any admitted IPv6 scope can be used, including admin-local, except for the reserved underlay subnet of ff04::/64, which belongs specifically to the internal multicast API.\n\nThe group address determines whether the group is any-source (ASM) or source-specific (SSM). An SSM group requires at least one exact source.\n\nThese groups have no member subscribers, as membership lives only on the underlay group mapped to by the required NAT target.\n\nThe NAT target must reference an existing underlay group. The underlay group cannot already be referenced by another external group.",
         "operationId": "multicast_group_create_external",
         "requestBody": {
           "content": {
@@ -1725,7 +1725,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ipv4ResultsPage"
+                  "$ref": "#/components/schemas/NatIpv4AddressResultsPage"
                 }
               }
             }
@@ -1899,7 +1899,7 @@
     "/nat/ipv4/{ipv4}/{low}/{high}": {
       "put": {
         "summary": "Add an external->internal NAT mapping for the given address/port range",
-        "description": "This maps an external IPv6 address and L3 port range to:  - A gimlet's IPv6 address  - A gimlet's MAC address  - A Geneve VNI\n\nThese identify the gimlet on which a guest is running, and gives OPTE the information it needs to  identify the guest VM that uses the external IPv6 and port range when making connections outside of an Oxide rack.",
+        "description": "This maps an external IPv4 address and L3 port range to:  - A sled's IPv6 address  - The destination NIC's MAC address  - A Geneve VNI\n\nThese identify the sled on which a guest is running, and give OPTE the information it needs to identify the guest VM that uses the external IPv4 address and port range when making connections outside of an Oxide rack.",
         "operationId": "nat_ipv4_create",
         "parameters": [
           {
@@ -1987,7 +1987,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ipv6ResultsPage"
+                  "$ref": "#/components/schemas/NatIpv6AddressResultsPage"
                 }
               }
             }
@@ -3618,7 +3618,7 @@
         }
       }
     },
-    "/ports/{port_id}/links/{link_id}/ipv6_enabled": {
+    "/ports/{port_id}/links/{link_id}/ipv6-enabled": {
       "get": {
         "summary": "Return whether the link is configured to act as an IPv6 endpoint",
         "operationId": "link_ipv6_enabled_get",
@@ -4025,7 +4025,7 @@
         }
       }
     },
-    "/ports/{port_id}/links/{link_id}/prbs_get_err": {
+    "/ports/{port_id}/links/{link_id}/prbs-get-err": {
       "get": {
         "summary": "Return the measured bit-error rate for a link with an active PRBS",
         "description": "connection to another switch.",
@@ -4134,7 +4134,7 @@
         }
       }
     },
-    "/ports/{port_id}/links/{link_id}/serdes/anlt_status": {
+    "/ports/{port_id}/links/{link_id}/serdes/anlt-status": {
       "get": {
         "summary": "Get the per-lane AN/LT status for each lane on this link",
         "operationId": "link_an_lt_get",
@@ -4178,7 +4178,7 @@
         }
       }
     },
-    "/ports/{port_id}/links/{link_id}/serdes/enc_speed": {
+    "/ports/{port_id}/links/{link_id}/serdes/enc-speed": {
       "get": {
         "summary": "Get the per-lane speed and encoding for each lane on this link",
         "operationId": "link_enc_speed_get",
@@ -4274,7 +4274,7 @@
         }
       }
     },
-    "/ports/{port_id}/links/{link_id}/serdes/lane_map": {
+    "/ports/{port_id}/links/{link_id}/serdes/lane-map": {
       "get": {
         "summary": "Get the logical->physical mappings for each lane in this port",
         "operationId": "lane_map_get",
@@ -4318,7 +4318,7 @@
         }
       }
     },
-    "/ports/{port_id}/links/{link_id}/serdes/rx_sig": {
+    "/ports/{port_id}/links/{link_id}/serdes/rx-sig": {
       "get": {
         "summary": "Get the per-lane rx signal info for each lane on this link",
         "operationId": "link_rx_sig_info_get",
@@ -4366,7 +4366,7 @@
         }
       }
     },
-    "/ports/{port_id}/links/{link_id}/serdes/tx_eq": {
+    "/ports/{port_id}/links/{link_id}/serdes/tx-eq": {
       "get": {
         "summary": "Get the per-lane tx eq settings for each lane on this link",
         "operationId": "link_tx_eq_get",
@@ -5304,19 +5304,8 @@
         "summary": "Trigger NAT Reconciliation",
         "operationId": "nat_trigger_update",
         "responses": {
-          "200": {
-            "description": "successful operation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Null",
-                  "type": "string",
-                  "enum": [
-                    null
-                  ]
-                }
-              }
-            }
+          "204": {
+            "description": "resource updated"
           },
           "4XX": {
             "$ref": "#/components/responses/Error"
@@ -6361,8 +6350,8 @@
         "description": "Direction a multicast group member is reached by.\n\n`External` group members must have any packet encapsulation removed before packet delivery.",
         "type": "string",
         "enum": [
-          "Underlay",
-          "External"
+          "underlay",
+          "external"
         ]
       },
       "DisabledFeatures": {
@@ -6435,7 +6424,7 @@
             "description": "All transmit/receive lanes are used for a single link.",
             "type": "string",
             "enum": [
-              "Single"
+              "single"
             ]
           }
         ]
@@ -6490,7 +6479,7 @@
         }
       },
       "ExternalInternalForwarding": {
-        "description": "Internal forwarding for an external multicast group.\n\nExternal groups always carry a NAT target.",
+        "description": "Internal forwarding for an external multicast group.\n\nExternal groups always have a NAT target.",
         "type": "object",
         "properties": {
           "nat_target": {
@@ -6507,7 +6496,7 @@
         ]
       },
       "ExternalMulticastIp": {
-        "description": "A validated IP address for a customer-visible overlay multicast group.\n\nThe overlay multicast group is the address guests can send to and join, e.g. `233.252.0.1` or `ff0e::1`, and spans both address families. Its rack-internal underlay mapping is validated separately via `UnderlayMulticastIpv6`, with a 1:1 mapping between the two.\n\nJSON uses the ordinary IP-address string form. Deserialization rejects addresses that are not multicast, use a reserved, interface-local, or link-local IPv6 scope, fall in the IPv4 local network control block (`224.0.0.0/24`) or the `ff04::/64` underlay subnet, are a reserved base or SSM null address, or carry malformed prefix-based or embedded-RP flags.",
+        "description": "A validated IP address for a customer-visible overlay multicast group.\n\nThe overlay multicast group is the address guests can send to and join, e.g. `233.252.0.1` or `ff0e::1`, and spans both address families. Its rack-internal underlay mapping is validated separately via `UnderlayMulticastIpv6`, with a 1:1 mapping between the two.\n\nEncoded as an IP address string.\n\nRequests are rejected if the address is not multicast, uses a reserved, interface-local, or link-local IPv6 scope, falls within the IPv4 local network control block (`224.0.0.0/24`) or the `ff04::/64` underlay subnet, is a reserved base or SSM null address, or carries malformed prefix-based or embedded-RP flags.",
         "type": "string",
         "format": "ip"
       },
@@ -6537,36 +6526,36 @@
           {
             "type": "object",
             "properties": {
-              "LinkFlap": {
+              "link_flap": {
                 "type": "string"
               }
             },
             "required": [
-              "LinkFlap"
+              "link_flap"
             ],
             "additionalProperties": false
           },
           {
             "type": "object",
             "properties": {
-              "Autoneg": {
+              "autoneg": {
                 "type": "string"
               }
             },
             "required": [
-              "Autoneg"
+              "autoneg"
             ],
             "additionalProperties": false
           },
           {
             "type": "object",
             "properties": {
-              "Injected": {
+              "injected": {
                 "type": "string"
               }
             },
             "required": [
-              "Injected"
+              "injected"
             ],
             "additionalProperties": false
           }
@@ -6619,7 +6608,7 @@
           }
         ]
       },
-      "FecRSCounters": {
+      "FecRsCounters": {
         "description": "Per-port RS FEC counters",
         "type": "object",
         "properties": {
@@ -6905,21 +6894,35 @@
             "description": "Exact match for the source IP address.",
             "type": "object",
             "properties": {
-              "Exact": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "exact"
+                ]
+              },
+              "value": {
                 "type": "string",
                 "format": "ip"
               }
             },
             "required": [
-              "Exact"
-            ],
-            "additionalProperties": false
+              "type",
+              "value"
+            ]
           },
           {
             "description": "Match any source address (0.0.0.0/0 or ::/0 depending on group IP version).",
-            "type": "string",
-            "enum": [
-              "Any"
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "any"
+                ]
+              }
+            },
+            "required": [
+              "type"
             ]
           }
         ]
@@ -7350,21 +7353,21 @@
             "description": "Pulse Amplitude Modulation 4-level",
             "type": "string",
             "enum": [
-              "Pam4"
+              "pam4"
             ]
           },
           {
             "description": "Non-Return-to-Zero encoding",
             "type": "string",
             "enum": [
-              "Nrz"
+              "nrz"
             ]
           },
           {
             "description": "No encoding selected",
             "type": "string",
             "enum": [
-              "None"
+              "none"
             ]
           }
         ]
@@ -7759,7 +7762,7 @@
           "timestamp"
         ]
       },
-      "LinkFecRSCounters": {
+      "LinkFecRsCounters": {
         "description": "The FEC counters for a specific link, including its link ID.",
         "type": "object",
         "properties": {
@@ -7767,7 +7770,7 @@
             "description": "The FEC counter data.",
             "allOf": [
               {
-                "$ref": "#/components/schemas/FecRSCounters"
+                "$ref": "#/components/schemas/FecRsCounters"
               }
             ]
           },
@@ -8008,47 +8011,83 @@
             "description": "An error was encountered while trying to configure the link in the switch hardware.",
             "type": "object",
             "properties": {
-              "config_error": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "config_error"
+                ]
+              },
+              "value": {
                 "type": "string"
               }
             },
             "required": [
-              "config_error"
-            ],
-            "additionalProperties": false
+              "type",
+              "value"
+            ]
           },
           {
             "description": "The link is up.",
-            "type": "string",
-            "enum": [
-              "up"
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "up"
+                ]
+              }
+            },
+            "required": [
+              "type"
             ]
           },
           {
             "description": "The link is down.",
-            "type": "string",
-            "enum": [
-              "down"
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "down"
+                ]
+              }
+            },
+            "required": [
+              "type"
             ]
           },
           {
             "description": "The Link is offline due to a fault",
             "type": "object",
             "properties": {
-              "faulted": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "faulted"
+                ]
+              },
+              "value": {
                 "$ref": "#/components/schemas/Fault"
               }
             },
             "required": [
-              "faulted"
-            ],
-            "additionalProperties": false
+              "type",
+              "value"
+            ]
           },
           {
             "description": "The link's state is not known.",
-            "type": "string",
-            "enum": [
-              "unknown"
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unknown"
+                ]
+              }
+            },
+            "required": [
+              "type"
             ]
           }
         ]
@@ -8451,7 +8490,7 @@
           },
           "sources": {
             "nullable": true,
-            "description": "Optional source list.\n\nA source list can be absent from ASM group requests. If absent, empty, or containing `Any`, the group permits every source (i.e., a wildcard).\n\nSSM groups require at least one exact source in the list and reject `Any` wildcard entries.",
+            "description": "Optional source list.\n\nA source list can be absent from ASM group requests. If omitted, empty, or containing `{\"type\": \"any\"}`, then the group permits every source (i.e., a wildcard).\n\nSSM groups require at least one exact source in the list and reject `{\"type\": \"any\"}` entries. Sources must match the group's address family.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/IpSrc"
@@ -8506,7 +8545,7 @@
             ]
           },
           "external_group_id": {
-            "description": "ASIC replication group ID for the external group.",
+            "description": "ASIC replication group ID of the external/underlay pair, attributed to both groups.",
             "type": "integer",
             "format": "uint16",
             "minimum": 0
@@ -8627,7 +8666,7 @@
                 ]
               },
               "external_group_id": {
-                "description": "ASIC replication group ID for the external group.",
+                "description": "ASIC replication group ID of the external/underlay pair, attributed to both groups.",
                 "type": "integer",
                 "format": "uint16",
                 "minimum": 0
@@ -8757,7 +8796,7 @@
           },
           "sources": {
             "nullable": true,
-            "description": "Replacement source list.\n\nExclude or set to null to preserve the current source filter.",
+            "description": "Replacement source list (validated against the same ruleset as creation).\n\nOmit or set to null to preserve the current source filter. An empty list permits any source for an ASM group and is rejected for an SSM group.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/IpSrc"
@@ -8782,6 +8821,76 @@
         },
         "required": [
           "members"
+        ]
+      },
+      "NatIpv4Address": {
+        "description": "An external IPv4 address with at least one NAT mapping.",
+        "type": "object",
+        "properties": {
+          "address": {
+            "description": "The external address. Its mappings are listed by `nat_ipv4_list`.",
+            "type": "string",
+            "format": "ipv4"
+          }
+        },
+        "required": [
+          "address"
+        ]
+      },
+      "NatIpv4AddressResultsPage": {
+        "description": "A single page of results",
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "list of items on this page of results",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NatIpv4Address"
+            }
+          },
+          "next_page": {
+            "nullable": true,
+            "description": "token used to fetch the next page of results (if any)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "NatIpv6Address": {
+        "description": "An external IPv6 address with at least one NAT mapping.",
+        "type": "object",
+        "properties": {
+          "address": {
+            "description": "The external address. Its mappings are listed by `nat_ipv6_list`.",
+            "type": "string",
+            "format": "ipv6"
+          }
+        },
+        "required": [
+          "address"
+        ]
+      },
+      "NatIpv6AddressResultsPage": {
+        "description": "A single page of results",
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "list of items on this page of results",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NatIpv6Address"
+            }
+          },
+          "next_page": {
+            "nullable": true,
+            "description": "token used to fetch the next page of results (if any)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
         ]
       },
       "NatTarget": {
@@ -8934,16 +9043,16 @@
       "Polarity": {
         "type": "string",
         "enum": [
-          "Normal",
-          "Inverted"
+          "normal",
+          "inverted"
         ]
       },
       "PortFec": {
         "type": "string",
         "enum": [
-          "None",
-          "Firecode",
-          "RS"
+          "none",
+          "firecode",
+          "rs"
         ]
       },
       "PortId": {
@@ -8971,22 +9080,22 @@
       "PortMedia": {
         "type": "string",
         "enum": [
-          "Copper",
-          "Optical",
-          "CPU",
-          "None",
-          "Unknown"
+          "copper",
+          "optical",
+          "cpu",
+          "none",
+          "unknown"
         ]
       },
       "PortPrbsMode": {
         "description": "Legal PRBS modes",
         "type": "string",
         "enum": [
-          "Mode31",
-          "Mode15",
-          "Mode13",
-          "Mode9",
-          "Mission"
+          "mode31",
+          "mode15",
+          "mode13",
+          "mode9",
+          "mission"
         ]
       },
       "PortSettings": {
@@ -9009,15 +9118,15 @@
         "description": "Speeds with which a single port may be configured",
         "type": "string",
         "enum": [
-          "Speed0G",
-          "Speed1G",
-          "Speed10G",
-          "Speed25G",
-          "Speed40G",
-          "Speed50G",
-          "Speed100G",
-          "Speed200G",
-          "Speed400G"
+          "speed0_g",
+          "speed1_g",
+          "speed10_g",
+          "speed25_g",
+          "speed40_g",
+          "speed50_g",
+          "speed100_g",
+          "speed200_g",
+          "speed400_g"
         ]
       },
       "PowerMode": {
@@ -9748,24 +9857,24 @@
           {
             "type": "object",
             "properties": {
-              "V4": {
+              "v4": {
                 "$ref": "#/components/schemas/Ipv4Route"
               }
             },
             "required": [
-              "V4"
+              "v4"
             ],
             "additionalProperties": false
           },
           {
             "type": "object",
             "properties": {
-              "V6": {
+              "v6": {
                 "$ref": "#/components/schemas/Ipv6Route"
               }
             },
             "required": [
-              "V6"
+              "v6"
             ],
             "additionalProperties": false
           }
@@ -9777,24 +9886,24 @@
           {
             "type": "object",
             "properties": {
-              "V4": {
+              "v4": {
                 "$ref": "#/components/schemas/Ipv4Route"
               }
             },
             "required": [
-              "V4"
+              "v4"
             ],
             "additionalProperties": false
           },
           {
             "type": "object",
             "properties": {
-              "V6": {
+              "v6": {
                 "$ref": "#/components/schemas/Ipv6Route"
               }
             },
             "required": [
-              "V6"
+              "v6"
             ],
             "additionalProperties": false
           }
@@ -9830,20 +9939,20 @@
           {
             "type": "object",
             "properties": {
-              "Nrz": {
+              "nrz": {
                 "type": "number",
                 "format": "float"
               }
             },
             "required": [
-              "Nrz"
+              "nrz"
             ],
             "additionalProperties": false
           },
           {
             "type": "object",
             "properties": {
-              "Pam4": {
+              "pam4": {
                 "type": "object",
                 "properties": {
                   "eye1": {
@@ -9867,7 +9976,7 @@
               }
             },
             "required": [
-              "Pam4"
+              "pam4"
             ],
             "additionalProperties": false
           }
@@ -10051,14 +10160,14 @@
             "description": "Take snapshot of ingress pipeline",
             "type": "string",
             "enum": [
-              "Ingress"
+              "ingress"
             ]
           },
           {
             "description": "Take snapshot of egress pipeline",
             "type": "string",
             "enum": [
-              "Egress"
+              "egress"
             ]
           }
         ]
@@ -10752,55 +10861,11 @@
         ]
       },
       "Vni": {
-        "description": "A validated Geneve Virtual Network Identifier.\n\nA Geneve VNI is a 24-bit value used to identify virtual networks encapsulated using the Generic Network Virtualization Encapsulation (Geneve) protocol (RFC 8926). Any value above the 24-bit maximum of 16777215 is rejected at both construction and deserialization.",
+        "description": "A validated Geneve Virtual Network Identifier.\n\nA Geneve VNI is a 24-bit value used to identify virtual networks encapsulated using the Generic Network Virtualization Encapsulation (Geneve) protocol (RFC 8926). Any value above the 24-bit maximum of 16777215 is rejected outright, whether it is built directly or parsed from a request.",
         "type": "integer",
         "format": "uint32",
         "minimum": 0,
         "maximum": 16777215
-      },
-      "ipv4ResultsPage": {
-        "description": "A single page of results",
-        "type": "object",
-        "properties": {
-          "items": {
-            "description": "list of items on this page of results",
-            "type": "array",
-            "items": {
-              "type": "string",
-              "format": "ipv4"
-            }
-          },
-          "next_page": {
-            "nullable": true,
-            "description": "token used to fetch the next page of results (if any)",
-            "type": "string"
-          }
-        },
-        "required": [
-          "items"
-        ]
-      },
-      "ipv6ResultsPage": {
-        "description": "A single page of results",
-        "type": "object",
-        "properties": {
-          "items": {
-            "description": "list of items on this page of results",
-            "type": "array",
-            "items": {
-              "type": "string",
-              "format": "ipv6"
-            }
-          },
-          "next_page": {
-            "nullable": true,
-            "description": "token used to fetch the next page of results (if any)",
-            "type": "string"
-          }
-        },
-        "required": [
-          "items"
-        ]
       },
       "MulticastTag": {
         "description": "Tag for identifying and authorizing multicast group operations.\n\nTag format: 1 to 80 ASCII bytes containing alphanumeric characters, hyphens, underscores, colons, or periods. Default format is `{uuid}:{group_ip}`.",

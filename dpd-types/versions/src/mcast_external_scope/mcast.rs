@@ -62,7 +62,7 @@
 //!   addresses.
 //! - A source's address family must match the group's.
 //! - An SSM group requires at least one exact source and rejects `Any` because
-//!   routers ignore an SSM requests without a source ([RFC 4607] §2). An ASM
+//!   routers ignore an SSM request without a source ([RFC 4607] §2). An ASM
 //!   group accepts exact sources, `Any` or no source list allows traffic
 //!   from any source.
 //! - The NAT target's internal IP falls within `ff04::/64`, and its inner MAC
@@ -90,14 +90,11 @@ use crate::v1::mcast::{
     ExternalForwarding, InternalForwarding, MulticastGroupId,
 };
 use crate::v1::network::MacAddr;
-use crate::v7;
-use crate::v7::mcast::IpSrc;
-use crate::v8;
-use crate::v8::mcast::{
-    MulticastGroupUnderlayResponse, UNDERLAY_MULTICAST_SUBNET,
-    UnderlayMulticastIpv6,
-};
-use crate::v14::network::{NatTarget, Vni};
+use crate::v8::mcast::{UNDERLAY_MULTICAST_SUBNET, UnderlayMulticastIpv6};
+use crate::v14;
+use crate::v14::mcast::{IpSrc, MulticastGroupUnderlayResponse};
+
+use super::network::{NatTarget, Vni};
 
 /// A validated IP address for a customer-visible overlay multicast group.
 ///
@@ -106,11 +103,13 @@ use crate::v14::network::{NatTarget, Vni};
 /// rack-internal underlay mapping is validated separately via
 /// `UnderlayMulticastIpv6`, with a 1:1 mapping between the two.
 ///
-/// JSON uses the ordinary IP-address string form. Deserialization rejects
-/// addresses that are not multicast, use a reserved, interface-local, or
-/// link-local IPv6 scope, fall in the IPv4 local network control block
-/// (`224.0.0.0/24`) or the `ff04::/64` underlay subnet, are a reserved base
-/// or SSM null address, or carry malformed prefix-based or embedded-RP flags.
+/// Encoded as an IP address string.
+///
+/// Requests are rejected if the address is not multicast, uses a reserved,
+/// interface-local, or link-local IPv6 scope, falls within the IPv4 local
+/// network control block (`224.0.0.0/24`) or the `ff04::/64` underlay subnet,
+/// is a reserved base or SSM null address, or carries malformed prefix-based
+/// or embedded-RP flags.
 #[derive(
     Clone,
     Copy,
@@ -148,7 +147,7 @@ pub enum ExternalMulticastIpError {
     #[error("Address {0} is not a multicast address")]
     NotMulticast(IpAddr),
 
-    /// The address contains the IPv4 Local Network Control Block
+    /// The address is in the IPv4 Local Network Control Block
     /// (`224.0.0.0/24`), which routers should not forward off link
     /// (RFC 5771 §4).
     #[error(
@@ -207,7 +206,7 @@ pub enum ExternalMulticastIpError {
 
     /// The embedded rendezvous point (RP) R flag is set with an invalid flag
     /// combination, prefix length, RP interface ID, or derived RP address.
-    /// [`InvalidEmbeddedRp`] names the rule that failed.
+    /// The failed rule is represented by [`InvalidEmbeddedRp`].
     #[error(
         "Address {addr} sets the R flag, but {reason} (RFC 3956, RFC 7371)"
     )]
@@ -260,7 +259,7 @@ pub enum MulticastGroupCreateExternalError {
     /// An SSM group cannot use `IpSrc::Any` (only ASM groups can).
     #[error(
         "Group IP {0} is a Source-Specific Multicast address and requires \
-         specific sources (IpSrc::Any is not allowed)"
+         specific sources (an any-source entry is not allowed)"
     )]
     SsmRejectsAnySource(IpAddr),
 
@@ -323,12 +322,12 @@ pub enum InvalidEmbeddedRp {
     RequiresPrefixBased,
     /// The T flag is not set ([RFC 7371] §4.2.2, §4.2.3).
     RequiresTransient,
-    /// The prefix length, carried here, is zero or greater than 64
+    /// The prefix length is zero or greater than 64
     /// ([RFC 3956] §4).
     PrefixLengthOutOfRange(u8),
     /// The RP interface ID is zero ([RFC 3956] §6.3).
     ZeroInterfaceId,
-    /// The derived RP address, carried here, is in `::/16`, link-local, or
+    /// The derived RP address is in `::/16`, link-local, or
     /// multicast space ([RFC 3956] §4, §10).
     ///
     /// The address is built from the group's network prefix and RP interface
@@ -338,7 +337,7 @@ pub enum InvalidEmbeddedRp {
 
 /// The IPv6 representation of an embedded IPv4 address.
 ///
-/// Both variants carry the IPv4 address within the low 32 bits and differ only
+/// Both forms encode the IPv4 address within the low 32 bits and differ only
 /// in the 96-bit prefix ahead of those bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EmbeddedIpv4 {
@@ -389,7 +388,7 @@ pub enum MulticastSourceError {
     /// An IPv6 source address is invalid if it uses an IPv4-mapped
     /// ([RFC 4291] §2.5.5.2) or IPv4-compatible ([RFC 4291] §2.5.5.1)
     /// representation. Either form converts to an IPv4 address and would
-    /// carry IPv4 semantics past the IPv4 source checks.
+    /// bypass the IPv4 source checks.
     ///
     /// [RFC 4291]: https://www.rfc-editor.org/rfc/rfc4291.html
     #[error(
@@ -653,7 +652,7 @@ pub enum ExternalInternalForwardingError {
 
 /// Internal forwarding for an external multicast group.
 ///
-/// External groups always carry a NAT target.
+/// External groups always have a NAT target.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema,
 )]
@@ -783,7 +782,7 @@ pub struct SsmMulticastGroupCreate {
 ///         }
 ///     },
 ///     "external_forwarding": { "vlan_id": null },
-///     "sources": [{ "Exact": "10.0.0.1" }]
+///     "sources": [{ "type": "exact", "value": "10.0.0.1" }]
 /// });
 ///
 /// let group: MulticastGroupCreateExternalEntry =
@@ -815,9 +814,9 @@ pub struct SsmMulticastGroupCreate {
 /// assert!(matches!(group, MulticastGroupCreateExternalEntry::Asm(_)));
 /// ```
 ///
-/// An ASM group may carry exact sources, but a source of `Any` (wildcard), a
-/// singleton `["Any"]`, or an empty list all collapse to the same unrestricted
-/// shape.
+/// An ASM group may have exact sources, but a source of `Any` (wildcard), a
+/// singleton `[{ "type": "any" }]`, or an empty list all collapse to the same
+/// unrestricted shape.
 ///
 /// ```
 /// use dpd_types_versions::latest::mcast::MulticastGroupCreateExternalEntry;
@@ -833,7 +832,10 @@ pub struct SsmMulticastGroupCreate {
 ///         }
 ///     },
 ///     "external_forwarding": { "vlan_id": null },
-///     "sources": [{ "Exact": "10.0.0.1" }, { "Exact": "10.0.0.2" }]
+///     "sources": [
+///         { "type": "exact", "value": "10.0.0.1" },
+///         { "type": "exact", "value": "10.0.0.2" }
+///     ]
 /// });
 ///
 /// let entry: MulticastGroupCreateExternalEntry =
@@ -844,8 +846,11 @@ pub struct SsmMulticastGroupCreate {
 /// assert_eq!(group.sources().unwrap().count(), 2);
 ///
 /// for sources in [
-///     serde_json::json!(["Any", { "Exact": "10.0.0.1" }]),
-///     serde_json::json!(["Any"]),
+///     serde_json::json!([
+///         { "type": "any" },
+///         { "type": "exact", "value": "10.0.0.1" }
+///     ]),
+///     serde_json::json!([{ "type": "any" }]),
 ///     serde_json::json!([]),
 /// ] {
 ///     body["sources"] = sources;
@@ -862,7 +867,7 @@ pub struct SsmMulticastGroupCreate {
 /// }
 /// ```
 ///
-/// An SSM group must carry exact sources, while ASM can omit them. Both an
+/// An SSM group requires exact sources, while ASM can omit them. Both an
 /// absent list and a singleton `Any` (wildcard) are rejected:
 ///
 /// ```
@@ -885,7 +890,7 @@ pub struct SsmMulticastGroupCreate {
 ///     serde_json::from_value::<MulticastGroupCreateExternalEntry>(body.clone());
 /// assert!(no_sources.is_err());
 ///
-/// body["sources"] = serde_json::json!(["Any"]);
+/// body["sources"] = serde_json::json!([{ "type": "any" }]);
 /// let singleton_any =
 ///     serde_json::from_value::<MulticastGroupCreateExternalEntry>(body);
 /// assert!(singleton_any.is_err());
@@ -909,7 +914,7 @@ pub struct SsmMulticastGroupCreate {
 ///             }
 ///         },
 ///         "external_forwarding": { "vlan_id": null },
-///         "sources": [{ "Exact": "2001:db8::1" }]
+///         "sources": [{ "type": "exact", "value": "2001:db8::1" }]
 ///     });
 ///
 ///     let group: MulticastGroupCreateExternalEntry =
@@ -925,7 +930,7 @@ pub struct SsmMulticastGroupCreate {
 pub enum MulticastGroupCreateExternalEntry {
     /// Any-source group; the source filter is canonicalized at parse.
     Asm(AsmMulticastGroupCreate),
-    /// Source-specific group, carrying at least one validated exact source.
+    /// Source-specific group with at least one validated exact source.
     Ssm(SsmMulticastGroupCreate),
 }
 
@@ -949,12 +954,13 @@ pub(crate) struct MulticastGroupCreateExternalEntryShadow {
     pub(crate) external_forwarding: ExternalForwarding,
     /// Optional source list.
     ///
-    /// A source list can be absent from ASM group requests. If absent,
-    /// empty, or containing `Any`, the group permits every source (i.e., a
-    /// wildcard).
+    /// A source list can be absent from ASM group requests. If omitted,
+    /// empty, or containing `{"type": "any"}`, then the group permits every
+    /// source (i.e., a wildcard).
     ///
     /// SSM groups require at least one exact source in the list and
-    /// reject `Any` wildcard entries.
+    /// reject `{"type": "any"}` entries. Sources must match the group's
+    /// address family.
     pub(crate) sources: Option<Vec<SourceEntry>>,
 }
 
@@ -1034,13 +1040,13 @@ impl JsonSchema for MulticastGroupCreateExternalEntry {
     }
 }
 
-impl TryFrom<v7::mcast::MulticastGroupCreateExternalEntry>
+impl TryFrom<v14::mcast::MulticastGroupCreateExternalEntry>
     for MulticastGroupCreateExternalEntry
 {
     type Error = MulticastGroupCreateExternalError;
 
     fn try_from(
-        entry: v7::mcast::MulticastGroupCreateExternalEntry,
+        entry: v14::mcast::MulticastGroupCreateExternalEntry,
     ) -> Result<Self, Self::Error> {
         let sources = entry
             .sources
@@ -1067,27 +1073,29 @@ pub struct MulticastGroupUpdateExternalEntry {
     pub internal_forwarding: ExternalInternalForwarding,
     /// Egress VLAN configuration for external forwarding.
     pub external_forwarding: ExternalForwarding,
-    /// Replacement source list.
+    /// Replacement source list (validated against the same ruleset as
+    /// creation).
     ///
-    /// Exclude or set to null to preserve the current source filter.
+    /// Omit or set to null to preserve the current source filter. An empty
+    /// list permits any source for an ASM group and is rejected for an SSM
+    /// group.
     pub sources: Option<Vec<SourceEntry>>,
 }
 
-impl TryFrom<v8::mcast::MulticastGroupUpdateExternalEntry>
+impl TryFrom<v14::mcast::MulticastGroupUpdateExternalEntry>
     for MulticastGroupUpdateExternalEntry
 {
     type Error = MulticastGroupCreateExternalError;
 
     fn try_from(
-        entry: v8::mcast::MulticastGroupUpdateExternalEntry,
+        entry: v14::mcast::MulticastGroupUpdateExternalEntry,
     ) -> Result<Self, Self::Error> {
-        let sources = match entry.sources {
-            Some(sources) => sources
-                .into_iter()
-                .map(SourceEntry::try_from)
-                .collect::<Result<_, _>>()?,
-            None => vec![SourceEntry::Any],
-        };
+        let sources = entry
+            .sources
+            .unwrap_or_default()
+            .into_iter()
+            .map(SourceEntry::try_from)
+            .collect::<Result<_, _>>()?;
 
         Ok(Self {
             internal_forwarding: entry.internal_forwarding.try_into()?,
@@ -1121,7 +1129,8 @@ impl TryFrom<v1::mcast::MulticastGroupIpParam>
 pub struct MulticastGroupExternalResponse {
     /// The validated multicast address of the group.
     pub group_ip: ExternalMulticastIp,
-    /// ASIC replication group ID for the external group.
+    /// ASIC replication group ID of the external/underlay pair, attributed
+    /// to both groups.
     pub external_group_id: MulticastGroupId,
     /// Tag for validating update/delete requests. Always present and generated
     /// as `{uuid}:{group_ip}` if not provided at creation time.
@@ -1135,7 +1144,7 @@ pub struct MulticastGroupExternalResponse {
 }
 
 impl From<MulticastGroupExternalResponse>
-    for v8::mcast::MulticastGroupExternalResponse
+    for v14::mcast::MulticastGroupExternalResponse
 {
     fn from(resp: MulticastGroupExternalResponse) -> Self {
         Self {
@@ -1160,7 +1169,7 @@ pub enum MulticastGroupResponse {
     External(MulticastGroupExternalResponse),
 }
 
-impl From<MulticastGroupResponse> for v8::mcast::MulticastGroupResponse {
+impl From<MulticastGroupResponse> for v14::mcast::MulticastGroupResponse {
     fn from(resp: MulticastGroupResponse) -> Self {
         match resp {
             MulticastGroupResponse::Underlay(u) => Self::Underlay(u),

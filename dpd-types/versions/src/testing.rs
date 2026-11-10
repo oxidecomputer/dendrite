@@ -12,7 +12,7 @@
 //! multicast validator and SSM check, failing the test at generation if either
 //! rule narrows.
 //!
-//! [`MCAST_EXTERNAL_SCOPE`]: crate::v14::mcast
+//! [`MCAST_EXTERNAL_SCOPE`]: crate::v15::mcast
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -21,7 +21,7 @@ use proptest::prelude::*;
 use crate::latest::mcast::{
     IPV4_SSM_SUBNET, IPV6_ADMIN_SCOPED_MULTICAST_PREFIX, IPV6_SSM_SUBNETS,
 };
-use crate::v14::mcast::{
+use crate::v15::mcast::{
     is_ssm_address, validate_external_multicast_ipv4,
     validate_external_multicast_ipv6,
 };
