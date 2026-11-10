@@ -21,7 +21,7 @@ use dpd_types::arp::{
     ArpEntry, ArpToken, Ipv4ArpParam, Ipv4Token, Ipv6ArpParam, Ipv6Token,
 };
 use dpd_types::counters::{
-    CounterPath, CounterSync, LinkFecRSCounters, LinkPcsCounters,
+    CounterPath, CounterSync, LinkFecRsCounters, LinkPcsCounters,
     LinkRMonCounters, LinkRMonCountersAll,
 };
 use dpd_types::fault::{Fault, FaultCondition};
@@ -41,8 +41,8 @@ use dpd_types::mcast::{
 };
 use dpd_types::misc::{BuildInfo, TagPath};
 use dpd_types::nat::{
-    NatIpv4Path, NatIpv4PortPath, NatIpv4RangePath, NatIpv6Path,
-    NatIpv6PortPath, NatIpv6RangePath, NatToken,
+    NatIpv4Address, NatIpv4Path, NatIpv4PortPath, NatIpv4RangePath,
+    NatIpv6Address, NatIpv6Path, NatIpv6PortPath, NatIpv6RangePath, NatToken,
 };
 use dpd_types::oxstats::OximeterMetadata;
 use dpd_types::port::{
@@ -68,7 +68,7 @@ use dpd_types::switch_port::{Led, LedState, ManagementMode, SwitchPortView};
 use dpd_types::table;
 use dpd_types::table::TableParam;
 use dpd_types::transceivers::{Datapath, Monitors, PowerState, Transceiver};
-use dpd_types_versions::{v1, v7};
+use dpd_types_versions::{v1, v7, v8};
 use dropshot::BuildError;
 use dropshot::ClientErrorStatusCode;
 use dropshot::ClientSpecifiesVersionInHeader;
@@ -1379,7 +1379,7 @@ impl DpdApi for DpdApiImpl {
     async fn nat_ipv6_addresses_list(
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<PaginationParams<EmptyScanParams, Ipv6Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv6Addr>>, HttpError> {
+    ) -> Result<HttpResponseOk<ResultsPage<NatIpv6Address>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let pag_params = query.into_inner();
         let max = rqctx.page_limit(&pag_params)?.get();
@@ -1393,12 +1393,15 @@ impl DpdApi for DpdApiImpl {
             switch,
             last_addr,
             usize::try_from(max).expect("invalid usize"),
-        );
+        )
+        .into_iter()
+        .map(|address| NatIpv6Address { address })
+        .collect();
 
         Ok(HttpResponseOk(ResultsPage::new(
             entries,
             &EmptyScanParams {},
-            |ip: &Ipv6Addr, _| Ipv6Token { ip: *ip },
+            |addr: &NatIpv6Address, _| Ipv6Token { ip: addr.address },
         )?))
     }
 
@@ -1486,7 +1489,7 @@ impl DpdApi for DpdApiImpl {
     async fn nat_ipv4_addresses_list(
         rqctx: RequestContext<Arc<Switch>>,
         query: Query<PaginationParams<EmptyScanParams, Ipv4Token>>,
-    ) -> Result<HttpResponseOk<ResultsPage<Ipv4Addr>>, HttpError> {
+    ) -> Result<HttpResponseOk<ResultsPage<NatIpv4Address>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let pag_params = query.into_inner();
         let max = rqctx.page_limit(&pag_params)?.get();
@@ -1500,12 +1503,15 @@ impl DpdApi for DpdApiImpl {
             switch,
             last_addr,
             usize::try_from(max).expect("invalid usize"),
-        );
+        )
+        .into_iter()
+        .map(|address| NatIpv4Address { address })
+        .collect();
 
         Ok(HttpResponseOk(ResultsPage::new(
             entries,
             &EmptyScanParams {},
-            |ip: &Ipv4Addr, _| Ipv4Token { ip: *ip },
+            |addr: &NatIpv4Address, _| Ipv4Token { ip: addr.address },
         )?))
     }
 
@@ -1882,11 +1888,11 @@ impl DpdApi for DpdApiImpl {
 
     async fn nat_trigger_update(
         rqctx: RequestContext<Arc<Switch>>,
-    ) -> Result<HttpResponseOk<()>, HttpError> {
+    ) -> Result<HttpResponseUpdatedNoContent, HttpError> {
         let switch = rqctx.context();
 
         match switch.workflow_server.trigger(Task::Nat) {
-            Ok(_) => Ok(HttpResponseOk(())),
+            Ok(_) => Ok(HttpResponseUpdatedNoContent()),
             Err(e) => {
                 error!(rqctx.log, "unable to trigger rpw"; "error" => ?e);
                 Err(DpdError::Other("RPW Trigger Failure".to_string()).into())
@@ -2094,8 +2100,14 @@ impl DpdApi for DpdApiImpl {
             }
         };
 
-        mcast::modify_group_internal(switch, underlay, &tag, entry.into())
-            .map(|resp| HttpResponseOk(resp.into()))
+        let v8_entry =
+            v8::mcast::MulticastGroupUpdateUnderlayEntry::from(entry);
+        mcast::modify_group_internal(switch, underlay, &tag, v8_entry.into())
+            .map(|resp| {
+                let v8_resp =
+                    v8::mcast::MulticastGroupUnderlayResponse::from(resp);
+                HttpResponseOk(v8_resp.into())
+            })
             .map_err(HttpError::from)
     }
 
@@ -2147,8 +2159,14 @@ impl DpdApi for DpdApiImpl {
                 .to_string(),
         };
 
-        mcast::modify_group_external(switch, ip, &tag, entry.into())
-            .map(|resp| HttpResponseCreated(resp.into()))
+        let v8_entry =
+            v8::mcast::MulticastGroupUpdateExternalEntry::from(entry);
+        mcast::modify_group_external(switch, ip, &tag, v8_entry.into())
+            .map(|resp| {
+                let v8_resp =
+                    v8::mcast::MulticastGroupExternalResponse::from(resp);
+                HttpResponseCreated(v8_resp.into())
+            })
             .map_err(HttpError::from)
     }
 
@@ -2174,10 +2192,14 @@ impl DpdApi for DpdApiImpl {
 
         let v7_entry =
             v7::mcast::MulticastGroupUpdateExternalEntry::from(entry);
-        mcast::modify_group_external(switch, ip, &tag, v7_entry.into())
+        let v8_entry =
+            v8::mcast::MulticastGroupUpdateExternalEntry::from(v7_entry);
+        mcast::modify_group_external(switch, ip, &tag, v8_entry.into())
             .map(|resp| {
+                let v8_resp =
+                    v8::mcast::MulticastGroupExternalResponse::from(resp);
                 let v7_resp =
-                    v7::mcast::MulticastGroupExternalResponse::from(resp);
+                    v7::mcast::MulticastGroupExternalResponse::from(v8_resp);
                 HttpResponseCreated(v7_resp.into())
             })
             .map_err(HttpError::from)
@@ -2360,7 +2382,7 @@ impl DpdApi for DpdApiImpl {
     #[cfg(feature = "tofino_asic")]
     async fn fec_rs_counters_list(
         rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<LinkFecRSCounters>>, HttpError> {
+    ) -> Result<HttpResponseOk<Vec<LinkFecRsCounters>>, HttpError> {
         let switch: &Switch = rqctx.context();
         let all_counters =
             stats::port_get_fec_rs_counters_all(&switch.asic_hdl)
@@ -2374,7 +2396,7 @@ impl DpdApi for DpdApiImpl {
                     "failed to lookup port and link ID from \
                 an existing port handle: {port_hdl}"
                 )))?;
-            out.push(LinkFecRSCounters { port_id, link_id, counters });
+            out.push(LinkFecRsCounters { port_id, link_id, counters });
         }
         Ok(HttpResponseOk(out))
     }
@@ -2382,7 +2404,7 @@ impl DpdApi for DpdApiImpl {
     #[cfg(not(feature = "tofino_asic"))]
     async fn fec_rs_counters_list(
         _rqctx: RequestContext<Self::Context>,
-    ) -> Result<HttpResponseOk<Vec<LinkFecRSCounters>>, HttpError> {
+    ) -> Result<HttpResponseOk<Vec<LinkFecRsCounters>>, HttpError> {
         Err(HttpError::for_unavail(
             None,
             "not implemented for this asic".to_string(),
@@ -2393,7 +2415,7 @@ impl DpdApi for DpdApiImpl {
     async fn fec_rs_counters_get(
         rqctx: RequestContext<Self::Context>,
         path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<LinkFecRSCounters>, HttpError> {
+    ) -> Result<HttpResponseOk<LinkFecRsCounters>, HttpError> {
         let switch: &Switch = rqctx.context();
         let params = path.into_inner();
         let port_id = params.port_id;
@@ -2401,7 +2423,7 @@ impl DpdApi for DpdApiImpl {
         let port_handle = switch.link_id_to_hdl(port_id, link_id)?;
         stats::port_get_fec_rs_counters(&switch.asic_hdl, port_handle)
             .map(|counters| {
-                HttpResponseOk(LinkFecRSCounters { port_id, link_id, counters })
+                HttpResponseOk(LinkFecRsCounters { port_id, link_id, counters })
             })
             .map_err(|e| HttpError::from(DpdError::from(e)))
     }
@@ -2410,7 +2432,7 @@ impl DpdApi for DpdApiImpl {
     async fn fec_rs_counters_get(
         _rqctx: RequestContext<Self::Context>,
         _path: Path<LinkPath>,
-    ) -> Result<HttpResponseOk<LinkFecRSCounters>, HttpError> {
+    ) -> Result<HttpResponseOk<LinkFecRsCounters>, HttpError> {
         Err(HttpError::for_unavail(
             None,
             "not implemented for this asic".to_string(),

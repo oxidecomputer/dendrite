@@ -45,6 +45,7 @@ use common::network::MacAddr;
 use common::ports::PortId;
 use common::table::TableType;
 use dpd_types::switch_identifiers::SwitchIdentifiers;
+use dpd_types_versions::v13;
 use table::Table;
 use types::*;
 
@@ -608,8 +609,19 @@ where
     P: AsRef<std::path::Path>,
 {
     let contents = tokio::fs::read_to_string(path).await?;
-    toml::from_str(&contents)
-        .map_err(|e| DpdError::Other(format!("failed to parse TOML: {e:?}")))
+    parse_auto_configuration(&contents)
+}
+fn parse_auto_configuration(contents: &str) -> DpdResult<AutoconfiguredLinks> {
+    // For stability, the on-disk port config format is parsed with the v13
+    // `LinkCreate` representation.
+    let links: BTreeMap<PortId, v13::link::LinkCreate> =
+        toml::from_str(contents).map_err(|e| {
+            DpdError::Other(format!("failed to parse TOML: {e:?}"))
+        })?;
+    Ok(links
+        .into_iter()
+        .map(|(port_id, params)| (port_id, params.into()))
+        .collect())
 }
 
 async fn sidecar_main(mut switch: Switch) -> anyhow::Result<()> {
@@ -839,4 +851,51 @@ fn run_interrupt_monitor(log: slog::Logger) {
     std::thread::spawn(move || {
         asic::tofino_asic::interrupt_monitor::monitor_interrupts(log);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shipped_port_configs_parse() {
+        let configs = [
+            ("model_config.toml", include_str!("../misc/model_config.toml")),
+            (
+                "sidecar_config.toml",
+                include_str!("../misc/sidecar_config.toml"),
+            ),
+            (
+                "softnpu_single_sled_config.toml",
+                include_str!("../misc/softnpu_single_sled_config.toml"),
+            ),
+        ];
+        for (name, contents) in configs {
+            let links = parse_auto_configuration(contents)
+                .unwrap_or_else(|e| panic!("parsed {name}: {e}"));
+            assert!(!links.is_empty(), "{name} contains at least one link");
+        }
+    }
+
+    #[test]
+    fn port_config_uses_pre_openapi_lint_names() {
+        let links = parse_auto_configuration(
+            "[rear0]\nfec = \"RS\"\nspeed = \"Speed100G\"\n",
+        )
+        .expect("parsed port config with pre-OPENAPI_LINT names");
+        let params = links
+            .get(&PortId::try_from("rear0").expect("parsed rear0 port ID"))
+            .expect("rear0 link is present");
+        assert_eq!(params.speed, common::ports::PortSpeed::Speed100G);
+        assert_eq!(params.fec, Some(common::ports::PortFec::RS));
+
+        let error = parse_auto_configuration(
+            "[rear0]\nfec = \"rs\"\nspeed = \"speed100_g\"\n",
+        )
+        .expect_err("OPENAPI_LINT wire names are rejected in port config");
+        assert!(
+            error.to_string().contains("failed to parse TOML"),
+            "unexpected error: {error}"
+        );
+    }
 }
