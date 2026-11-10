@@ -34,6 +34,7 @@ packet = { path = "../packet" }
 pcap = { path = "../pcap" }
 asic = { path = "../asic" }
 anyhow.workspace = true
+common = { workspace = true, features = [ "test-utils" ] }
 crc.workspace = true
 dpd-types.workspace = true
 lazy_static.workspace = true
@@ -42,5 +43,6 @@ rand.workspace = true
 slog.workspace = true
 slog-async.workspace = true
 slog-term.workspace = true
+thiserror.workspace = true
 toml.workspace = true
 pretty_assertions.workspace = true

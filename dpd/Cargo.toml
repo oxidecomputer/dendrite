@@ -75,7 +75,9 @@ transceiver-controller = { workspace = true, features = [ "api-traits" ] }
 scuffle = { workspace = true, features = ["smf-by-instance"] }
 
 [dev-dependencies]
+common = { workspace = true, features = [ "test-utils" ] }
 expectorate.workspace = true
+rand.workspace = true
 regress.workspace = true
 mockall.workspace = true
 slog-term.workspace = true
