@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use packet::Endpoint;
+use packet::Packet;
 use packet::eth;
 use packet::geneve;
 
@@ -19,7 +20,17 @@ use crate::integration_tests::common::prelude::*;
 #[ignore]
 async fn test_geneve() -> TestResult {
     let switch = &*get_switch().await;
+    test_geneve_impl(switch, |_| Ok(())).await
+}
 
+/// Runs a packet test between VPC peers.
+///
+/// The `modify_inner` callback can be used to arbitrarily
+/// change the packet before encapsulation.
+async fn test_geneve_impl(
+    switch: &Switch,
+    modify_inner: impl FnOnce(&mut Packet) -> anyhow::Result<()>,
+) -> TestResult {
     let ingress_port = PhysPort(10);
     let uplink_port = PhysPort(14);
     let router_ip = "fd00:1122:3344:0101::1";
@@ -35,13 +46,12 @@ async fn test_geneve() -> TestResult {
     let vpc_dst_ip = "10.10.10.2";
     let vpc_dst_mac = "04:01:01:01:01:02";
     let vpc_dst_port = 4444;
-    let payload = common::gen_udp_packet(
+    let mut inner = common::gen_udp_packet(
         Endpoint::parse(vpc_src_mac, vpc_src_ip, vpc_src_port).unwrap(),
         Endpoint::parse(vpc_dst_mac, vpc_dst_ip, vpc_dst_port).unwrap(),
-    )
-    .deparse()
-    .unwrap()
-    .to_vec();
+    );
+    modify_inner(&mut inner)?;
+    let payload = inner.deparse().unwrap().to_vec();
 
     let mut to_send = common::gen_geneve_packet(
         Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0101::4", 3333)
@@ -52,7 +62,7 @@ async fn test_geneve() -> TestResult {
             geneve::GENEVE_UDP_PORT,
         )
         .unwrap(),
-        eth::ETHER_IPV4,
+        eth::ETHER_ETHER,
         345,
         &[],
         &payload,
@@ -105,7 +115,7 @@ async fn test_geneve_multiopt() -> TestResult {
             geneve::GENEVE_UDP_PORT,
         )
         .unwrap(),
-        eth::ETHER_IPV4,
+        eth::ETHER_ETHER,
         345,
         &[
             // Does this combination make sense? Maybe not today, but
@@ -137,7 +147,7 @@ async fn test_geneve_multiopt() -> TestResult {
             geneve::GENEVE_UDP_PORT,
         )
         .unwrap(),
-        eth::ETHER_IPV4,
+        eth::ETHER_ETHER,
         345,
         &[
             // Swapped!
