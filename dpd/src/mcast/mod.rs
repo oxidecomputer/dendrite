@@ -171,10 +171,10 @@ pub(crate) struct MulticastGroup {
 
 /// The kind of a [`MulticastGroup`]: external or underlay.
 ///
-/// An external group carries ingress state: where to NAT, the egress VLAN,
+/// An external group contains ingress state: where to NAT, the egress VLAN,
 /// and the source filter.
 ///
-/// An underlay group carries replication state in [`Replication`].
+/// An underlay group's replication state is stored in [`Replication`].
 #[derive(Clone, Debug)]
 enum GroupKind {
     /// A customer-visible overlay multicast group.
@@ -304,7 +304,7 @@ impl MulticastGroup {
         self.underlay_scoped_group.id()
     }
 
-    /// ASIC group that carries members of `direction`.
+    /// ASIC group with members of `direction`.
     fn group_id(&self, direction: Direction) -> MulticastGroupId {
         match direction {
             Direction::External => self.external_group_id(),
@@ -790,7 +790,7 @@ fn del_group_locked(
     if let GroupKind::Underlay { group_ip, .. } = &group.kind
         && let Some(external_ip) = mcast.nat_target_refs.get(group_ip)
     {
-        return Err(DpdError::Invalid(format!(
+        return Err(DpdError::McastGroupReferenced(format!(
             "cannot delete underlay group {group_ip}: still referenced \
              by external group {} via NAT target",
             external_ip.ip(),

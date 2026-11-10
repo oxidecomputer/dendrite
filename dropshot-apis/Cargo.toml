@@ -11,4 +11,6 @@ clap.workspace = true
 dpd-api.workspace = true
 dropshot-api-manager-types.workspace = true
 dropshot-api-manager.workspace = true
+openapi-lint.workspace = true
+openapiv3.workspace = true
 semver.workspace = true

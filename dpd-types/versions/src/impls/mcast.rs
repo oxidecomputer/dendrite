@@ -15,8 +15,8 @@
 //! interpretation of the RFCs. [`UNDERLAY_MULTICAST_SUBNET`] and the tag
 //! rules are defined in [`MCAST_STRICT_UNDERLAY`].
 //!
-//! [`is_ssm_address`]: crate::v14::mcast::is_ssm_address
-//! [`MCAST_EXTERNAL_SCOPE`]: crate::v14::mcast
+//! [`is_ssm_address`]: crate::v15::mcast::is_ssm_address
+//! [`MCAST_EXTERNAL_SCOPE`]: crate::v15::mcast
 //! [`MCAST_STRICT_UNDERLAY`]: crate::v8::mcast
 //! [`UNDERLAY_MULTICAST_SUBNET`]: crate::v8::mcast::UNDERLAY_MULTICAST_SUBNET
 //! [RFC 4291]: https://www.rfc-editor.org/rfc/rfc4291.html
@@ -43,7 +43,7 @@ use crate::latest::mcast::{
     UnicastAddrV4, UnicastAddrV6, is_ssm_address,
     validate_external_multicast_ip,
 };
-use crate::v14::mcast::{
+use crate::v15::mcast::{
     validate_unicast_source_ipv4, validate_unicast_source_ipv6,
 };
 
@@ -78,7 +78,7 @@ const fn ipv6_ssm_subnet(scope: u16) -> Ipv6Net {
 /// (X flag set) form, a nonzero `ff2` nibble ([RFC 7371] §4.1.1), and a
 /// nonzero `rsvd` nibble (RIID in [RFC 3956] §3).
 ///
-/// [`is_ssm_address`]: crate::v14::mcast::is_ssm_address
+/// [`is_ssm_address`]: crate::v15::mcast::is_ssm_address
 /// [RFC 3956]: https://www.rfc-editor.org/rfc/rfc3956.html
 /// [RFC 4607]: https://www.rfc-editor.org/rfc/rfc4607.html
 /// [RFC 7371]: https://www.rfc-editor.org/rfc/rfc7371.html
@@ -116,8 +116,8 @@ pub const IPV6_ADMIN_SCOPED_MULTICAST_PREFIX: u16 = 0xff04;
 pub(crate) enum RequestSources {
     /// Any-source group, with the filter already canonicalized.
     Asm(SourceFilter),
-    /// Source-specific group, carrying the narrowed address alongside the
-    /// sources that [RFC 4607] requires it to have.
+    /// Source-specific group with the narrowed address and the sources
+    /// required by [RFC 4607].
     ///
     /// [RFC 4607]: https://www.rfc-editor.org/rfc/rfc4607.html
     Ssm { group_ip: SsmMulticastIp, sources: NonEmptyExactSources },
@@ -131,7 +131,7 @@ impl RequestSources {
     /// This rejects any source whose address family differs from the group's.
     /// An SSM group rejects an `Any` entry and requires at least one exact
     /// source, since routers must ignore a request for an SSM destination
-    /// that names no source ([RFC 4607] §2); an ASM group accepts either form.
+    /// with no source ([RFC 4607] §2); an ASM group accepts either form.
     ///
     /// [RFC 4607]: https://www.rfc-editor.org/rfc/rfc4607.html
     pub(crate) fn new(
@@ -779,7 +779,7 @@ mod arbitrary_impls {
 
     use super::IPV6_ADMIN_SCOPED_MULTICAST_PREFIX;
     use crate::v8::mcast::UnderlayMulticastIpv6;
-    use crate::v14::mcast::{UnicastAddrV4, UnicastAddrV6};
+    use crate::v15::mcast::{UnicastAddrV4, UnicastAddrV6};
 
     /// Generate IPv4 unicast addresses that work as a multicast source.
     ///
@@ -855,7 +855,7 @@ mod tests {
         InvalidMulticastSource, MAX_TAG_LENGTH, MulticastSourceError,
         MulticastTag, UnderlayMulticastError, UnderlayMulticastIpv6,
     };
-    use crate::v14::mcast::MulticastGroupCreateExternalEntryShadow;
+    use crate::v15::mcast::MulticastGroupCreateExternalEntryShadow;
 
     #[test]
     fn tag_schema_bounds() {
@@ -1314,6 +1314,52 @@ mod tests {
     }
 
     #[test]
+    fn prev_api_upgrade_with_omitted_sources() {
+        let legacy_update = || {
+            serde_json::from_value::<
+                crate::v14::mcast::MulticastGroupUpdateExternalEntry,
+            >(serde_json::json!({
+                "internal_forwarding": { "nat_target": nat_target_json() },
+                "external_forwarding": { "vlan_id": null },
+            }))
+            .unwrap()
+        };
+
+        let update =
+            crate::v15::mcast::MulticastGroupUpdateExternalEntry::try_from(
+                legacy_update(),
+            )
+            .unwrap();
+        assert_eq!(update.sources.as_deref().map(<[_]>::len), Some(0));
+
+        for group in ["239.1.2.3", "ff0e::1"] {
+            let group_ip: ExternalMulticastIp = group.parse().unwrap();
+            assert!(
+                matches!(
+                    SourceFilter::from_entries(
+                        group_ip,
+                        update.sources.as_deref()
+                    ),
+                    Ok(SourceFilter::Any)
+                ),
+                "{group} with omitted legacy sources should allow any source"
+            );
+        }
+
+        for group in ["232.1.2.3", "ff3e::4000:1"] {
+            let group_ip: ExternalMulticastIp = group.parse().unwrap();
+            assert_eq!(
+                SourceFilter::from_entries(group_ip, update.sources.as_deref())
+                    .err(),
+                Some(MulticastGroupCreateExternalError::SsmRequiresSources(
+                    group.parse::<IpAddr>().unwrap()
+                )),
+                "{group} with omitted legacy sources should require sources"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_source_family_mismatch() {
         for (group_ip, source) in [
             ("232.1.2.3", "2001:db8::1"),
@@ -1437,7 +1483,7 @@ mod tests {
         assert!(matches!(
             serde_json::from_value::<MulticastGroupCreateExternalEntry>(body(
                 "232.1.2.3",
-                serde_json::json!([{ "Exact": "10.1.1.1" }]),
+                serde_json::json!([{ "type": "exact", "value": "10.1.1.1" }]),
             ))
             .unwrap(),
             MulticastGroupCreateExternalEntry::Ssm(_)
@@ -1462,7 +1508,7 @@ mod tests {
                     "tag": "asm-tag",
                     "internal_forwarding": { "nat_target": nat_target_json() },
                     "external_forwarding": { "vlan_id": 10 },
-                    "sources": ["Any"],
+                    "sources": [{ "type": "any" }],
                 }),
                 serde_json::json!({
                     "group_ip": "224.1.2.3",
@@ -1495,8 +1541,8 @@ mod tests {
                     "internal_forwarding": { "nat_target": nat_target_json() },
                     "external_forwarding": { "vlan_id": null },
                     "sources": [
-                        { "Exact": "10.1.1.1" },
-                        { "Exact": "10.1.1.2" },
+                        { "type": "exact", "value": "10.1.1.1" },
+                        { "type": "exact", "value": "10.1.1.2" },
                     ],
                 }),
                 serde_json::json!({
@@ -1505,8 +1551,8 @@ mod tests {
                     "internal_forwarding": { "nat_target": nat_target_json() },
                     "external_forwarding": { "vlan_id": null },
                     "sources": [
-                        { "Exact": "10.1.1.1" },
-                        { "Exact": "10.1.1.2" },
+                        { "type": "exact", "value": "10.1.1.1" },
+                        { "type": "exact", "value": "10.1.1.2" },
                     ],
                 }),
             ),
@@ -1516,14 +1562,14 @@ mod tests {
                     "tag": null,
                     "internal_forwarding": { "nat_target": nat_target_json() },
                     "external_forwarding": { "vlan_id": 4094 },
-                    "sources": [{ "Exact": "2001:db8::1" }],
+                    "sources": [{ "type": "exact", "value": "2001:db8::1" }],
                 }),
                 serde_json::json!({
                     "group_ip": "ff3e::4000:1",
                     "tag": null,
                     "internal_forwarding": { "nat_target": nat_target_json() },
                     "external_forwarding": { "vlan_id": 4094 },
-                    "sources": [{ "Exact": "2001:db8::1" }],
+                    "sources": [{ "type": "exact", "value": "2001:db8::1" }],
                 }),
             ),
         ] {
@@ -1668,7 +1714,10 @@ mod tests {
                     "tag": null,
                     "internal_forwarding": { "nat_target": nat_target_json() },
                     "external_forwarding": { "vlan_id": null },
-                    "sources": ["Any", { "Exact": "1.2.3.4" }],
+                    "sources": [
+                        { "type": "any" },
+                        { "type": "exact", "value": "1.2.3.4" },
+                    ],
                 }),
             )
             .unwrap();
