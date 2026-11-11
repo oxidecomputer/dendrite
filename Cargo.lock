@@ -188,7 +188,7 @@ dependencies = [
  "slog",
  "slog-async",
  "slog-term",
- "softnpu 0.2.0 (git+https://github.com/oxidecomputer/softnpu?branch=zl%2Ftable-clear)",
+ "softnpu 0.2.0 (git+https://github.com/oxidecomputer/softnpu?branch=main)",
  "strum 0.28.0",
  "thiserror 2.0.18",
  "tofino 0.1.0 (git+https://github.com/oxidecomputer/tofino?branch=main)",
@@ -5118,18 +5118,7 @@ dependencies = [
 [[package]]
 name = "p4rs"
 version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/p4?branch=main#c8b190f46901d4c1b8eef1ca35be243b18653471"
-dependencies = [
- "bitvec",
- "num",
- "serde",
- "usdt 0.5.0",
-]
-
-[[package]]
-name = "p4rs"
-version = "0.1.0"
-source = "git+https://github.com/oxidecomputer/p4?branch=zl%2Fupsert-table-entries#b9baa79b4dc277501f860325da34403b89fb4ee9"
+source = "git+https://github.com/oxidecomputer/p4?branch=main#89b725ca3d534089675ef59f1606882218b6a3c8"
 dependencies = [
  "bitvec",
  "num",
@@ -7360,9 +7349,9 @@ dependencies = [
 [[package]]
 name = "softnpu"
 version = "0.2.0"
-source = "git+https://github.com/oxidecomputer/softnpu?branch=zl%2Ftable-clear#63687602f0d26add71d4dae4ac62d46563ba23f5"
+source = "git+https://github.com/oxidecomputer/softnpu?branch=main#42ff234fbb5e4b2da55eff9e11529694c43589d9"
 dependencies = [
- "p4rs 0.1.0 (git+https://github.com/oxidecomputer/p4?branch=zl%2Fupsert-table-entries)",
+ "p4rs",
  "serde",
  "serde_json",
  "tokio",
@@ -7373,7 +7362,7 @@ name = "softnpu"
 version = "0.2.0"
 source = "git+https://github.com/oxidecomputer/softnpu#7e015d167a914777bc21434d1c61f205f22993b1"
 dependencies = [
- "p4rs 0.1.0 (git+https://github.com/oxidecomputer/p4?branch=main)",
+ "p4rs",
  "serde",
  "serde_json",
  "tokio",
