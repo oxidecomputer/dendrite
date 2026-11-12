@@ -49,10 +49,12 @@ pub fn module_id_from_qsfp(p: QsfpPort) -> transceiver_controller::ModuleId {
 
 /// Default transceiver settings.
 ///
-/// Maps MPN (by `&str`) to a set of tx-eq values (`TxEq`).
+/// Maps MPN (by `&str`) to a set of tx-eq values (`XcvrSettings`).
 ///
 /// These are only defined for transceivers that need a specific FEC or that do
 /// not work correctly with the default equalization values assigned by the SDE.
+/// Both the SDE defaults and these settings may be explicitly overridden by
+/// per-link settings configured by the admin.
 static XCVR_DEFAULTS: phf::Map<&'static str, XcvrSettings> = phf::phf_map! {
     "OXIDESOFTNPU" => XcvrSettings {
         fec: Some(PortFec::RS),
