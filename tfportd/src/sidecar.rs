@@ -2,9 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
 use slog::debug;
@@ -100,39 +100,32 @@ pub fn resolution_needed(
     }
 }
 
-pub fn handle_neighbor_needed(g: &Global, p: packet::Packet) {
-    if p.hdrs.ipv6_hdr.is_none() {
-        return error!(g.log, "not an ipv6 packet");
-    }
-
-    let sc = p.hdrs.sidecar_hdr.unwrap();
-    let asic_id = p.hdrs.sidecar_hdr.as_ref().unwrap().sc_egress;
-    let ipv6 = {
-        let x = u128::from_be_bytes(sc.sc_payload[0..16].try_into().unwrap());
-        x.into()
-    };
-    resolution_needed(g, asic_id, IpAddr::V6(ipv6), p);
+/// Returns the IPv4 nexthop an SC_ARP_NEEDED packet is waiting on.
+fn arp_needed_nexthop(p: &Packet) -> Option<Ipv4Addr> {
+    // We currently don't support IPv6 routes with IPv4 next-hops, so only
+    // allow this resolution for IPv4 packets.
+    p.hdrs.ipv4_hdr.as_ref()?;
+    // The P4 code zero-extends the 32-bit nexthop to fill the 128-bit
+    // payload, so the address is in the last four bytes.
+    let [.., a, b, c, d] = p.hdrs.sidecar_hdr.as_ref()?.sc_payload;
+    Some(Ipv4Addr::new(a, b, c, d))
 }
 
-pub fn handle_arp_needed(g: &Global, p: packet::Packet) {
-    if p.hdrs.ipv4_hdr.is_none() {
-        return error!(g.log, "not an ipv4 packet: {:?}", p);
+/// Returns the IPv6 nexthop an SC_NEIGHBOR_NEEDED packet is waiting on.
+fn ndp_needed_nexthop(p: &Packet) -> Option<Ipv6Addr> {
+    // Both IPv4 and IPv6 routes can use an IPv6 next-hop, so check for either.
+    if p.hdrs.ipv4_hdr.is_none() && p.hdrs.ipv6_hdr.is_none() {
+        return None;
     }
-
-    let sc = p.hdrs.sidecar_hdr.unwrap();
-    let asic_id = p.hdrs.sidecar_hdr.as_ref().unwrap().sc_egress;
-    let ipv4 = {
-        let x = u32::from_be_bytes(sc.sc_payload[12..16].try_into().unwrap());
-        x.into()
-    };
-    resolution_needed(g, asic_id, IpAddr::V4(ipv4), p);
+    Some(Ipv6Addr::from(p.hdrs.sidecar_hdr.as_ref()?.sc_payload))
 }
 
 fn handle_packet(g: &Global, p: packet::Packet) {
-    let sc_code = match &p.hdrs.sidecar_hdr {
-        Some(sc) => sc.sc_code,
+    let sc = match &p.hdrs.sidecar_hdr {
+        Some(sc) => sc,
         None => return debug!(g.log, "received a non-sidecar packet"),
     };
+    let sc_code = sc.sc_code;
 
     match sc_code {
         sidecar::SC_FWD_FROM_USERSPACE => {
@@ -142,8 +135,18 @@ fn handle_packet(g: &Global, p: packet::Packet) {
             // These packets were addressed to a port that doesn't have a corresponding
             // tfport link.  There's nothing we want to do with them.
         }
-        sidecar::SC_ARP_NEEDED => handle_arp_needed(g, p),
-        sidecar::SC_NEIGHBOR_NEEDED => handle_neighbor_needed(g, p),
+        sidecar::SC_ARP_NEEDED => match arp_needed_nexthop(&p) {
+            Some(ip) => resolution_needed(g, sc.sc_egress, ip.into(), p),
+            None => {
+                error!(g.log, "not an ipv4 packet (sc_code: {sc_code}): {p:?}")
+            }
+        },
+        sidecar::SC_NEIGHBOR_NEEDED => match ndp_needed_nexthop(&p) {
+            Some(ip) => resolution_needed(g, sc.sc_egress, ip.into(), p),
+            None => {
+                error!(g.log, "not an ip packet (sc_code: {sc_code}): {p:?}")
+            }
+        },
         // TODO-completeness: implement this as per dendrite#156
         sidecar::SC_ICMP_NEEDED => {}
         x => debug!(g.log, "unrecognized sidecar code: {:x}", x),
@@ -177,4 +180,97 @@ pub fn sidecar_loop(g: Arc<Global>) {
     pcap_hdl.close();
 
     debug!(g.log, "sidecar thread exiting");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use packet::{Endpoint, arp, eth, ipv4, ipv6};
+
+    const V4_NEXTHOP: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
+    const V6_NEXTHOP: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+
+    fn endpoints(src: &str, dst: &str) -> (Endpoint, Endpoint) {
+        (
+            Endpoint::parse("e0:d5:5e:67:89:ab", src, 3333).unwrap(),
+            Endpoint::parse("e0:d5:5e:67:89:ac", dst, 4444).unwrap(),
+        )
+    }
+
+    fn udp_v4() -> Packet {
+        let (src, dst) = endpoints("10.0.0.1", "10.0.0.2");
+        let stack = vec![ipv4::IPPROTO_UDP.into(), eth::ETHER_IPV4];
+        Packet::generate(src, dst, stack, None).unwrap()
+    }
+
+    fn udp_v6() -> Packet {
+        let (src, dst) = endpoints("fd00::1", "fd00::2");
+        let stack = vec![ipv6::IPPROTO_UDP.into(), eth::ETHER_IPV6];
+        Packet::generate(src, dst, stack, None).unwrap()
+    }
+
+    fn arp_request() -> Packet {
+        let (src, dst) = endpoints("10.0.0.1", "10.0.0.2");
+        let stack = vec![arp::ARPOP_REQUEST, eth::ETHER_ARP];
+        Packet::generate(src, dst, stack, None).unwrap()
+    }
+
+    // Wrap `p` in a sidecar header, as the switch does when it punts a packet
+    // to userspace.
+    fn add_sidecar(mut p: Packet, sc_code: u8, sc_payload: [u8; 16]) -> Packet {
+        let eth = p.hdrs.eth_hdr.as_mut().unwrap();
+        p.hdrs.sidecar_hdr = Some(sidecar::SidecarHdr {
+            sc_code,
+            sc_pad: 0,
+            sc_ingress: 1,
+            sc_egress: 7,
+            sc_ether_type: eth.eth_type,
+            sc_payload,
+        });
+        eth.eth_type = eth::ETHER_SIDECAR;
+        p
+    }
+
+    fn arp_needed(p: Packet) -> Packet {
+        // The P4 code zero-extends the IPv4 nexthop into the 128-bit payload.
+        let mut payload = [0u8; 16];
+        payload[12..].copy_from_slice(&V4_NEXTHOP.octets());
+        add_sidecar(p, sidecar::SC_ARP_NEEDED, payload)
+    }
+
+    fn ndp_needed(p: Packet) -> Packet {
+        add_sidecar(p, sidecar::SC_NEIGHBOR_NEEDED, V6_NEXTHOP.octets())
+    }
+
+    #[test]
+    fn arp_needed_ipv4_pkt() {
+        assert_eq!(arp_needed_nexthop(&arp_needed(udp_v4())), Some(V4_NEXTHOP));
+    }
+
+    // IPv6 routes cannot have IPv4 nexthops.
+    #[test]
+    fn arp_needed_ipv6_pkt() {
+        assert_eq!(arp_needed_nexthop(&arp_needed(udp_v6())), None);
+    }
+
+    #[test]
+    fn arp_needed_non_ip_pkt() {
+        assert_eq!(arp_needed_nexthop(&arp_needed(arp_request())), None);
+    }
+
+    #[test]
+    fn ndp_needed_ipv6_pkt() {
+        assert_eq!(ndp_needed_nexthop(&ndp_needed(udp_v6())), Some(V6_NEXTHOP));
+    }
+
+    // An IPv4 route via an IPv6 nexthop, e.g. BGP unnumbered.
+    #[test]
+    fn ndp_needed_ipv4_pkt() {
+        assert_eq!(ndp_needed_nexthop(&ndp_needed(udp_v4())), Some(V6_NEXTHOP));
+    }
+
+    #[test]
+    fn ndp_needed_non_ip_pkt() {
+        assert_eq!(ndp_needed_nexthop(&ndp_needed(arp_request())), None);
+    }
 }
