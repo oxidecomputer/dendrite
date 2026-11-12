@@ -4,7 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
 use slog::debug;
@@ -117,8 +117,10 @@ fn handle_packet(g: &Global, p: packet::Packet) {
         }
         sidecar::SC_ARP_NEEDED => {
             if p.hdrs.ipv4_hdr.is_none() && p.hdrs.ipv6_hdr.is_none() {
-                error!(g.log, "not an ip packet (sc_code: {sc_code}): {p:?}");
-                return None;
+                return error!(
+                    g.log,
+                    "not an ip packet (sc_code: {sc_code}): {p:?}"
+                );
             }
             let [.., a, b, c, d] = sc.sc_payload;
             let ip = IpAddr::V4(Ipv4Addr::new(a, b, c, d));
@@ -126,8 +128,10 @@ fn handle_packet(g: &Global, p: packet::Packet) {
         }
         sidecar::SC_NEIGHBOR_NEEDED => {
             if p.hdrs.ipv6_hdr.is_none() {
-                error!(g.log, "not an ipv6 packet (sc_code: {sc_code}): {p:?}");
-                return None;
+                return error!(
+                    g.log,
+                    "not an ipv6 packet (sc_code: {sc_code}): {p:?}"
+                );
             }
             let ip = IpAddr::V6(Ipv6Addr::from(sc.sc_payload));
             resolution_needed(g, sc.sc_egress, ip, p)
