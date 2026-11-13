@@ -42,9 +42,6 @@ pub struct Config {
     /// automatically at startup.
     pub port_config: Option<String>,
 
-    /// Where to find alternate transceiver xcvr_defaults
-    pub xcvr_defaults: Option<String>,
-
     /// Base address used to calculate the mac addresses for all ports on the
     /// switch.
     pub mac_base: Option<MacAddr>,
@@ -93,7 +90,6 @@ impl Default for Config {
             log_file: None,
             log_format: common::logging::LogFormat::Json,
             port_config: None,
-            xcvr_defaults: None,
             listen_addresses: vec![localhost],
             dns_servers: Vec::new(),
             rack_id: None,
@@ -147,11 +143,6 @@ pub(crate) fn update_from_smf(config: &mut Config) -> SmfResult<()> {
 
     if let Some(port_config) = smf::get_property(&snapshot, "port_config")? {
         config.port_config = Some(port_config);
-    }
-
-    if let Some(xcvr_defaults) = smf::get_property(&snapshot, "xcvr_defaults")?
-    {
-        config.xcvr_defaults = Some(xcvr_defaults);
     }
 
     if let Some(mac_base) = smf::get_property(&snapshot, "mac_base")? {
@@ -275,10 +266,6 @@ fn update_from_cli(opts: &crate::Opt, config: &mut Config) -> DpdResult<()> {
 
     if let Some(port_config) = &opts.port_config {
         config.port_config = Some(port_config.to_string());
-    }
-
-    if let Some(xcvr_defaults) = &opts.xcvr_defaults {
-        config.xcvr_defaults = Some(xcvr_defaults.to_string());
     }
 
     if let Some(list) = &opts.listen_addresses {
