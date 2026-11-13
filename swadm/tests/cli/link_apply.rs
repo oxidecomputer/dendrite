@@ -31,7 +31,7 @@ fn apply_tx_eq_all() -> anyhow::Result<()> {
             --fec rs
             --speed 100g
             --lane 0
-            --tx-eq={VAL}"
+            --tx-eq {VAL}"
     ))?;
 
     cmd::retry(|| {
