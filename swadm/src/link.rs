@@ -225,23 +225,22 @@ pub enum GetSerdes {
 /// Diagnostic commands to updated the settings of a link's SERDES
 pub enum SetSerdes {
     /// Update the tx equalization settings for this port.  Only the main setting is
-    /// required.  All others will default to 0. Note: to set a negative value,
-    /// you must use the "=" option syntax.  e.g., "--pre1=-1"
+    /// required.  All others will default to 0.
     #[clap(visible_alias = "txeq")]
     TxEq {
         /// The link path, specified as `switch_port/link`.
         ///
         /// For example `rear0/0` is the first link on the rear0 switch port.
         link_path: LinkPath,
-        #[clap(long)]
+        #[clap(long, allow_negative_numbers(true))]
         pre2: Option<i32>,
-        #[clap(long)]
+        #[clap(long, allow_negative_numbers(true))]
         pre1: Option<i32>,
-        #[clap(long)]
+        #[clap(long, allow_negative_numbers(true))]
         main: Option<i32>,
-        #[clap(long)]
+        #[clap(long, allow_negative_numbers(true))]
         post1: Option<i32>,
-        #[clap(long)]
+        #[clap(long, allow_negative_numbers(true))]
         post2: Option<i32>,
     },
 }
@@ -453,27 +452,27 @@ pub enum Link {
         allow_ddm_traffic: bool,
 
         /// Uniform equalization parameter to apply to all cursors.
-        #[clap(long)]
+        #[clap(long, allow_negative_numbers(true))]
         tx_eq: Option<i32>,
 
         /// Transmit equalization precursor 1.
-        #[clap(long, conflicts_with = "tx_eq")]
+        #[clap(long, conflicts_with = "tx_eq", allow_negative_numbers(true))]
         pre1: Option<i32>,
 
         /// Transmit equalization precursor 2.
-        #[clap(long, conflicts_with = "tx_eq")]
+        #[clap(long, conflicts_with = "tx_eq", allow_negative_numbers(true))]
         pre2: Option<i32>,
 
         /// Transmit equalization main precursor.
-        #[clap(long, conflicts_with = "tx_eq")]
+        #[clap(long, conflicts_with = "tx_eq", allow_negative_numbers(true))]
         main: Option<i32>,
 
         /// Transmit equalization postcursor 1.
-        #[clap(long, conflicts_with = "tx_eq")]
+        #[clap(long, conflicts_with = "tx_eq", allow_negative_numbers(true))]
         post1: Option<i32>,
 
         /// Transmit equalization postcursor 2.
-        #[clap(long, conflicts_with = "tx_eq")]
+        #[clap(long, conflicts_with = "tx_eq", allow_negative_numbers(true))]
         post2: Option<i32>,
     },
 }

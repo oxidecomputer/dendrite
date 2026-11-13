@@ -58,7 +58,6 @@
     <propval name='rear_ports' type='astring' value='unknown' />
     <propval name='enable_rpw' type='astring' value='true' />
     <propval name='nexus_address' type='astring' value='unknown' />
-    <propval name='xcvr_defaults' type='astring' value='/opt/oxide/dendrite/misc/xcvr_defaults.csv' />
   </property_group>
 
     <property_group name='startd' type='framework'>
