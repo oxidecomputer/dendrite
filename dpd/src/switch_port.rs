@@ -6,7 +6,6 @@
 
 //! Types for describing and managing physical ports on the Sidecar switch.
 
-use anyhow::Context;
 use dpd_types::port_map::BackplaneLink;
 use dpd_types::switch_port::Led;
 use dpd_types::switch_port::LedPolicy;
@@ -14,7 +13,6 @@ use dpd_types::switch_port::LedState;
 use dpd_types::switch_port::ManagementMode;
 use dpd_types::switch_port::SwitchPortView;
 use dpd_types::transceivers::QsfpDevice;
-use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use crate::link::Link;
@@ -49,60 +47,84 @@ pub fn module_id_from_qsfp(p: QsfpPort) -> transceiver_controller::ModuleId {
         .expect("Should be statically limited")
 }
 
-// Per-transceiver collection of settings
-#[derive(Debug, Deserialize)]
-struct XcvrDefaultsEntry {
-    /// Manufacturer part number - unique identifer for a transceiver
-    pub mpn: String,
-    /// FEC
-    pub fec: Option<PortFec>,
-    /// Precursor 2
-    pub pre2: Option<i32>,
-    /// Precursor 1
-    pub pre1: Option<i32>,
-    /// Main
-    pub main: Option<i32>,
-    /// Postcursor 1
-    pub post1: Option<i32>,
-    /// Postcursor 2
-    pub post2: Option<i32>,
-}
-
-/// Parse the provided CSV file, extracting optional settings for a
-/// subset of our supported transceivers.
-pub fn load_xcvr_defaults(
-    csv_file: &str,
-) -> anyhow::Result<BTreeMap<String, XcvrSettings>> {
-    let mut rdr = csv::ReaderBuilder::new()
-        .has_headers(false)
-        .comment(Some(b'#'))
-        .from_path(csv_file)
-        .with_context(|| format!("parsing xcvr config file {csv_file}"))?;
-
-    let mut settings = BTreeMap::new();
-    for entry in rdr.deserialize() {
-        let e: XcvrDefaultsEntry = entry?;
-
-        let tx_eq = if e.pre2.is_some()
-            || e.pre1.is_some()
-            || e.main.is_some()
-            || e.post2.is_some()
-            || e.post1.is_some()
-        {
-            Some(TxEq {
-                pre2: e.pre2,
-                pre1: e.pre1,
-                main: e.main,
-                post1: e.post1,
-                post2: e.post2,
-            })
-        } else {
-            None
-        };
-        settings.insert(e.mpn, XcvrSettings { tx_eq, fec: e.fec });
-    }
-    Ok(settings)
-}
+/// Default transceiver settings.
+///
+/// Maps MPN (by `&str`) to a set of tx-eq values (`XcvrSettings`).
+///
+/// These are only defined for transceivers that need a specific FEC or that do
+/// not work correctly with the default equalization values assigned by the SDE.
+/// Both the SDE defaults and these settings may be explicitly overridden by
+/// per-link settings configured by the admin.
+static XCVR_DEFAULTS: phf::Map<&'static str, XcvrSettings> = phf::phf_map! {
+    "OXIDESOFTNPU" => XcvrSettings {
+        fec: Some(PortFec::RS),
+        tx_eq: Some(TxEq {
+            pre2: Some(0),
+            pre1: Some(0),
+            main: Some(0),
+            post1: Some(0),
+            post2: Some(0),
+        }),
+    },
+    "FTLC9558REPM" => XcvrSettings {
+        fec: None,
+        tx_eq: Some(TxEq {
+            pre2: Some(0),
+            pre1: Some(0),
+            main: Some(26),
+            post1: Some(0),
+            post2: Some(0),
+        }),
+    },
+    "FTLC9558REPM-1Y" => XcvrSettings {
+        fec: None,
+        tx_eq: Some(TxEq {
+            pre2: Some(0),
+            pre1: Some(0),
+            main: Some(26),
+            post1: Some(0),
+            post2: Some(0),
+        }),
+    },
+    "SPTSMP3CLCDA" => XcvrSettings {
+        fec: Some(PortFec::RS),
+        tx_eq: Some(TxEq {
+            pre2: Some(0),
+            pre1: Some(-5),
+            main: Some(25),
+            post1: Some(-5),
+            post2: Some(0),
+        }),
+    },
+    "SPTSMP3CLCDD" => XcvrSettings {
+        fec: Some(PortFec::RS),
+        tx_eq: Some(TxEq {
+            pre2: Some(0),
+            pre1: Some(-5),
+            main: Some(25),
+            post1: Some(-5),
+            post2: Some(0),
+        }),
+    },
+    "SPTSMP3CLCDF" => XcvrSettings {
+        fec: Some(PortFec::RS),
+        tx_eq: Some(TxEq {
+            pre2: Some(0),
+            pre1: Some(-5),
+            main: Some(25),
+            post1: Some(-5),
+            post2: Some(0),
+        }),
+    },
+    "FTCC1112E2PCL" => XcvrSettings { fec: Some(PortFec::None), tx_eq: None },
+    "FTCC8612E2PCM" => XcvrSettings { fec: Some(PortFec::RS), tx_eq: None },
+    "FTL410QE4C-1Y" => XcvrSettings { fec: Some(PortFec::None), tx_eq: None },
+    "FTLC9152RGPL" => XcvrSettings { fec: Some(PortFec::RS), tx_eq: None },
+    "FTLC4353RJPL" => XcvrSettings { fec: Some(PortFec::None), tx_eq: None },
+    "FTLC4353RJPL-1Y" => XcvrSettings { fec: Some(PortFec::None), tx_eq: None },
+    "FTLC1159RGPL" => XcvrSettings { fec: Some(PortFec::RS), tx_eq: None },
+    "CAB-Q-Q-5M" => XcvrSettings { fec: Some(PortFec::None), tx_eq: None },
+};
 
 /// The physical ports on the switch.
 ///
@@ -115,30 +137,17 @@ pub struct SwitchPorts {
     pub port_map: PortMap,
     /// Mapping from PortIds to known data about the physical switch port.
     pub ports: BTreeMap<PortId, Mutex<SwitchPort>>,
-    /// Per-MPN txeq settings.  These are optional and are only defined when
-    /// we find transceivers that do not work correctly with the default values
-    /// assigned by the SDE.  Both the SDE defaults and these settings may be
-    /// explicitly overridden by per-link settings configured by the admin.
-    pub xcvr_defaults: BTreeMap<String, XcvrSettings>,
 }
 
 impl SwitchPorts {
-    pub fn new(
-        revision: SidecarRevision,
-        xcvr_defaults_file: &Option<String>,
-    ) -> anyhow::Result<Self> {
+    pub fn new(revision: SidecarRevision) -> Self {
         let port_map = PortMap::new(revision);
         let ports = port_map
             .port_ids()
             .copied()
             .map(|port_id| (port_id, Mutex::new(SwitchPort::new(port_id))))
             .collect();
-        let xcvr_defaults = match xcvr_defaults_file {
-            Some(f) => load_xcvr_defaults(f)?,
-            None => BTreeMap::new(),
-        };
-
-        Ok(Self { port_map, ports, xcvr_defaults })
+        Self { port_map, ports }
     }
 
     pub fn verify_exists(&self, port_id: PortId) -> DpdResult<()> {
@@ -323,7 +332,7 @@ impl crate::Switch {
         if let Some(tx_eq) = match (link.tx_eq, &mpn) {
             (Some(user_defined), _) => Some(user_defined),
             (None, Some(mpn)) => {
-                self.switch_ports.xcvr_defaults.get(mpn).and_then(|x| x.tx_eq)
+                XCVR_DEFAULTS.get(mpn.as_str()).and_then(|x| x.tx_eq)
             }
             (_, _) => None,
         } {
@@ -353,8 +362,7 @@ impl crate::Switch {
     /// also fail.
     pub fn qsfp_default_fec(&self, qsfp_mpn: &str) -> DpdResult<PortFec> {
         slog::debug!(self.log, "looking up default FEC for {qsfp_mpn}");
-        match self.switch_ports.xcvr_defaults.get(qsfp_mpn).and_then(|x| x.fec)
-        {
+        match XCVR_DEFAULTS.get(qsfp_mpn).and_then(|x| x.fec) {
             Some(fec) => Ok(fec),
             None => Err(DpdError::Missing(
                 "no default FEC defined for this port's xcvr".to_string(),

@@ -54,7 +54,6 @@
     <propval name='dev_path' type='astring' value='unknown' />
     <propval name='mac_base' type='astring' value='unknown' />
     <propval name='port_config' type='astring' value='unknown' />
-    <propval name='xcvr_defaults' type='astring' value='/opt/oxide/dendrite/misc/xcvr_defaults.csv' />
     <propval name='transceiver_interface' type='astring' value='sidecar0' />
     <propval name='enable_rpw' type='astring' value='true' />
     <propval name='nexus_address' type='astring' value='unknown' />
