@@ -4,8 +4,10 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use std::hash::Hash;
+
 use slog::{error, trace};
-use softnpu_lib::{ManagementRequest, TableAdd, TableRemove};
+use softnpu_lib::{ManagementRequest, TableAdd, TableClear, TableRemove};
 
 use crate::softnpu::Handle;
 use aal::{
@@ -14,9 +16,10 @@ use aal::{
 };
 use common::table::TableType;
 
-/// Represents a handle to a SoftNPU ASIC table. The `id` member corresponds to
-/// the table path in the P4 program. Well known sidecar-lite.p4 paths follow
-/// below.
+/// Represents a handle to a SoftNPU ASIC table.
+///
+/// The `type_` member identifies the table and `softnpu_table_name()`
+/// maps it to the corresponding path in sidecar-lite.p4.
 pub struct Table {
     type_: TableType,
     implemented: bool,
@@ -24,6 +27,8 @@ pub struct Table {
 }
 
 impl Table {
+    /// Return the sidecar-lite table name for this table, or `None` if the
+    /// table is not implemented in the SoftNPU backend.
     pub fn softnpu_table_name(&self) -> Option<&'static str> {
         if self.implemented {
             match self.type_ {
@@ -44,6 +49,28 @@ impl Table {
                 TableType::ArpIpv4 => Some("ingress.resolver.resolver_v4"),
                 TableType::NeighborIpv6 => Some("ingress.resolver.resolver_v6"),
                 TableType::PortMacAddress => Some("ingress.mac.mac_rewrite"),
+                TableType::McastIpv6 => {
+                    Some(crate::softnpu::mcast::MCAST_REPLICATION_V6_TABLE)
+                }
+                TableType::McastIpv4SrcFilter => {
+                    Some("ingress.mcast.mcast_source_filter_v4")
+                }
+                TableType::McastIpv6SrcFilter => {
+                    Some("ingress.mcast.mcast_source_filter_v6")
+                }
+                TableType::NatIngressIpv4Mcast => {
+                    Some("ingress.nat.nat_v4_mcast")
+                }
+                TableType::NatIngressIpv6Mcast => {
+                    Some("ingress.nat.nat_v6_mcast")
+                }
+                TableType::McastEgressDecapPorts => {
+                    Some("egress.tbl_decap_ports")
+                }
+                TableType::PortMacAddressMcast => Some("egress.mcast_src_mac"),
+                TableType::McastEgressPortMapping => {
+                    Some("egress.asic_id_to_port")
+                }
                 _ => panic!(
                     "implemented table {} has no softnpu table",
                     self.type_
@@ -53,15 +80,89 @@ impl Table {
             None
         }
     }
+
+    /// Translate a `configure_mcastv6` request into a sidecar-lite
+    /// `set_port_bitmap` addition.
+    ///
+    /// dpd sends `(mcast_grp_a, mcast_grp_b, rid, level1_excl_id,
+    /// level2_excl_id)`, while sidecar-lite expects
+    /// `(external, underlay, rid)`, from `McGroupData` membership.
+    ///
+    /// SoftNPU's bitmap is a write-time snapshot (the Sidecar's replication
+    /// engine tracks membership live). dpd rewrites the entry after membership
+    /// changes to refresh it.
+    fn mcast_replication_add(
+        &self,
+        hdl: &Handle,
+        table: String,
+        keyset_data: Vec<u8>,
+        action_data: &aal::ActionData,
+    ) -> AsicResult<()> {
+        let action = &action_data.action;
+        let external_grp = arg_u16(hdl, action_data, action, "mcast_grp_a")?;
+        let underlay_grp = arg_u16(hdl, action_data, action, "mcast_grp_b")?;
+        let rid = arg_u16(hdl, action_data, action, "rid")?;
+
+        let (external_bitmap, underlay_bitmap) = {
+            let mc_data = hdl.mc_data.lock().unwrap();
+            (
+                mc_data.port_bitmap(external_grp),
+                mc_data.port_bitmap(underlay_grp),
+            )
+        };
+
+        let parameter_data = [
+            external_bitmap.to_le_bytes().as_slice(),
+            underlay_bitmap.to_le_bytes().as_slice(),
+            rid.to_le_bytes().as_slice(),
+        ]
+        .concat();
+
+        slog::debug!(
+            hdl.log,
+            "mcast replication add: external_grp={external_grp} \
+             underlay_grp={underlay_grp} external_bitmap={external_bitmap:#x} \
+             underlay_bitmap={underlay_bitmap:#x} rid={rid}"
+        );
+        trace!(hdl.log, "table: {table}");
+        trace!(hdl.log, "keyset_data:\n{keyset_data:#?}");
+        trace!(hdl.log, "parameter_data:\n{parameter_data:#?}");
+
+        add_entry(
+            hdl,
+            table,
+            crate::softnpu::mcast::SET_PORT_BITMAP_ACTION.to_string(),
+            keyset_data,
+            parameter_data,
+        )
+    }
 }
 
-// All tables are defined to be 1024 entries deep
+/// Send a `TableAdd` request for `table`, which replaces any entry already
+/// under the key (oxidecomputer/p4#282), serving as both an add and an update.
+fn add_entry(
+    hdl: &Handle,
+    table: String,
+    action: String,
+    keyset_data: Vec<u8>,
+    parameter_data: Vec<u8>,
+) -> AsicResult<()> {
+    let add = ManagementRequest::TableAdd(TableAdd {
+        table,
+        action,
+        keyset_data,
+        parameter_data,
+    });
+    crate::softnpu::mgmt::write(add, &hdl.mgmt_config)
+}
+
+// All tables are defined to be 4096 entries deep.
 const TABLE_SIZE: usize = 4096;
 
 impl TableOps<Handle> for Table {
     fn new(hdl: &Handle, type_: TableType) -> AsicResult<Table> {
-        // TODO just mapping sidecar.p4 things onto simplified sidecar-lite.p4
-        // things to get started.
+        // Mapping sidecar.p4 table types onto simplified sidecar-lite.p4
+        // equivalents.
         let implemented = match type_ {
             TableType::RouteIdxIpv4
             | TableType::RouteFwdIpv4
@@ -75,23 +176,40 @@ impl TableOps<Handle> for Table {
             | TableType::NatIngressIpv4
             | TableType::NatIngressIpv6
             | TableType::AttachedSubnetIpv4
-            | TableType::AttachedSubnetIpv6 => true,
+            | TableType::AttachedSubnetIpv6
+            | TableType::McastIpv6
+            | TableType::McastIpv4SrcFilter
+            | TableType::McastIpv6SrcFilter
+            | TableType::McastEgressDecapPorts
+            | TableType::McastEgressPortMapping
+            | TableType::PortMacAddressMcast
+            | TableType::NatIngressIpv4Mcast
+            | TableType::NatIngressIpv6Mcast => true,
             x => {
-                error!(hdl.log, "TABLE NOT HANDLED {x}");
+                error!(hdl.log, "table not handled: {x}");
                 false
             }
         };
 
-        Ok(Table { type_, implemented, size: TABLE_SIZE })
+        let tbl = Table { type_, implemented, size: TABLE_SIZE };
+        // The SoftNPU pipeline outlives the dpd process. Clear each table
+        // before the control plane reapplies its configuration.
+        tbl.clear(hdl)?;
+        Ok(tbl)
     }
 
     fn size(&self) -> usize {
         self.size
     }
 
-    fn clear(&self, _hdl: &Handle) -> AsicResult<()> {
-        //TODO implement in softnpu
-        Ok(())
+    fn clear(&self, hdl: &Handle) -> AsicResult<()> {
+        let Some(table) = self.softnpu_table_name() else {
+            return Ok(());
+        };
+        let msg = ManagementRequest::TableClear(TableClear {
+            table: table.to_string(),
+        });
+        crate::softnpu::mgmt::write(msg, &hdl.mgmt_config)
     }
 
     fn entry_add<M: MatchParse, A: ActionParse>(
@@ -103,16 +221,32 @@ impl TableOps<Handle> for Table {
         let Some(table) = self.softnpu_table_name() else {
             return Ok(());
         };
+        let table = table.to_string();
         let name = self.type_.to_string();
         let match_data = key.key_to_ir().unwrap();
         let action_data = data.action_to_ir().unwrap();
+        let fields = match_data.fields;
 
         trace!(hdl.log, "entry_add called");
         trace!(hdl.log, "table: {name}");
-        trace!(hdl.log, "match_data:\n{:#?}", match_data);
-        trace!(hdl.log, "action_data:\n{:#?}", action_data);
+        trace!(hdl.log, "match_data: {fields:#?}");
+        trace!(hdl.log, "action_data:\n{action_data:#?}");
 
-        let keyset_data = keyset_data(match_data.fields, self.type_);
+        let keyset_data = keyset_data(fields, self.type_);
+
+        // Multicast replication entries get handled separately because
+        // sidecar-lite's `set_port_bitmap` op requires the port bitmaps
+        // for the group IDs that dpd sends in `configure_mcastv6`.
+        if let (TableType::McastIpv6, "configure_mcastv6") =
+            (self.type_, action_data.action.as_str())
+        {
+            return self.mcast_replication_add(
+                hdl,
+                table,
+                keyset_data,
+                &action_data,
+            );
+        }
 
         let (action, parameter_data) = match (
             self.type_,
@@ -432,130 +566,81 @@ impl TableOps<Handle> for Table {
             | (TableType::NatIngressIpv6, "forward_ipv6_to")
             | (TableType::AttachedSubnetIpv4, "forward_to_v4")
             | (TableType::AttachedSubnetIpv6, "forward_to_v6") => {
-                let mut target = Vec::new();
-                let mut vni = Vec::new();
-                let mut mac = Vec::new();
+                forward_to_sled_params(hdl, &name, action_data)?
+            }
+            (TableType::NatIngressIpv4Mcast, "mcast_forward_ipv4_to")
+            | (TableType::NatIngressIpv6Mcast, "mcast_forward_ipv6_to") => {
+                forward_to_sled_params(hdl, &name, action_data)?
+            }
+            // Multicast source filters: no action parameters.
+            (TableType::McastIpv4SrcFilter, "allow_source_mcastv4")
+            | (TableType::McastIpv6SrcFilter, "allow_source_mcastv6") => {
+                ("allow_source", Vec::new())
+            }
+            // Multicast egress decap: see `pack_decap_bitmap`.
+            (TableType::McastEgressDecapPorts, "set_decap_ports") => {
+                ("set_decap_ports", pack_decap_bitmap(&action_data))
+            }
+            (TableType::McastEgressDecapPorts, "set_decap_ports_and_vlan") => {
+                let mut params = pack_decap_bitmap(&action_data);
+                let vlan_id = arg_u16(hdl, &action_data, &name, "vlan_id")?;
+                params.extend_from_slice(&vlan_id.to_le_bytes());
+                ("set_decap_ports_and_vlan", params)
+            }
+            // Multicast egress MAC rewrite.
+            (TableType::PortMacAddressMcast, "rewrite") => {
+                let mut params = Vec::new();
                 for arg in action_data.args {
-                    match arg.name.as_str() {
-                        "target" => {
-                            // "target" is 128 bits
-                            let mut data: Vec<u8> = Vec::new();
-                            match &arg.value {
-                                ValueTypes::U64(_) => {
-                                    // Currently the ValueType is always Ptr
-                                    error!(
-                                        hdl.log,
-                                        "expected ValueType::Ptr, \
-                                        received ValueType::U64"
-                                    );
-                                    return Ok(());
-                                }
-                                ValueTypes::Ptr(v) => {
-                                    data.extend_from_slice(v.as_slice());
-                                }
-                            }
-                            let len = data.len();
-                            let buf = &mut data[len - 16..];
-                            buf.reverse();
-                            target.extend_from_slice(buf);
+                    match arg.value {
+                        ValueTypes::U64(v) => {
+                            let mac = v.to_le_bytes();
+                            params.extend_from_slice(&mac[0..6]);
                         }
-                        "vni" => {
-                            // "vni" is 24 bits
-                            let mut data: Vec<u8> = Vec::new();
-                            match &arg.value {
-                                ValueTypes::U64(v) => {
-                                    data.extend_from_slice(&v.to_le_bytes());
-                                }
-                                ValueTypes::Ptr(_) => {
-                                    // Currently the ValueType is always U64
-                                    error!(
-                                        hdl.log,
-                                        "expected ValueType::U64, \
-                                        received ValueType::Ptr"
-                                    );
-                                    return Ok(());
-                                }
-                            }
-                            vni.extend_from_slice(&data[0..3]);
-                        }
-                        "inner_mac" => {
-                            // "mac" is 48 bits
-                            let mut data: Vec<u8> = Vec::new();
-                            match &arg.value {
-                                ValueTypes::U64(v) => {
-                                    data.extend_from_slice(&v.to_le_bytes());
-                                }
-                                ValueTypes::Ptr(_) => {
-                                    // Currently the ValueType is always U64
-                                    error!(
-                                        hdl.log,
-                                        "expected ValueType::U64, \
-                                        received ValueType::Ptr"
-                                    );
-                                    return Ok(());
-                                }
-                            }
-                            mac.extend_from_slice(&data[0..6])
-                        }
-                        _ => {
-                            error!(hdl.log, "unknown argument: {}", arg.name);
-                            return Ok(());
+                        ValueTypes::Ptr(v) => {
+                            params.extend_from_slice(v.as_slice());
                         }
                     }
                 }
-                let mut params = Vec::new();
-                // arguments currently don't arrive in the correct order,
-                // so we'll order them manually
-                params.extend_from_slice(target.as_slice());
-                params.extend_from_slice(vni.as_slice());
-                params.extend_from_slice(mac.as_slice());
-                ("forward_to_sled", params)
+                ("rewrite_src_mac", params)
             }
+            (TableType::McastEgressPortMapping, "set_port_number") => {
+                ("set_port_number", vec![port_number_param(&action_data)?])
+            }
+            // sidecar-lite's resolvers support drop (by default).
+            (TableType::ArpIpv4, "drop")
+            | (TableType::NeighborIpv6, "drop") => ("drop", Vec::new()),
+            // The local_v4/local_v6 tables have no drop action and dpd programs
+            // dropv4/dropv6 during port IP setup.
+            (TableType::PortAddrIpv4, "dropv4")
+            | (TableType::PortAddrIpv6, "dropv6") => return Ok(()),
             (_, x) => {
-                error!(hdl.log, "ACTION NOT HANDLED {name} {x}");
-                return Ok(());
+                error!(hdl.log, "action not handled: {name} {x}");
+                return Err(AsicError::InvalidArg(format!(
+                    "{name}: action {x} not handled by the softnpu backend"
+                )));
             }
         };
         let action = action.to_string();
         trace!(hdl.log, "sending request to softnpu");
-        trace!(hdl.log, "table: {name}");
-        trace!(hdl.log, "action: {:#?}", action);
-        trace!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
-        trace!(hdl.log, "parameter_data:\n{:#?}", parameter_data);
+        trace!(hdl.log, "table: {table}");
+        trace!(hdl.log, "action: {action:#?}");
+        trace!(hdl.log, "keyset_data:\n{keyset_data:#?}");
+        trace!(hdl.log, "parameter_data:\n{parameter_data:#?}");
 
-        let msg = ManagementRequest::TableAdd(TableAdd {
-            table: table.to_string(),
-            action,
-            keyset_data,
-            parameter_data,
-        });
-
-        crate::softnpu::mgmt::write(msg, &hdl.mgmt_config);
-
-        Ok(())
+        add_entry(hdl, table, action, keyset_data, parameter_data)
     }
 
-    fn entry_update<M: MatchParse, A: ActionParse>(
+    // TODO: SoftNPU doesn't track installed keys, i.e., `entry_add` never
+    // returns `Exists`, and `entry_update` and `entry_del` never return
+    // `Missing`. This skews dpd's `TableUsage` counts for every type of
+    // SoftNPU table (unicast included, since oxidecomputer/dendrite#175).
+    fn entry_update<M: MatchParse + Hash, A: ActionParse>(
         &self,
         hdl: &Handle,
         key: &M,
         data: &A,
     ) -> AsicResult<()> {
-        let Some(_table) = self.softnpu_table_name() else {
-            return Ok(());
-        };
-        let name = self.type_.to_string();
-
-        let match_data = key.key_to_ir().unwrap();
-        let action_data = data.action_to_ir().unwrap();
-
-        trace!(hdl.log, "entry_update called");
-        trace!(hdl.log, "table: {name}");
-        trace!(hdl.log, "match_data:\n{:#?}", match_data);
-        trace!(hdl.log, "action_data:\n{:#?}", action_data);
-
-        //TODO implement in softnpu
-        Ok(())
+        self.entry_add(hdl, key, data)
     }
 
     fn entry_del<M: MatchParse>(
@@ -566,27 +651,25 @@ impl TableOps<Handle> for Table {
         let Some(table) = self.softnpu_table_name() else {
             return Ok(());
         };
+        let table = table.to_string();
         let name = self.type_.to_string();
         let match_data = key.key_to_ir().unwrap();
+        let fields = match_data.fields;
 
         trace!(hdl.log, "entry_del called");
         trace!(hdl.log, "table: {name}");
-        trace!(hdl.log, "match_data:\n{:#?}", match_data);
+        trace!(hdl.log, "match_data: {fields:#?}");
 
-        let keyset_data = keyset_data(match_data.fields, self.type_);
+        let keyset_data = keyset_data(fields, self.type_);
 
         trace!(hdl.log, "sending request to softnpu");
-        trace!(hdl.log, "table: {name}");
-        trace!(hdl.log, "keyset_data:\n{:#?}", keyset_data);
+        trace!(hdl.log, "table: {table}");
+        trace!(hdl.log, "keyset_data:\n{keyset_data:#?}");
 
-        let msg = ManagementRequest::TableRemove(TableRemove {
-            keyset_data,
-            table: table.to_string(),
-        });
+        let msg =
+            ManagementRequest::TableRemove(TableRemove { keyset_data, table });
 
-        crate::softnpu::mgmt::write(msg, &hdl.mgmt_config);
-
-        Ok(())
+        crate::softnpu::mgmt::write(msg, &hdl.mgmt_config)
     }
 
     fn get_entries<M: MatchParse, A: ActionParse>(
@@ -594,7 +677,7 @@ impl TableOps<Handle> for Table {
         _hdl: &Handle,
         _from_hardware: bool,
     ) -> AsicResult<Vec<(M, A)>> {
-        Err(aal::AsicError::OperationUnsupported)
+        Err(AsicError::OperationUnsupported)
     }
 
     fn get_counters<M: MatchParse>(
@@ -606,8 +689,147 @@ impl TableOps<Handle> for Table {
     }
 }
 
+/// Extract the `forward_to_sled` action parameters shared by unicast and
+/// multicast NAT/attached-subnet actions.
+///
+/// Returns the sidecar-lite action name and serialized parameter bytes.
+fn forward_to_sled_params(
+    hdl: &Handle,
+    name: &str,
+    action_data: aal::ActionData,
+) -> AsicResult<(&'static str, Vec<u8>)> {
+    for arg in &action_data.args {
+        if !matches!(arg.name.as_str(), "target" | "vni" | "inner_mac") {
+            error!(hdl.log, "unknown argument: {} in {name}", arg.name);
+            return Err(AsicError::InvalidArg(format!(
+                "{name}: unknown argument {}",
+                arg.name
+            )));
+        }
+    }
+
+    let target = arg_ptr(hdl, &action_data, name, "target")?;
+    let vni = arg_u64(hdl, &action_data, name, "vni")?;
+    let mac = arg_u64(hdl, &action_data, name, "inner_mac")?;
+
+    let Some(start) = target.len().checked_sub(16) else {
+        return Err(AsicError::InvalidArg(format!(
+            "{name}: target is {} bytes, expected at least 16",
+            target.len()
+        )));
+    };
+
+    let mut params = Vec::new();
+    let mut target_bytes = target[start..].to_vec();
+    target_bytes.reverse();
+    params.extend_from_slice(&target_bytes);
+    params.extend_from_slice(&vni.to_le_bytes()[0..3]);
+    params.extend_from_slice(&mac.to_le_bytes()[0..6]);
+    Ok(("forward_to_sled", params))
+}
+
+fn find_arg<'a>(
+    action_data: &'a aal::ActionData,
+    action: &str,
+    arg_name: &str,
+) -> AsicResult<&'a ValueTypes> {
+    action_data
+        .args
+        .iter()
+        .find(|arg| arg.name == arg_name)
+        .map(|arg| &arg.value)
+        .ok_or_else(|| {
+            AsicError::InvalidArg(format!(
+                "{action}: missing argument {arg_name}"
+            ))
+        })
+}
+
+fn arg_u64(
+    hdl: &Handle,
+    action_data: &aal::ActionData,
+    action: &str,
+    arg_name: &str,
+) -> AsicResult<u64> {
+    match find_arg(action_data, action, arg_name)? {
+        ValueTypes::U64(v) => Ok(*v),
+        ValueTypes::Ptr(_) => {
+            error!(hdl.log, "expected ValueType::U64, received ValueType::Ptr");
+            Err(AsicError::InvalidArg(format!(
+                "{action}: {arg_name} expects ValueType::U64"
+            )))
+        }
+    }
+}
+
+fn arg_u16(
+    hdl: &Handle,
+    action_data: &aal::ActionData,
+    action: &str,
+    arg_name: &str,
+) -> AsicResult<u16> {
+    let v = arg_u64(hdl, action_data, action, arg_name)?;
+    u16::try_from(v).map_err(|_| {
+        AsicError::InvalidArg(format!("{action}: {arg_name} {v} exceeds u16"))
+    })
+}
+
+fn arg_ptr<'a>(
+    hdl: &Handle,
+    action_data: &'a aal::ActionData,
+    action: &str,
+    arg_name: &str,
+) -> AsicResult<&'a [u8]> {
+    match find_arg(action_data, action, arg_name)? {
+        ValueTypes::Ptr(v) => Ok(v.as_slice()),
+        ValueTypes::U64(_) => {
+            error!(hdl.log, "expected ValueType::Ptr, received ValueType::U64");
+            Err(AsicError::InvalidArg(format!(
+                "{action}: {arg_name} expects ValueType::Ptr"
+            )))
+        }
+    }
+}
+
+/// Pack the low 4 chunks (ports 0-127) of dpd's 8x32-bit decap port
+/// bitmap into the 16 bytes of sidecar-lite's `bit<128>` `decap_bitmap`
+/// field (in little-endian).
+///
+/// NOTE: The high chunks are always zero on this backend and ports >= 128
+/// are rejected when adding members. Emitting exactly 16 bytes keeps
+/// any following action parameter (the tagged variant's vlan_id) at
+/// the offset sidecar-lite reads it from.
+fn pack_decap_bitmap(args: &aal::ActionData) -> Vec<u8> {
+    let mut chunks = [0u32; 4];
+    for arg in &args.args {
+        if let ValueTypes::U64(v) = &arg.value {
+            match arg.name.as_str() {
+                "ports_0" => chunks[0] = *v as u32,
+                "ports_1" => chunks[1] = *v as u32,
+                "ports_2" => chunks[2] = *v as u32,
+                "ports_3" => chunks[3] = *v as u32,
+                _ => {}
+            }
+        }
+    }
+    chunks.iter().flat_map(|c| c.to_le_bytes()).collect()
+}
+
+fn port_number_param(args: &aal::ActionData) -> AsicResult<u8> {
+    args.args
+        .iter()
+        .find(|arg| arg.name == "port_number")
+        .and_then(|arg| u8::try_from(&arg.value).ok())
+        .ok_or_else(|| {
+            AsicError::InvalidArg(format!(
+                "{}: missing or invalid port_number",
+                args.action
+            ))
+        })
+}
+
 /// Extract keys from `match_data` and ensure that they are
-/// in a data structure with the correct length
+/// in a data structure with the correct length.
 fn keyset_data(match_data: Vec<MatchEntryField>, table: TableType) -> Vec<u8> {
     let mut keyset_data: Vec<u8> = Vec::new();
     for m in match_data {
@@ -622,7 +844,7 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: TableType) -> Vec<u8> {
                         keyset_data.extend_from_slice(&data[..4]);
                     }
                     TableType::NeighborIpv6 => {
-                        // "nexthop_ipv4" => bit<128>
+                        // "nexthop_ipv6" => bit<128>
                         let mut buf = Vec::new();
                         serialize_value_type(&x, &mut buf);
                         buf.reverse();
@@ -655,6 +877,44 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: TableType) -> Vec<u8> {
                         buf.reverse();
                         keyset_data.extend_from_slice(&buf);
                     }
+                    // Multicast replication: hdr.ipv6.dst => bit<128>
+                    TableType::McastIpv6 => {
+                        let mut buf = Vec::new();
+                        serialize_value_type(&x, &mut buf);
+                        buf.reverse();
+                        keyset_data.extend_from_slice(&buf);
+                    }
+                    // Multicast source filter exact keys: inner dst =>
+                    // bit<32> or bit<128>. The LPM src key is handled
+                    // in the LPM branch.
+                    TableType::McastIpv4SrcFilter => {
+                        serialize_value_type(&x, &mut data);
+                        keyset_data.extend_from_slice(&data[..4]);
+                    }
+                    TableType::McastIpv6SrcFilter => {
+                        let mut buf = Vec::new();
+                        serialize_value_type(&x, &mut buf);
+                        buf.reverse();
+                        keyset_data.extend_from_slice(&buf);
+                    }
+                    // Multicast NAT: dst => bit<32> or bit<128>
+                    TableType::NatIngressIpv4Mcast => {
+                        serialize_value_type(&x, &mut data);
+                        keyset_data.extend_from_slice(&data[..4]);
+                    }
+                    TableType::NatIngressIpv6Mcast => {
+                        let mut buf = Vec::new();
+                        serialize_value_type(&x, &mut buf);
+                        buf.reverse();
+                        keyset_data.extend_from_slice(&buf);
+                    }
+                    // Multicast egress tables: port => bit<16>
+                    TableType::McastEgressDecapPorts
+                    | TableType::McastEgressPortMapping
+                    | TableType::PortMacAddressMcast => {
+                        serialize_value_type(&x, &mut data);
+                        keyset_data.extend_from_slice(&data[..2]);
+                    }
                     _ => {
                         serialize_value_type(&x, &mut keyset_data);
                     }
@@ -670,7 +930,13 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: TableType) -> Vec<u8> {
                         serialize_value_type_be(&x.prefix, &mut data);
                         keyset_data.extend_from_slice(&data[data.len() - 4..]);
                         // prefix length for longest prefix match operation
-                        keyset_data.push(x.len as u8)
+                        keyset_data.push(x.len as u8);
+                    }
+                    TableType::McastIpv4SrcFilter => {
+                        // "src_addr" => bit<32> lpm
+                        serialize_value_type_be(&x.prefix, &mut data);
+                        keyset_data.extend_from_slice(&data[data.len() - 4..]);
+                        keyset_data.push(x.len as u8);
                     }
                     _ => {
                         serialize_value_type_be(&x.prefix, &mut keyset_data);
@@ -682,7 +948,7 @@ fn keyset_data(match_data: Vec<MatchEntryField>, table: TableType) -> Vec<u8> {
             MatchEntryValue::Range(x) => {
                 match table {
                     TableType::NatIngressIpv4 | TableType::NatIngressIpv6 => {
-                        // "l4_dst_port" => ingress.nat_id: range =>  bit<16>
+                        // "l4_dst_port" => ingress.nat_id: range => bit<16>
                         let low = &x.low.to_le_bytes();
                         let high = &x.high.to_le_bytes();
                         keyset_data.extend_from_slice(&low[..2]);
@@ -723,5 +989,63 @@ fn serialize_value_type_be(x: &ValueTypes, data: &mut Vec<u8>) {
         ValueTypes::Ptr(v) => {
             data.extend_from_slice(v.as_slice());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_mapping_serializes_for_sidecar_lite() {
+        let fields = vec![MatchEntryField {
+            name: "egress_port".to_string(),
+            value: MatchEntryValue::Value(ValueTypes::U64(0x0102)),
+        }];
+        assert_eq!(
+            keyset_data(fields, TableType::McastEgressPortMapping),
+            vec![0x02, 0x01]
+        );
+
+        let action_data = aal::ActionData {
+            action: "set_port_number".to_string(),
+            args: vec![aal::ActionArg {
+                name: "port_number".to_string(),
+                value: ValueTypes::U64(17),
+            }],
+        };
+        assert_eq!(port_number_param(&action_data).unwrap(), 17);
+
+        let missing = aal::ActionData {
+            action: "set_port_number".to_string(),
+            args: Vec::new(),
+        };
+        assert!(matches!(
+            port_number_param(&missing),
+            Err(AsicError::InvalidArg(_))
+        ));
+    }
+
+    #[test]
+    fn mcast_nat_keys_serialize_for_sidecar_lite() {
+        let v4 = vec![MatchEntryField {
+            name: "dst_addr".to_string(),
+            value: MatchEntryValue::Value(ValueTypes::U64(0xe000_0101)),
+        }];
+        assert_eq!(
+            keyset_data(v4, TableType::NatIngressIpv4Mcast),
+            vec![0x01, 0x01, 0x00, 0xe0]
+        );
+
+        let addr: std::net::Ipv6Addr = "ff0e::1:1010".parse().unwrap();
+        let v6 = vec![MatchEntryField {
+            name: "dst_addr".to_string(),
+            value: MatchEntryValue::Value(ValueTypes::Ptr(
+                addr.octets().to_vec(),
+            )),
+        }];
+        let mut expected = addr.octets().to_vec();
+        expected.reverse();
+        assert_eq!(keyset_data(v6, TableType::NatIngressIpv6Mcast), expected);
     }
 }

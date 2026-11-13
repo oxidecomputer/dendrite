@@ -7543,6 +7543,98 @@ async fn test_source_filter_update_to_any() -> TestResult {
         "After update with Any, should have only 1 entry (the /0)"
     );
 
+    // Narrow to specific sources for (*,G) -> (S,G) transitions, which is
+    // exercised below with `sources: None`.
+    let narrow_entry = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
+        sources: Some(vec![
+            types::IpSrc::Exact("192.168.1.1".parse().unwrap()),
+            types::IpSrc::Exact("192.168.1.2".parse().unwrap()),
+        ]),
+    };
+
+    let narrowed = switch
+        .client
+        .multicast_group_update_external(
+            &external_group_ip.try_into().unwrap(),
+            &TEST_TAG,
+            &narrow_entry,
+        )
+        .await
+        .expect("Should narrow external group sources")
+        .into_inner();
+
+    assert_eq!(
+        narrowed.sources.as_deref().map(<[_]>::len),
+        Some(2),
+        "Narrowing should restore 2 specific sources"
+    );
+
+    let after_narrowed_table = switch
+        .client
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
+        .await
+        .expect("Should dump table after narrowing");
+
+    assert_eq!(
+        after_narrowed_table.entries.len(),
+        baseline_count + 2,
+        "Narrowing should restore 2 specific entries"
+    );
+
+    let keep_entry = types::MulticastGroupUpdateExternalEntry {
+        internal_forwarding: types::ExternalInternalForwarding {
+            nat_target: nat_target.clone(),
+        },
+        external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
+        sources: None,
+    };
+
+    let kept = switch
+        .client
+        .multicast_group_update_external(
+            &external_group_ip.try_into().unwrap(),
+            &TEST_TAG,
+            &keep_entry,
+        )
+        .await
+        .expect("Should update external group with sources: None")
+        .into_inner();
+
+    assert_eq!(
+        kept.sources, narrowed.sources,
+        "sources: None must preserve the current filter"
+    );
+
+    // Round-trip via GET to confirm the stored representation matches.
+    let fetched = switch
+        .client
+        .multicast_group_get(&external_group_ip)
+        .await
+        .expect("Should get external group")
+        .into_inner();
+
+    assert_eq!(
+        get_sources(&fetched),
+        kept.sources,
+        "GET after sources: None must agree with the update response"
+    );
+
+    let after_keep_table = switch
+        .client
+        .table_dump(SOURCE_FILTER_IPV4_TABLE, false)
+        .await
+        .expect("Should dump table after sources: None");
+
+    assert_eq!(
+        after_keep_table.entries.len(),
+        baseline_count + 2,
+        "sources: None must keep the 2 specific entries"
+    );
+
     // Cleanup in correct order: external first, then internal
     cleanup_test_group(switch, external_group_ip, &TEST_TAG).await.unwrap();
     cleanup_test_group(switch, internal_group_ip, &TEST_TAG).await

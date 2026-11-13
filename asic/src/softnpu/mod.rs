@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use slog::{Logger, o};
+use slog::{Logger, debug, o};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -25,8 +25,9 @@ use common::ports::{
     PortFec, PortId, PortMedia, PortPrbsMode, PortSpeed, TxEq,
 };
 
-use softnpu_lib::ManagementRequest;
+use softnpu_lib::{ManagementRequest, ManagementResponse};
 
+pub mod mcast;
 pub mod mgmt;
 pub mod table;
 
@@ -102,8 +103,8 @@ pub struct Handle {
     log: Logger,
     ports: Mutex<HashMap<PortHdl, Port>>,
     pub mgmt_config: mgmt::ManagementConfig,
-
     update_tx: Mutex<Option<mpsc::UnboundedSender<PortUpdate>>>,
+    mc_data: Mutex<mcast::McGroupData>,
 }
 
 impl Handle {
@@ -129,6 +130,7 @@ impl Handle {
             ports: Mutex::new(HashMap::new()),
             mgmt_config,
             update_tx: Mutex::new(None),
+            mc_data: Mutex::new(mcast::McGroupData::default()),
         })
     }
 
@@ -146,51 +148,74 @@ impl Handle {
 
 impl AsicMulticastOps for Handle {
     fn mc_domains(&self) -> Vec<u16> {
-        let len = self.ports.lock().unwrap().len() as u16;
-        (0..len).collect()
+        let mc_data = self.mc_data.lock().unwrap();
+        mc_data.domains()
     }
 
-    fn mc_port_count(&self, _group_id: u16) -> AsicResult<usize> {
-        Ok(self.ports.lock().unwrap().len())
+    fn mc_port_count(&self, group_id: u16) -> AsicResult<usize> {
+        let mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_port_count(group_id)
     }
 
-    fn mc_port_list(&self, _group_id: u16) -> AsicResult<Vec<u16>> {
-        // TODO: Read members from replication table bitmaps via DumpRequest.
-        Err(AsicError::OperationUnsupported)
+    fn mc_port_list(&self, group_id: u16) -> AsicResult<Vec<u16>> {
+        self.mc_data.lock().unwrap().domain_port_list(group_id)
     }
 
     fn mc_port_add(
         &self,
-        _group_id: u16,
-        _port: u16,
-        _rid: u16,
-        _level1_excl_id: u16,
+        group_id: u16,
+        port: u16,
+        rid: u16,
+        level1_excl_id: u16,
     ) -> AsicResult<()> {
-        Err(AsicError::OperationUnsupported)
+        slog::info!(
+            self.log,
+            "adding port {port} to multicast group {group_id}"
+        );
+        self.mc_data.lock().unwrap().domain_port_add(
+            group_id,
+            port,
+            rid,
+            level1_excl_id,
+        )
     }
 
-    fn mc_port_remove(&self, _group_id: u16, _port: u16) -> AsicResult<()> {
-        Ok(())
+    fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
+        slog::info!(
+            self.log,
+            "removing port {port} from multicast group {group_id}"
+        );
+        self.mc_data.lock().unwrap().domain_port_remove(group_id, port)
     }
 
-    fn mc_group_create(&self, _group_id: u16) -> AsicResult<()> {
-        Err(AsicError::OperationUnsupported)
+    fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
+        slog::info!(self.log, "creating multicast group {group_id}");
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_create(group_id)
     }
 
-    fn mc_group_destroy(&self, _group_id: u16) -> AsicResult<()> {
-        Ok(())
+    fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()> {
+        slog::info!(self.log, "destroying multicast group {group_id}");
+        let mut mc_data = self.mc_data.lock().unwrap();
+        mc_data.domain_destroy(group_id)
     }
 
     fn mc_groups_count(&self) -> AsicResult<usize> {
-        Ok(self.ports.lock().unwrap().len())
+        let mc_data = self.mc_data.lock().unwrap();
+        Ok(mc_data.domains_count())
     }
 
     fn mc_set_max_nodes(
         &self,
-        _max_nodes: u32,
-        _max_link_aggregated_nodes: u32,
+        max_nodes: u32,
+        max_link_aggregated_nodes: u32,
     ) -> AsicResult<()> {
-        Ok(())
+        slog::info!(
+            self.log,
+            "setting max nodes to {max_nodes}, \
+             max link aggregated nodes to {max_link_aggregated_nodes}"
+        );
+        self.mc_data.lock().unwrap().set_max_nodes(max_nodes)
     }
 }
 
@@ -246,7 +271,7 @@ impl AsicOps for Handle {
         let asic_port_id = self.port_to_asic_id(port_hdl)?;
         let tx = self.update_tx.lock().unwrap();
         if let Some(tx) = tx.as_ref() {
-            // When a port is enabled in softnpu, it automatically comes online.
+            // When a port is enabled in SoftNPU, it automatically comes online.
             // When switching between enabled and disabled, we send the main body
             // of dpd the PortUpdate events we would expect to see on real hardware.
             let present =
@@ -272,7 +297,7 @@ impl AsicOps for Handle {
                 }
             }
         } else {
-            slog::debug!(self.log, "no PortUpdate handler registered");
+            debug!(self.log, "no PortUpdate handler registered");
         }
         Ok(())
     }
@@ -361,13 +386,28 @@ impl AsicOps for Handle {
     }
 
     fn get_connectors(&self) -> Vec<Connector> {
-        let msg = ManagementRequest::RadixRequest;
-        crate::softnpu::mgmt::write(msg, &self.mgmt_config);
         let response = crate::softnpu::mgmt::read(
             ManagementRequest::RadixRequest,
             &self.mgmt_config,
         );
-        let radix: u16 = response.trim().parse().unwrap();
+        // NOTE: propolis responds over the UART in ASCII, due to a guest tty
+        // without a raw mode.
+        //
+        // <https://github.com/oxidecomputer/propolis/blob/77848924fedc3e1439efb055f5459714c2bb322c/lib/propolis/src/hw/virtio/softnpu.rs#L778-L792>
+        //
+        // NOTE: standalone SoftNPU responds over UDS with a JSON
+        // `ManagementResponse`.
+        //
+        // <https://github.com/oxidecomputer/softnpu/blob/618a149ff169ed8a9c1620a3b1a2410f5cf5d53b/lib/src/lib.rs#L82-L85>
+        let radix: u16 = match &self.mgmt_config {
+            mgmt::ManagementConfig::UART => response.trim().parse().unwrap(),
+            mgmt::ManagementConfig::UDS { .. } => {
+                match serde_json::from_str(response.trim()).unwrap() {
+                    ManagementResponse::RadixResponse(radix) => radix,
+                    other => panic!("unexpected radix response: {other:?}"),
+                }
+            }
+        };
 
         let mut result = vec![Connector::CPU];
         for i in 1..radix + 1 {

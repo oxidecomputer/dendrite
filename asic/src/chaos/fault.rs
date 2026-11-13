@@ -46,31 +46,32 @@ pub(super) struct Fault {
     calls: u64,
     /// The call numbers that fail.
     range: CallRange,
+    /// The error returned by a failing execution.
+    err: fn(String) -> AsicError,
 }
 
 impl Fault {
     pub(super) fn new(range: CallRange) -> Self {
-        Self { calls: 0, range }
+        Self { calls: 0, range, err: AsicError::Synthetic }
     }
 }
 
 impl Handle {
     pub(super) fn check_mc_fault(&self, op: McOp) -> AsicResult<()> {
-        if self.config.mc_config.unsupported.contains(&op) {
-            return Err(AsicError::OperationUnsupported);
-        }
-
         let failed_call = {
             let mut faults = self.mc_faults.lock().unwrap();
             faults.get_mut(&op).and_then(|fault| {
                 fault.calls += 1;
-                fault.range.contains(fault.calls).then_some(fault.calls)
+                fault
+                    .range
+                    .contains(fault.calls)
+                    .then_some((fault.calls, fault.err))
             })
         };
 
-        if let Some(call) = failed_call {
-            slog::error!(self.log, "chaos error: {} (call {})", op, call);
-            return Err(AsicError::Synthetic(op.to_string()));
+        if let Some((call, err)) = failed_call {
+            slog::error!(self.log, "chaos error: {op} (call {call})");
+            return Err(err(op.to_string()));
         }
 
         self.config.mc_config.chaos(op).unfurled(&self.log, &op.to_string())
@@ -93,20 +94,20 @@ impl Handle {
             let mut faults = self.table_faults.lock().unwrap();
             faults.get_mut(&(table, op)).and_then(|fault| {
                 fault.calls += 1;
-                fault.range.contains(fault.calls).then_some(fault.calls)
+                fault
+                    .range
+                    .contains(fault.calls)
+                    .then_some((fault.calls, fault.err))
             })
         };
 
         match failed_call {
-            Some(call) => {
+            Some((call, err)) => {
                 slog::error!(
                     self.log,
-                    "chaos table error: {} on {} (call {})",
-                    op,
-                    table,
-                    call
+                    "chaos table error: {op} on {table} (call {call})"
                 );
-                Err(AsicError::Synthetic(op.to_string()))
+                Err(err(op.to_string()))
             }
             None => Ok(()),
         }
@@ -117,11 +118,10 @@ impl Handle {
         table: TableType,
         op: TableOp,
         range: CallRange,
+        error: fn(String) -> AsicError,
     ) {
-        self.table_faults
-            .lock()
-            .unwrap()
-            .insert((table, op), Fault::new(range));
+        let fault = Fault { err: error, ..Fault::new(range) };
+        self.table_faults.lock().unwrap().insert((table, op), fault);
     }
 
     pub fn clear_table_faults(&self, table: TableType, op: TableOp) {
