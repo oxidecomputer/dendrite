@@ -126,7 +126,6 @@ parser IngressParser(
 		ipv4_checksum.add(hdr.ipv4);
 		meta.orig_src_ipv4 = hdr.ipv4.src_addr;
 		meta.orig_dst_ipv4 = hdr.ipv4.dst_addr;
-		meta.ipv4_checksum_err = ipv4_checksum.verify();
 		meta.pkt_type = meta.pkt_type | PKT_IPV4;
 
 		// This subtracts most of the pseudo header from the checksum.
@@ -141,16 +140,11 @@ parser IngressParser(
 			hdr.ipv4.protocol,
 		});
 
-		transition select(hdr.ipv4.dst_addr[31:28]) {
-			4w0xe: validate_ipv4_mcast1_2;
-			default: validate_ttl;
-		}
-	}
-
-	state validate_ttl {
-		transition select(hdr.ipv4.ttl) {
-			8w0: invalidate_ttl;
-			default: goto_proto_ipv4;
+		transition select(hdr.ipv4.ttl, hdr.ipv4.dst_addr[31:28]) {
+			(8w0, _): invalidate_ttl;
+			(8w1, 4w0xe): invalidate_ttl;
+			(_, 4w0xe): validate_ipv4_mcast1_2;
+			default: eval_ipv4_opts;
 		}
 	}
 
@@ -196,15 +190,7 @@ parser IngressParser(
 
 	state set_mcast_ipv4 {
 		meta.is_mcast = true;
-		transition validate_mcast_ttl;
-	}
-
-	state validate_mcast_ttl {
-		transition select(hdr.ipv4.ttl) {
-			8w0: invalidate_ttl;
-			8w1: invalidate_ttl;
-			default: goto_proto_ipv4;
-		}
+		transition eval_ipv4_opts;
 	}
 
 	state invalidate_ttl {
@@ -224,7 +210,30 @@ parser IngressParser(
 		transition accept;
 	}
 
+	state eval_ipv4_opts {
+		transition select(hdr.ipv4.ihl) {
+			4w0 .. (IPV4_IHL_MIN - 1): invalidate_ihl;
+			IPV4_IHL_MIN: goto_proto_ipv4;
+			default: extract_ipv4_opts;
+		}
+	}
+
+	state invalidate_ihl {
+		meta.drop_reason = DROP_IPV4_IHL_INVALID;
+		meta.dropped = true;
+		transition accept;
+	}
+
+	state extract_ipv4_opts {
+		pkt.extract(hdr.ipv4_opts,
+			(bit<32>)(hdr.ipv4.ihl |-| IPV4_IHL_MIN) * 32);
+		ipv4_checksum.add(hdr.ipv4_opts);
+
+		transition goto_proto_ipv4;
+	}
+
 	state goto_proto_ipv4 {
+		meta.ipv4_checksum_err = ipv4_checksum.verify();
 		transition select(hdr.ipv4.protocol) {
 			IPPROTO_ICMP: parse_icmp;
 			IPPROTO_TCP: parse_tcp;
@@ -320,7 +329,7 @@ parser IngressParser(
 		transition select(hdr.ipv6.next_hdr) {
 			IPPROTO_ICMPV6: parse_icmp6;
 			IPPROTO_TCP: parse_tcp;
-			IPPROTO_UDP: parse_udp;
+			IPPROTO_UDP: parse_udp6;
 			IPPROTO_SCTP: drop_sctp;
 			default: accept;
 		}
@@ -387,7 +396,21 @@ parser IngressParser(
 		transition accept;
 	}
 
+	// IPv4 parser for UDP. Oxide Geneve is only ever carried
+	// in IPv6, so we can stop parsing after the L4 header in IPv4.
 	state parse_udp {
+		pkt.extract(hdr.udp);
+		meta.pkt_type = meta.pkt_type | PKT_UDP;
+		nat_checksum.subtract(hdr.udp);
+		nat_checksum.subtract_all_and_deposit(meta.body_checksum);
+
+		meta.l4_src_port = hdr.udp.src_port;
+		meta.l4_dst_port = hdr.udp.dst_port;
+
+		transition accept;
+	}
+
+	state parse_udp6 {
 		pkt.extract(hdr.udp);
 		meta.pkt_type = meta.pkt_type | PKT_UDP;
 		nat_checksum.subtract(hdr.udp);
@@ -520,6 +543,20 @@ parser IngressParser(
 
 	state parse_inner_ipv4 {
 		pkt.extract(hdr.inner_ipv4);
+		transition select(hdr.inner_ipv4.ihl) {
+			4w0 .. (IPV4_IHL_MIN - 1): accept;
+			IPV4_IHL_MIN: goto_inner_proto_ipv4;
+			default: extract_inner_ipv4_opts;
+		}
+	}
+
+	state extract_inner_ipv4_opts {
+		pkt.extract(hdr.inner_ipv4_opts,
+			(bit<32>)(hdr.inner_ipv4.ihl |-| IPV4_IHL_MIN) * 32);
+		transition goto_inner_proto_ipv4;
+	}
+
+	state goto_inner_proto_ipv4 {
 		transition select(hdr.inner_ipv4.protocol) {
 			IPPROTO_TCP: parse_inner_tcp;
 			IPPROTO_UDP: parse_inner_udp;
@@ -588,6 +625,8 @@ parser EgressParser(
 		meta.vlan_id = 0;
 		meta.port_number = 0;
 
+		meta.inner_hc = 0;
+		meta.ttl_checksum_const= 0;
 
 		transition parse_bridge_hdr;
 	}
@@ -623,13 +662,22 @@ parser EgressParser(
 
 	state parse_ipv4 {
 		pkt.extract(hdr.ipv4);
-
-		transition select(hdr.ipv4.protocol) {
-			IPPROTO_ICMP: parse_icmp;
-			IPPROTO_TCP: parse_tcp;
-			IPPROTO_UDP: parse_udp;
+		transition select(hdr.ipv4.ihl) {
+			(IPV4_IHL_MIN + 1) .. IPV4_IHL_MAX: extract_ipv4_opts;
 			default: accept;
 		}
+	}
+
+	state extract_ipv4_opts {
+		// We have no real reason to parse this. However, as of
+		// writing, NOT parsing this seems to use much more PHV
+		// and causes a compilation failure.
+		// It's worthwhile periodically attempting to remove this
+		// in case some future compiled state treats less work as
+		// a resource improvement.
+		pkt.extract(hdr.ipv4_opts,
+			(bit<32>)(hdr.ipv4.ihl |-| IPV4_IHL_MIN) * 32);
+		transition accept;
 	}
 
 	state parse_ipv6 {
@@ -640,12 +688,6 @@ parser EgressParser(
 			IPPROTO_UDP: parse_udp;
 			default: accept;
 		}
-	}
-
-	state parse_icmp {
-		pkt.extract(hdr.icmp);
-
-		transition accept;
 	}
 
 	state parse_tcp {
@@ -755,29 +797,11 @@ parser EgressParser(
 
 	state parse_inner_ipv4 {
 		pkt.extract(hdr.inner_ipv4);
-		transition select(hdr.inner_ipv4.protocol) {
-			IPPROTO_TCP: parse_inner_tcp;
-			IPPROTO_UDP: parse_inner_udp;
-			default: accept;
-		}
+		transition accept;
 	}
 
 	state parse_inner_ipv6 {
 		pkt.extract(hdr.inner_ipv6);
-		transition select(hdr.inner_ipv6.next_hdr) {
-			IPPROTO_TCP: parse_inner_tcp;
-			IPPROTO_UDP: parse_inner_udp;
-			default: accept;
-		}
-	}
-
-	state parse_inner_tcp {
-		pkt.extract(hdr.inner_tcp);
-		transition accept;
-	}
-
-	state parse_inner_udp {
-		pkt.extract(hdr.inner_udp);
 		transition accept;
 	}
 }
