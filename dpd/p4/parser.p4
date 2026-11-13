@@ -58,6 +58,7 @@ parser IngressParser(
 		meta.bridge_hdr.ingress_port = ig_intr_md.ingress_port;
 		meta.bridge_hdr.nat_egress_hit = false;
 		meta.bridge_hdr.is_link_local_mcastv6 = false;
+		meta.bridge_hdr.is_mcast_from_userspace = false;
 		meta.bridge_hdr.reserved = 0;
 
 		transition port_metadata;
@@ -89,11 +90,92 @@ parser IngressParser(
 
 		meta.pkt_type = meta.pkt_type | PKT_SIDECAR;
 		transition select(hdr.sidecar.sc_ether_type) {
-			ETHERTYPE_VLAN: parse_vlan;
-			ETHERTYPE_IPV4: parse_ipv4;
-			ETHERTYPE_IPV6: parse_ipv6;
+			ETHERTYPE_VLAN: parse_sidecar_vlan;
+			ETHERTYPE_IPV4: parse_sidecar_ipv4;
+			ETHERTYPE_IPV6: parse_sidecar_ipv6;
 			ETHERTYPE_ARP: parse_arp;
 			default: accept;
+		}
+	}
+
+	state parse_sidecar_vlan {
+		pkt.extract(hdr.vlan);
+
+		meta.pkt_type = meta.pkt_type | PKT_VLAN;
+		transition select(hdr.vlan.ether_type) {
+			ETHERTYPE_IPV4: parse_sidecar_ipv4;
+			ETHERTYPE_IPV6: parse_sidecar_ipv6;
+			ETHERTYPE_ARP: parse_arp;
+			default: accept;
+		}
+	}
+
+	state parse_sidecar_ipv4 {
+		pkt.extract(hdr.ipv4);
+		ipv4_checksum.add(hdr.ipv4);
+		meta.orig_src_ipv4 = hdr.ipv4.src_addr;
+		meta.orig_dst_ipv4 = hdr.ipv4.dst_addr;
+		meta.ipv4_checksum_err = ipv4_checksum.verify();
+		meta.pkt_type = meta.pkt_type | PKT_IPV4;
+
+		nat_checksum.subtract({
+			hdr.ipv4.src_addr,
+			hdr.ipv4.dst_addr,
+			8w0,
+			hdr.ipv4.protocol,
+		});
+
+		transition select(hdr.ipv4.dst_addr[31:28]) {
+			4w0xe: set_sidecar_mcast_ipv4;
+			default: goto_proto_ipv4;
+		}
+	}
+
+	// Multicast encapped with a sidecar header is expected from the switch
+	// zone (the sender here), and `Filter` drops it from any other port. The
+	// TTL 1 drop applies only to forwarded multicast traffic
+	// (RFC 1812 §5.3.1). TTL 0 is still dropped, as no node may originate or
+	// forward it (RFC 1812 §4.2.2.9).
+	state set_sidecar_mcast_ipv4 {
+		meta.is_mcast = true;
+		transition select(hdr.ipv4.ttl) {
+			8w0: invalidate_ttl;
+			default: goto_proto_ipv4;
+		}
+	}
+
+	state parse_sidecar_ipv6 {
+		pkt.extract(hdr.ipv6);
+		meta.pkt_type = meta.pkt_type | PKT_IPV6;
+
+		nat_checksum.subtract({
+			hdr.ipv6.src_addr,
+			hdr.ipv6.dst_addr,
+			8w0,
+			hdr.ipv6.next_hdr,
+			hdr.ipv6.payload_len
+		});
+
+		transition select(hdr.ipv6.dst_addr[127:112]) {
+			IPV6_INTERFACE_LOCAL_16: drop_interface_local_mcast;
+			IPV6_LINK_LOCAL_16: set_link_local_mcast;
+			default: check_sidecar_ipv6_mcast;
+		}
+	}
+
+	state check_sidecar_ipv6_mcast {
+		transition select(hdr.ipv6.dst_addr[127:120]) {
+			8w0xff: set_sidecar_mcast_ipv6;
+			default: goto_proto_ipv6;
+		}
+	}
+
+	// The same exemption as `set_sidecar_mcast_ipv4` for a hop limit 1.
+	state set_sidecar_mcast_ipv6 {
+		meta.is_mcast = true;
+		transition select(hdr.ipv6.hop_limit) {
+			8w0: invalidate_hop_limit;
+			default: goto_proto_ipv6;
 		}
 	}
 
