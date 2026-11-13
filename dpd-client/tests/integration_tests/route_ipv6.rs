@@ -203,8 +203,14 @@ async fn test_deleted_unicast_impl(switch: &Switch) -> TestResult {
     common::set_icmp6_unreachable(switch, &mut to_recv, ingress);
     let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     assert!(
-        one_counted_test(switch, send, Some(expected), "ipv6_unrouteable")
-            .await?
+        one_counted_test(
+            switch,
+            send,
+            Some(expected),
+            "ipv6_unrouteable",
+            None,
+        )
+        .await?
     );
 
     Ok(())
@@ -286,8 +292,14 @@ async fn test_unrouteable() -> TestResult {
     common::set_icmp6_unreachable(switch, &mut to_recv, ingress);
     let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
     assert!(
-        one_counted_test(switch, send, Some(expected), "ipv6_unrouteable")
-            .await?
+        one_counted_test(
+            switch,
+            send,
+            Some(expected),
+            "ipv6_unrouteable",
+            None,
+        )
+        .await?
     );
 
     Ok(())
