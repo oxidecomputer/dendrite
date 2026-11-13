@@ -90,6 +90,7 @@ openapiv3 = "2.2.0"
 openssl = "0.10"
 oxide-tokio-rt = "0.1.2"
 parking_lot = "0.12"
+phf = { version = "0.12", features = ["macros"] }
 predicates = "3.1.4"
 pretty_assertions = "1.4"
 progenitor = "0.15.1"
