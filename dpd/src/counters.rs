@@ -199,6 +199,7 @@ enum DropReason {
     GeneveOptionMalformed,
     GeneveOptionUnknown,
     DropSctp,
+    MulticastTtlExceeded,
 }
 
 impl TryFrom<u8> for DropReason {
@@ -234,6 +235,7 @@ impl TryFrom<u8> for DropReason {
             25 => Ok(DropReason::GeneveOptionMalformed),
             26 => Ok(DropReason::GeneveOptionUnknown),
             27 => Ok(DropReason::DropSctp),
+            28 => Ok(DropReason::MulticastTtlExceeded),
             x => Err(format!("Unrecognized drop reason: {x}")),
         }
     }
@@ -263,7 +265,7 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
         DropReason::Ipv4Unrouteable => "ipv4_unrouteable".to_string(),
         DropReason::Ipv6Unrouteable => "ipv6_unrouteable".to_string(),
         DropReason::NatIngressMiss => "nat_ingress_miss".to_string(),
-        DropReason::NatEgressBlocked => "nat_engress_blocked".to_string(),
+        DropReason::NatEgressBlocked => "nat_egress_blocked".to_string(),
         DropReason::MulticastNoGroup => "multicast_no_group".to_string(),
         DropReason::MulticastInvalidMac => "multicast_invalid_mac".to_string(),
         DropReason::MulticastCpuCopy => "multicast_cpu_copy".to_string(),
@@ -281,6 +283,9 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
         }
         DropReason::GeneveOptionUnknown => "geneve_option_unknown".to_string(),
         DropReason::DropSctp => "drop_sctp".to_string(),
+        DropReason::MulticastTtlExceeded => {
+            "multicast_ttl_exceeded".to_string()
+        }
     };
     Ok(Some(label))
 }
