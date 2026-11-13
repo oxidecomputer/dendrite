@@ -4,6 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use std::borrow::Cow;
 use std::fmt::Write;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::AtomicBool;
@@ -168,9 +169,17 @@ impl TestPacket {
             println!("port: {}: {:?}", self.port, self.packet);
         }
         if verbosity & SHOW_HEX != 0 {
-            let data = self.packet.deparse().unwrap();
-            dump_hex(&data);
+            let data = self.deconstruct_pkt();
+            dump_hex(data.as_ref());
         }
+    }
+
+    /// Returns the deparsed bytes of the contained packet if possible.
+    /// Otherwise, just returns the body bytes.
+    fn deconstruct_pkt(&self) -> Cow<'_, [u8]> {
+        self.packet.deparse().map(|pkt| pkt.to_vec().into()).unwrap_or_else(
+            |_| Cow::Borrowed(self.packet.body.as_deref().unwrap_or(&[])),
+        )
     }
 }
 
@@ -579,7 +588,7 @@ impl Switch {
         if phys_port == NO_PORT {
             None
         } else if let Some(port) = &self.ports[idx] {
-            Some((port.port_id.clone(), port.link_id.clone()))
+            Some((port.port_id.clone(), port.link_id))
         } else {
             panic!("request for missing port: {phys_port}");
         }
@@ -607,7 +616,7 @@ impl Switch {
             let Some(p) = p else {
                 unreachable!("Filtered to only Some(_)");
             };
-            (p.port_id.clone(), p.link_id.clone())
+            (p.port_id.clone(), p.link_id)
         })
     }
 
@@ -631,21 +640,21 @@ impl Switch {
         tx: mpsc::Sender<TestPacket>,
     ) {
         loop {
-            match hdl.next_owned() {
+            let raw = match hdl.next_owned() {
                 pcap::Ternary::None => break,
                 pcap::Ternary::Err(e) => {
                     println!("port {port} got pcap error: {e}");
                     break;
                 }
-                pcap::Ternary::Ok(data) => {
-                    let packet = packet::Packet::parse(&data).unwrap();
-                    let copy =
-                        Packet { hdrs: packet.hdrs.clone(), body: packet.body };
+                pcap::Ternary::Ok(d) => d,
+            };
 
-                    let cap = TestPacket { port, packet: Arc::new(copy) };
-                    tx.send(cap).unwrap();
-                }
-            }
+            let packet = packet::Packet::parse(&raw).unwrap_or_else(|e| {
+                eprintln!("Packet failed to parse: {e:?}");
+                Packet { body: Some(raw), ..Default::default() }
+            });
+
+            tx.send(TestPacket { port, packet: Arc::new(packet) }).unwrap();
         }
     }
 
@@ -736,7 +745,11 @@ impl Switch {
         let mut found = Vec::new();
         for (s, sent) in send.iter().enumerate() {
             for (g, got) in captured.iter().enumerate() {
-                if sent == got {
+                // Compare raw bytes to support sending degenerate packets
+                // that might not parse into a normal header.
+                if sent.port == got.port
+                    && sent.deconstruct_pkt() == got.deconstruct_pkt()
+                {
                     found.push(s);
                     captured.remove(g);
                     break;
@@ -1510,6 +1523,29 @@ pub fn tofino_flow_hash(
     digest.update(&dst_port.to_be_bytes());
     digest.update(&src_port.to_be_bytes());
     digest.finalize()
+}
+
+/// It's often convenient to define a basic test harness and then
+/// exercise packet variants through that consistent config.
+/// This defines some common callbacks that may be useful when constructing
+/// test variants.
+///
+/// The test harness should fail if any callbacks return error.
+pub struct PktCallbacks {
+    /// Called on the tx packet before generating the expected response.
+    /// Called immediately before encapsulation if applicable.
+    pub tx_pkt: fn(&mut Packet) -> anyhow::Result<()>,
+
+    /// Called on the (to_send, expect_recv) tuple immediately before
+    /// running the packet test.
+    pub exchanged:
+        fn(&mut Vec<TestPacket>, &mut Vec<TestPacket>) -> anyhow::Result<()>,
+}
+
+impl Default for PktCallbacks {
+    fn default() -> Self {
+        Self { tx_pkt: |_| Ok(()), exchanged: |_, _| Ok(()) }
+    }
 }
 
 pub mod prelude {
