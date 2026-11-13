@@ -136,7 +136,6 @@ pub(crate) struct GroupCreateRollbackContext<'a> {
     underlay_id: MulticastGroupId,
     nat_target: Option<NatTarget>,
     sources: Option<&'a [IpSrc]>,
-    vlan_id: Option<u16>,
 }
 
 impl RollbackOps for GroupCreateRollbackContext<'_> {
@@ -262,7 +261,6 @@ impl<'a> GroupCreateRollbackContext<'a> {
         underlay_id: MulticastGroupId,
         nat_target: NatTarget,
         sources: Option<&'a [IpSrc]>,
-        vlan_id: Option<u16>,
     ) -> Self {
         Self {
             switch,
@@ -271,7 +269,6 @@ impl<'a> GroupCreateRollbackContext<'a> {
             underlay_id,
             nat_target: Some(nat_target),
             sources,
-            vlan_id,
         }
     }
 
@@ -289,7 +286,6 @@ impl<'a> GroupCreateRollbackContext<'a> {
             underlay_id,
             nat_target: None,
             sources: None,
-            vlan_id: None,
         }
     }
 
@@ -429,7 +425,6 @@ impl<'a> GroupCreateRollbackContext<'a> {
                         table::mcast::mcast_nat::del_ipv4_entry(
                             self.switch,
                             ipv4,
-                            self.vlan_id,
                         ),
                     );
                 }
@@ -520,7 +515,6 @@ impl<'a> GroupCreateRollbackContext<'a> {
                         table::mcast::mcast_nat::del_ipv6_entry(
                             self.switch,
                             ipv6,
-                            self.vlan_id,
                         ),
                     );
                 }
@@ -779,8 +773,7 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         }
 
         // Restore NAT settings for external groups (internal groups have no
-        // NAT entries). Both new_tgt and old_tgt are the same original NAT
-        // target since we're restoring to the original state.
+        // NAT entries) by rewriting the entry with the original NAT target.
         if let Some(nat) = nat_target {
             match self.group_ip {
                 IpAddr::V4(ipv4) => {
@@ -791,9 +784,6 @@ impl<'a> GroupUpdateRollbackContext<'a> {
                             self.switch,
                             ipv4,
                             nat,
-                            nat,
-                            self.attempted_vlan_id,
-                            vlan_id,
                         ),
                     );
                 }
@@ -805,9 +795,6 @@ impl<'a> GroupUpdateRollbackContext<'a> {
                             self.switch,
                             ipv6,
                             nat,
-                            nat,
-                            self.attempted_vlan_id,
-                            vlan_id,
                         ),
                     );
                 }
