@@ -44,7 +44,7 @@ fn set_all_taps() -> anyhow::Result<()> {
     self::create_100g_link(port, link).context("link setup failed")?;
 
     cmd::swadm(format!(
-        "link serdes set tx-eq {link} --pre2=-1 --pre1 0 --main 10 --post1=5 --post2 2"
+        "link serdes set tx-eq {link} --pre2=-1 --pre1 0 --main 10 --post1 -5 --post2 2"
     ))?;
 
     cmd::retry(|| {
