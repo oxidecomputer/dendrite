@@ -7,6 +7,7 @@ edition = "2024"
 [dependencies]
 common.workspace = true
 bytes.workspace = true
+heapless.workspace = true
 rand.workspace = true
 schemars.workspace = true
 serde.workspace = true

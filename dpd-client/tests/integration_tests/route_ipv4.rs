@@ -16,6 +16,7 @@ use reqwest::StatusCode;
 use crate::integration_tests::common;
 use crate::integration_tests::common::PktCallbacks;
 use crate::integration_tests::common::prelude::*;
+use crate::integration_tests::counters;
 use crate::integration_tests::counters::one_counted_test;
 use packet::Endpoint;
 use packet::eth::EthQHdr;
@@ -1146,6 +1147,54 @@ async fn test_multipath_mixed_delete() -> TestResult {
         .route_ipv4_get(&cidr)
         .await
         .expect_err("route should be gone after deleting all targets");
+
+    Ok(())
+}
+
+// Send an IPv4 packet with options. It should arrive with options.
+#[ignore]
+#[tokio::test]
+async fn ipv4_options() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+    let mut conf = RouteTest::default();
+
+    conf.modify.tx_pkt = PktCallbacks::add_opts;
+    self::test_route_ipv4_unicast_impl(switch, conf).await?;
+
+    Ok(())
+}
+
+// Send an IPv4 packet with an irrational IHL. It should be dropped
+// with the corresponding counter.
+#[ignore]
+#[tokio::test]
+async fn bad_ihl() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+    let mut conf = RouteTest::default();
+
+    conf.modify.tx_pkt = |to_send| {
+        to_send
+            .hdrs
+            .ipv4_hdr
+            .as_mut()
+            .ok_or_else(|| anyhow!("Expected an IPv4 packet"))?
+            .ipv4_hdr_len = 1;
+        Ok(())
+    };
+    conf.modify.exchanged = PktCallbacks::no_response;
+
+    let prev_ct = switch.get_counter("ipv4_ihl_invalid", None).await?;
+
+    self::test_route_ipv4_unicast_impl(switch, conf).await?;
+
+    counters::check_counter_incremented(
+        switch,
+        "ipv4_ihl_invalid",
+        prev_ct,
+        1,
+        None,
+    )
+    .await?;
 
     Ok(())
 }

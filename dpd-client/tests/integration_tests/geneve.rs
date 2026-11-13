@@ -10,6 +10,8 @@ use packet::Endpoint;
 use packet::Packet;
 use packet::eth;
 use packet::geneve;
+use packet::ipv4::Ipv4Hdr;
+use packet::ipv4::OptBuf;
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
@@ -21,6 +23,19 @@ use crate::integration_tests::common::prelude::*;
 async fn test_geneve() -> TestResult {
     let switch = &*get_switch().await;
     test_geneve_impl(switch, |_| Ok(())).await
+}
+
+// IPv4 optioned packets are also routed.
+#[tokio::test]
+#[ignore]
+async fn inner_ipv4_options_are_routed() -> TestResult {
+    let switch = &*get_switch().await;
+    test_geneve_impl(switch, |pkt| {
+        let garbage = std::iter::once(0xC3u32.to_be_bytes()).cycle().take(3);
+        Ipv4Hdr::set_options(pkt, OptBuf::try_new(garbage).unwrap())?;
+        Ok(())
+    })
+    .await
 }
 
 /// Runs a packet test between VPC peers.
