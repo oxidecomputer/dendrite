@@ -30,6 +30,8 @@ use packet::arp;
 use packet::eth;
 use packet::icmp;
 use packet::ipv4;
+use packet::ipv4::Ipv4Hdr;
+use packet::ipv4::OptBuf;
 use packet::ipv6;
 use packet::sidecar;
 use types::PortId;
@@ -1545,6 +1547,29 @@ pub struct PktCallbacks {
 impl Default for PktCallbacks {
     fn default() -> Self {
         Self { tx_pkt: |_| Ok(()), exchanged: |_, _| Ok(()) }
+    }
+}
+
+impl PktCallbacks {
+    /// Adds some arbitrary IPv4 options data to the packet.
+    pub fn add_opts(pkt: &mut Packet) -> anyhow::Result<()> {
+        let garbage = std::iter::once(())
+            .cycle()
+            .enumerate()
+            .map(|(num, ())| (num as u32).to_be_bytes())
+            .take(7);
+        let opts = OptBuf::try_new(garbage).unwrap();
+        Ipv4Hdr::set_options(pkt, opts)?;
+        Ok(())
+    }
+
+    /// Drain the response vec. The packet should be dropped.
+    pub fn no_response(
+        _sent: &mut Vec<TestPacket>,
+        expected: &mut Vec<TestPacket>,
+    ) -> anyhow::Result<()> {
+        expected.clear();
+        Ok(())
     }
 }
 

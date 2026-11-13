@@ -15,8 +15,8 @@ use crate::ipv6::Ipv6Hdr;
 use crate::lldp::LldpHdr;
 use crate::{Endpoint, Headers, L2Endpoint, MacAddr, Packet, Protocol};
 
-const ETH_HDR_SZ: usize = 14;
-const ETH_8021Q_SZ: usize = 4;
+pub const ETH_HDR_SZ: usize = 14;
+pub const ETH_8021Q_SZ: usize = 4;
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub struct EthQHdr {

@@ -61,6 +61,19 @@ async fn test_service_ipv4_unicast() -> TestResult {
     Ok(())
 }
 
+/// A packet with IPv4 options sent to a switch address arrives properly.
+#[tokio::test]
+#[ignore]
+async fn ipv4_options_reach_service_addr() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+
+    let mut conf = ServiceTest::service_ingress();
+    conf.modify.tx_pkt = PktCallbacks::add_opts;
+
+    self::run_unicast_ipv4_service(switch, conf).await?;
+    Ok(())
+}
+
 /// Runs a unicast IPv4 test from src to dst using the given config.
 async fn run_unicast_ipv4_service(
     switch: &Switch,

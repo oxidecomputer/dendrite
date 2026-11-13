@@ -16,17 +16,22 @@ use ::common::network::Vni;
 use dpd_client::ClientInfo;
 use dpd_client::types;
 use packet::Endpoint;
+use packet::Packet;
 use packet::eth;
 use packet::geneve;
 use packet::icmp;
 use packet::ipv4;
+use packet::ipv4::Ipv4Hdr;
+use packet::ipv4::OptBuf;
 use packet::ipv6;
 use packet::tcp;
 use packet::udp;
+use packet::udp::UdpHdr;
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::PktCallbacks;
 use crate::integration_tests::common::prelude::*;
+use crate::integration_tests::counters;
 
 use futures::TryStreamExt;
 
@@ -717,4 +722,142 @@ async fn test_ingress_ipv6_tcp() -> TestResult {
 async fn test_ingress_ipv6_icmp() -> TestResult {
     let switch = &*get_switch().await;
     test_ingress_ipv6(switch, L4Protocol::Icmp).await
+}
+
+// IPv4 optioned traffic is dropped where decap is required.
+#[tokio::test]
+#[ignore]
+async fn nat_ipv4_options_drop_egress() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+
+    let mut test = NatTest::egress_ipv4();
+    test.uplink_port_registered = true;
+    test.modify.tx_pkt = PktCallbacks::add_opts;
+    test.modify.exchanged = PktCallbacks::no_response;
+
+    let before = switch.get_counter("nat_ipv4_options", None).await?;
+
+    self::test_nat_egress(switch, &test).await?;
+
+    counters::check_counter_incremented(
+        switch,
+        "nat_ipv4_options",
+        before,
+        1,
+        None,
+    )
+    .await?;
+
+    Ok(())
+}
+
+// IPv4 optioned traffic is dropped where encap is required.
+#[tokio::test]
+#[ignore]
+async fn nat_ipv4_options_drop_ingress() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+
+    let mut test = NatTest::ingress_ipv4();
+    test.modify.tx_pkt = PktCallbacks::add_opts;
+    test.modify.exchanged = PktCallbacks::no_response;
+
+    test.create_ipv4_nat(switch).await?;
+
+    let before = switch.get_counter("nat_ipv4_options", None).await?;
+
+    self::test_nat_ingress(switch, &test).await?;
+
+    counters::check_counter_incremented(
+        switch,
+        "nat_ipv4_options",
+        before,
+        1,
+        None,
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// One's complement addition.
+fn ones_sum(left: u16, right: u16) -> u16 {
+    let mut sum = left as u32 + right as u32;
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    sum as u16
+}
+
+/// Constructs an optioned packet whereby an options-oblivious
+/// router would misroute the packet to the wrong NAT range.
+///
+/// Puts a fake L4 header into the options bytes along with
+/// a checksum magic number that will cause both a 20-byte
+/// misparse and a correct IPv4 parser to reach the same checksum.
+fn adversarial_pkt(pkt: &mut Packet) -> anyhow::Result<()> {
+    let udp_hdr = pkt
+        .hdrs
+        .udp_hdr
+        .as_mut()
+        .ok_or_else(|| anyhow!("Expected a UDP packet"))?;
+    let old_dport = udp_hdr.udp_dport;
+    udp_hdr.udp_dport = old_dport.wrapping_add(4096);
+    UdpHdr::update_checksum(pkt);
+
+    let v4 = pkt
+        .hdrs
+        .ipv4_hdr
+        .as_mut()
+        .ok_or_else(|| anyhow!("Expected an IPv4 header"))?;
+    anyhow::ensure!(
+        v4.ipv4_hdr_len == 5,
+        "Packet should not already have options"
+    );
+
+    // Use an RFC 4727 "experimental" option type, and declare
+    // eight bytes worth of options that checksum to zero.
+    let experimental = 0x9E;
+    let len8 = 8;
+
+    // IPv4 checksum is calculated in u16s
+    let cancel =
+        !self::ones_sum(((experimental as u16) << 8) | len8 as u16, old_dport);
+
+    let [port_msb, port_lsb] = old_dport.to_be_bytes();
+    let [cancel_msb, cancel_lsb] = cancel.to_be_bytes();
+    let opts = OptBuf::try_new([
+        [experimental, len8, port_msb, port_lsb],
+        [0, 0, cancel_msb, cancel_lsb],
+    ])
+    .unwrap();
+    Ipv4Hdr::set_options(pkt, opts)?;
+
+    Ok(())
+}
+
+/// Sidecar extracts the correct NAT target from a packet
+/// that might easily be sent to the wrong NAT port.
+#[tokio::test]
+#[ignore]
+async fn nat_drops_adversarial_optioned_packet() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+
+    let mut test = NatTest::ingress_ipv4();
+    test.modify.tx_pkt = self::adversarial_pkt;
+    test.modify.exchanged = PktCallbacks::no_response;
+
+    test.create_ipv4_nat(switch).await?;
+
+    let before = switch.get_counter("nat_ingress_miss", None).await?;
+    self::test_nat_ingress(switch, &test).await?;
+    counters::check_counter_incremented(
+        switch,
+        "nat_ingress_miss",
+        before,
+        1,
+        None,
+    )
+    .await?;
+
+    Ok(())
 }
