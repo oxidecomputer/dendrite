@@ -16,7 +16,7 @@ pub mod arp {
 }
 
 pub mod attached_subnet {
-    pub use crate::v3::attached_subnet::AttachedSubnetEntry;
+    pub use crate::v15::attached_subnet::AttachedSubnetEntry;
 }
 
 pub mod counters {
@@ -67,31 +67,65 @@ pub mod loopback {
 
 pub mod mcast {
     pub use crate::v1::mcast::ExternalForwarding;
-    pub use crate::v1::mcast::InternalForwarding;
     pub use crate::v1::mcast::MulticastGroupId;
     pub use crate::v1::mcast::MulticastGroupIdParam;
     pub use crate::v1::mcast::MulticastGroupIpParam;
 
-    pub use crate::v8::mcast::Error;
+    pub use crate::v8::mcast::MAX_TAG_LENGTH;
     pub use crate::v8::mcast::MulticastGroupTagQuery;
     pub use crate::v8::mcast::MulticastTag;
+    pub use crate::v8::mcast::MulticastTagParseError;
     pub use crate::v8::mcast::MulticastTagPath;
     pub use crate::v8::mcast::MulticastUnderlayGroupIpParam;
+    pub use crate::v8::mcast::UNDERLAY_MULTICAST_SUBNET;
+    pub use crate::v8::mcast::UnderlayMulticastError;
     pub use crate::v8::mcast::UnderlayMulticastIpv6;
+    pub use crate::v8::mcast::UnderlayMulticastParseError;
 
     pub use crate::v14::mcast::Direction;
     pub use crate::v14::mcast::IpSrc;
-    pub use crate::v14::mcast::MulticastGroupCreateExternalEntry;
     pub use crate::v14::mcast::MulticastGroupCreateUnderlayEntry;
-    pub use crate::v14::mcast::MulticastGroupExternalResponse;
     pub use crate::v14::mcast::MulticastGroupMember;
-    pub use crate::v14::mcast::MulticastGroupResponse;
     pub use crate::v14::mcast::MulticastGroupUnderlayResponse;
-    pub use crate::v14::mcast::MulticastGroupUpdateExternalEntry;
     pub use crate::v14::mcast::MulticastGroupUpdateUnderlayEntry;
 
-    pub use crate::impls::mcast::MAX_TAG_LENGTH;
-    pub use crate::impls::mcast::MulticastTagParseError;
+    pub use crate::v15::mcast::AsmMulticastGroupCreate;
+    pub use crate::v15::mcast::EmbeddedIpv4;
+    pub use crate::v15::mcast::ExactSource;
+    pub use crate::v15::mcast::ExternalInternalForwarding;
+    pub use crate::v15::mcast::ExternalInternalForwardingError;
+    pub use crate::v15::mcast::ExternalMulticastIp;
+    pub use crate::v15::mcast::ExternalMulticastIpError;
+    pub use crate::v15::mcast::ExternalNatTarget;
+    pub use crate::v15::mcast::ExternalNatTargetError;
+    pub use crate::v15::mcast::InvalidEmbeddedRp;
+    pub use crate::v15::mcast::InvalidMulticastSource;
+    pub use crate::v15::mcast::MulticastExternalGroupIpParam;
+    pub use crate::v15::mcast::MulticastGroupCreateExternalEntry;
+    pub use crate::v15::mcast::MulticastGroupCreateExternalError;
+    pub use crate::v15::mcast::MulticastGroupExternalResponse;
+    pub use crate::v15::mcast::MulticastGroupResponse;
+    pub use crate::v15::mcast::MulticastGroupUpdateExternalEntry;
+    pub use crate::v15::mcast::MulticastSourceError;
+    pub use crate::v15::mcast::MulticastSourceParseError;
+    pub use crate::v15::mcast::NonEmptyExactSources;
+    pub use crate::v15::mcast::SourceEntry;
+    pub use crate::v15::mcast::SourceFilter;
+    pub use crate::v15::mcast::SsmMulticastGroupCreate;
+    pub use crate::v15::mcast::SsmMulticastIp;
+    pub use crate::v15::mcast::UnicastAddrV4;
+    pub use crate::v15::mcast::UnicastAddrV6;
+
+    pub use crate::v15::mcast::is_ssm_address;
+    pub use crate::v15::mcast::validate_external_multicast_ip;
+    pub use crate::v15::mcast::validate_external_multicast_ipv4;
+    pub use crate::v15::mcast::validate_external_multicast_ipv6;
+
+    // The SSM allocation blocks and the admin-local scope prefix are
+    // unversioned, since RFC 4607 and RFC 4291 fix them for every API version.
+    pub use crate::impls::mcast::IPV4_SSM_SUBNET;
+    pub use crate::impls::mcast::IPV6_ADMIN_SCOPED_MULTICAST_PREFIX;
+    pub use crate::impls::mcast::IPV6_SSM_SUBNETS;
 }
 
 pub mod misc {
@@ -100,8 +134,6 @@ pub mod misc {
 }
 
 pub mod nat {
-    pub use crate::v1::nat::Ipv4Nat;
-    pub use crate::v1::nat::Ipv6Nat;
     pub use crate::v1::nat::NatIpv4Path;
     pub use crate::v1::nat::NatIpv4PortPath;
     pub use crate::v1::nat::NatIpv4RangePath;
@@ -112,15 +144,19 @@ pub mod nat {
 
     pub use crate::v14::nat::NatIpv4Address;
     pub use crate::v14::nat::NatIpv6Address;
+
+    pub use crate::v15::nat::IpNat;
 }
 
 pub mod network {
     pub use crate::v1::network::MacAddr;
     pub use crate::v1::network::MacError;
-    pub use crate::v1::network::NatTarget;
-    pub use crate::v1::network::Vni;
+    pub use crate::v1::network::VniError;
+    pub use crate::v1::network::VniParseError;
 
-    pub use crate::v3::network::InstanceTarget;
+    pub use crate::v15::network::InstanceTarget;
+    pub use crate::v15::network::NatTarget;
+    pub use crate::v15::network::Vni;
 }
 
 pub mod oxstats {

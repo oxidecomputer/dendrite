@@ -7,7 +7,8 @@
 use rand::random;
 use serde::{Deserialize, Serialize};
 use slog::Logger;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, btree_map};
+use std::fmt;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
 
@@ -24,7 +25,11 @@ pub use crate::faux_fsm::FsmState;
 pub use crate::faux_fsm::FsmType;
 pub use crate::faux_fsm::PortFsmState;
 
+mod fault;
 pub mod table;
+
+pub use fault::CallRange;
+use fault::Fault;
 
 const CPU_PORT: u16 = 47;
 
@@ -57,7 +62,7 @@ impl Chaos {
 
     /// Return a chaos error according to the underlying probability value.
     pub fn unfurled(&self, log: &Logger, message: &str) -> AsicResult<()> {
-        if self.value >= random() {
+        if self.value > random() {
             slog::error!(log, "chaos error: {}", message);
             return Err(AsicError::Synthetic(message.into()));
         }
@@ -143,12 +148,68 @@ impl TableChaos {
         message: &str,
     ) -> AsicResult<()> {
         if let Some(value) = self.values.get(&id)
-            && *value >= random()
+            && *value > random()
         {
             slog::error!(log, "chaos table error: {}", message);
             return Err(AsicError::Synthetic(message.into()));
         }
         Ok(())
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum McOp {
+    McPortCount,
+    McPortList,
+    McPortAdd,
+    McPortRemove,
+    McGroupCreate,
+    McGroupDestroy,
+    McGroupsCount,
+    McSetMaxNodes,
+}
+
+impl fmt::Display for McOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::McPortCount => "mc_port_count",
+            Self::McPortList => "mc_port_list",
+            Self::McPortAdd => "mc_port_add",
+            Self::McPortRemove => "mc_port_remove",
+            Self::McGroupCreate => "mc_group_create",
+            Self::McGroupDestroy => "mc_group_destroy",
+            Self::McGroupsCount => "mc_groups_count",
+            Self::McSetMaxNodes => "mc_set_max_nodes",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TableOp {
+    EntryAdd,
+    EntryUpdate,
+    EntryDel,
+}
+
+impl fmt::Display for TableOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::EntryAdd => "table_entry_add",
+            Self::EntryUpdate => "table_entry_update",
+            Self::EntryDel => "table_entry_del",
+        })
     }
 }
 
@@ -161,6 +222,27 @@ pub struct AsicMulticastConfig {
     pub mc_group_destroy: Chaos,
     pub mc_groups_count: Chaos,
     pub mc_set_max_nodes: Chaos,
+    #[serde(default)]
+    pub mc_port_list: Chaos,
+    #[serde(default)]
+    pub faults: BTreeMap<McOp, CallRange>,
+    #[serde(default)]
+    pub unsupported: BTreeSet<McOp>,
+}
+
+impl AsicMulticastConfig {
+    fn chaos(&self, op: McOp) -> &Chaos {
+        match op {
+            McOp::McPortCount => &self.mc_port_count,
+            McOp::McPortList => &self.mc_port_list,
+            McOp::McPortAdd => &self.mc_port_add,
+            McOp::McPortRemove => &self.mc_port_remove,
+            McOp::McGroupCreate => &self.mc_group_create,
+            McOp::McGroupDestroy => &self.mc_group_destroy,
+            McOp::McGroupsCount => &self.mc_groups_count,
+            McOp::McSetMaxNodes => &self.mc_set_max_nodes,
+        }
+    }
 }
 
 /// The chaos ASIC config contains chaos values for each ASIC operation.
@@ -232,6 +314,9 @@ impl AsicConfig {
                 mc_group_destroy: Chaos::new(v),
                 mc_groups_count: Chaos::new(v),
                 mc_set_max_nodes: Chaos::new(v),
+                mc_port_list: Chaos::new(v),
+                faults: BTreeMap::new(),
+                unsupported: BTreeSet::new(),
             },
         }
     }
@@ -255,6 +340,7 @@ impl AsicConfig {
             mc_config: AsicMulticastConfig {
                 mc_port_count: Chaos::new(v),
                 mc_groups_count: Chaos::new(v),
+                mc_port_list: Chaos::new(v),
                 ..Default::default()
             },
             ..Default::default()
@@ -335,6 +421,9 @@ pub struct Port {
 /// A hanlde for a chaos asic.
 pub struct Handle {
     ports: Mutex<HashMap<PortHdl, Port>>,
+    mc_groups: Mutex<BTreeMap<u16, BTreeSet<AsicId>>>,
+    mc_faults: Mutex<BTreeMap<McOp, Fault>>,
+    table_faults: Mutex<BTreeMap<(TableType, TableOp), Fault>>,
     config: AsicConfig,
     log: Logger,
 }
@@ -344,6 +433,16 @@ impl Handle {
     pub fn new(log: &Logger, config: &AsicConfig) -> AsicResult<Self> {
         Ok(Handle {
             ports: Mutex::new(HashMap::new()),
+            mc_groups: Mutex::new(BTreeMap::new()),
+            mc_faults: Mutex::new(
+                config
+                    .mc_config
+                    .faults
+                    .iter()
+                    .map(|(&op, &range)| (op, Fault::new(range)))
+                    .collect(),
+            ),
+            table_faults: Mutex::new(BTreeMap::new()),
             config: config.clone(),
             log: log.clone(),
         })
@@ -366,19 +465,6 @@ macro_rules! unfurl {
 }
 pub(crate) use unfurl;
 
-/// A convenience macro for unfurling multicast chaos. The $name should be a
-/// regular `Chaos` member of [`AsicMulticastConfigConfig`]. The `handle` is
-/// a [`Handle`] object.
-macro_rules! unfurl_mc {
-    ($handle:ident, $name:ident) => {
-        $handle
-            .config
-            .mc_config
-            .$name
-            .unfurled(&$handle.log, stringify!($name))?
-    };
-}
-
 /// A convenience macro for unfurling tabular chaos. The $name should be a
 /// `TableChaos` member of [`AsicConfig`]. The `handle` is a [`Handle`] object.
 macro_rules! table_unfurl {
@@ -390,44 +476,76 @@ pub(crate) use table_unfurl;
 
 impl AsicMulticastOps for Handle {
     fn mc_domains(&self) -> Vec<u16> {
-        let len = self.ports.lock().unwrap().len() as u16;
-        (0..len).collect()
+        self.mc_groups.lock().unwrap().keys().copied().collect()
     }
 
-    fn mc_port_count(&self, _group_id: u16) -> AsicResult<usize> {
-        unfurl_mc!(self, mc_port_count);
-        Ok(self.ports.lock().unwrap().len())
+    fn mc_port_count(&self, group_id: u16) -> AsicResult<usize> {
+        self.check_mc_fault(McOp::McPortCount)?;
+        let groups = self.mc_groups.lock().unwrap();
+        get_mc_group(&groups, group_id).map(BTreeSet::len)
+    }
+
+    fn mc_port_list(&self, group_id: u16) -> AsicResult<Vec<AsicId>> {
+        self.check_mc_fault(McOp::McPortList)?;
+        let groups = self.mc_groups.lock().unwrap();
+        get_mc_group(&groups, group_id)
+            .map(|ports| ports.iter().copied().collect())
     }
 
     fn mc_port_add(
         &self,
-        _group_id: u16,
-        _port: u16,
+        group_id: u16,
+        port: u16,
         _rid: u16,
         _level1_excl_id: u16,
     ) -> AsicResult<()> {
-        unfurl_mc!(self, mc_port_add);
-        Err(AsicError::OperationUnsupported)
+        self.check_mc_fault(McOp::McPortAdd)?;
+        let mut groups = self.mc_groups.lock().unwrap();
+        if get_mc_group_mut(&mut groups, group_id)?.insert(port) {
+            Ok(())
+        } else {
+            Err(AsicError::Exists(format!(
+                "port {port} already in multicast group {group_id}"
+            )))
+        }
     }
 
-    fn mc_port_remove(&self, _group_id: u16, _port: u16) -> AsicResult<()> {
-        unfurl_mc!(self, mc_port_remove);
-        Ok(())
+    fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
+        self.check_mc_fault(McOp::McPortRemove)?;
+        let mut groups = self.mc_groups.lock().unwrap();
+        if get_mc_group_mut(&mut groups, group_id)?.remove(&port) {
+            Ok(())
+        } else {
+            Err(AsicError::Missing(format!(
+                "port {port} not in multicast group {group_id}"
+            )))
+        }
     }
 
-    fn mc_group_create(&self, _group_id: u16) -> AsicResult<()> {
-        unfurl_mc!(self, mc_group_create);
-        Err(AsicError::OperationUnsupported)
+    fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
+        self.check_mc_fault(McOp::McGroupCreate)?;
+        match self.mc_groups.lock().unwrap().entry(group_id) {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(BTreeSet::new());
+                Ok(())
+            }
+            btree_map::Entry::Occupied(_) => Err(AsicError::Exists(format!(
+                "multicast group {group_id} already exists"
+            ))),
+        }
     }
 
-    fn mc_group_destroy(&self, _group_id: u16) -> AsicResult<()> {
-        unfurl_mc!(self, mc_group_destroy);
-        Ok(())
+    fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()> {
+        self.check_mc_fault(McOp::McGroupDestroy)?;
+        match self.mc_groups.lock().unwrap().remove(&group_id) {
+            Some(_) => Ok(()),
+            None => Err(missing_mc_group(group_id)),
+        }
     }
 
     fn mc_groups_count(&self) -> AsicResult<usize> {
-        unfurl_mc!(self, mc_groups_count);
-        Ok(self.ports.lock().unwrap().len())
+        self.check_mc_fault(McOp::McGroupsCount)?;
+        Ok(self.mc_groups.lock().unwrap().len())
     }
 
     fn mc_set_max_nodes(
@@ -435,8 +553,7 @@ impl AsicMulticastOps for Handle {
         _max_nodes: u32,
         _max_link_aggregated_nodes: u32,
     ) -> AsicResult<()> {
-        unfurl_mc!(self, mc_set_max_nodes);
-        Ok(())
+        self.check_mc_fault(McOp::McSetMaxNodes)
     }
 }
 
@@ -552,7 +669,7 @@ impl AsicOps for Handle {
         // and use it as before.
         let port_hdl = PortHdl::new(connector, 0);
         if ports.contains_key(&port_hdl) {
-            return Err(AsicError::Exists);
+            return Err(AsicError::Exists(format!("port {port_hdl} exists")));
         }
         ports.insert(port_hdl, Port { enabled: true });
         self.port_to_asic_id(port_hdl).map(|id| (port_hdl, id))
@@ -619,4 +736,22 @@ fn get_port_mut(
         Some(p) => Ok(p),
         None => Err(AsicError::InvalidArg("no such port".to_string())),
     }
+}
+
+fn missing_mc_group(group_id: u16) -> AsicError {
+    AsicError::Missing(format!("no such multicast group: {group_id}"))
+}
+
+fn get_mc_group(
+    groups: &BTreeMap<u16, BTreeSet<AsicId>>,
+    group_id: u16,
+) -> AsicResult<&BTreeSet<AsicId>> {
+    groups.get(&group_id).ok_or_else(|| missing_mc_group(group_id))
+}
+
+fn get_mc_group_mut(
+    groups: &mut BTreeMap<u16, BTreeSet<AsicId>>,
+    group_id: u16,
+) -> AsicResult<&mut BTreeSet<AsicId>> {
+    groups.get_mut(&group_id).ok_or_else(|| missing_mc_group(group_id))
 }

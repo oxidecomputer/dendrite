@@ -32,7 +32,7 @@ pub fn add_loopback_ipv4(switch: &Switch, addr: &Ipv4Entry) -> DpdResult<()> {
     }
     match table::port_ip::loopback_ipv4_add(switch, addr.addr) {
         Ok(()) => _ = loopback_data.v4_addrs.insert(addr.clone()),
-        Err(DpdError::Switch(AsicError::Exists)) => {
+        Err(DpdError::Switch(AsicError::Exists(_))) => {
             if !loopback_data.v4_addrs.contains(addr) {
                 warn!(
                     switch.log,
@@ -82,7 +82,7 @@ pub fn add_loopback_ipv6(switch: &Switch, addr: &Ipv6Entry) -> DpdResult<()> {
 
     match table::port_ip::loopback_ipv6_add(switch, addr.addr) {
         Ok(()) => _ = loopback_data.v6_addrs.insert(addr.clone()),
-        Err(DpdError::Switch(AsicError::Exists)) => {
+        Err(DpdError::Switch(AsicError::Exists(_))) => {
             if !loopback_data.v6_addrs.contains(addr) {
                 warn!(
                     switch.log,

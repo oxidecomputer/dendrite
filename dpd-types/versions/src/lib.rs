@@ -33,6 +33,8 @@
 
 mod impls;
 pub mod latest;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 #[path = "initial/mod.rs"]
 pub mod v1;
 #[path = "asic_details/mod.rs"]
@@ -45,6 +47,8 @@ pub mod v12;
 pub mod v13;
 #[path = "openapi_lint/mod.rs"]
 pub mod v14;
+#[path = "mcast_external_scope/mod.rs"]
+pub mod v15;
 #[path = "attached_subnets/mod.rs"]
 pub mod v3;
 #[path = "v4_over_v6_routes/mod.rs"]

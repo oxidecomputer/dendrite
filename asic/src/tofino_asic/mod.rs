@@ -80,6 +80,10 @@ impl AsicMulticastOps for Handle {
         mcast::domain_port_count(self, group_id)
     }
 
+    fn mc_port_list(&self, group_id: u16) -> AsicResult<Vec<u16>> {
+        mcast::domain_port_list(self, group_id)
+    }
+
     fn mc_port_add(
         &self,
         group_id: u16,
@@ -459,7 +463,7 @@ impl Handle {
 
 pub fn sde_error(ctx: impl ToString, err: bf_status_t) -> AsicError {
     match err {
-        bf_wrapper::BF_ALREADY_EXISTS => AsicError::Exists,
+        bf_wrapper::BF_ALREADY_EXISTS => AsicError::Exists(ctx.to_string()),
         bf_wrapper::BF_OBJECT_NOT_FOUND => AsicError::Missing(ctx.to_string()),
         _ => AsicError::SdeError {
             ctx: ctx.to_string(),

@@ -4,7 +4,6 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use slog::debug;
 use slog::error;
 use slog::info;
 
@@ -56,14 +55,10 @@ fn mac_set_common(
 fn mac_clear_common(s: &Switch, type_: TableType, port: u16) -> DpdResult<()> {
     let match_key = MacMatchKey { port };
 
-    match s.table_entry_del(type_, &match_key) {
+    match s.table_entry_clear(type_, &match_key) {
         Ok(_) => {
             info!(s.log, "cleared mac on {port} in table {type_}",);
             Ok(())
-        }
-        Err(e @ DpdError::Switch(aal::AsicError::Missing(_))) => {
-            debug!(s.log, "no mac on {port} in table {type_} to clear");
-            Err(e)
         }
         Err(e) => {
             error!(s.log, "clear mac on {port} in table {type_} failed: {e:?}",);
@@ -74,7 +69,7 @@ fn mac_clear_common(s: &Switch, type_: TableType, port: u16) -> DpdResult<()> {
 
 /// Add a new entry to the MAC table.
 ///
-/// An error is returned if the entry already exists. Use `mac_update` instead.
+/// An error is returned if the entry already exists.
 pub fn mac_set(s: &Switch, port: u16, mac: MacAddr) -> DpdResult<()> {
     mac_set_common(s, TableType::PortMacAddress, port, mac)
 }
@@ -106,7 +101,7 @@ pub fn reset(s: &Switch) -> DpdResult<()> {
 
 /// Add a new entry to the MAC table.
 ///
-/// An error is returned if the entry already exists. Use `mac_update` instead.
+/// An error is returned if the entry already exists.
 pub fn mcast_mac_set(s: &Switch, port: u16, mac: MacAddr) -> DpdResult<()> {
     mac_set_common(s, TableType::PortMacAddressMcast, port, mac)
 }

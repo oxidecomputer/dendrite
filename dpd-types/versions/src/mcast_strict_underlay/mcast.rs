@@ -9,9 +9,11 @@
 
 use std::net::{IpAddr, Ipv6Addr};
 
+use oxnet::Ipv6Net;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::impls::mcast::IPV6_ADMIN_SCOPED_MULTICAST_PREFIX;
 use crate::v1;
 use crate::v1::mcast::{
     ExternalForwarding, InternalForwarding, MulticastGroupId,
@@ -19,6 +21,14 @@ use crate::v1::mcast::{
 };
 use crate::v7;
 use crate::v7::mcast::IpSrc;
+
+/// Underlay multicast subnet (`ff04::/64`).
+///
+/// See [`UnderlayMulticastIpv6`] for its role.
+pub const UNDERLAY_MULTICAST_SUBNET: Ipv6Net = Ipv6Net::new_unchecked(
+    Ipv6Addr::new(IPV6_ADMIN_SCOPED_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 0),
+    64,
+);
 
 /// A validated underlay multicast IPv6 address.
 ///
@@ -42,7 +52,7 @@ use crate::v7::mcast::IpSrc;
 pub struct UnderlayMulticastIpv6(pub(crate) Ipv6Addr);
 
 impl TryFrom<Ipv6Addr> for UnderlayMulticastIpv6 {
-    type Error = Error;
+    type Error = UnderlayMulticastError;
 
     fn try_from(addr: Ipv6Addr) -> Result<Self, Self::Error> {
         Self::new(addr)
@@ -73,14 +83,25 @@ impl TryFrom<v1::mcast::AdminScopedIpv6> for UnderlayMulticastIpv6 {
     }
 }
 
-#[derive(Clone, Debug, thiserror::Error)]
-pub enum Error {
+/// Errors raised while validating an underlay multicast address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum UnderlayMulticastError {
+    /// The address is outside the underlay multicast subnet (`ff04::/64`).
     #[error(
         "Address {0} is not in underlay multicast subnet (must be ff04::/64)"
     )]
     InvalidUnderlayMulticastIp(Ipv6Addr),
+}
+
+/// Error returned when parsing an [`UnderlayMulticastIpv6`] from a string.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum UnderlayMulticastParseError {
+    /// The string could not be parsed as an IPv6 address.
     #[error("Invalid IPv6 address '{0}': {1}")]
-    InvalidIpv6Address(String, std::net::AddrParseError),
+    InvalidIpv6(String, std::net::AddrParseError),
+    /// The parsed address was outside the underlay multicast subnet.
+    #[error(transparent)]
+    Value(#[from] UnderlayMulticastError),
 }
 
 /// A multicast group configuration for POST requests for internal (to the rack)
@@ -207,21 +228,62 @@ impl From<MulticastGroupResponse> for v7::mcast::MulticastGroupResponse {
     }
 }
 
+/// Maximum length for multicast tags.
+pub const MAX_TAG_LENGTH: usize = 80;
+
 /// Tag for identifying and authorizing multicast group operations.
 ///
 /// Tag format: 1 to 80 ASCII bytes containing alphanumeric characters,
 /// hyphens, underscores, colons, or periods. Default format is
 /// `{uuid}:{group_ip}`.
 #[derive(
-    Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Deserialize,
+    Serialize,
+    JsonSchema,
 )]
+#[serde(try_from = "String", into = "String")]
 pub struct MulticastTag(
     #[schemars(
         length(min = 1, max = 80),
         regex(pattern = r"^[a-zA-Z0-9_.:-]+$")
     )]
-    pub String,
+    pub(crate) String,
 );
+
+/// Error parsing a multicast tag from a string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum MulticastTagParseError {
+    #[error("tag cannot be empty")]
+    Empty,
+    #[error("tag cannot exceed {MAX_TAG_LENGTH} bytes")]
+    TooLong,
+    #[error(
+        "tag must contain only ASCII alphanumeric characters, hyphens, \
+         underscores, colons, or periods"
+    )]
+    InvalidCharacter,
+}
+
+impl From<MulticastTag> for String {
+    fn from(tag: MulticastTag) -> Self {
+        tag.0
+    }
+}
+
+impl TryFrom<String> for MulticastTag {
+    type Error = MulticastTagParseError;
+
+    fn try_from(tag: String) -> Result<Self, Self::Error> {
+        tag.parse()
+    }
+}
 
 /// Path parameter for multicast tag-based operations.
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -231,7 +293,9 @@ pub struct MulticastTagPath {
 
 impl From<v1::misc::TagPath> for MulticastTagPath {
     fn from(path: v1::misc::TagPath) -> Self {
-        Self { tag: path.tag.into() }
+        // Versions before `MCAST_STRICT_UNDERLAY` accept any tag string, and a
+        // malformed one matches against no group.
+        Self { tag: MulticastTag(path.tag) }
     }
 }
 

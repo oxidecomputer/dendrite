@@ -739,7 +739,7 @@ impl aal::TableOps<Handle> for Table {
         let data_hdl = self.data_to_asic(&action)?;
 
         let bf = hdl.bf_get();
-        unsafe {
+        let res = unsafe {
             bf_rt_table_entry_add(
                 self.rt_hdl,
                 bf.rt_sess,
@@ -748,8 +748,8 @@ impl aal::TableOps<Handle> for Table {
                 data_hdl.data_hdl,
             )
         }
-        .check_error("adding entry")
-        .log_error(hdl)
+        .check_error("adding entry");
+        log_unexpected_error(res, hdl)
     }
 
     fn entry_update<M: MatchParse, A: ActionParse>(
@@ -764,7 +764,7 @@ impl aal::TableOps<Handle> for Table {
         let data_hdl = self.data_to_asic(&action)?;
 
         let bf = hdl.bf_get();
-        unsafe {
+        let res = unsafe {
             bf_rt_table_entry_mod(
                 self.rt_hdl,
                 bf.rt_sess,
@@ -773,8 +773,8 @@ impl aal::TableOps<Handle> for Table {
                 data_hdl.data_hdl,
             )
         }
-        .check_error("updating entry")
-        .log_error(hdl)
+        .check_error("updating entry");
+        log_unexpected_error(res, hdl)
     }
 
     fn entry_del<M: MatchParse>(
@@ -785,7 +785,7 @@ impl aal::TableOps<Handle> for Table {
         let key_hdl = self.key_to_asic(key.key_to_ir()?)?;
 
         let bf = hdl.bf_get();
-        unsafe {
+        let res = unsafe {
             bf_rt_table_entry_del(
                 self.rt_hdl,
                 bf.rt_sess,
@@ -793,8 +793,8 @@ impl aal::TableOps<Handle> for Table {
                 key_hdl.key_hdl,
             )
         }
-        .check_error("deleting entry")
-        .log_error(hdl)
+        .check_error("deleting entry");
+        log_unexpected_error(res, hdl)
     }
 
     fn get_entries<M: MatchParse, A: ActionParse>(
@@ -874,5 +874,12 @@ impl aal::TableOps<Handle> for Table {
         }
 
         Ok(values)
+    }
+}
+
+fn log_unexpected_error(res: AsicResult<()>, hdl: &Handle) -> AsicResult<()> {
+    match res {
+        Err(AsicError::Exists(_) | AsicError::Missing(_)) => res,
+        res => res.log_error(hdl),
     }
 }
