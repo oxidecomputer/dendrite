@@ -119,4 +119,5 @@ pub(crate) fn new_dpd_client(port: u16) -> Client {
         &format!("http://localhost:{}", port),
         ClientState { tag: "tenagra".into(), log },
     )
+    .expect("dpd client")
 }
