@@ -223,6 +223,7 @@ pub struct Vni(pub(crate) u32);
 
 /// Error raised while validating a [`Vni`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+#[non_exhaustive]
 pub enum VniError {
     /// The value exceeds the 24-bit Geneve maximum.
     #[error(
@@ -234,6 +235,7 @@ pub enum VniError {
 
 /// Error returned when parsing a [`Vni`] from a string.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
+#[non_exhaustive]
 pub enum VniParseError {
     /// The string could not be parsed as a `u32`.
     #[error("Invalid VNI '{0}': {1}")]
