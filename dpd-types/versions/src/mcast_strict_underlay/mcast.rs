@@ -85,6 +85,7 @@ impl TryFrom<v1::mcast::AdminScopedIpv6> for UnderlayMulticastIpv6 {
 
 /// Errors raised while validating an underlay multicast address.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum UnderlayMulticastError {
     /// The address is outside the underlay multicast subnet (`ff04::/64`).
     #[error(
@@ -95,6 +96,7 @@ pub enum UnderlayMulticastError {
 
 /// Error returned when parsing an [`UnderlayMulticastIpv6`] from a string.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum UnderlayMulticastParseError {
     /// The string could not be parsed as an IPv6 address.
     #[error("Invalid IPv6 address '{0}': {1}")]
@@ -259,6 +261,7 @@ pub struct MulticastTag(
 
 /// Error parsing a multicast tag from a string.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum MulticastTagParseError {
     #[error("tag cannot be empty")]
     Empty,

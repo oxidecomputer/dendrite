@@ -562,6 +562,8 @@ impl fmt::Display for InvalidMulticastSource {
     }
 }
 
+impl std::error::Error for InvalidMulticastSource {}
+
 impl fmt::Display for InvalidEmbeddedRp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -582,6 +584,8 @@ impl fmt::Display for InvalidEmbeddedRp {
         }
     }
 }
+
+impl std::error::Error for InvalidEmbeddedRp {}
 
 impl fmt::Display for EmbeddedIpv4 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -863,6 +867,7 @@ mod tests {
             serde_json::to_value(schemars::schema_for!(MulticastTag)).unwrap();
         assert_eq!(schema["maxLength"].as_u64(), Some(MAX_TAG_LENGTH as u64));
         assert_eq!(schema["minLength"].as_u64(), Some(1));
+        assert_eq!(schema["pattern"], "^[a-zA-Z0-9_.:-]+$");
     }
 
     #[test]

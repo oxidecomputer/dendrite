@@ -14,6 +14,18 @@ pub use common::{
     MCAST_TAG_MISMATCH_ERROR_CODE, MISSING_NAT_TARGET_ERROR_CODE,
     ROLLBACK_FAILURE_ERROR_CODE,
 };
+pub use dpd_types_versions::latest::mcast::{
+    EmbeddedIpv4, ExactSource, ExternalMulticastIp, ExternalMulticastIpError,
+    IPV4_SSM_SUBNET, IPV6_ADMIN_SCOPED_MULTICAST_PREFIX, IPV6_SSM_SUBNETS,
+    InvalidEmbeddedRp, InvalidMulticastSource, MAX_TAG_LENGTH,
+    MulticastGroupCreateExternalError, MulticastSourceError,
+    MulticastSourceParseError, MulticastTag, MulticastTagParseError,
+    NonEmptyExactSources, SourceEntry, SourceFilter, UNDERLAY_MULTICAST_SUBNET,
+    UnderlayMulticastError, UnderlayMulticastIpv6, UnderlayMulticastParseError,
+    is_ssm_address, validate_external_multicast_ip,
+    validate_external_multicast_ipv4, validate_external_multicast_ipv6,
+};
+pub use dpd_types_versions::latest::network::{Vni, VniError, VniParseError};
 use slog::Logger;
 use std::cmp::Ordering;
 use std::fmt;
@@ -50,10 +62,10 @@ progenitor::generate_api!(
     // server's own set, ensuring clients apply the same checks when
     // constructing or parsing them.
     replace = {
-        ExternalMulticastIp = dpd_types_versions::latest::mcast::ExternalMulticastIp,
-        MulticastTag = dpd_types_versions::latest::mcast::MulticastTag,
-        UnderlayMulticastIpv6 = dpd_types_versions::latest::mcast::UnderlayMulticastIpv6,
-        Vni = dpd_types_versions::latest::network::Vni,
+        ExternalMulticastIp = crate::ExternalMulticastIp,
+        MulticastTag = crate::MulticastTag,
+        UnderlayMulticastIpv6 = crate::UnderlayMulticastIpv6,
+        Vni = crate::Vni,
     },
 );
 
@@ -337,6 +349,26 @@ impl From<types::NatTarget> for network::NatTarget {
             internal_ip: t.internal_ip,
             inner_mac: t.inner_mac.into(),
             vni: t.vni,
+        }
+    }
+}
+
+impl From<SourceEntry> for types::IpSrc {
+    fn from(source: SourceEntry) -> Self {
+        match source {
+            SourceEntry::Any => Self::Any,
+            SourceEntry::Exact(source) => Self::Exact(source.ip()),
+        }
+    }
+}
+
+impl TryFrom<types::IpSrc> for SourceEntry {
+    type Error = MulticastGroupCreateExternalError;
+
+    fn try_from(source: types::IpSrc) -> Result<Self, Self::Error> {
+        match source {
+            types::IpSrc::Any => Ok(Self::Any),
+            types::IpSrc::Exact(ip) => Ok(Self::Exact(ExactSource::new(ip)?)),
         }
     }
 }
