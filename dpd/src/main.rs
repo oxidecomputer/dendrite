@@ -66,7 +66,6 @@ mod freemap;
 mod link;
 mod loopback;
 mod macaddrs;
-#[cfg(feature = "multicast")]
 mod mcast;
 mod nat;
 mod oxstats;
@@ -197,7 +196,6 @@ pub struct Switch {
     pub oximeter_producer: Mutex<Option<oximeter_producer::Server>>,
     pub oximeter_meta: Mutex<Option<OximeterMetadata>>,
     pub reconciler: link::LinkReconciler,
-    #[cfg(feature = "multicast")]
     pub mcast: Mutex<mcast::MulticastGroupData>,
 
     mac_mgmt: Mutex<macaddrs::MacManagement>,
@@ -310,7 +308,6 @@ impl Switch {
             oximeter_producer: Mutex::new(None),
             oximeter_meta: Mutex::new(None),
             reconciler: link::LinkReconciler::default(),
-            #[cfg(feature = "multicast")]
             mcast: Mutex::new(mcast::MulticastGroupData::new()),
             mac_mgmt,
             port_history: Mutex::new(BTreeMap::new()),
