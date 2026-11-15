@@ -161,7 +161,7 @@ fn apply_updates(
     for entry in &updates {
         let nat_ip = entry.external_address;
 
-        let vni = match Vni::new(*entry.vni).ok_or(anyhow!("invalid vni")) {
+        let vni = match Vni::new(*entry.vni) {
             Ok(vni) => vni,
             Err(e) => {
                 error!(switch.log, "unable to create nat entry"; "error" => ?e);

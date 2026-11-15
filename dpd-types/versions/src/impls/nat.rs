@@ -4,17 +4,9 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use crate::latest::nat::{Ipv4Nat, Ipv6Nat};
+use crate::latest::nat::IpNat;
 
-impl PartialEq for Ipv6Nat {
-    fn eq(&self, other: &Self) -> bool {
-        self.external == other.external
-            && self.low == other.low
-            && self.high == other.high
-    }
-}
-
-impl PartialEq for Ipv4Nat {
+impl<T: PartialEq> PartialEq for IpNat<T> {
     fn eq(&self, other: &Self) -> bool {
         self.external == other.external
             && self.low == other.low

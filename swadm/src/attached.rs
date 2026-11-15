@@ -4,7 +4,6 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use std::convert::TryFrom;
 use std::io::{Write, stdout};
 use std::net::Ipv6Addr;
 
@@ -95,7 +94,7 @@ async fn attsub_list(
             m.subnet,
             m.tgt.internal_ip,
             MacAddr::from(m.tgt.inner_mac.clone()),
-            m.tgt.vni.0,
+            m.tgt.vni.as_u32(),
         )?;
     }
     tw.flush()?;
@@ -107,10 +106,7 @@ async fn attsub_get(client: &Client, attsub: IpNet) -> anyhow::Result<()> {
     let target = client
         .attached_subnet_get(&attsub)
         .await
-        .map(|r| {
-            common::network::InstanceTarget::try_from(r.into_inner())
-                .expect("Invalid internal target from server")
-        })
+        .map(|r| common::network::InstanceTarget::from(r.into_inner()))
         .context("failed to get IPv4 NAT mapping")?;
     println!("target: {target}");
     Ok(())
@@ -123,11 +119,8 @@ async fn attsub_add(
     inner_mac: MacAddr,
     vni: Vni,
 ) -> anyhow::Result<()> {
-    let tgt = types::InstanceTarget {
-        internal_ip,
-        inner_mac: inner_mac.into(),
-        vni: types::Vni::from(vni),
-    };
+    let tgt =
+        types::InstanceTarget { internal_ip, inner_mac: inner_mac.into(), vni };
     client
         .attached_subnet_create(&attsub, &tgt)
         .await

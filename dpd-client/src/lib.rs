@@ -6,10 +6,26 @@
 
 //! Client library for the Dendrite data plane daemon.
 
-pub use common::ROLLBACK_FAILURE_ERROR_CODE;
 use common::counters;
 use common::network;
 use common::ports;
+pub use common::{
+    MCAST_GROUP_REFERENCED_ERROR_CODE, MCAST_REPAIR_PENDING_ERROR_CODE,
+    MCAST_TAG_MISMATCH_ERROR_CODE, MISSING_NAT_TARGET_ERROR_CODE,
+    ROLLBACK_FAILURE_ERROR_CODE,
+};
+pub use dpd_types_versions::latest::mcast::{
+    EmbeddedIpv4, ExactSource, ExternalMulticastIp, ExternalMulticastIpError,
+    IPV4_SSM_SUBNET, IPV6_ADMIN_SCOPED_MULTICAST_PREFIX, IPV6_SSM_SUBNETS,
+    InvalidEmbeddedRp, InvalidMulticastSource, MAX_TAG_LENGTH,
+    MulticastGroupCreateExternalError, MulticastSourceError,
+    MulticastSourceParseError, MulticastTag, MulticastTagParseError,
+    NonEmptyExactSources, SourceEntry, SourceFilter, UNDERLAY_MULTICAST_SUBNET,
+    UnderlayMulticastError, UnderlayMulticastIpv6, UnderlayMulticastParseError,
+    is_ssm_address, validate_external_multicast_ip,
+    validate_external_multicast_ipv4, validate_external_multicast_ipv6,
+};
+pub use dpd_types_versions::latest::network::{Vni, VniError, VniParseError};
 use slog::Logger;
 use std::cmp::Ordering;
 use std::fmt;
@@ -37,9 +53,19 @@ progenitor::generate_api!(
     derives = [ PartialEq ],
     patch = {
         PortId = {derives = [PartialOrd, Ord, PartialEq, Eq, Hash, Clone] },
+        MulticastGroupMember = {derives = [Eq, Hash] },
     },
     crates = {
         "oxnet" = "0.1.0",
+    },
+    // Replace the generated newtypes for these validated types with the
+    // server's own set, ensuring clients apply the same checks when
+    // constructing or parsing them.
+    replace = {
+        ExternalMulticastIp = crate::ExternalMulticastIp,
+        MulticastTag = crate::MulticastTag,
+        UnderlayMulticastIpv6 = crate::UnderlayMulticastIpv6,
+        Vni = crate::Vni,
     },
 );
 
@@ -307,46 +333,43 @@ impl From<counters::RMonCounters> for types::RMonCounters {
     }
 }
 
-impl TryFrom<types::Vni> for network::Vni {
-    type Error = String;
-
-    fn try_from(t: types::Vni) -> Result<network::Vni, String> {
-        network::Vni::new(t.0)
-            .ok_or_else(|| String::from("VNI is out of valid range"))
-    }
-}
-
-impl From<network::Vni> for types::Vni {
-    fn from(t: network::Vni) -> types::Vni {
-        types::Vni(t.as_u32())
-    }
-}
-
-impl TryFrom<types::InstanceTarget> for network::InstanceTarget {
-    type Error = String;
-
-    fn try_from(
-        t: types::InstanceTarget,
-    ) -> Result<network::InstanceTarget, Self::Error> {
-        Ok(Self {
+impl From<types::InstanceTarget> for network::InstanceTarget {
+    fn from(t: types::InstanceTarget) -> Self {
+        Self {
             internal_ip: t.internal_ip,
             inner_mac: t.inner_mac.into(),
-            vni: t.vni.try_into()?,
-        })
+            vni: t.vni,
+        }
     }
 }
 
-impl TryFrom<types::NatTarget> for network::NatTarget {
-    type Error = String;
-
-    fn try_from(
-        t: types::NatTarget,
-    ) -> Result<network::NatTarget, Self::Error> {
-        Ok(Self {
+impl From<types::NatTarget> for network::NatTarget {
+    fn from(t: types::NatTarget) -> Self {
+        Self {
             internal_ip: t.internal_ip,
             inner_mac: t.inner_mac.into(),
-            vni: t.vni.try_into()?,
-        })
+            vni: t.vni,
+        }
+    }
+}
+
+impl From<SourceEntry> for types::IpSrc {
+    fn from(source: SourceEntry) -> Self {
+        match source {
+            SourceEntry::Any => Self::Any,
+            SourceEntry::Exact(source) => Self::Exact(source.ip()),
+        }
+    }
+}
+
+impl TryFrom<types::IpSrc> for SourceEntry {
+    type Error = MulticastGroupCreateExternalError;
+
+    fn try_from(source: types::IpSrc) -> Result<Self, Self::Error> {
+        match source {
+            types::IpSrc::Any => Ok(Self::Any),
+            types::IpSrc::Exact(ip) => Ok(Self::Exact(ExactSource::new(ip)?)),
+        }
     }
 }
 

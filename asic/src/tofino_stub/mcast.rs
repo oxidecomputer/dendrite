@@ -13,7 +13,7 @@ pub struct McGroupData {
 }
 
 fn no_group(group_id: u16) -> AsicError {
-    AsicError::InvalidArg(format!("no such multicast group: {group_id}"))
+    AsicError::Missing(format!("no such multicast group: {group_id}"))
 }
 
 impl McGroupData {
@@ -26,8 +26,18 @@ impl McGroupData {
     pub fn domain_port_count(&self, group_id: u16) -> AsicResult<usize> {
         match self.groups.get(&group_id) {
             Some(g) => Ok(g.len()),
-            None => Err(no_group(group_id)),
+            None => Err(AsicError::Missing(format!(
+                "no such multicast group: {group_id}"
+            ))),
         }
+    }
+
+    pub fn domain_port_list(&self, group_id: u16) -> AsicResult<Vec<u16>> {
+        let group =
+            self.groups.get(&group_id).ok_or_else(|| no_group(group_id))?;
+        let mut ports: Vec<u16> = group.iter().copied().collect();
+        ports.sort_unstable();
+        Ok(ports)
     }
 
     /// Add a port to a multicast domain.
@@ -45,7 +55,7 @@ impl McGroupData {
 
         match group.insert(port) {
             true => Ok(()),
-            false => Err(AsicError::InvalidArg(format!(
+            false => Err(AsicError::Exists(format!(
                 "multicast group {group_id} already contains port {port}"
             ))),
         }
@@ -64,7 +74,7 @@ impl McGroupData {
 
         match group.remove(&port) {
             true => Ok(()),
-            false => Err(AsicError::InvalidArg(format!(
+            false => Err(AsicError::Missing(format!(
                 "multicast group {group_id} doesn't contain port {port}"
             ))),
         }
@@ -74,7 +84,7 @@ impl McGroupData {
     #[allow(clippy::map_entry)]
     pub fn domain_create(&mut self, group_id: u16) -> AsicResult<()> {
         if self.groups.contains_key(&group_id) {
-            Err(AsicError::InvalidArg(format!(
+            Err(AsicError::Exists(format!(
                 "multicast group {group_id} already exists"
             )))
         } else {
