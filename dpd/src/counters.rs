@@ -24,10 +24,25 @@ use aal_macros::*;
 use asic::Handle;
 use common::counters::CounterId;
 use common::counters::EgressCounterId;
+use common::counters::SERVICE_PORT_LABEL;
 use common::table::TableType;
 
 use anyhow::Context;
 use dpd_types::table::TableCounterEntry;
+
+/// The ASIC port carrying packets to and from userspace, matching
+/// `USER_SPACE_SERVICE_PORT` in `sidecar.p4`.
+///
+/// On the current switch, this is the PCIe CPU port, which has no link. The
+/// `int0` link maps to the Ethernet CPU port, as reported by
+/// `bf_eth_cpu_port_get` (ASIC port 2 on the Tofino model).
+/// Without a label for ASIC port 0, its per-port counters get omitted from
+/// the response.
+///
+/// Note: the SDE's PCIe CPU port selection can be found within
+/// `lld_get_pcie_cpu_port`:
+/// <https://github.com/p4lang/open-p4studio/blob/b6f1022d65aeaaa33ff6603480f653fd95d21565/pkgsrc/bf-drivers/src/lld/lld_sku.c#L2516-L2537>
+const USER_SPACE_SERVICE_PORT: u16 = 0;
 
 // Counters in an indirect table are accessed by their index number rather than
 // a key.  Still, we define a key anyway to allow us to use the direct counter
@@ -274,10 +289,13 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
 // dozen are associated with configured links at any given time.  If this ID
 // doesn't match to a port, it's not an error.
 async fn port_label(switch: &Switch, ctr: u16) -> Option<String> {
-    switch
-        .asic_port_id_to_port_link(ctr)
-        .map(|(port, link)| format!("{port}/{link}"))
-        .ok()
+    match switch.asic_port_id_to_port_link(ctr) {
+        Ok((port, link)) => Some(format!("{port}/{link}")),
+        Err(_) if ctr == USER_SPACE_SERVICE_PORT => {
+            Some(SERVICE_PORT_LABEL.to_string())
+        }
+        Err(_) => None,
+    }
 }
 
 /// Fetch all of the accumulated values for this counter.

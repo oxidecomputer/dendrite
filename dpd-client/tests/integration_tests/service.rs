@@ -223,7 +223,10 @@ async fn test_arp_needed() -> TestResult {
     let expected =
         TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
-    assert!(one_counted_test(switch, send, Some(expected), "arp_miss").await?);
+    assert!(
+        one_counted_test(switch, send, Some(expected), "arp_miss", None)
+            .await?
+    );
 
     Ok(())
 }
@@ -272,7 +275,10 @@ async fn test_ndp_needed() -> TestResult {
     let expected =
         TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
-    assert!(one_counted_test(switch, send, Some(expected), "ndp_miss").await?);
+    assert!(
+        one_counted_test(switch, send, Some(expected), "ndp_miss", None)
+            .await?
+    );
 
     Ok(())
 }
@@ -321,8 +327,14 @@ async fn test_ttl_exceeded() -> TestResult {
         TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
     assert!(
-        one_counted_test(switch, send, Some(expected), "ipv4_ttl_exceeded")
-            .await?
+        one_counted_test(
+            switch,
+            send,
+            Some(expected),
+            "ipv4_ttl_exceeded",
+            None,
+        )
+        .await?
     );
 
     Ok(())
@@ -374,8 +386,14 @@ async fn test_hop_limit_exceeded() -> TestResult {
         TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT };
 
     assert!(
-        one_counted_test(switch, send, Some(expected), "ipv6_ttl_exceeded")
-            .await?
+        one_counted_test(
+            switch,
+            send,
+            Some(expected),
+            "ipv6_ttl_exceeded",
+            None,
+        )
+        .await?
     );
 
     Ok(())
