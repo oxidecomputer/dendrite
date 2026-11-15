@@ -142,6 +142,7 @@ impl From<ExternalMulticastIp> for IpAddr {
 
 /// Errors returned when parsing or validating an [`ExternalMulticastIp`].
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum ExternalMulticastIpError {
     /// The address is not a multicast address.
     #[error("Address {0} is not a multicast address")]
@@ -225,6 +226,7 @@ pub enum ExternalMulticastIpError {
 /// Errors returned when validating an external multicast group creation
 /// request.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum MulticastGroupCreateExternalError {
     /// The group IP failed external multicast address validation, returning an
     /// [`ExternalMulticastIpError`].
@@ -273,6 +275,7 @@ pub enum MulticastGroupCreateExternalError {
 /// The rules are validated in variant order. An address that breaks more
 /// than one rule only reports the first hit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum InvalidMulticastSource {
     /// `0.0.0.0` or `::`.
     Unspecified,
@@ -317,6 +320,7 @@ pub enum InvalidMulticastSource {
 /// [RFC 3956]: https://www.rfc-editor.org/rfc/rfc3956.html
 /// [RFC 7371]: https://www.rfc-editor.org/rfc/rfc7371.html
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum InvalidEmbeddedRp {
     /// The P flag is not set ([RFC 7371] §4.2.2, §4.2.3).
     RequiresPrefixBased,
@@ -356,6 +360,7 @@ pub enum EmbeddedIpv4 {
 
 /// Errors raised while validating a multicast source address.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum MulticastSourceError {
     /// A source address is a multicast address (not a unicast one).
     #[error(
@@ -412,6 +417,7 @@ pub enum MulticastSourceError {
 //
 // This follows `VniParseError` and `UnderlayMulticastParseError`.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum MulticastSourceParseError {
     /// The string could not be parsed as an IP address.
     #[error("Invalid source IP address '{0}': {1}")]
