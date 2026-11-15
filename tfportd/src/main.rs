@@ -289,7 +289,7 @@ async fn main_impl() -> anyhow::Result<()> {
             dpd_port = config.dpd_port
         ),
         client_state,
-    );
+    )?;
 
     info!(log, "connected to dpd running {}", dpd_version(&log, &client).await);
 
