@@ -267,7 +267,8 @@ impl Switch {
         let client = Client::new(
             &format!("http://{ctrl_host}:{ctrl_port}"),
             client_state,
-        );
+        )
+        .expect("dpd client");
 
         // The following port definitions are based on the FrontPanel->DevPort
         // mappings we get from the Tofino model.  The ports that have attached
