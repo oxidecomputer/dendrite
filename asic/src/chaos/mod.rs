@@ -503,8 +503,15 @@ impl AsicOps for Handle {
         };
 
         let asic_port_id = self.port_to_asic_id(port_hdl)?;
-        let _ = chan.send(PortUpdate::Enable { asic_port_id, enabled: val });
-        let _ = chan.send(PortUpdate::LinkUp { asic_port_id, linkup: val });
+        let r1 = chan.send(PortUpdate::Enable { asic_port_id, enabled: val });
+        let r2 = chan.send(PortUpdate::LinkUp { asic_port_id, linkup: val });
+
+        if r1.is_err() || r2.is_err() {
+            return Err(AsicError::Internal(
+                "PortUpdate tx failed. That rx chan should never be dropped."
+                    .to_string(),
+            ));
+        }
 
         Ok(())
     }

@@ -11,6 +11,7 @@ use std::sync::Once;
 use std::time::Duration;
 use std::time::Instant;
 
+pub mod addr;
 pub mod attached_subnet;
 pub mod counters;
 pub mod logging;
@@ -18,6 +19,9 @@ pub mod nat;
 pub mod network;
 pub mod ports;
 pub mod table;
+
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
 
 #[cfg(target_os = "illumos")]
 pub mod illumos;

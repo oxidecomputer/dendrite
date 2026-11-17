@@ -186,9 +186,9 @@ pub(crate) fn reset_bitmap_table(s: &Switch) -> DpdResult<()> {
     s.table_clear(TableType::McastEgressDecapPorts)
 }
 
-/// Add a port ID entry to the port ID table for converting ASIC port IDs
+/// Set a port ID entry to the port ID table for converting ASIC port IDs
 /// to port numbers.
-pub(crate) fn add_port_mapping_entry(
+pub(crate) fn set_port_mapping_entry(
     s: &Switch,
     asic_port_id: u16,
 ) -> DpdResult<()> {
@@ -200,7 +200,7 @@ pub(crate) fn add_port_mapping_entry(
 
     debug!(s.log, "add port id entry {match_key} -> {action_data:?}");
 
-    s.table_entry_add(
+    s.table_entry_set(
         TableType::McastEgressPortMapping,
         &match_key,
         &action_data,
@@ -231,7 +231,7 @@ pub(crate) fn update_port_mapping_entry(
 
 /// Delete a port ID entry from the port ID table for converting ASIC port IDs
 /// to port numbers.
-pub(crate) fn del_port_mapping_entry(
+pub(crate) fn clear_port_mapping_entry(
     s: &Switch,
     asic_port_id: u16,
 ) -> DpdResult<()> {
@@ -239,7 +239,7 @@ pub(crate) fn del_port_mapping_entry(
 
     debug!(s.log, "delete port id entry {match_key} -> {asic_port_id}");
 
-    s.table_entry_del(TableType::McastEgressPortMapping, &match_key)
+    s.table_entry_clear(TableType::McastEgressPortMapping, &match_key)
 }
 
 /// Dump the multicast port mapping table.

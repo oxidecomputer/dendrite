@@ -4,15 +4,7 @@
 //
 // Copyright 2025 Oxide Computer Company
 
-use std::collections::HashSet;
-use std::net::IpAddr;
-use std::net::Ipv4Addr;
-use std::net::Ipv6Addr;
-
 use futures::TryStreamExt;
-use rand::Rng;
-use rand::SeedableRng;
-use rand::rngs::StdRng;
 
 use dpd_client::Client;
 use dpd_client::types::Ipv4Entry;
@@ -48,53 +40,6 @@ pub(crate) async fn link_list_ipv6(
         .await
 }
 
-/// A random IP address generator.
-pub struct IpRng {
-    rng: StdRng,
-    claimed: HashSet<IpAddr>,
-}
-
-impl IpRng {
-    /// Creates a new ip address generator from the given seed.
-    pub fn new(seed: u64) -> Self {
-        Self { rng: StdRng::seed_from_u64(seed), claimed: HashSet::default() }
-    }
-
-    /// Returns a random IPv4 address that this instance
-    /// has never created before.
-    pub fn unique_ipv4(&mut self) -> Ipv4Addr {
-        Self::roll_unique(&mut self.claimed, || {
-            Ipv4Addr::from_bits(self.rng.random())
-        })
-    }
-
-    /// Returns a random IPv6 address that this instance
-    /// has never created before.
-    pub fn unique_ipv6(&mut self) -> Ipv6Addr {
-        Self::roll_unique(&mut self.claimed, || {
-            Ipv6Addr::from_bits(self.rng.random())
-        })
-    }
-
-    fn roll_unique<T>(
-        tracker: &mut HashSet<IpAddr>,
-        mut random_addr: impl FnMut() -> T,
-    ) -> T
-    where
-        T: Into<IpAddr> + Copy,
-    {
-        loop {
-            // Executes infinitely if we've already generated the entire
-            // IPv4 or IPv6 address space, in which case the offending test
-            // has earned a more bespoke solution :)
-            let addr = random_addr();
-            if tracker.insert(addr.into()) {
-                return addr;
-            }
-        }
-    }
-}
-
 /// Simplifies validating dropshot client output.
 pub trait HttpResponseCheck: Sized {
     /// Panics if the status code within `self` does not match
@@ -106,68 +51,5 @@ impl HttpResponseCheck for dpd_client::Error<dpd_client::types::Error> {
     fn expect_status(self, code: reqwest::StatusCode) -> Self {
         assert_eq!(self.status(), Some(code), "Unexpected HTTP status code");
         self
-    }
-}
-
-#[cfg(test)]
-pub mod retry {
-    use std::time::Duration;
-    use std::time::Instant;
-    use thiserror::Error;
-
-    #[derive(Error, Debug)]
-    pub enum ReturnCode {
-        #[error("Operation failed but should be retried later: {0}")]
-        Retry(String),
-
-        #[error("Fatal error: {0}")]
-        Fatal(String),
-    }
-
-    impl From<dpd_client::Error<dpd_client::types::Error>> for ReturnCode {
-        fn from(value: dpd_client::Error<dpd_client::types::Error>) -> Self {
-            Self::Fatal(value.to_string())
-        }
-    }
-
-    impl From<dpd_client::types::error::ConversionError> for ReturnCode {
-        fn from(value: dpd_client::types::error::ConversionError) -> Self {
-            Self::Fatal(value.to_string())
-        }
-    }
-
-    pub async fn retry_op(
-        poll_interval: Duration,
-        poll_max: Duration,
-        mut op: impl AsyncFnMut() -> Result<(), ReturnCode>,
-    ) -> anyhow::Result<()> {
-        let poll_start = Instant::now();
-        loop {
-            let retry_msg = match op().await {
-                Ok(()) => return Ok(()),
-                Err(ReturnCode::Fatal(e)) => return Err(anyhow::anyhow!(e)),
-                Err(ReturnCode::Retry(msg)) => msg,
-            };
-
-            let duration = Instant::now().duration_since(poll_start);
-            if duration > poll_max {
-                return Err(anyhow::anyhow!("operation failed: {retry_msg}"));
-            }
-            tokio::time::sleep(poll_interval).await;
-        }
-    }
-}
-
-#[cfg(test)]
-mod util_tests {
-    use crate::chaos_tests::util::IpRng;
-
-    /// Basic check on unique ipv6 address generation.
-    #[test]
-    fn unique_v6() {
-        let mut rng = IpRng::new(7);
-        let one = rng.unique_ipv6();
-        let two = rng.unique_ipv6();
-        assert_ne!(one, two);
     }
 }
