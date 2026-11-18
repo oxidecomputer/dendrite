@@ -193,8 +193,13 @@ impl TableOps<Handle> for Table {
 
         let tbl = Table { type_, implemented, size: TABLE_SIZE };
         // The SoftNPU pipeline outlives the dpd process. Clear each table
-        // before the control plane reapplies its configuration.
-        tbl.clear(hdl)?;
+        // before the control plane reapplies its configuration, with exceptions
+        // made for the resolver (ARP/NDP) tables, which must be bypassed
+        // because omicron's `cargo xtask virtual-hardware` seeds the upstream
+        // gateway's entry with `scadm` before dpd starts.
+        if !matches!(type_, TableType::ArpIpv4 | TableType::NeighborIpv6) {
+            tbl.clear(hdl)?;
+        }
         Ok(tbl)
     }
 
