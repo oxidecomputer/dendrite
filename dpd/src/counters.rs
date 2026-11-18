@@ -200,6 +200,7 @@ enum DropReason {
     GeneveOptionUnknown,
     DropSctp,
     MulticastTtlExceeded,
+    MulticastUnexpectedSidecarHdr,
 }
 
 impl TryFrom<u8> for DropReason {
@@ -236,6 +237,7 @@ impl TryFrom<u8> for DropReason {
             26 => Ok(DropReason::GeneveOptionUnknown),
             27 => Ok(DropReason::DropSctp),
             28 => Ok(DropReason::MulticastTtlExceeded),
+            29 => Ok(DropReason::MulticastUnexpectedSidecarHdr),
             x => Err(format!("Unrecognized drop reason: {x}")),
         }
     }
@@ -285,6 +287,9 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
         DropReason::DropSctp => "drop_sctp".to_string(),
         DropReason::MulticastTtlExceeded => {
             "multicast_ttl_exceeded".to_string()
+        }
+        DropReason::MulticastUnexpectedSidecarHdr => {
+            "multicast_unexpected_sidecar_hdr".to_string()
         }
     };
     Ok(Some(label))

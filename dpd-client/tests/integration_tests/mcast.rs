@@ -10,7 +10,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use futures::TryStreamExt;
 use oxnet::MulticastMac;
 
@@ -27,7 +27,9 @@ use packet::{Endpoint, L4Endpoint, eth, geneve, ipv4, ipv6, sidecar, udp};
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
-use crate::integration_tests::counters::check_counter_incremented;
+use crate::integration_tests::counters::{
+    check_counter_incremented, check_counter_unchanged, one_counted_test,
+};
 
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
 const MULTICAST_TEST_IPV6: Ipv6Addr =
@@ -3459,82 +3461,537 @@ async fn test_inner_ttl_external_v6_eth_two() -> TestResult {
     .await
 }
 
-/// Link-local replicas reach egress with a zero replication id, so the
-/// counter block reaches them through `is_link_local_ipv6_mcast` rather
-/// than `egress_rid`. Both the underlay and external conditions exclude
-/// that case, and this checks the exclusion remains after compilation.
+const USERSPACE_SC_EGRESS: PhysPort = PhysPort(23);
+
+async fn packet_test_userspace_mcast(
+    switch: &Switch,
+    send: TestPacket,
+    expected: Vec<TestPacket>,
+    sc_egress: PhysPort,
+    link_local: bool,
+) -> TestResult {
+    let label = switch.port_label(sc_egress).unwrap();
+    let mcast = switch.get_counter(&label, Some("multicast")).await?;
+    let link_local_mcast =
+        switch.get_counter(&label, Some("multicast_link_local")).await?;
+    let external_mcast =
+        switch.get_counter(&label, Some("multicast_external")).await?;
+    let underlay_mcast =
+        switch.get_counter(&label, Some("multicast_underlay")).await?;
+    let ucast = switch.get_counter(&label, Some("unicast")).await?;
+
+    switch.packet_test(vec![send], expected)?;
+
+    check_counter_incremented(switch, &label, mcast, 1, Some("multicast"))
+        .await?;
+
+    if link_local {
+        check_counter_incremented(
+            switch,
+            &label,
+            link_local_mcast,
+            1,
+            Some("multicast_link_local"),
+        )
+        .await?;
+    } else {
+        check_counter_unchanged(
+            switch,
+            &label,
+            link_local_mcast,
+            Some("multicast_link_local"),
+        )
+        .await?;
+    }
+    check_counter_unchanged(switch, &label, ucast, Some("unicast")).await?;
+    check_counter_unchanged(
+        switch,
+        &label,
+        external_mcast,
+        Some("multicast_external"),
+    )
+    .await?;
+    check_counter_unchanged(
+        switch,
+        &label,
+        underlay_mcast,
+        Some("multicast_underlay"),
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn run_userspace_multicast_forward_test(
+    switch: &Switch,
+    to_send: packet::Packet,
+    nat_target: types::ExternalNatTarget,
+) -> TestResult {
+    let sc_egress = USERSPACE_SC_EGRESS;
+    let egress1 = PhysPort(15);
+    let egress3 = PhysPort(19);
+
+    let multicast_ip = to_send.dst().unwrap().get_ip("destination").unwrap();
+    let eth_hdr = to_send.hdrs.eth_hdr.as_ref().unwrap();
+    let payload = to_send.deparse().unwrap()[eth_hdr.hdr_len()..].to_vec();
+    let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
+        Endpoint::L4(L4Endpoint {
+            mac: GIMLET_MAC.into(),
+            ip: GIMLET_IP.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
+        Endpoint::L4(L4Endpoint {
+            mac: Ipv6Addr::from(nat_target.internal_ip)
+                .derive_multicast_mac()
+                .into(),
+            ip: nat_target.internal_ip.into(),
+            port: geneve::GENEVE_UDP_PORT,
+        }),
+        eth_hdr.eth_type,
+        nat_target.vni.as_u32(),
+        1,
+        &payload,
+    );
+
+    let pkts = [to_send, geneve_pkt];
+    let from_userspace = |mut pkt: packet::Packet| {
+        common::add_sidecar_hdr(
+            switch,
+            &mut pkt,
+            sidecar::SC_FWD_FROM_USERSPACE,
+            NO_PORT,
+            sc_egress,
+            None,
+        );
+        TestPacket { packet: Arc::new(pkt), port: SERVICE_PORT }
+    };
+    let forwarded = |pkt: &packet::Packet| {
+        vec![TestPacket { packet: Arc::new(pkt.clone()), port: sc_egress }]
+    };
+
+    for pkt in &pkts {
+        packet_test_userspace_mcast(
+            switch,
+            from_userspace(pkt.clone()),
+            forwarded(pkt),
+            sc_egress,
+            false,
+        )
+        .await?;
+    }
+
+    let internal_multicast_ip = IpAddr::V6(MULTICAST_NAT_IP);
+    create_test_multicast_group(
+        switch,
+        internal_multicast_ip,
+        Some(&TEST_TAG),
+        &[
+            (egress1, types::Direction::Underlay),
+            (egress3, types::Direction::Underlay),
+        ],
+        None,
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
+    let created_group = create_test_multicast_group(
+        switch,
+        multicast_ip,
+        Some(&TEST_TAG),
+        &[],
+        Some(nat_target),
+        types::ExternalForwarding { vlan_id: None },
+        None,
+    )
+    .await;
+
+    for pkt in &pkts {
+        packet_test_userspace_mcast(
+            switch,
+            from_userspace(pkt.clone()),
+            forwarded(pkt),
+            sc_egress,
+            false,
+        )
+        .await?;
+    }
+
+    cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
+        .await
+        .unwrap();
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
+}
+
 #[tokio::test]
 #[ignore]
-async fn test_link_local_multicast_counter_attribution() -> TestResult {
+async fn test_userspace_multicast_v4_forwarded() -> TestResult {
     let switch = &*get_switch().await;
 
-    let egress = PhysPort(10);
+    let mut to_send = create_ipv4_multicast_packet(
+        IpAddr::V4(MULTICAST_TEST_IPV4),
+        MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab),
+        "10.10.10.10",
+        3333,
+        4444,
+        None,
+    );
+    to_send.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_ttl = 1;
+    ipv4::Ipv4Hdr::update_checksum(&mut to_send);
+
+    run_userspace_multicast_forward_test(
+        switch,
+        to_send,
+        create_nat_target_ipv4(),
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_userspace_multicast_v6_forwarded() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let mut to_send = create_ipv6_multicast_packet(
+        IpAddr::V6(MULTICAST_TEST_IPV6),
+        MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab),
+        "fd00:1122:7788:101::4",
+        3333,
+        4444,
+        None,
+    );
+    to_send.hdrs.ipv6_hdr.as_mut().unwrap().ipv6_hop_lim = 1;
+
+    run_userspace_multicast_forward_test(
+        switch,
+        to_send,
+        create_nat_target_ipv6(),
+    )
+    .await
+}
+
+async fn userspace_mcast_forward_case(
+    switch: &Switch,
+    destination: IpAddr,
+    vlan_id: Option<u16>,
+    dst_mac: Option<MacAddr>,
+    ttl: u8,
+) -> TestResult {
+    let src_mac = MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab);
+    let mut to_send = match destination {
+        IpAddr::V4(_) => {
+            let mut pkt = create_ipv4_multicast_packet(
+                destination,
+                src_mac,
+                "10.10.10.10",
+                3333,
+                4444,
+                vlan_id,
+            );
+            pkt.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_ttl = ttl;
+            pkt
+        }
+        IpAddr::V6(_) => {
+            let mut pkt = create_ipv6_multicast_packet(
+                destination,
+                src_mac,
+                "fd00:1122:7788:0101::4",
+                3333,
+                4444,
+                vlan_id,
+            );
+            pkt.hdrs.ipv6_hdr.as_mut().unwrap().ipv6_hop_lim = ttl;
+            pkt
+        }
+    };
+
+    if let Some(dst_mac) = dst_mac {
+        to_send.hdrs.eth_hdr.as_mut().unwrap().eth_dmac = dst_mac.into();
+    }
+    if to_send.hdrs.ipv4_hdr.is_some() {
+        ipv4::Ipv4Hdr::update_checksum(&mut to_send);
+    }
+
+    let mut send = to_send.clone();
+    common::add_sidecar_hdr(
+        switch,
+        &mut send,
+        sidecar::SC_FWD_FROM_USERSPACE,
+        NO_PORT,
+        USERSPACE_SC_EGRESS,
+        None,
+    );
+
+    let link_local = matches!(
+        destination,
+        IpAddr::V6(ip) if ip.segments()[0] == 0xff02
+    );
+    packet_test_userspace_mcast(
+        switch,
+        TestPacket { packet: Arc::new(send), port: SERVICE_PORT },
+        vec![TestPacket {
+            packet: Arc::new(to_send),
+            port: USERSPACE_SC_EGRESS,
+        }],
+        USERSPACE_SC_EGRESS,
+        link_local,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_userspace_multicast_mac_and_vlan_forwarded() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let v4 = IpAddr::V4(MULTICAST_TEST_IPV4);
+    let v6 = IpAddr::V6(MULTICAST_TEST_IPV6);
+    let ll = IpAddr::V6("ff02::1".parse().unwrap());
+    let bad_v4 = MacAddr::new(0x02, 0, 0, 0, 0, 0x01);
+    let bad_ll = MacAddr::new(0x33, 0x33, 0, 0, 0, 0x02);
+    let cases = [
+        ("ipv4_bad_dst_mac", v4, None, Some(bad_v4)),
+        ("link_local_bad_dst_mac", ll, None, Some(bad_ll)),
+        ("ipv4_vlan", v4, Some(10), None),
+        ("ipv6_vlan", v6, Some(10), None),
+        ("link_local_vlan", ll, Some(10), None),
+    ];
+
+    for (name, destination, vlan_id, dst_mac) in cases {
+        userspace_mcast_forward_case(switch, destination, vlan_id, dst_mac, 1)
+            .await
+            .with_context(|| format!("userspace multicast case {name}"))?;
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_userspace_link_local_multicast_hop_limit_zero_forwarded()
+-> TestResult {
+    let switch = &*get_switch().await;
+
+    let ll = IpAddr::V6("ff02::1".parse().unwrap());
+    for vlan_id in [None, Some(10)] {
+        userspace_mcast_forward_case(switch, ll, vlan_id, None, 0)
+            .await
+            .with_context(|| format!("vlan {vlan_id:?}"))?;
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_userspace_interface_local_multicast_dropped() -> TestResult {
+    let switch = &*get_switch().await;
 
     let src =
         Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0101::4", 3333)
             .unwrap();
-    let dst = Endpoint::parse("33:33:00:00:00:01", "ff02::1", 4444).unwrap();
+    let dst = Endpoint::parse("33:33:00:00:00:01", "ff01::1", 4444).unwrap();
 
-    // Sourced from userspace so the packet egresses without replication,
-    // mirroring test_link_local_multicast_outbound in route_ipv6.
     let mut send = common::gen_udp_packet(src, dst);
     common::add_sidecar_hdr(
         switch,
         &mut send,
         sidecar::SC_FWD_FROM_USERSPACE,
         NO_PORT,
-        egress,
+        USERSPACE_SC_EGRESS,
         None,
     );
-    let test_pkt = TestPacket { packet: Arc::new(send), port: SERVICE_PORT };
-    let expected_pkts = vec![TestPacket {
-        packet: Arc::new(common::gen_udp_packet(src, dst)),
-        port: egress,
-    }];
-
-    let port_label_egress = switch.port_label(egress).unwrap();
-
-    let ctr_baseline_link_local = switch
-        .get_counter(&port_label_egress, Some("multicast_link_local"))
-        .await
-        .unwrap();
-    let ctr_baseline_external = switch
-        .get_counter(&port_label_egress, Some("multicast_external"))
-        .await
-        .unwrap();
-    let ctr_baseline_underlay = switch
-        .get_counter(&port_label_egress, Some("multicast_underlay"))
-        .await
-        .unwrap();
-
-    switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
-
-    check_counter_incremented(
+    one_counted_test(
         switch,
-        &port_label_egress,
-        ctr_baseline_link_local,
-        1,
-        Some("multicast_link_local"),
+        TestPacket { packet: Arc::new(send), port: SERVICE_PORT },
+        None,
+        "multicast_to_local_interface",
+        None,
     )
-    .await
-    .unwrap();
+    .await?;
 
-    let ctr_external = switch
-        .get_counter(&port_label_egress, Some("multicast_external"))
-        .await
-        .unwrap();
-    let ctr_underlay = switch
-        .get_counter(&port_label_egress, Some("multicast_underlay"))
-        .await
-        .unwrap();
-    assert_eq!(
-        ctr_external, ctr_baseline_external,
-        "link-local replicas must not hit the external counter"
-    );
-    assert_eq!(
-        ctr_underlay, ctr_baseline_underlay,
-        "link-local replicas must not hit the underlay counter"
-    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_userspace_multicast_ttl_zero_dropped() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let src_mac = MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab);
+
+    for vlan_id in [None, Some(10)] {
+        let mut v4_pkt = create_ipv4_multicast_packet(
+            IpAddr::V4(MULTICAST_TEST_IPV4),
+            src_mac,
+            "10.10.10.10",
+            3333,
+            4444,
+            vlan_id,
+        );
+        v4_pkt.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_ttl = 0;
+        ipv4::Ipv4Hdr::update_checksum(&mut v4_pkt);
+
+        let mut v6_pkt = create_ipv6_multicast_packet(
+            IpAddr::V6(MULTICAST_TEST_IPV6),
+            src_mac,
+            "fd00:1122:7788:101::4",
+            3333,
+            4444,
+            vlan_id,
+        );
+        v6_pkt.hdrs.ipv6_hdr.as_mut().unwrap().ipv6_hop_lim = 0;
+
+        for (drop_label, mut pkt) in
+            [("ipv4_ttl_invalid", v4_pkt), ("ipv6_ttl_invalid", v6_pkt)]
+        {
+            common::add_sidecar_hdr(
+                switch,
+                &mut pkt,
+                sidecar::SC_FWD_FROM_USERSPACE,
+                NO_PORT,
+                USERSPACE_SC_EGRESS,
+                None,
+            );
+            one_counted_test(
+                switch,
+                TestPacket { packet: Arc::new(pkt), port: SERVICE_PORT },
+                None,
+                drop_label,
+                None,
+            )
+            .await
+            .with_context(|| format!("{drop_label}, vlan {vlan_id:?}"))?;
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_service_port_multicast_ttl_one_dropped() -> TestResult {
+    let switch = &*get_switch().await;
+    let src_mac = MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab);
+
+    for vlan_id in [None, Some(10)] {
+        let mut v4_pkt = create_ipv4_multicast_packet(
+            IpAddr::V4(MULTICAST_TEST_IPV4),
+            src_mac,
+            "10.10.10.10",
+            3333,
+            4444,
+            vlan_id,
+        );
+        v4_pkt.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_ttl = 1;
+        ipv4::Ipv4Hdr::update_checksum(&mut v4_pkt);
+
+        let mut v6_pkt = create_ipv6_multicast_packet(
+            IpAddr::V6(MULTICAST_TEST_IPV6),
+            src_mac,
+            "fd00:1122:7788:101::4",
+            3333,
+            4444,
+            vlan_id,
+        );
+        v6_pkt.hdrs.ipv6_hdr.as_mut().unwrap().ipv6_hop_lim = 1;
+
+        for (family, pkt) in [("ipv4", v4_pkt), ("ipv6", v6_pkt)] {
+            one_counted_test(
+                switch,
+                TestPacket { packet: Arc::new(pkt), port: SERVICE_PORT },
+                None,
+                "multicast_ttl_exceeded",
+                None,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "service-port {family} multicast without Sidecar, \
+                     vlan {vlan_id:?}"
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_multicast_unexpected_sidecar_hdr_dropped() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let ingress = PhysPort(22);
+    let port_label_ingress = switch.port_label(ingress).unwrap();
+    let src_mac = MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab);
+
+    for vlan_id in [None, Some(10)] {
+        let pkts = [
+            create_ipv4_multicast_packet(
+                IpAddr::V4(MULTICAST_TEST_IPV4),
+                src_mac,
+                "10.10.10.10",
+                3333,
+                4444,
+                vlan_id,
+            ),
+            create_ipv6_multicast_packet(
+                IpAddr::V6(MULTICAST_TEST_IPV6),
+                src_mac,
+                "fd00:1122:7788:0101::4",
+                3333,
+                4444,
+                vlan_id,
+            ),
+            create_ipv6_multicast_packet(
+                IpAddr::V6("ff02::1".parse().unwrap()),
+                src_mac,
+                "fd00:1122:7788:0101::4",
+                3333,
+                4444,
+                vlan_id,
+            ),
+        ];
+
+        for mut send in pkts {
+            if let Some(ipv4_hdr) = send.hdrs.ipv4_hdr.as_mut() {
+                ipv4_hdr.ipv4_ttl = 1;
+                ipv4::Ipv4Hdr::update_checksum(&mut send);
+            } else {
+                send.hdrs.ipv6_hdr.as_mut().unwrap().ipv6_hop_lim = 1;
+            }
+            common::add_sidecar_hdr(
+                switch,
+                &mut send,
+                sidecar::SC_FWD_FROM_USERSPACE,
+                NO_PORT,
+                PhysPort(15),
+                None,
+            );
+            let drop_mcast_baseline = switch
+                .get_counter(&port_label_ingress, Some("multicast_drop"))
+                .await?;
+
+            one_counted_test(
+                switch,
+                TestPacket { packet: Arc::new(send), port: ingress },
+                None,
+                "multicast_unexpected_sidecar_hdr",
+                None,
+            )
+            .await
+            .with_context(|| format!("vlan {vlan_id:?}"))?;
+            check_counter_incremented(
+                switch,
+                &port_label_ingress,
+                drop_mcast_baseline,
+                1,
+                Some("multicast_drop"),
+            )
+            .await?;
+        }
+    }
 
     Ok(())
 }
