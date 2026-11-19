@@ -82,3 +82,7 @@ slog-term.workspace = true
 dpd-client.workspace = true
 slog-async.workspace = true
 futures.workspace = true
+
+[target.'cfg(target_os = "illumos")'.dev-dependencies]
+zone = "0.3"
+socket2.workspace = true
