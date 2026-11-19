@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use std::{fmt, thread};
 
-use anyhow::Context;
 use anyhow::anyhow;
+use anyhow::{Context, bail};
 use oxnet::Ipv4Net;
 use oxnet::Ipv6Net;
 use slog::Drain;
@@ -24,14 +24,14 @@ use dpd_client::Client;
 use dpd_client::ClientInfo;
 use dpd_client::ClientState;
 use dpd_client::types;
-use packet::Endpoint;
-use packet::Packet;
 use packet::arp;
 use packet::eth;
 use packet::icmp;
 use packet::ipv4;
 use packet::ipv6;
 use packet::sidecar;
+use packet::{Endpoint, L4Endpoint};
+use packet::{L3Endpoint, Packet, geneve};
 use types::PortId;
 
 const SHOW_VERBOSE: u8 = 0x01;
@@ -659,21 +659,19 @@ impl Switch {
         }
     }
 
-    pub fn get_port_mac(&self, port: PhysPort) -> Result<MacAddr, String> {
+    pub fn get_port_mac(&self, port: PhysPort) -> anyhow::Result<MacAddr> {
         let idx: usize = port.into();
-        if idx < self.ports.len() {
-            if let Some(p) = &self.ports[idx] {
-                return Ok(p.mac.expect(
-                    format!(
-                        "no MAC for {}/{} (phys port = {idx})",
-                        p.port_id.to_string(),
-                        *p.link_id,
-                    )
-                    .as_str(),
-                ));
-            }
-        }
-        Err("no such port".to_string())
+        let Some(Some(p)) = self.ports.get(idx) else {
+            bail!("no such port: {port:?}")
+        };
+
+        p.mac.ok_or_else(|| {
+            anyhow!(
+                "no MAC for {}/{} (phys port = {idx})",
+                p.port_id,
+                *p.link_id
+            )
+        })
     }
 
     pub fn collected_packets_clear(&self) {
@@ -746,8 +744,8 @@ impl Switch {
         let mut found = Vec::new();
         for (s, sent) in send.iter().enumerate() {
             for (g, got) in captured.iter().enumerate() {
-                // Compare raw bytes to support sending degenerate packets
-                // that might not parse into a normal header.
+                // Compare deconstructed packets to support sending degenerate
+                // headers that may fail parse validation.
                 if sent.port == got.port
                     && sent.deconstruct_pkt() == got.deconstruct_pkt()
                 {
@@ -972,18 +970,18 @@ pub enum OxideGeneveOption {
 /// Build a Geneve packet with a possible multicast tag.
 #[cfg(feature = "multicast")]
 pub fn gen_geneve_packet_with_mcast_tag(
-    src: Endpoint,
-    dst: Endpoint,
-    inner_type: u16,
+    src: L3Endpoint,
+    dst: L3Endpoint,
+    flow_hash: u16,
     vni: u32,
     mcast_tag: u8,
     payload: &[u8],
 ) -> Packet {
     let opt = OxideGeneveOption::Multicast(mcast_tag);
-    gen_geneve_packet(
+    self::gen_geneve_packet(
         src,
         dst,
-        inner_type,
+        flow_hash,
         vni,
         core::slice::from_ref(&opt),
         payload,
@@ -992,42 +990,47 @@ pub fn gen_geneve_packet_with_mcast_tag(
 
 /// Build a Geneve packet with a possible multicast tag.
 pub fn gen_external_geneve_packet(
-    src: Endpoint,
-    dst: Endpoint,
-    inner_type: u16,
+    src: L3Endpoint,
+    dst: L3Endpoint,
+    flow_hash: u16,
     vni: u32,
     payload: &[u8],
 ) -> Packet {
     let opt = OxideGeneveOption::External;
-    gen_geneve_packet(
+    self::gen_geneve_packet(
         src,
         dst,
-        inner_type,
+        flow_hash,
         vni,
         core::slice::from_ref(&opt),
         payload,
     )
 }
 
-/// Build a Geneve packet with the given parameters.
+/// Encapsulate an Ethernet frame `payload` in a Geneve tunnel.
 pub fn gen_geneve_packet(
-    src: Endpoint,
-    dst: Endpoint,
-    inner_type: u16,
+    src: L3Endpoint,
+    dst: L3Endpoint,
+    flow_hash: u16,
     vni: u32,
     geneve_opts: &[OxideGeneveOption],
     payload: &[u8],
 ) -> Packet {
-    let udp_stack = match src.get_ip("src").unwrap() {
+    let src = L4Endpoint::from_l3(src, flow_hash);
+    let dst = L4Endpoint::from_l3(dst, geneve::GENEVE_UDP_PORT);
+
+    let udp_stack = match src.ip {
         IpAddr::V4(_) => {
-            vec![inner_type, ipv4::IPPROTO_UDP.into(), eth::ETHER_IPV4]
+            vec![eth::ETHER_ETHER, ipv4::IPPROTO_UDP.into(), eth::ETHER_IPV4]
         }
         IpAddr::V6(_) => {
-            vec![inner_type, ipv6::IPPROTO_UDP.into(), eth::ETHER_IPV6]
+            vec![eth::ETHER_ETHER, ipv6::IPPROTO_UDP.into(), eth::ETHER_IPV6]
         }
     };
 
-    let mut pkt = Packet::generate(src, dst, udp_stack, Some(payload)).unwrap();
+    let mut pkt =
+        Packet::generate(src.into(), dst.into(), udp_stack, Some(payload))
+            .unwrap();
     let geneve = pkt.hdrs.geneve_hdr.as_mut().unwrap();
     geneve.vni = vni;
 
@@ -1100,7 +1103,7 @@ pub fn gen_geneve_packet(
     );
     geneve.opt_len = u8::try_from(extra_bytes / 4).unwrap();
     pkt.hdrs.udp_hdr.as_mut().unwrap().udp_len += extra_bytes;
-    match src.get_ip("src").unwrap() {
+    match src.ip {
         IpAddr::V4(_) => {
             pkt.hdrs.ipv4_hdr.as_mut().unwrap().ipv4_total_len += extra_bytes
         }
@@ -1533,19 +1536,21 @@ pub fn tofino_flow_hash(
 ///
 /// The test harness should fail if any callbacks return error.
 pub struct PktCallbacks {
-    /// Called on the tx packet before generating the expected response.
+    /// Called on the packet before generating the expected response.
     /// Called immediately before encapsulation if applicable.
-    pub tx_pkt: fn(&mut Packet) -> anyhow::Result<()>,
+    pub modify_pkt: fn(&mut Packet) -> anyhow::Result<()>,
 
-    /// Called on the (to_send, expect_recv) tuple immediately before
-    /// running the packet test.
-    pub exchanged:
+    /// Provides mutable access to each complete batch of input/output
+    /// packets in a packet test.
+    ///
+    /// Called immediately before simulated switch processing.
+    pub modify_exchange:
         fn(&mut Vec<TestPacket>, &mut Vec<TestPacket>) -> anyhow::Result<()>,
 }
 
 impl Default for PktCallbacks {
     fn default() -> Self {
-        Self { tx_pkt: |_| Ok(()), exchanged: |_, _| Ok(()) }
+        Self { modify_pkt: |_| Ok(()), modify_exchange: |_, _| Ok(()) }
     }
 }
 

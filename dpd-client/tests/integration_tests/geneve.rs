@@ -7,9 +7,9 @@
 use std::sync::Arc;
 
 use packet::Endpoint;
+use packet::L3Endpoint;
 use packet::Packet;
 use packet::eth;
-use packet::geneve;
 
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
@@ -54,15 +54,15 @@ async fn test_geneve_impl(
     let payload = inner.deparse().unwrap().to_vec();
 
     let mut to_send = common::gen_geneve_packet(
-        Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0101::4", 3333)
-            .unwrap(),
-        Endpoint::parse(
-            "e0:d5:5e:67:89:ac",
-            "fd00:1122:3344:0101::5",
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        eth::ETHER_ETHER,
+        L3Endpoint::new(
+            "e0:d5:5e:67:89:ab".parse()?,
+            "fd00:1122:7788:0101::4".parse()?,
+        ),
+        L3Endpoint::new(
+            "e0:d5:5e:67:89:ac".parse()?,
+            "fd00:1122:3344:0101::5".parse()?,
+        ),
+        3333,
         345,
         &[],
         &payload,
@@ -107,15 +107,15 @@ async fn test_geneve_multiopt() -> TestResult {
     .to_vec();
 
     let mut to_send = common::gen_geneve_packet(
-        Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0101::4", 3333)
-            .unwrap(),
-        Endpoint::parse(
-            "e0:d5:5e:67:89:ac",
-            "fd00:1122:3344:0101::5",
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        eth::ETHER_ETHER,
+        L3Endpoint::new(
+            "e0:d5:5e:67:89:ab".parse()?,
+            "fd00:1122:7788:0101::4".parse()?,
+        ),
+        L3Endpoint::new(
+            "e0:d5:5e:67:89:ac".parse()?,
+            "fd00:1122:3344:0101::5".parse()?,
+        ),
+        3333,
         345,
         &[
             // Does this combination make sense? Maybe not today, but
@@ -139,15 +139,15 @@ async fn test_geneve_multiopt() -> TestResult {
     // Now, verify that options are present (but canonically ordered)
     // if we put them in in a different order.
     let mut to_send = common::gen_geneve_packet(
-        Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0101::4", 3333)
-            .unwrap(),
-        Endpoint::parse(
-            "e0:d5:5e:67:89:ac",
-            "fd00:1122:3344:0101::5",
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        eth::ETHER_ETHER,
+        L3Endpoint::new(
+            "e0:d5:5e:67:89:ab".parse()?,
+            "fd00:1122:7788:0101::4".parse()?,
+        ),
+        L3Endpoint::new(
+            "e0:d5:5e:67:89:ac".parse()?,
+            "fd00:1122:3344:0101::5".parse()?,
+        ),
+        3333,
         345,
         &[
             // Swapped!

@@ -118,7 +118,7 @@ struct RouteTest {
     router_subnet: &'static str,
     src: Endpoint,
     dst: Endpoint,
-    modify: PktCallbacks,
+    ctrl: PktCallbacks,
 }
 
 impl Default for RouteTest {
@@ -132,7 +132,7 @@ impl Default for RouteTest {
                 .unwrap(),
             dst: Endpoint::parse("e0:d5:5e:67:89:ac", "10.10.10.11", 4444)
                 .unwrap(),
-            modify: PktCallbacks::default(),
+            ctrl: PktCallbacks::default(),
         }
     }
 }
@@ -153,7 +153,7 @@ async fn test_route_ipv4_unicast_impl(
 
     let mut to_send = common::gen_udp_packet_loaded(conf.src, conf.dst, &[]);
     eth::EthHdr::rewrite_dmac(&mut to_send, conf.router.mac);
-    (conf.modify.tx_pkt)(&mut to_send)?;
+    (conf.ctrl.modify_pkt)(&mut to_send)?;
 
     let to_recv = common::gen_packet_routed(switch, conf.egress, &to_send);
 
@@ -161,7 +161,7 @@ async fn test_route_ipv4_unicast_impl(
         vec![TestPacket { packet: Arc::new(to_send), port: conf.ingress }];
     let mut expected =
         vec![TestPacket { packet: Arc::new(to_recv), port: conf.egress }];
-    (conf.modify.exchanged)(&mut send, &mut expected)?;
+    (conf.ctrl.modify_exchange)(&mut send, &mut expected)?;
 
     switch.packet_test(send, expected)
 }

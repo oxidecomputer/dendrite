@@ -23,7 +23,7 @@ struct ServiceTest {
     service_ip: IpAddr,
     src: Endpoint,
     dst: Endpoint,
-    modify: PktCallbacks,
+    ctrl: PktCallbacks,
 }
 
 impl ServiceTest {
@@ -45,7 +45,7 @@ impl ServiceTest {
             src: Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333)
                 .unwrap(),
             dst,
-            modify: PktCallbacks::default(),
+            ctrl: PktCallbacks::default(),
         }
     }
 }
@@ -77,7 +77,7 @@ async fn run_unicast_ipv4_service(
     switch.client.link_ipv4_create(&port_id, &link_id, &entry).await.unwrap();
 
     let mut send_pkt = common::gen_udp_packet(conf.src, conf.dst);
-    (conf.modify.tx_pkt)(&mut send_pkt)?;
+    (conf.ctrl.modify_pkt)(&mut send_pkt)?;
     let mut recv_pkt = send_pkt.clone();
 
     let send = TestPacket { packet: Arc::new(send_pkt), port: conf.ingress };
@@ -96,7 +96,7 @@ async fn run_unicast_ipv4_service(
     let mut expected =
         vec![TestPacket { packet: Arc::new(recv_pkt), port: SERVICE_PORT }];
 
-    (conf.modify.exchanged)(&mut send, &mut expected)?;
+    (conf.ctrl.modify_exchange)(&mut send, &mut expected)?;
 
     switch.packet_test(send, expected)
 }
