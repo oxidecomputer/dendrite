@@ -16,7 +16,6 @@ pub use crate::faux_fsm::FsmState;
 pub use crate::faux_fsm::FsmType;
 pub use crate::faux_fsm::PortFsmState;
 
-#[cfg(feature = "multicast")]
 use aal::AsicMulticastOps;
 use aal::{
     AsicError, AsicId, AsicOps, AsicResult, Connector, PortHdl, PortUpdate,
@@ -145,7 +144,6 @@ impl Handle {
     pub fn fini(&self) {}
 }
 
-#[cfg(feature = "multicast")]
 impl AsicMulticastOps for Handle {
     fn mc_domains(&self) -> Vec<u16> {
         let len = self.ports.lock().unwrap().len() as u16;

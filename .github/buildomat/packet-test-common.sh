@@ -10,15 +10,7 @@ STARTUP_TIMEOUT=${STARTUP_TIMEOUT:=120}
 DENDRITE_TEST_HOST=${DENDRITE_TEST_HOST:="[::1]"}
 DENDRITE_TEST_VERBOSITY=${DENDRITE_TEST_VERBOSITY:=3}
 
-if [ "$MULTICAST" == "" ]; then
-    BUILD_FEATURES=tofino_asic
-    CODEGEN_FEATURES=()
-    SWADM_FEATURES=()
-else
-    BUILD_FEATURES=tofino_asic,multicast
-    CODEGEN_FEATURES=(--multicast)
-    SWADM_FEATURES=(--features=multicast)
-fi
+BUILD_FEATURES=tofino_asic
 
 function cleanup {
     set +o errexit
@@ -64,7 +56,7 @@ export SDE=/opt/oxide/tofino_sde
 banner "Build"
 if [[ $NOBUILD -ne 1 ]]; then
     cargo build --features=$BUILD_FEATURES --bin dpd --bin swadm
-    cargo xtask codegen --stages "$TOFINO_STAGES" "${CODEGEN_FEATURES[@]}"
+    cargo xtask codegen --stages "$TOFINO_STAGES"
 fi
 
 banner "Test"
@@ -114,8 +106,7 @@ cargo test \
     --no-fail-fast \
     $TESTNAME \
     -- \
-    --ignored \
-    --skip succeeds_when_table_fragmented
+    --ignored
 
 popd
 
@@ -125,12 +116,10 @@ pushd swadm
 
 cargo test \
     --no-fail-fast \
-    "${SWADM_FEATURES[@]}" \
     -- \
     --ignored
 
 cargo test \
-    --no-fail-fast \
-    "${SWADM_FEATURES[@]}"
+    --no-fail-fast
 
 popd
