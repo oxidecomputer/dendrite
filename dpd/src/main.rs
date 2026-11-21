@@ -177,6 +177,11 @@ pub(crate) struct Opt {
     /// IP address and port of MGS server.
     #[structopt(long)]
     mgs_address: Option<SocketAddr>,
+
+    /// If enabled, dpd will monitor and manipulate interrupts
+    /// from the ASIC.
+    #[clap(long = "interrupts")]
+    enable_interrupts: bool,
 }
 
 /// The main context object for running all of `dpd`.
@@ -278,9 +283,18 @@ impl Switch {
         let mac_mgmt = Mutex::new(macaddrs::MacManagement::new(&log));
 
         #[cfg(feature = "tofino_asic")]
-        if !asic_hdl.is_model() {
-            #[cfg(feature = "interrupts")]
-            run_interrupt_monitor(log.clone());
+        {
+            let serve_interrupts =
+                !asic_hdl.is_model() && config.enable_interrupts;
+            if serve_interrupts {
+                self::run_interrupt_monitor(log.clone());
+                slog::debug!(log, "Interrupts enabled");
+            } else if config.enable_interrupts {
+                slog::warn!(
+                    log,
+                    "Interrupts cannot be enabled on this platform"
+                );
+            }
         }
 
         let ws_log = log.new(slog::o!("unit" => "workflow_server"));
@@ -873,7 +887,7 @@ async fn run_dpd(opt: Opt) -> anyhow::Result<()> {
     }
 }
 
-#[cfg(all(feature = "tofino_asic", feature = "interrupts"))]
+#[cfg(feature = "tofino_asic")]
 fn run_interrupt_monitor(log: slog::Logger) {
     std::thread::spawn(move || {
         asic::tofino_asic::interrupt_monitor::monitor_interrupts(log);

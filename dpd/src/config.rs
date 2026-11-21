@@ -76,6 +76,10 @@ pub struct Config {
 
     /// MGS address.
     pub mgs_address: Option<SocketAddr>,
+
+    /// If enabled, dpd will monitor and manipulate interrupts
+    /// from the ASIC.
+    pub enable_interrupts: bool,
 }
 
 impl Default for Config {
@@ -100,6 +104,7 @@ impl Default for Config {
             enable_rpw: false,
             nexus_address: None,
             mgs_address: None,
+            enable_interrupts: false,
         }
     }
 }
@@ -210,6 +215,15 @@ pub(crate) fn update_from_smf(config: &mut Config) -> SmfResult<()> {
         if let Some(rev) = smf::get_property(&snapshot, "board_rev")? {
             config.asic_config.board_rev = rev;
         }
+        if let Some(conf) = smf::get_property(&snapshot, "enable_interrupts")? {
+            let Ok(interrupts) = conf.parse() else {
+                return Err(SmfError::InvalidProperty(
+                    "enable_interrupts".to_string(),
+                    "Property must be a boolean".to_string(),
+                ));
+            };
+            config.enable_interrupts = interrupts;
+        }
     }
 
     #[cfg(feature = "softnpu")]
@@ -279,6 +293,7 @@ fn update_from_cli(opts: &crate::Opt, config: &mut Config) -> DpdResult<()> {
     }
 
     config.enable_rpw = opts.enable_rpw;
+    config.enable_interrupts = opts.enable_interrupts;
 
     #[cfg(feature = "tofino_asic")]
     {
