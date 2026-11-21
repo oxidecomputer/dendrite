@@ -4,6 +4,8 @@
 //
 // Copyright 2026 Oxide Computer Company
 
+use std::net::IpAddr;
+
 use anyhow::{Context, Result};
 use clap::{Subcommand, ValueEnum};
 
@@ -25,39 +27,100 @@ impl From<Direction> for types::SnapshotDirection {
     }
 }
 
+enum TriggerValue {
+    Ip { ip: IpAddr },
+    Hex { value: String, mask: String },
+}
+
+struct Trigger {
+    field: String,
+    value: TriggerValue,
+}
+
+impl From<Trigger> for types::SnapshotTrigger {
+    fn from(value: Trigger) -> Self {
+        let (val, mask) = match value.value {
+            TriggerValue::Ip { ip } => match ip {
+                IpAddr::V4(v4) => (
+                    format!("0x{:08x}", u32::from(v4)),
+                    format!("0x{:x}", u32::MAX),
+                ),
+                IpAddr::V6(v6) => (
+                    format!("0x{:032x}", u128::from(v6)),
+                    format!("0x{:x}", u128::MAX),
+                ),
+            },
+            TriggerValue::Hex { value, mask } => (value, mask),
+        };
+        types::SnapshotTrigger { field: value.field, mask, value: val }
+    }
+}
+
 /// Tofino snapshot commands
 #[derive(Debug, Subcommand)]
 pub enum Snapshot {
     /// Capture a PHV snapshot
+    ///
+    /// This tool allows you to capture the state of the switch ASIC when a
+    /// given trigger packet is detected.
     Capture {
-        /// MAU start stage
+        /// The first hardware stage to capture snapshot data from. Must be
+        /// 0-19. Must be less than `end_stage`.
         #[arg(long)]
         start_stage: u8,
 
-        /// MAU end stage
+        /// The last hardware stage to capture snapshot data from. Must be
+        /// 0-19. Must be greater than `start_stage`.
         #[arg(long)]
         end_stage: u8,
 
-        /// Pipeline direction
+        /// What pipeline to capture a snapshot from. In our P4 code the ingress
+        /// pipeline entry point is `control Ingress` and the egress pipeline
+        /// entry point is `control Egress`.
         #[arg(long, value_enum, default_value_t = Direction::Ingress)]
         dir: Direction,
 
-        /// Pipe to capture from
+        /// Pipeline to capture from. The Tofino has four pipelines. For the
+        /// purposes of this tool a pipeline is a collection of ports. If your
+        /// capture does not trigger when you expect it to, it may be that the
+        /// port the packet data came in on is on a different pipeline.
         #[arg(long, default_value_t = 0)]
         pipe: u32,
 
-        /// Trigger fields as "field=value/mask" (hex values).
+        /// A trigger determines when a snapshot is collected. When a packet
+        /// goes through the ASIC that matches a trigger, a snapshot is
+        /// collected.
+        ///
+        /// A trigger is specified as "field=value/mask" (hex values).
         /// Example: "hdr.ethernet.dst_addr=0x112233445566/0xffffffffffff"
         ///
+        /// IP addresses can be expressed directly.
+        /// Example: "hdr.ipv6.dst_addr=fd00::5"
+        ///
+        /// NOTE: In some cases trigger values must be specified in the
+        /// opposite byte order they appear in as field captures, sorry.
+        ///
         /// Field names must match what's in the phv ingress or phv egress
-        /// /section of opt/oxide/dendrite/sidecar/pipe/sidecar.bfa.
+        /// section of /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa. These names
+        /// come from our p4 code. The prefixes come from the parameter names
+        /// in `control Ingress` and `control Egress` respectively e.g. `hdr`
+        /// and `meta`. And the field names come from corresponding P4 struct
+        /// and header definitions such as `sidecar_headers_t` and the contained
+        /// header types. But looking at sidecar.bfa is probably the quickest
+        /// way to see what names are in play.
+        ///
+        /// This flag may be specified multiple times to specify multiple
+        /// triggers. Multiple triggers are joined together as a logical AND.
         #[arg(long = "trigger", short = 't')]
         triggers: Vec<String>,
 
         /// P4 field names to decode from the capture.
         ///
         /// Field names must match what's in the phv ingress or phv egress
-        /// /section of opt/oxide/dendrite/sidecar/pipe/sidecar.bfa.
+        /// section of /opt/oxide/dendrite/sidecar/pipe/sidecar.bfa.
+        ///
+        /// This flag may be specified multiple times to capture and decode
+        /// multiple fields.
         #[arg(long = "field", short = 'f')]
         fields: Vec<String>,
 
@@ -91,16 +154,29 @@ pub enum Snapshot {
 }
 
 /// Parse a trigger spec: "field=value/mask" where value and mask are hex.
-fn parse_trigger(s: &str) -> Result<types::SnapshotTrigger> {
+fn parse_trigger(s: &str) -> Result<Trigger> {
     let (field, rest) =
         s.split_once('=').context("expected field=value/mask")?;
-    let (val_str, mask_str) =
-        rest.split_once('/').context("expected value/mask after =")?;
-    Ok(types::SnapshotTrigger {
-        field: field.trim().to_string(),
-        value: val_str.trim().to_string(),
-        mask: mask_str.trim().to_string(),
-    })
+
+    let field = field.trim();
+    let rest = rest.trim();
+
+    if let Ok(ip) = rest.parse::<IpAddr>() {
+        Ok(Trigger { field: field.to_owned(), value: TriggerValue::Ip { ip } })
+    } else {
+        let (value, mask) =
+            rest.split_once('/').context("expected value/mask after =")?;
+        let value = value.trim();
+        let mask = mask.trim();
+
+        Ok(Trigger {
+            field: field.to_owned(),
+            value: TriggerValue::Hex {
+                value: value.to_owned(),
+                mask: mask.to_owned(),
+            },
+        })
+    }
 }
 
 pub async fn snapshot_cmd(client: &Client, cmd: Snapshot) -> Result<()> {
@@ -116,7 +192,7 @@ pub async fn snapshot_cmd(client: &Client, cmd: Snapshot) -> Result<()> {
         } => {
             let api_triggers: Vec<types::SnapshotTrigger> = triggers
                 .iter()
-                .map(|t| parse_trigger(t))
+                .map(|t| parse_trigger(t).map(Into::into))
                 .collect::<Result<Vec<_>>>()
                 .context("bad trigger spec")?;
 
