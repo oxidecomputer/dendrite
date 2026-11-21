@@ -1775,6 +1775,7 @@ dependencies = [
  "slog",
  "slog-async",
  "slog-term",
+ "thiserror 2.0.18",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "transceiver-controller",
@@ -5033,9 +5034,9 @@ dependencies = [
 
 [[package]]
 name = "oxnet"
-version = "0.1.6"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a1d55676fd6e2fe06971c05d176c7aca3d2b7d6ed1244ae8026beb1e7b89058"
+checksum = "ea8d0d4f1ffb3c7c4d907efc5941ece53e3563ee5e42c150c1914ab3ac409099"
 dependencies = [
  "ipnetwork",
  "schemars 0.8.22",
