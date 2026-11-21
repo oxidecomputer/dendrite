@@ -202,7 +202,7 @@ async fn simnet_process(g: &Global) -> anyhow::Result<()> {
 
         for a in to_del_v4 {
             if let Err(e) =
-                g.client.link_ipv4_delete(&port_id, &link_id, a).await
+                g.client.link_ipv4_delete(&port_id, &link_id, a, None).await
             {
                 error!(g.log, "failed to delete v4 address {a}: {e}");
             }
@@ -219,7 +219,7 @@ async fn simnet_process(g: &Global) -> anyhow::Result<()> {
 
         for a in to_del_v6 {
             if let Err(e) =
-                g.client.link_ipv6_delete(&port_id, &link_id, a).await
+                g.client.link_ipv6_delete(&port_id, &link_id, a, None).await
             {
                 error!(g.log, "failed to delete v6 address {a}: {e}");
             }

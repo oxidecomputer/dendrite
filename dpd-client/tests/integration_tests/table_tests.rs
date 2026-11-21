@@ -174,9 +174,10 @@ impl TableTest for types::Ipv4Entry {
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
+        let tag = Some(switch.client.inner().tag.as_str());
         switch
             .client
-            .link_ipv4_delete(&port_id, &link_id, &gen_ipv4_addr(idx))
+            .link_ipv4_delete(&port_id, &link_id, &gen_ipv4_addr(idx), tag)
             .await
     }
 
@@ -217,9 +218,10 @@ impl TableTest for types::Ipv6Entry {
 
     async fn delete_entry(switch: &Switch, idx: usize) -> OpResult<()> {
         let (port_id, link_id) = switch.link_id(PhysPort(11)).unwrap();
+        let tag = Some(switch.client.inner().tag.as_str());
         switch
             .client
-            .link_ipv6_delete(&port_id, &link_id, &gen_ipv6_addr(idx))
+            .link_ipv6_delete(&port_id, &link_id, &gen_ipv6_addr(idx), tag)
             .await
     }
 

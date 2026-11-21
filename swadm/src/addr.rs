@@ -390,12 +390,12 @@ async fn addr_del(
 ) -> anyhow::Result<()> {
     match addr {
         IpAddr::V4(addr) => client
-            .link_ipv4_delete(&link.port_id, &link.link_id, &addr)
+            .link_ipv4_delete(&link.port_id, &link.link_id, &addr, None)
             .await
             .context("failed to delete IPv4 address")
             .map(|_| ()),
         IpAddr::V6(addr) => client
-            .link_ipv6_delete(&link.port_id, &link.link_id, &addr)
+            .link_ipv6_delete(&link.port_id, &link.link_id, &addr, None)
             .await
             .context("failed to delete IPv6 address")
             .map(|_| ()),
@@ -408,12 +408,12 @@ async fn addr_del_loopback(
 ) -> anyhow::Result<()> {
     match addr {
         IpAddr::V4(addr) => client
-            .loopback_ipv4_delete(&addr)
+            .loopback_ipv4_delete(&addr, None)
             .await
             .context("failed to delete IPv4 address")
             .map(|_| ()),
         IpAddr::V6(addr) => client
-            .loopback_ipv6_delete(&addr)
+            .loopback_ipv6_delete(&addr, None)
             .await
             .context("failed to delete IPv6 address")
             .map(|_| ()),

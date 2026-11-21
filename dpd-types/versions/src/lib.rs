@@ -45,6 +45,8 @@ pub mod v12;
 pub mod v13;
 #[path = "openapi_lint/mod.rs"]
 pub mod v14;
+#[path = "address_tags/mod.rs"]
+pub mod v15;
 #[path = "attached_subnets/mod.rs"]
 pub mod v3;
 #[path = "v4_over_v6_routes/mod.rs"]

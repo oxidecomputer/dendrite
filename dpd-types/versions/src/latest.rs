@@ -58,6 +58,8 @@ pub mod link {
     pub use crate::v14::link::LinkCreate;
     pub use crate::v14::link::LinkState;
     pub use crate::v14::link::LinkView;
+
+    pub use crate::v15::IpToken;
 }
 
 pub mod loopback {
@@ -97,6 +99,11 @@ pub mod mcast {
 pub mod misc {
     pub use crate::v1::misc::BuildInfo;
     pub use crate::v1::misc::TagPath;
+
+    pub use crate::v15::CmdAck;
+    pub use crate::v15::MaybeTagged;
+    pub use crate::v15::OptTag;
+    pub use crate::v15::Tagged;
 }
 
 pub mod nat {
