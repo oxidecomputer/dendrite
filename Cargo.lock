@@ -1726,6 +1726,7 @@ dependencies = [
  "slog-error-chain",
  "slog-term",
  "smf 0.10.0",
+ "socket2 0.6.4",
  "strum 0.28.0",
  "thiserror 2.0.18",
  "tokio",
@@ -1734,6 +1735,7 @@ dependencies = [
  "usdt 0.6.0",
  "uuid",
  "vergen",
+ "zone",
 ]
 
 [[package]]
