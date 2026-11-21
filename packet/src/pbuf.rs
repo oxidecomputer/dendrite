@@ -126,16 +126,30 @@ impl ParseBuffer<'_> {
     }
 
     pub fn get_bytes(&mut self, bytes: usize) -> PacketResult<Vec<u8>> {
+        let mut buf = vec![0u8; bytes];
+        self.get_bytes_into(&mut buf)?;
+        Ok(buf)
+    }
+
+    /// Fills `buf` from self and advances the cursor by that many
+    /// bytes. Returns err if `buf` could not be completely filled.
+    pub fn get_bytes_into(&mut self, buf: &mut [u8]) -> PacketResult<()> {
         self.byte_align();
 
-        if self.bytes_left() < bytes {
-            Err(parse_error(self, "buffer overrun"))
-        } else {
-            let mut v = Vec::new();
-            v.extend_from_slice(&self.data[self.byte..self.byte + bytes]);
-            self.byte += bytes;
-            Ok(v)
-        }
+        let Some(segment) = self.data.get(self.byte..self.byte + buf.len())
+        else {
+            return Err(parse_error(
+                self,
+                format!(
+                    "Not enough bytes remaining to fill buffer of size {}",
+                    buf.len()
+                ),
+            ));
+        };
+
+        buf.copy_from_slice(segment);
+        self.byte += buf.len();
+        Ok(())
     }
 
     pub fn get_u32(&mut self) -> PacketResult<u32> {

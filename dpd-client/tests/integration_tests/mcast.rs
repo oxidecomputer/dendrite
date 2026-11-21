@@ -2253,12 +2253,10 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
     cleanup_test_group(switch, MULTICAST_NAT_IP.into(), TEST_TAG).await
 }
 
-#[tokio::test]
-#[ignore]
-async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_members()
--> TestResult {
-    let switch = &*get_switch().await;
-
+async fn test_geneve_to_underlay_and_external(
+    switch: &Switch,
+    modify_pkt: impl FnOnce(&mut Packet) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     // Define test ports
     let ingress = PhysPort(10);
     let egress1 = PhysPort(15);
@@ -2308,7 +2306,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     let dst_port = 4444;
 
     // Create the original packet
-    let og_pkt = create_ipv4_multicast_packet(
+    let mut og_pkt = create_ipv4_multicast_packet(
         multicast_ip,
         src_mac,
         src_ip,
@@ -2316,6 +2314,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
         dst_port,
         Some(10),
     );
+    modify_pkt(&mut og_pkt)?;
 
     // Emulate Nat Target from previous packet in the chain.
     let nat_target = create_nat_target_ipv6();
@@ -2382,6 +2381,28 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
         .await
         .unwrap();
     cleanup_test_group(switch, MULTICAST_NAT_IP.into(), TEST_TAG).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_members()
+-> TestResult {
+    let switch = &*get_switch().await;
+    self::test_geneve_to_underlay_and_external(switch, |_| Ok(())).await
+}
+
+/// The current implementation of multicast decap allows IPv4-optioned packets
+/// to egress successfully. This behavior seems worth preserving and informs
+/// how we might later implement this for unicast encap/decap.
+#[tokio::test]
+#[ignore]
+async fn ipv4_opts_decap_successfully() -> anyhow::Result<()> {
+    let switch = &*get_switch().await;
+    self::test_geneve_to_underlay_and_external(
+        switch,
+        common::PktCallbacks::add_opts,
+    )
+    .await
 }
 
 #[tokio::test]
