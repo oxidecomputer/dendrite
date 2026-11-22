@@ -2380,11 +2380,8 @@ control Egress(
 		// Check multicast egress packets by checking that RID is not 0.
 		bool is_egress_rid_mcast = eg_intr_md.egress_rid > 0;
 		// We track IPv6 multicast packets separately for counters.
-		bool is_link_local_ipv6_mcast = false;
-		if (hdr.ipv6.isValid()) {
-			bit<16> ipv6_prefix = (bit<16>)hdr.ipv6.dst_addr[127:112];
-			is_link_local_ipv6_mcast = (ipv6_prefix == IPV6_LINK_LOCAL_16);
-		}
+		bool is_link_local_ipv6_mcast =
+		    meta.bridge_hdr.is_link_local_mcastv6;
 		bool is_mcast = is_egress_rid_mcast || is_link_local_ipv6_mcast;
 
 		if (is_egress_rid_mcast == true) {
@@ -2415,14 +2412,12 @@ control Egress(
 			if (is_mcast == true) {
 				mcast_ctr.count(eg_intr_md.egress_port);
 
-				if (is_link_local_ipv6_mcast) {
-					link_local_mcast_ctr.count(eg_intr_md.egress_port);
-				} else if (hdr.geneve.isValid()) {
-					external_mcast_ctr.count(eg_intr_md.egress_port);
-				} else if (hdr.geneve.isValid() &&
-				           hdr.geneve_opts.oxg_mcast.isValid() &&
-				           hdr.geneve_opts.oxg_mcast.mcast_tag == MULTICAST_TAG_UNDERLAY) {
+				if (is_egress_rid_mcast && hdr.geneve.isValid()) {
 					underlay_mcast_ctr.count(eg_intr_md.egress_port);
+				} else if (is_egress_rid_mcast) {
+					external_mcast_ctr.count(eg_intr_md.egress_port);
+				} else {
+					link_local_mcast_ctr.count(eg_intr_md.egress_port);
 				}
 			} else {
 				unicast_ctr.count(eg_intr_md.egress_port);
