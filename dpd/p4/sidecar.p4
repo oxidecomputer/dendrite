@@ -2195,8 +2195,6 @@ control Ingress(
 			if (meta.nat_egress_hit && !meta.service_routed) {
 				meta.bridge_hdr.nat_egress_hit = true;
 			}
-		} else if (meta.is_link_local_mcastv6) {
-			meta.bridge_hdr.is_link_local_mcastv6 = true;
 		}
 
 		if (meta.encap_needed) {
@@ -2416,9 +2414,9 @@ control Egress(
 
 				// Per-type counters:
 				//
-				// - link-local (ff02::/16 outer dst) -> always
-				//   forwarded without PRE (Packet Replication Engine)
-				//   replication, arriving with egress_rid == 0.
+				// - link-local (ff02::/16 outer dst) -> ingress sets the
+				//   bridge header flag. Packets arrive with egress_rid == 0
+				//   and without PRE (Packet Replication Engine) replication.
 				// - egress_rid > 0 with a valid Geneve header -> an
 				//   underlay replica, still encapsulated.
 				// - egress_rid > 0 without a valid Geneve header -> an
