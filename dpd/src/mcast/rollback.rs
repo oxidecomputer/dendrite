@@ -17,12 +17,13 @@ use aal::{AsicError, AsicMulticastOps};
 use slog::{debug, error, warn};
 
 use super::{
-    Direction, ExternalMulticastIp, GroupKind, IpSrc, MulticastGroup,
-    MulticastGroupId, MulticastGroupMember, MulticastReplicationInfo,
-    Replication, SourceFilter, UnderlayMulticastIpv6, clear_source_filter,
-    mc_group_clear, mc_group_set, mc_port_clear, mc_port_set,
+    BitmapVlanUpdate, Direction, ExternalMulticastIp, GroupKind, IpSrc,
+    MulticastGroup, MulticastGroupId, MulticastGroupMember,
+    MulticastReplicationInfo, Replication, SourceFilter, StaleTargetUpdate,
+    UnderlayMulticastIpv6,
+    clear_source_filter, mc_group_clear, mc_group_set, mc_port_clear, mc_port_set,
     restore_source_filters, set_group_bitmap_entries, set_replication_entry,
-    set_source_filter, update_fwding_tables,
+    set_source_filter, update_fwding_tables, update_nat_tables,
 };
 use crate::{
     Switch, table,
@@ -342,15 +343,29 @@ impl<'a> GroupCreateRollbackContext<'a> {
         }
     }
 
-    /// Restore a referenced underlay group's bitmap VLAN, then roll back the
-    /// failed creation step.
+    /// Roll back the failed creation sequence, then restore a referenced
+    /// underlay group's bitmap VLAN once the external group's NAT entry is
+    /// removed. 
+    ///
+    /// If removing the tables fails outright, the VLAN remains as iss, with traffic
+    /// still NAT'd to the underlay group that's tagged.
     pub(crate) fn rollback_with_vlan_restore(
         &self,
         err: DpdError,
         underlay_group: &MulticastGroup,
     ) -> DpdError {
-        let restored = self.restore_bitmap_vlan(underlay_group, None);
-        self.rollback(after_unwind(err, restored))
+        let restored =
+            unwind_outcome([self.remove_tables(), self.remove_groups()])
+                .and_then(|()| self.restore_bitmap_vlan(underlay_group, None));
+        after_unwind(err, restored)
+    }
+
+    pub(crate) fn rollback_bitmap(
+        &self,
+        err: DpdError,
+        underlay_group: &MulticastGroup,
+    ) -> DpdError {
+        after_unwind(err, self.restore_bitmap_vlan(underlay_group, None))
     }
 
     /// Perform rollback and return error.
@@ -616,21 +631,39 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         after_unwind(err, unwind.and(self.restore_fwding_tables()))
     }
 
-    /// Restore the bitmap VLAN on every group in `updates`, then report the
-    /// initial failure together with that failure's outcome.
+    /// Restore the NAT target and bitmap VLANs after a failed update.
     ///
-    /// This attempts every group even if an earlier restore fails.
-    pub(crate) fn rollback_with_bitmap_restore<'b>(
+    /// `stale_bitmap` is set once NAT points at the new target, just before the
+    /// old target's VLAN is cleared. This restores the old bitmap and
+    /// points NAT back at the old target before restoring the new bitmap.
+    ///
+    /// Note: the new bitmap remains in place if either restore fails.
+    pub(super) fn restore_retarget(
         &self,
-        err: DpdError,
-        updates: impl IntoIterator<Item = (&'b MulticastGroup, Option<u16>)>,
-    ) -> DpdError {
-        let restored =
-            unwind_outcome(updates.into_iter().map(|(group, vlan_id)| {
-                self.restore_bitmap_vlan(group, vlan_id)
-            }));
+        target_bitmap: Option<&BitmapVlanUpdate<'_>>,
+        stale_bitmap: Option<&StaleTargetUpdate<'_>>,
+    ) -> DpdResult<()> {
+        if let Some(update) = stale_bitmap {
+            self.restore_bitmap_vlan(
+                update.bitmap.group,
+                update.bitmap.old_vlan_id,
+            )?;
+            let group_ip = self.group_ip();
+            self.log_rollback_error(
+                "restore NAT target",
+                &format!("for group {group_ip}"),
+                update_nat_tables(
+                    self.switch,
+                    group_ip,
+                    update.nat_target.into(),
+                ),
+            )?;
+        }
 
-        after_unwind(err, restored)
+        if let Some(update) = target_bitmap {
+            self.restore_bitmap_vlan(update.group, update.old_vlan_id)?;
+        }
+        Ok(())
     }
 
     /// Undo an underlay group's port changes, restore its tables, and report
@@ -716,9 +749,10 @@ impl<'a> GroupDeleteRollbackContext<'a> {
         underlay_group: &MulticastGroup,
         deleted: &[DeleteStep],
     ) -> DpdError {
-        let restored =
-            self.restore_bitmap_vlan(underlay_group, self.group.vlan_id());
-        self.rollback(after_unwind(err, restored), deleted)
+        let restored = self
+            .restore_bitmap_vlan(underlay_group, self.group.vlan_id())
+            .and_then(|()| self.restore_tables(deleted));
+        after_unwind(err, restored)
     }
 
     fn restore_tables(&self, deleted: &[DeleteStep]) -> DpdResult<()> {
@@ -1342,15 +1376,14 @@ mod chaos_tests {
             )
         };
 
-        let before_tables: BTreeMap<_, _> = [
-            TableType::McastIpv6,
-            TableType::McastEgressDecapPorts,
-            TableType::RouteIpv6Mcast,
-            route_table,
-        ]
-        .into_iter()
-        .map(|table| (table, table_usage(&switch, table)))
-        .collect();
+        let before_tables: BTreeMap<_, _> =
+            [TableType::McastIpv6, TableType::RouteIpv6Mcast, route_table]
+                .into_iter()
+                .map(|table| (table, table_usage(&switch, table)))
+                .collect();
+        let bitmap_group_id = switch.mcast.lock().unwrap().groups[&underlay_key]
+            .external_group_id();
+        let before_bitmap = bitmap_entry(&switch, bitmap_group_id);
 
         {
             let mut route = switch.table_get(route_table).unwrap();
@@ -1397,6 +1430,7 @@ mod chaos_tests {
         for (table, before) in before_tables {
             assert_eq!(table_usage(&switch, table), before, "{table}");
         }
+        assert_eq!(bitmap_entry(&switch, bitmap_group_id), before_bitmap);
 
         let groups = switch.mcast.lock().unwrap();
         assert_eq!(groups.groups.len(), 1 + usize::from(source_removal_fails));
@@ -1497,9 +1531,9 @@ mod chaos_tests {
             "creation error was replaced: {err:?}"
         );
 
-        assert_eq!(table_usage(&switch, route_table), (0, 1, 1, 0));
-        assert_eq!(table_usage(&switch, source_table), (0, 1, 1, 0));
-        assert_eq!(table_usage(&switch, nat_table), (0, 1, 1, 0));
+        assert_eq!(table_usage(&switch, route_table), (0, 0, 0, 0));
+        assert_eq!(table_usage(&switch, source_table), (0, 0, 0, 0));
+        assert_eq!(table_usage(&switch, nat_table), (0, 0, 0, 0));
         assert_eq!(
             table_usage(&switch, TableType::McastEgressDecapPorts),
             before_decap
@@ -1529,21 +1563,26 @@ mod chaos_tests {
         );
     }
 
-    /// Check the rollback process for VLAN changes and NAT retargets on
-    /// `external_ip`.
+    /// Check rollback for VLAN changes and NAT retargets on `external_ip`.
     ///
-    /// When `target_changed` is true, the NAT target changes and the VLAN
-    /// remains as is. Otherwise, the VLAN gets modified. Sources change either
-    /// way, and NAT programming fails.
+    /// When `target_changed` is set, we retarget and keep the VLAN. The
+    /// other case changes the VLAN. Both cases replace a source with the
+    /// table at capacity.
     ///
-    /// The NAT key is always just the destination address; both cases
-    /// update the entry in place and hit the injected `table_entry_update`
-    /// failure.
-    fn external_update_failure(external_ip: IpAddr, target_changed: bool) {
+    /// The NAT write uses the same destination key in both cases. Inject a
+    /// failure on that write unless `fail_old_bitmap` is set. That case
+    /// fails the old bitmap write after NAT switches to the new target.
+    fn external_update_failure(
+        external_ip: IpAddr,
+        target_changed: bool,
+        fail_old_bitmap: bool,
+    ) {
         let (route_table, source_table, nat_table) =
             external_tables(external_ip);
         let mut config = Config::default();
-        config.asic_config.table_entry_update.values.insert(nat_table, 1.0);
+        if !fail_old_bitmap {
+            config.asic_config.table_entry_update.values.insert(nat_table, 1.0);
+        }
 
         let (switch, logs) = chaos_switch(config);
         let (underlay_ip, underlay_key) = install_underlay_group(&switch);
@@ -1572,6 +1611,18 @@ mod chaos_tests {
         let before_bitmap =
             table_usage(&switch, TableType::McastEgressDecapPorts);
         let before_filters = table_usage(&switch, source_table);
+        let before_nat = forwarding_table_snapshot(&switch, nat_table);
+        {
+            let mut table = switch.table_get(source_table).unwrap();
+            table.usage.size = table.usage.occupancy;
+        }
+        if fail_old_bitmap {
+            switch.asic_hdl.inject_table_faults(
+                TableType::McastEgressDecapPorts,
+                TableOp::EntryUpdate,
+                CallRange::nth(2),
+            );
+        }
         let before_route_action = route_action(&switch, external_ip);
         let bitmap_group_ids: Vec<MulticastGroupId> = {
             let groups = switch.mcast.lock().unwrap();
@@ -1626,7 +1677,11 @@ mod chaos_tests {
             matches!(err, DpdError::Switch(_)),
             "update error was replaced or unwound: {err:?}"
         );
-        assert_eq!(table_usage(&switch, nat_table), (1, 1, 0, 0));
+        assert_eq!(
+            table_usage(&switch, nat_table),
+            (1, 1, 0, if fail_old_bitmap { 2 } else { 0 }),
+        );
+        assert_eq!(forwarding_table_snapshot(&switch, nat_table), before_nat);
 
         let after_route = table_usage(&switch, route_table);
         assert_eq!(
@@ -1735,7 +1790,7 @@ mod chaos_tests {
 
             switch.asic_hdl.inject_table_faults(
                 source_table,
-                TableOp::EntryDel,
+                TableOp::EntryAdd,
                 CallRange::starting_at(1),
             );
             let update = || MulticastGroupUpdateExternalEntry {
@@ -1775,7 +1830,7 @@ mod chaos_tests {
             let listed = get_range(&switch, None, 1, Some(tag)).unwrap();
             assert_eq!(serde_json::to_value(&listed[0]).unwrap(), stored);
 
-            switch.asic_hdl.clear_table_faults(source_table, TableOp::EntryDel);
+            switch.asic_hdl.clear_table_faults(source_table, TableOp::EntryAdd);
             assert_eq!(
                 serde_json::to_value(get_group(&switch, external_ip).unwrap())
                     .unwrap(),
@@ -2394,14 +2449,16 @@ mod chaos_tests {
     #[test]
     fn test_external_update_nat_failure_restores_state() {
         for group_ip in ["224.1.2.3", "ff0e::1"] {
-            external_update_failure(group_ip.parse().unwrap(), false);
+            external_update_failure(group_ip.parse().unwrap(), false, false);
         }
     }
 
     #[test]
     fn test_external_retarget_failure_restores_bitmaps() {
         for group_ip in ["224.1.2.3", "ff0e::1"] {
-            external_update_failure(group_ip.parse().unwrap(), true);
+            let group_ip = group_ip.parse().unwrap();
+            external_update_failure(group_ip, true, false);
+            external_update_failure(group_ip, true, true);
         }
     }
 
@@ -3947,14 +4004,9 @@ mod chaos_tests {
             before_decap
         );
         assert!(bitmap_entry(&switch, external_group_id).is_none());
-        assert_eq!(table_usage(&switch, nat_table).0, 1);
-        assert_eq!(table_usage(&switch, route_table).0, 1);
-        assert_eq!(
-            route_action(&switch, external_ip)
-                .and_then(|(_, vlan_id)| vlan_id)
-                .as_deref(),
-            Some("10")
-        );
+        assert_eq!(table_usage(&switch, nat_table).0, 0);
+        assert_eq!(table_usage(&switch, route_table).0, 0);
+        assert!(route_action(&switch, external_ip).is_none());
 
         {
             let errs = logs.entries.lock().unwrap();

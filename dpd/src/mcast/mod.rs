@@ -607,17 +607,18 @@ pub(crate) fn add_group_external(
         &sources,
     );
 
-    let configured = (|| {
-        configure_external_tables(s, &group_info, &sources)
-            .map_err(|e| rollback_ctx.rollback(e))?;
-        do_vlan_propagation(
-            s,
-            group_addr,
-            group_info.external_forwarding().vlan_id,
-            underlay_group,
-        )
-        .map_err(|e| rollback_ctx.rollback_with_vlan_restore(e, underlay_group))
-    })();
+    let configured = do_vlan_propagation(
+        s,
+        group_addr,
+        group_info.external_forwarding().vlan_id,
+        underlay_group,
+    )
+    .map_err(|e| rollback_ctx.rollback_bitmap(e, underlay_group))
+    .and_then(|()| {
+        configure_external_tables(s, &group_info, &sources).map_err(|e| {
+            rollback_ctx.rollback_with_vlan_restore(e, underlay_group)
+        })
+    });
 
     if let Err(err) = configured {
         if matches!(err, DpdError::Unwind { .. }) {
@@ -971,9 +972,9 @@ fn repair_pending_external_group(
     };
     let repaired = (|| {
         repair_nat_target(s, mcast, *nat_target)?;
-        update_external_tables(s, &group, &stored, sources, &[])?;
         let underlay = mcast.get_nat_target_group(group_ip, *nat_target)?;
-        ensure_bitmap_vlan(s, underlay, *vlan_id)
+        ensure_bitmap_vlan(s, underlay, *vlan_id)?;
+        update_external_tables(s, &group, &stored, sources, None, None)
     })();
 
     if let Err(e) = repaired {
@@ -1066,21 +1067,25 @@ pub(crate) fn modify_group_external(
     // Unlike `sources`, `None` does not preserve the current value.
     let new_vlan_id = new_group_info.external_forwarding.vlan_id;
 
-    let bitmap_updates = [
+    let target_bitmap =
         (target_changed || old_vlan_id != new_vlan_id).then(|| {
             BitmapVlanUpdate {
                 group: new_underlay_group,
                 old_vlan_id: mcast.get_vlan_for_underlay_addr(new_underlay_ip),
                 new_vlan_id,
             }
-        }),
+        });
+    let stale_bitmap =
         old_underlay_group.filter(|_| target_changed).map(|group| {
-            BitmapVlanUpdate { group, old_vlan_id, new_vlan_id: None }
-        }),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
+            StaleTargetUpdate {
+                bitmap: BitmapVlanUpdate {
+                    group,
+                    old_vlan_id,
+                    new_vlan_id: None,
+                },
+                nat_target: old_nat_target,
+            }
+        });
 
     // Create rollback context for external group update
     let rollback_ctx =
@@ -1091,7 +1096,8 @@ pub(crate) fn modify_group_external(
         &group_entry,
         &new_group_info,
         &new_sources,
-        &bitmap_updates,
+        target_bitmap.as_ref(),
+        stale_bitmap.as_ref(),
     ) {
         let err = rollback_ctx.rollback_external(e, &new_sources);
         if matches!(err, DpdError::Unwind { .. }) {
@@ -1700,9 +1706,8 @@ fn apply_each(
 /// Restore ASIC source-filter entries from `applied` to the `original`
 /// source filter.
 ///
-/// This operation adds every entry in `original`, then removes entries
-/// present in the `applied` filter but not in the `original` one. The removals
-/// run even if some additions fail.
+/// Remove entries unique to `applied` first to free slots in a full
+/// table. Reinstall the entries in `original` even if a removal fails.
 ///
 /// Existing additions and missing removals are ignored. Failures from both
 /// steps are returned along with their source.
@@ -1715,15 +1720,15 @@ pub(super) fn restore_source_filters(
     let applied: BTreeSet<IpSrc> = applied.iter().collect();
     let original: BTreeSet<IpSrc> = original.iter().collect();
 
-    let added = apply_each(original.iter().cloned(), |source| {
-        set_source_filter(s, group_ip, source)
-    });
     let removed =
         apply_each(applied.difference(&original).cloned(), |source| {
             clear_source_filter(s, group_ip, source)
         });
+    let added = apply_each(original.iter().cloned(), |source| {
+        set_source_filter(s, group_ip, source)
+    });
 
-    match (added, removed) {
+    match (removed, added) {
         (Err(mut failures), Err(more)) => {
             failures.extend(more);
             Err(failures)
@@ -2319,13 +2324,24 @@ fn set_replication_entry(
 /// A pending VLAN change to an underlay group's port bitmap.
 ///
 /// An external multicast group propagates its VLAN onto the underlay group
-/// mapped by its NAT target. Retargeting the NAT target or modifying the
-/// VLAN yields an update for the new underlay group, and, when that target
-/// is moved, a second update clearing the old one.
+/// mapped by its NAT target. A VLAN-only change updates that underlay
+/// group's bitmap. A retarget updates the new target's bitmap and clears
+/// the VLAN from the old target's bitmap (see [`StaleTargetUpdate`]).
 struct BitmapVlanUpdate<'a> {
     group: &'a MulticastGroup,
     old_vlan_id: Option<u16>,
     new_vlan_id: Option<u16>,
+}
+
+/// The old underlay group's bitmap update during a retarget, along with the
+/// NAT target to restore on failure.
+///
+/// The update clears the old group's VLAN only once NAT points at the new
+/// target. Rollback restores that VLAN first, then moves NAT back to
+/// `nat_target`.
+struct StaleTargetUpdate<'a> {
+    bitmap: BitmapVlanUpdate<'a>,
+    nat_target: ExternalNatTarget,
 }
 
 fn update_external_tables(
@@ -2333,16 +2349,17 @@ fn update_external_tables(
     group_entry: &MulticastGroup,
     new_group_info: &MulticastGroupUpdateExternalEntry,
     new_sources: &SourceFilter,
-    bitmap_updates: &[BitmapVlanUpdate<'_>],
+    target_bitmap: Option<&BitmapVlanUpdate<'_>>,
+    stale_bitmap: Option<&StaleTargetUpdate<'_>>,
 ) -> DpdResult<()> {
     let group_ip = group_entry.ip();
 
     // Sync sources first
+    remove_unwanted_source_filters(s, group_ip, new_sources)?;
     apply_each(new_sources.iter(), |source| {
         set_source_filter(s, group_ip, source)
     })
     .map_err(|failures| failures.head.1)?;
-    remove_unwanted_source_filters(s, group_ip, new_sources)?;
 
     let new_vlan_id = new_group_info.external_forwarding.vlan_id;
 
@@ -2358,16 +2375,24 @@ fn update_external_tables(
         }
     }?;
 
-    let mut attempted_bitmaps = 0;
+    let mut attempted_stale = None;
 
     let res = (|| {
-        for update in bitmap_updates {
-            attempted_bitmaps += 1;
+        if let Some(update) = target_bitmap {
             ensure_bitmap_vlan(s, update.group, update.new_vlan_id)?;
         }
 
         // Update NAT target -> external groups always have NAT targets
         update_nat_tables(s, group_ip, new_nat_target.into())?;
+
+        if let Some(update) = stale_bitmap {
+            attempted_stale = Some(update);
+            ensure_bitmap_vlan(
+                s,
+                update.bitmap.group,
+                update.bitmap.new_vlan_id,
+            )?;
+        }
         Ok(())
     })();
 
@@ -2377,12 +2402,9 @@ fn update_external_tables(
             let rollback_ctx =
                 GroupUpdateRollbackContext::new(s, group_entry, new_vlan_id);
 
-            Err(rollback_ctx.rollback_with_bitmap_restore(
+            Err(after_unwind(
                 e,
-                bitmap_updates[..attempted_bitmaps]
-                    .iter()
-                    .rev()
-                    .map(|update| (update.group, update.old_vlan_id)),
+                rollback_ctx.restore_retarget(target_bitmap, attempted_stale),
             ))
         }
     }
