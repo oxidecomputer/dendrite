@@ -7,7 +7,8 @@
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    sync::Arc,
+    str::FromStr,
+    sync::{Arc, LazyLock},
 };
 
 use crate::integration_tests::common;
@@ -19,7 +20,9 @@ use anyhow::anyhow;
 use dpd_client::{Error, types};
 use futures::TryStreamExt;
 use oxnet::MulticastMac;
-use packet::{Endpoint, eth, geneve, ipv4, ipv6, sidecar, udp};
+use packet::{
+    Endpoint, L3Endpoint, Packet, eth, geneve, ipv4, ipv6, sidecar, udp,
+};
 
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
 const MULTICAST_TEST_IPV6: Ipv6Addr =
@@ -29,7 +32,8 @@ const MULTICAST_TEST_IPV6_SSM: Ipv6Addr =
     Ipv6Addr::new(0xff3e, 0, 0, 0, 0, 0, 0, 0x1111);
 const MULTICAST_NAT_IP: Ipv6Addr =
     Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 1);
-const GIMLET_MAC: &str = "11:22:33:44:55:66";
+static GIMLET_MAC: LazyLock<MacAddr> =
+    LazyLock::new(|| MacAddr::from_str("11:22:33:44:55:66").unwrap());
 const GIMLET_IP: Ipv6Addr =
     Ipv6Addr::new(0xfd00, 0x1122, 0x7788, 0x0101, 0, 0, 0, 4);
 
@@ -399,27 +403,18 @@ fn prepare_expected_pkt(
             };
 
             let switch_port_mac =
-                switch.get_port_mac(switch_port.unwrap()).unwrap().to_string();
-
+                switch.get_port_mac(switch_port.unwrap()).unwrap();
             let mut forward_pkt = common::gen_external_geneve_packet(
-                Endpoint::parse(
-                    &switch_port_mac,
-                    "::0",
-                    common::tofino_flow_hash(
-                        send_pkt.src().unwrap(),
-                        send_pkt.dst().unwrap(),
-                        L4Protocol::Udp,
-                    ),
-                )
-                .unwrap(),
-                Endpoint::parse(
-                    &MacAddr::from(nat.internal_ip.derive_multicast_mac())
-                        .to_string(),
-                    &nat.internal_ip.to_string(),
-                    geneve::GENEVE_UDP_PORT,
-                )
-                .unwrap(),
-                eth::ETHER_ETHER,
+                L3Endpoint::new(switch_port_mac, Ipv6Addr::UNSPECIFIED.into()),
+                L3Endpoint::new(
+                    MacAddr::from(nat.internal_ip.derive_multicast_mac()),
+                    nat.internal_ip.into(),
+                ),
+                common::tofino_flow_hash(
+                    send_pkt.src().unwrap(),
+                    send_pkt.dst().unwrap(),
+                    L4Protocol::Udp,
+                ),
                 *nat.vni,
                 &ingress_payload,
             );
@@ -2016,6 +2011,17 @@ async fn test_ipv4_multicast_basic_replication_nat_ingress() -> TestResult {
     cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
 }
 
+/// Returns a deparsed copy of the packet without any VLAN header.
+fn deparse_without_vlan(pkt: &Packet) -> anyhow::Result<Vec<u8>> {
+    if pkt.hdrs.eth_hdr.is_none_or(|hdr| hdr.eth_8021q.is_none()) {
+        return Ok(pkt.deparse()?.to_vec());
+    }
+
+    let mut copy = pkt.clone();
+    copy.hdrs.eth_hdr.as_mut().unwrap().eth_8021q = None;
+    Ok(copy.deparse()?.to_vec())
+}
+
 #[tokio::test]
 #[ignore]
 async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
@@ -2089,31 +2095,19 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
     // Use same NAT target as the one used in the original packet
     let nat_target = create_nat_target_ipv4();
 
-    // Skip Ethernet header as it will be added by gen_geneve_packet
-    let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
-    let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
-
     // Create the Geneve packet with mcast_tag = 0
     // According to mcast_tag_check table, when geneve.isValid() is true and
     // mcast_tag is 0, it should invalidate the underlay group and set decap
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        eth::ETHER_IPV4,
+        L3Endpoint::new(*GIMLET_MAC, GIMLET_IP.into()),
+        L3Endpoint::new(
+            MacAddr::from(nat_target.internal_ip.derive_multicast_mac()),
+            nat_target.internal_ip.into(),
+        ),
+        geneve::GENEVE_UDP_PORT,
         nat_target.vni.clone().into(),
         0, // mcast_tag = 0
-        &payload,
+        &self::deparse_without_vlan(&og_pkt)?,
     );
 
     let test_pkt = TestPacket { packet: Arc::new(geneve_pkt), port: ingress };
@@ -2265,23 +2259,11 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
     // Emulate Nat Target from previous packet in the chain.
     let nat_target = create_nat_target_ipv6();
 
-    // Skip Ethernet header as it will be added by gen_geneve_packet
-    let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
-    let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
-
-    let geneve_src = Endpoint::parse(
-        GIMLET_MAC,
-        &GIMLET_IP.to_string(),
-        geneve::GENEVE_UDP_PORT,
-    )
-    .unwrap();
-    let geneve_dst = Endpoint::parse(
-        &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-            .to_string(),
-        &nat_target.internal_ip.to_string(),
-        geneve::GENEVE_UDP_PORT,
-    )
-    .unwrap();
+    let geneve_src = L3Endpoint::new(*GIMLET_MAC, GIMLET_IP.into());
+    let geneve_dst = L3Endpoint::new(
+        MacAddr::from(nat_target.internal_ip.derive_multicast_mac()),
+        nat_target.internal_ip.into(),
+    );
 
     // Create the Geneve packet with mcast_tag = 1
     // According to mcast_tag_check table, when geneve.isValid() is true and
@@ -2289,10 +2271,10 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
         geneve_src,
         geneve_dst,
-        eth::ETHER_IPV4,
+        geneve::GENEVE_UDP_PORT,
         nat_target.vni.clone().into(),
         1, // mcast_tag = 1
-        &payload,
+        &self::deparse_without_vlan(&og_pkt)?,
     );
 
     let test_pkt =
@@ -2456,32 +2438,20 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     // Emulate Nat Target from previous packet in the chain.
     let nat_target = create_nat_target_ipv6();
 
-    // Skip Ethernet header as it will be added by gen_geneve_packet
-    let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
-    let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
-
     // Create the Geneve packet with mcast_tag = 2
     // According to mcast_tag_check table, when geneve.isValid() is true and
     // mcast_tag is 2, it should not invalidate any group, decapping only the
     // external group(s)
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        eth::ETHER_IPV4,
+        L3Endpoint::new(*GIMLET_MAC, GIMLET_IP.into()),
+        L3Endpoint::new(
+            MacAddr::from(nat_target.internal_ip.derive_multicast_mac()),
+            nat_target.internal_ip.into(),
+        ),
+        geneve::GENEVE_UDP_PORT,
         nat_target.vni.clone().into(),
         2, // mcast_tag = 2
-        &payload,
+        &self::deparse_without_vlan(&og_pkt)?,
     );
 
     let test_pkt =
@@ -2691,9 +2661,7 @@ fn build_inner_ttl_geneve_pkt(
     };
 
     let (payload, ether_type) = if inner_eth {
-        let mut inner = og_pkt.clone();
-        inner.hdrs.eth_hdr.as_mut().unwrap().eth_8021q = None;
-        (inner.deparse().unwrap().to_vec(), eth::ETHER_ETHER)
+        (self::deparse_without_vlan(&og_pkt).unwrap(), eth::ETHER_ETHER)
     } else {
         let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
         let ether_type = match external_ip {
@@ -2703,25 +2671,21 @@ fn build_inner_ttl_geneve_pkt(
         (og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec(), ether_type)
     };
 
-    let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        ether_type,
+    let mut geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
+        L3Endpoint::new(*GIMLET_MAC, GIMLET_IP.into()),
+        L3Endpoint::new(
+            MacAddr::from(nat_target.internal_ip.derive_multicast_mac()),
+            nat_target.internal_ip.into(),
+        ),
+        geneve::GENEVE_UDP_PORT,
         nat_target.vni.clone().into(),
         mcast_tag,
         &payload,
     );
+    if ether_type != eth::ETHER_ETHER {
+        geneve_pkt.hdrs.geneve_hdr.as_mut().unwrap().protocol = ether_type;
+    }
+    udp::UdpHdr::update_checksum(&mut geneve_pkt);
 
     (og_pkt, geneve_pkt)
 }
@@ -5677,26 +5641,16 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     );
 
     // Create Geneve packet targeting the internal group
-    let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
-    let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        eth::ETHER_IPV6,
+        L3Endpoint::new(*GIMLET_MAC, GIMLET_IP.into()),
+        L3Endpoint::new(
+            MacAddr::from(nat_target.internal_ip.derive_multicast_mac()),
+            nat_target.internal_ip.into(),
+        ),
+        geneve::GENEVE_UDP_PORT,
         nat_target.vni.clone().into(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
-        &payload,
+        &self::deparse_without_vlan(&og_pkt)?,
     );
 
     let send =
@@ -5802,25 +5756,16 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
     let to_send_final = og_pkt2.clone();
 
     // Create Geneve packet for the underlay to underlay replication, no decap
-    let payload2 = og_pkt2.deparse().unwrap()[eth_hdr_len..].to_vec();
     let to_send_again = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        eth::ETHER_IPV6,
+        L3Endpoint::new(*GIMLET_MAC, GIMLET_IP.into()),
+        L3Endpoint::new(
+            MacAddr::from(nat_target.internal_ip.derive_multicast_mac()),
+            nat_target.internal_ip.into(),
+        ),
+        geneve::GENEVE_UDP_PORT,
         nat_target.vni.clone().into(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
-        &payload2,
+        &self::deparse_without_vlan(&og_pkt2)?,
     );
 
     // Create expected packets for all three egress ports
@@ -6074,26 +6019,16 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     );
 
     // Create Geneve packet targeting the internal group (like test_encapped_multicast_geneve_mcast_tag_to_underlay_members)
-    let eth_hdr_len = og_pkt.hdrs.eth_hdr.as_ref().unwrap().hdr_len();
-    let payload = og_pkt.deparse().unwrap()[eth_hdr_len..].to_vec();
     let geneve_pkt = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        eth::ETHER_IPV4,
+        L3Endpoint::new(*GIMLET_MAC, GIMLET_IP.into()),
+        L3Endpoint::new(
+            MacAddr::from(nat_target.internal_ip.derive_multicast_mac()),
+            nat_target.internal_ip.into(),
+        ),
+        geneve::GENEVE_UDP_PORT,
         nat_target.vni.clone().into(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
-        &payload,
+        &self::deparse_without_vlan(&og_pkt)?,
     );
 
     let send =
@@ -6194,25 +6129,16 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
     let to_send_final = og_pkt2.clone();
 
     // Create Geneve packet for the second test
-    let payload2 = og_pkt2.deparse().unwrap()[eth_hdr_len..].to_vec();
     let test_packet2 = common::gen_geneve_packet_with_mcast_tag(
-        Endpoint::parse(
-            GIMLET_MAC,
-            &GIMLET_IP.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &MacAddr::from(nat_target.internal_ip.derive_multicast_mac())
-                .to_string(),
-            &nat_target.internal_ip.to_string(),
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        eth::ETHER_IPV4,
+        L3Endpoint::new(*GIMLET_MAC, GIMLET_IP.into()),
+        L3Endpoint::new(
+            MacAddr::from(nat_target.internal_ip.derive_multicast_mac()),
+            nat_target.internal_ip.into(),
+        ),
+        geneve::GENEVE_UDP_PORT,
         nat_target.vni.clone().into(),
         2, // mcast_tag = 2 (allows both external and underlay replication)
-        &payload2,
+        &self::deparse_without_vlan(&og_pkt2)?,
     );
 
     // Create expected packets for all three egress ports
