@@ -57,6 +57,7 @@ parser IngressParser(
 		meta.bridge_hdr.setValid();
 		meta.bridge_hdr.ingress_port = ig_intr_md.ingress_port;
 		meta.bridge_hdr.nat_egress_hit = false;
+		meta.bridge_hdr.is_link_local_mcastv6 = false;
 		meta.bridge_hdr.reserved = 0;
 
 		transition port_metadata;
@@ -217,6 +218,7 @@ parser IngressParser(
 
 	state set_link_local_mcast {
 		meta.is_link_local_mcastv6 = true;
+		meta.bridge_hdr.is_link_local_mcastv6 = true;
 		meta.is_mcast = true;
 		transition validate_mcast_link_local_hop_limit;
 	}

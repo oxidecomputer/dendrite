@@ -72,7 +72,7 @@ fn get_counter(
     switch
         .counters
         .get(&counter)
-        .ok_or(DpdError::Invalid("no such counter".to_string()))
+        .ok_or(DpdError::Other("no such counter".to_string()))
 }
 
 /// Given an index into the Packet table, convert it from a bitmap of parsed
@@ -286,7 +286,8 @@ pub async fn get_values(
     force_sync: bool,
     counter_name: String,
 ) -> DpdResult<Vec<TableCounterEntry>> {
-    let counter_id = counter_name.parse::<CounterId>()?;
+    let counter_id =
+        counter_name.parse::<CounterId>().map_err(DpdError::Missing)?;
 
     let counters = {
         let switch = switch.clone();
@@ -350,7 +351,7 @@ pub async fn get_values(
 }
 
 pub fn reset(switch: &Switch, counter_name: String) -> DpdResult<()> {
-    let id = counter_name.parse::<CounterId>()?;
+    let id = counter_name.parse::<CounterId>().map_err(DpdError::Missing)?;
     let mut counter = get_counter(switch, id)?.lock().unwrap();
     counter.table.clear(&switch.asic_hdl)
 }
