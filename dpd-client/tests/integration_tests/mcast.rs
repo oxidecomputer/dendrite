@@ -2388,9 +2388,7 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
 
     let geneve_src = L3Endpoint::new(GIMLET_MAC.into(), GIMLET_IP.into());
     let geneve_dst = L3Endpoint::new(
-        Ipv6Addr::from(nat_target.internal_ip)
-            .derive_multicast_mac()
-            .into(),
+        Ipv6Addr::from(nat_target.internal_ip).derive_multicast_mac().into(),
         nat_target.internal_ip.into(),
     );
 
