@@ -414,9 +414,10 @@ impl From<&MulticastGroup> for MulticastGroupResponse {
     }
 }
 
-/// Multicast groups awaiting repair, with source-filter keys whose removal
-/// can't be confirmed.
+/// Multicast groups awaiting repair after a failed unwind.
 ///
+/// An external group's entry can include the underlay its NAT entry may still
+/// point at, as well as source-filter keys whose removal can't be confirmed.
 /// A failed rollback of an external update can leave source filters in the
 /// ASIC that are absent from the stored group. Repair and deletion clear these
 /// unobserved sources first.
@@ -426,7 +427,18 @@ impl From<&MulticastGroup> for MulticastGroupResponse {
 /// backends without per-table dumps (e.g., SoftNPU), where a leftover
 /// `/0` could admit every source.
 #[derive(Debug, Default)]
-struct PendingRepairs(BTreeMap<GroupKey, BTreeSet<IpSrc>>);
+struct PendingRepairs(BTreeMap<GroupKey, PendingRepair>);
+
+/// What a pending group's repair undoes beyond resyncing its stored
+/// configuration.
+#[derive(Debug, Default)]
+struct PendingRepair {
+    /// The retarget underlay that NAT may still point at.
+    attempted_tgt: Option<UnderlayMulticastIpv6>,
+    /// Source filters that may remain in the ASIC but are absent from the
+    /// stored group.
+    unobserved_srcs: BTreeSet<IpSrc>,
+}
 
 impl PendingRepairs {
     fn contains<Q>(&self, key: &Q) -> bool
@@ -435,6 +447,14 @@ impl PendingRepairs {
         Q: Ord + ?Sized,
     {
         self.0.contains_key(key)
+    }
+
+    fn get<Q>(&self, key: &Q) -> Option<&PendingRepair>
+    where
+        GroupKey: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.0.get(key)
     }
 
     fn insert(&mut self, key: GroupKey) {
@@ -450,7 +470,7 @@ impl PendingRepairs {
         key: GroupKey,
         srcs: impl IntoIterator<Item = IpSrc>,
     ) {
-        self.0.entry(key).or_default().extend(srcs);
+        self.0.entry(key).or_default().unobserved_srcs.extend(srcs);
     }
 
     fn sources<Q>(&self, key: &Q) -> BTreeSet<IpSrc>
@@ -458,20 +478,46 @@ impl PendingRepairs {
         GroupKey: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        self.0.get(key).cloned().unwrap_or_default()
+        self.0
+            .get(key)
+            .map(|repair| repair.unobserved_srcs.clone())
+            .unwrap_or_default()
     }
 
-    fn remove<Q>(&mut self, key: &Q) -> bool
+    fn set_attempted_tgt(
+        &mut self,
+        key: GroupKey,
+        attempted_tgt: Option<UnderlayMulticastIpv6>,
+    ) {
+        self.0.entry(key).or_default().attempted_tgt = attempted_tgt;
+    }
+
+    fn take_attempted_tgt<Q>(
+        &mut self,
+        key: &Q,
+    ) -> Option<UnderlayMulticastIpv6>
     where
         GroupKey: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        self.0.remove(key).is_some()
+        self.0.get_mut(key).and_then(|repair| repair.attempted_tgt.take())
     }
 
-    #[cfg(all(test, feature = "chaos"))]
-    fn is_empty(&self) -> bool {
-        self.0.is_empty()
+    fn retargeting_to(
+        &self,
+        underlay: UnderlayMulticastIpv6,
+    ) -> Option<IpAddr> {
+        self.0.iter().find_map(|(key, repair)| {
+            (repair.attempted_tgt == Some(underlay)).then_some(key.ip())
+        })
+    }
+
+    fn remove<Q>(&mut self, key: &Q) -> Option<PendingRepair>
+    where
+        GroupKey: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.0.remove(key)
     }
 
     fn clear(&mut self) {
@@ -484,6 +530,11 @@ impl PendingRepairs {
 pub struct MulticastGroupData {
     /// Multicast group configurations keyed by group IP.
     groups: BTreeMap<GroupKey, MulticastGroup>,
+    /// Groups pending ASIC repair after a failed unwind.
+    ///
+    /// An external group's entry includes the attempted underlay IP if the NAT
+    /// entry may still be pointed there. We restore the original NAT target
+    /// before clearing the VLAN on the attempted target.
     pending_repairs: PendingRepairs,
     /// The stack of available group IDs for O(1) allocation.
     /// Pre-populated with all IDs from GENERATOR_START to u16::MAX-1.
@@ -629,10 +680,7 @@ pub(crate) fn add_group_external(
     let nat_target = group_info.internal_forwarding().nat_target;
 
     mcast.validate_group_exists(group_key)?;
-
-    repair_nat_target(s, &mut mcast, nat_target)?;
-    let underlay_group = mcast.get_nat_target_group(group_addr, nat_target)?;
-
+    mcast.get_nat_target_group(group_addr, nat_target)?;
     if let Some(vlan_id) = group_info.external_forwarding().vlan_id {
         common::network::validate_vlan(vlan_id)?;
     }
@@ -641,6 +689,9 @@ pub(crate) fn add_group_external(
         Some(t) => String::from(t.parse::<MulticastTag>()?),
         None => generate_default_tag(group_addr),
     };
+
+    repair_underlay(s, &mut mcast, nat_target.into())?;
+    let underlay_group = mcast.get_nat_target_group(group_addr, nat_target)?;
 
     // Set IDs to match the underlay group from the NAT target
     let scoped_external_id = underlay_group.external_scoped_group.clone();
@@ -672,17 +723,14 @@ pub(crate) fn add_group_external(
         &sources,
     );
 
-    let configured = (|| {
-        configure_external_tables(s, &group_info, &sources)
-            .map_err(|e| rollback_ctx.rollback(e))?;
-        do_vlan_propagation(
-            s,
-            group_addr,
-            group_info.external_forwarding().vlan_id,
-            underlay_group,
-        )
-        .map_err(|e| rollback_ctx.rollback_with_vlan_restore(e, underlay_group))
-    })();
+    let configured = do_vlan_propagation(
+        s,
+        group_addr,
+        group_info.external_forwarding().vlan_id,
+        underlay_group,
+    )
+    .and_then(|()| configure_external_tables(s, &group_info, &sources))
+    .map_err(|e| rollback_ctx.rollback_with_vlan_restore(e, underlay_group));
 
     if let Err(err) = configured {
         if matches!(err, DpdError::Unwind { .. }) {
@@ -695,8 +743,6 @@ pub(crate) fn add_group_external(
         return Err(err);
     }
 
-    // VLAN propagation is the last fallible step. Any fallible work added
-    // below must also restore the underlay group's previous bitmap VLAN.
     mcast.groups.insert(group_key, group);
     mcast.add_forwarding_refs(group_key, admin_local_ip);
 
@@ -800,7 +846,7 @@ pub(crate) fn add_group_underlay(
     if let Err(e) = configured {
         let err = rollback_ctx.rollback(e);
         if matches!(err, DpdError::Unwind { .. }) {
-            mcast.pending_repairs.insert(group_key);
+            mcast.pending_repairs.extend([group_key]);
             mcast.groups.insert(group_key, group);
         }
         return Err(err);
@@ -845,7 +891,7 @@ fn del_group_locked(
     group_ip: IpAddr,
     tag: &str,
 ) -> DpdResult<()> {
-    let group = mcast.groups.get(&group_ip).cloned().ok_or_else(|| {
+    let group = mcast.groups.get(&group_ip).ok_or_else(|| {
         DpdError::Missing(format!(
             "Multicast group for IP {group_ip} not found"
         ))
@@ -865,70 +911,103 @@ fn del_group_locked(
     // Validate tag before removing the group.
     group.validate_tag(tag)?;
 
+    if let GroupKind::Underlay { group_ip, .. } = &group.kind {
+        repair_retarget_for_underlay(s, mcast, *group_ip)?;
+    }
+
+    let group = mcast.groups[&group_ip].clone();
     let nat_target_to_remove =
         group.nat_target().map(UnderlayMulticastIpv6::from);
+    let pending = mcast.pending_repairs.get(&group_ip);
+    let external_pending = nat_target_to_remove.is_some() && pending.is_some();
 
     debug!(s.log, "deleting multicast group for IP {group_ip}");
 
-    let stored_srcs = match &group.kind {
-        GroupKind::External { sources: srcs, .. } => Some(srcs),
-        GroupKind::Underlay { .. } => None,
-    };
-    clear_unobserved_sources(
-        s,
-        group_ip,
-        &mcast.pending_repairs.sources(&group_ip),
-        stored_srcs,
-    )
-    .map_err(|_| {
-        DpdError::McastRepairPending(format!(
-            "multicast group {group_ip} state is uncertain; retry the request"
-        ))
+    delete_group_from_asic(s, &group, pending).map_err(|(e, failed_at)| {
+        handle_failed_delete(s, mcast, &group, external_pending, e, failed_at)
     })?;
-
-    let rollback_ctx = GroupDeleteRollbackContext::new(s, &group);
-    let mut deleted = Vec::new();
-
-    if let Err(e) = delete_group_tables(s, &group, &mut deleted) {
-        let err = rollback_ctx.rollback(e, &deleted);
-        return Err(reinsert_after_failed_delete(s, mcast, &group, err));
-    }
-
-    if let Some(internal_ip) = nat_target_to_remove
-        && group.vlan_id().is_some()
-        && let Some(underlay_group) =
-            mcast.groups.get(&IpAddr::from(internal_ip))
-        && let Err(e) = ensure_bitmap_vlan(s, underlay_group, None)
-    {
-        let err = rollback_ctx.rollback_with_vlan_restore(
-            e,
-            underlay_group,
-            &deleted,
-        );
-        return Err(reinsert_after_failed_delete(s, mcast, &group, err));
-    }
-
-    // External groups share ASIC resources with their referenced underlay groups.
-    if matches!(group.kind, GroupKind::Underlay { .. }) {
-        deleted.push(DeleteStep::Domains);
-        if let Err(e) = delete_multicast_groups(
-            s,
-            group_ip,
-            group.external_group_id(),
-            group.underlay_group_id(),
-        ) {
-            let err = rollback_ctx.rollback(e, &deleted);
-            return Err(reinsert_after_failed_delete(s, mcast, &group, err));
-        }
-    }
 
     if let Some(internal_ip) = nat_target_to_remove {
         mcast.rm_forwarding_refs(internal_ip);
+        let key = GroupKey::underlay(internal_ip);
+        if external_pending && mcast.groups.contains_key(&key) {
+            if group.vlan_id().is_some() {
+                mcast.pending_repairs.extend([key]);
+            }
+            try_underlay_repair(s, mcast, internal_ip);
+        } else if group.vlan_id().is_some()
+            && let Some(underlay_group) = mcast.groups.get(&key)
+            && let Err(e) = ensure_bitmap_vlan(s, underlay_group, None)
+        {
+            warn!(
+                s.log,
+                "failed to clear multicast bitmap VLAN after delete";
+                "underlay_group" => %internal_ip,
+                "error" => ?e,
+            );
+            mcast.pending_repairs.extend([key]);
+        }
     }
 
-    mcast.pending_repairs.remove(&group_ip);
+    let attempted_tgt = mcast
+        .pending_repairs
+        .remove(&group_ip)
+        .and_then(|repair| repair.attempted_tgt);
     mcast.groups.remove(&group_ip);
+    if let Some(target) = attempted_tgt {
+        try_underlay_repair(s, mcast, target);
+    }
     Ok(())
+}
+
+fn handle_failed_delete(
+    s: &Switch,
+    mcast: &mut MulticastGroupData,
+    group: &MulticastGroup,
+    external_pending: bool,
+    e: DpdError,
+    failed_at: DeleteStep,
+) -> DpdError {
+    if !external_pending {
+        let err =
+            GroupDeleteRollbackContext::new(s, group).rollback(e, failed_at);
+        return reinsert_after_failed_delete(s, mcast, group, err);
+    }
+    let group_ip = group.ip();
+    let nat_removed = failed_at > DeleteStep::Nat;
+
+    warn!(
+        s.log,
+        "failed to delete multicast group pending repair";
+        "group_ip" => %group_ip,
+        "nat_removed" => nat_removed,
+        "error" => ?e,
+    );
+
+    // The NAT entry no longer points at the retarget underlay.
+    // -> repair its VLAN now.
+    if nat_removed
+        && let Some(target) =
+            mcast.pending_repairs.take_attempted_tgt(&group_ip)
+    {
+        try_underlay_repair(s, mcast, target);
+    }
+    e
+}
+
+fn try_underlay_repair(
+    s: &Switch,
+    mcast: &mut MulticastGroupData,
+    underlay_ip: UnderlayMulticastIpv6,
+) {
+    if let Err(e) = repair_pending_underlay_group(s, mcast, underlay_ip) {
+        warn!(
+            s.log,
+            "multicast underlay repair deferred";
+            "underlay_group" => %underlay_ip,
+            "error" => ?e,
+        );
+    }
 }
 
 fn reinsert_after_failed_delete(
@@ -997,32 +1076,65 @@ fn observed_group(
     mcast: &mut MulticastGroupData,
     group_ip: IpAddr,
 ) -> DpdResult<MulticastGroup> {
-    let group = mcast.groups.get(&group_ip).cloned().ok_or_else(|| {
+    let group = mcast.groups.get(&group_ip).ok_or_else(|| {
         DpdError::Missing(format!(
             "multicast group for IP {group_ip} not found"
         ))
     })?;
     let GroupKind::Underlay { group_ip: underlay_ip, .. } = &group.kind else {
+        let group = group.clone();
         repair_pending_external_group(s, mcast, group_ip)?;
         return Ok(group);
     };
     let underlay_ip = *underlay_ip;
 
     if !mcast.pending_repairs.contains(&group_ip) {
-        return Ok(resync_members_from_asic(s, &group).unwrap_or(group));
+        let observed = resync_members_from_asic(s, group);
+        return Ok(observed.unwrap_or_else(|| group.clone()));
     }
 
+    repair_underlay(s, mcast, underlay_ip)?;
+    Ok(mcast.groups[&group_ip].clone())
+}
+
+fn repair_retarget_for_underlay(
+    s: &Switch,
+    mcast: &mut MulticastGroupData,
+    underlay_ip: UnderlayMulticastIpv6,
+) -> DpdResult<()> {
+    if let Some(external_ip) = mcast.pending_repairs.retargeting_to(underlay_ip)
+    {
+        repair_pending_external_group(s, mcast, external_ip)?;
+    }
+    Ok(())
+}
+
+fn repair_pending_underlay_group(
+    s: &Switch,
+    mcast: &mut MulticastGroupData,
+    underlay_ip: UnderlayMulticastIpv6,
+) -> DpdResult<()> {
+    let key = GroupKey::underlay(underlay_ip);
+    if !mcast.pending_repairs.contains(&key) {
+        return Ok(());
+    }
+
+    let group = mcast.groups.get(&key).ok_or_else(|| {
+        DpdError::Missing(format!(
+            "multicast group for IP {underlay_ip} not found"
+        ))
+    })?;
     let vlan_id = mcast.get_vlan_for_underlay_addr(underlay_ip);
     let observed =
-        resync_after_failed_unwind(s, &group, vlan_id).ok_or_else(|| {
+        resync_after_failed_unwind(s, group, vlan_id).ok_or_else(|| {
             DpdError::McastRepairPending(format!(
-                "multicast group {group_ip} state is uncertain; retry the request"
+                "multicast group {underlay_ip} state is uncertain; retry the request"
             ))
         })?;
 
-    mcast.groups.insert(GroupKey::underlay(underlay_ip), observed.clone());
-    mcast.pending_repairs.remove(&group_ip);
-    Ok(observed)
+    mcast.groups.insert(key, observed);
+    mcast.pending_repairs.remove(&key);
+    Ok(())
 }
 
 fn repair_pending_external_group(
@@ -1043,20 +1155,14 @@ fn repair_pending_external_group(
         return Ok(());
     };
 
-    let stored = MulticastGroupUpdateExternalEntry {
-        internal_forwarding: ExternalInternalForwarding {
-            nat_target: *nat_target,
-        },
-        external_forwarding: ExternalForwarding { vlan_id: *vlan_id },
-        sources: None,
-    };
     let unobserved = mcast.pending_repairs.sources(&group_ip);
-    let repaired = (|| {
-        clear_unobserved_sources(s, group_ip, &unobserved, Some(sources))?;
-        repair_nat_target(s, mcast, *nat_target)?;
-        update_external_tables(s, &group, &stored, sources, &[])?;
+    let repaired = (|| -> DpdResult<()> {
+        clear_unobserved_sources(s, group_ip, &unobserved, sources)?;
+        repair_pending_underlay_group(s, mcast, (*nat_target).into())?;
         let underlay = mcast.get_nat_target_group(group_ip, *nat_target)?;
-        ensure_bitmap_vlan(s, underlay, *vlan_id)
+        ensure_bitmap_vlan(s, underlay, *vlan_id)?;
+        set_external_sources_and_route(s, &group, *vlan_id, sources)?;
+        update_nat_tables(s, group_ip, (*nat_target).into())
     })();
 
     if let Err(e) = repaired {
@@ -1071,7 +1177,13 @@ fn repair_pending_external_group(
         )));
     }
 
-    mcast.pending_repairs.remove(&group_ip);
+    if let Some(target) = mcast
+        .pending_repairs
+        .remove(&group_ip)
+        .and_then(|repair| repair.attempted_tgt)
+    {
+        try_underlay_repair(s, mcast, target);
+    }
     Ok(())
 }
 
@@ -1080,15 +1192,12 @@ fn clear_unobserved_sources(
     s: &Switch,
     group_ip: IpAddr,
     unobserved: &BTreeSet<IpSrc>,
-    stored: Option<&SourceFilter>,
+    stored: &SourceFilter,
 ) -> DpdResult<()> {
     apply_each(
         unobserved
             .iter()
-            .filter(|source| {
-                !stored
-                    .is_some_and(|srcs| srcs.iter().any(|src| src == **source))
-            })
+            .filter(|source| !stored.iter().any(|src| src == **source))
             .cloned(),
         |source| clear_source_filter(s, group_ip, source),
     )
@@ -1106,16 +1215,13 @@ fn clear_unobserved_sources(
     })
 }
 
-fn repair_nat_target(
+fn repair_underlay(
     s: &Switch,
     mcast: &mut MulticastGroupData,
-    nat_target: ExternalNatTarget,
+    underlay_ip: UnderlayMulticastIpv6,
 ) -> DpdResult<()> {
-    let key = GroupKey::underlay(nat_target.into());
-    if mcast.pending_repairs.contains(&key) {
-        observed_group(s, mcast, key.ip())?;
-    }
-    Ok(())
+    repair_retarget_for_underlay(s, mcast, underlay_ip)?;
+    repair_pending_underlay_group(s, mcast, underlay_ip)
 }
 
 /// Update an external group's forwarding, VLAN, and sources under its tag.
@@ -1137,8 +1243,6 @@ pub(crate) fn modify_group_external(
             ))
         })?;
     group_entry.validate_tag(tag)?;
-
-    repair_pending_external_group(s, &mut mcast, group_addr)?;
 
     let GroupKind::External {
         sources: old_sources,
@@ -1162,13 +1266,15 @@ pub(crate) fn modify_group_external(
     };
 
     let nat_target = new_group_info.internal_forwarding.nat_target;
-    repair_nat_target(s, &mut mcast, nat_target)?;
-    let new_underlay_group =
-        mcast.get_nat_target_group(group_addr, nat_target)?;
-
+    mcast.get_nat_target_group(group_addr, nat_target)?;
     if let Some(vlan_id) = new_group_info.external_forwarding.vlan_id {
         common::network::validate_vlan(vlan_id)?;
     }
+
+    repair_pending_external_group(s, &mut mcast, group_addr)?;
+    repair_underlay(s, &mut mcast, nat_target.into())?;
+    let new_underlay_group =
+        mcast.get_nat_target_group(group_addr, nat_target)?;
 
     let old_underlay_ip: UnderlayMulticastIpv6 = old_nat_target.into();
     let new_underlay_ip: UnderlayMulticastIpv6 = nat_target.into();
@@ -1180,33 +1286,34 @@ pub(crate) fn modify_group_external(
     // Unlike `sources`, `None` does not preserve the current value.
     let new_vlan_id = new_group_info.external_forwarding.vlan_id;
 
-    let bitmap_updates = [
+    let target_bitmap =
         (target_changed || old_vlan_id != new_vlan_id).then(|| {
             BitmapVlanUpdate {
                 group: new_underlay_group,
                 old_vlan_id: mcast.get_vlan_for_underlay_addr(new_underlay_ip),
                 new_vlan_id,
             }
-        }),
-        old_underlay_group.filter(|_| target_changed).map(|group| {
-            BitmapVlanUpdate { group, old_vlan_id, new_vlan_id: None }
-        }),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
+        });
+    let stale_bitmap = old_underlay_group.filter(|_| target_changed);
 
     // Create rollback context for external group update
     let rollback_ctx =
         GroupUpdateRollbackContext::new(s, &group_entry, new_vlan_id);
 
-    if let Err(e) = update_external_tables(
+    if let Err((e, attempted_tgt)) = update_external_tables(
         s,
         &group_entry,
         &new_group_info,
         &new_sources,
-        &bitmap_updates,
+        target_bitmap.as_ref(),
+        stale_bitmap,
     ) {
+        if matches!(e, DpdError::Unwind { .. }) {
+            mcast.pending_repairs.extend([
+                GroupKey::underlay(old_underlay_ip),
+                GroupKey::underlay(new_underlay_ip),
+            ]);
+        }
         let err = rollback_ctx.rollback_external(e, &new_sources);
         if matches!(err, DpdError::Unwind { .. }) {
             mcast.pending_repairs.add_sources(
@@ -1215,10 +1322,11 @@ pub(crate) fn modify_group_external(
                     .iter()
                     .filter(|new| !old_sources.iter().any(|old| old == *new)),
             );
-            mcast.pending_repairs.extend([
-                GroupKey::underlay(old_underlay_ip),
-                GroupKey::underlay(new_underlay_ip),
-            ]);
+            mcast.pending_repairs.set_attempted_tgt(group_key, attempted_tgt);
+            // Mark the retarget underlay as pending too. Underlay repair ops
+            // bypass groups without the marker set, and the failed retarget
+            // may have left its bitmap VLAN still modified.
+            mcast.pending_repairs.extend(attempted_tgt.map(GroupKey::underlay));
         }
         return Err(err);
     }
@@ -1268,7 +1376,6 @@ pub(crate) fn modify_group_underlay(
     let mut mcast = s.mcast.lock().unwrap();
 
     let group_key = GroupKey::underlay(group_ip);
-    let external_group_vlan_id = mcast.get_vlan_for_underlay_addr(group_ip);
 
     // Check existence and validate tag before making any changes
     let Some(existing_group) = mcast.groups.get(&group_key) else {
@@ -1285,6 +1392,10 @@ pub(crate) fn modify_group_underlay(
         )));
     }
 
+    repair_retarget_for_underlay(s, &mut mcast, group_ip)?;
+    let external_group_vlan_id = mcast.get_vlan_for_underlay_addr(group_ip);
+    let existing_group = &mcast.groups[&group_key];
+
     // Repair the route before changing memberships or replication.
     let repair = mcast.pending_repairs.contains(&group_key);
     if repair {
@@ -1299,12 +1410,6 @@ pub(crate) fn modify_group_underlay(
         MulticastReplicationInfo::new(original.external_group_id())
     });
 
-    // The decap bitmap must cover external ports before they are added to
-    // ASIC groups.
-    //
-    // Normal updates write the bitmap before port changes only when widening
-    // it. A group pending repair may have lost its bitmap during rollback;
-    // restore coverage for its stored external members as well.
     let widened = (!members.is_empty())
         .then(|| {
             original.widened_external_bitmap(&members).or_else(|| {
@@ -1315,18 +1420,50 @@ pub(crate) fn modify_group_underlay(
         })
         .flatten();
 
+    let union_bitmap = widened.clone().unwrap_or_else(|| {
+        create_port_bitmap(original.members(), Direction::External)
+    });
+    let new_bitmap = create_port_bitmap(&members, Direction::External);
+    let narrow = new_bitmap != union_bitmap;
+    let set_bitmap = |bitmap: &table::mcast::mcast_egress::PortBitmap| {
+        table::mcast::mcast_egress::set_bitmap_entry(
+            s,
+            original.external_group_id(),
+            bitmap,
+            external_group_vlan_id,
+        )
+    };
+
     let mut added_members = Vec::new();
     let mut removed_members = Vec::new();
     let programmed = (|| {
-        if let Some(port_bitmap) = &widened {
-            table::mcast::mcast_egress::set_bitmap_entry(
+        // The decap bitmap must cover external ports before they are added
+        // to ASIC groups.
+        //
+        // Rewrite the bitmap on non-empty updates even if the coverage remains
+        // unchanged, e.g. the entry may have gone missing without a pending
+        // repair marker.
+        match &widened {
+            Some(port_bitmap) => set_bitmap(port_bitmap),
+            None if members.is_empty()
+                || original.replication_info().is_none() =>
+            {
+                Ok(())
+            }
+            None => table::mcast::mcast_egress::update_bitmap_entry(
                 s,
                 original.external_group_id(),
-                port_bitmap,
+                &union_bitmap,
                 external_group_vlan_id,
             )
-            .map_err(|e| (UpdateStep::Tables, e))?;
+            .or_else(|e| match e {
+                DpdError::Switch(AsicError::Missing(_)) => {
+                    set_bitmap(&union_bitmap)
+                }
+                e => Err(e),
+            }),
         }
+        .map_err(|e| (UpdateStep::Tables, e))?;
 
         // First, remove ports from ASIC groups before cleaning up
         // replication table entries, otherwise stale ports cause
@@ -1348,9 +1485,9 @@ pub(crate) fn modify_group_underlay(
                 .map_err(|e| (UpdateStep::Tables, e));
         }
 
-        let union_bitmap = widened.clone().unwrap_or_else(|| {
-            create_port_bitmap(original.members(), Direction::External)
-        });
+        if widened.is_none() && original.replication_info().is_none() {
+            set_bitmap(&union_bitmap).map_err(|e| (UpdateStep::Tables, e))?;
+        }
 
         // Write the replication entry on membership updates. Backends
         // whose replication entry persists a write-time port bitmap (e.g.,
@@ -1364,15 +1501,8 @@ pub(crate) fn modify_group_underlay(
         // port bitmap (e.g., SoftNPU) keep sending to removed ports until the
         // replication entry is rewritten, and those packet copies must still
         // have their Geneve header stripped.
-        let new_bitmap = create_port_bitmap(&members, Direction::External);
-        if new_bitmap != union_bitmap {
-            table::mcast::mcast_egress::set_bitmap_entry(
-                s,
-                original.external_group_id(),
-                &new_bitmap,
-                external_group_vlan_id,
-            )
-            .map_err(|e| (UpdateStep::Tables, e))?;
+        if narrow {
+            set_bitmap(&new_bitmap).map_err(|e| (UpdateStep::Tables, e))?;
         }
         Ok(())
     })();
@@ -1406,7 +1536,7 @@ pub(crate) fn modify_group_underlay(
             )
         };
         if mark_for_repair {
-            mcast.pending_repairs.insert(group_key);
+            mcast.pending_repairs.extend([group_key]);
         }
         return Err(reinsert_after_rollback(
             s, &mut mcast, group_key, original, &members, err,
@@ -1447,7 +1577,7 @@ fn reinsert_after_rollback(
     replication
         .add_members(MulticastReplicationInfo::new(external_id), attempted);
 
-    mcast.pending_repairs.insert(group_key);
+    mcast.pending_repairs.extend([group_key]);
     let vlan_id = mcast.get_vlan_for_underlay_addr(group_ip);
     if let Some(resynced) = resync_after_failed_unwind(s, &group_entry, vlan_id)
     {
@@ -1467,7 +1597,7 @@ fn reinsert_after_rollback(
         return err;
     }
 
-    match clear_group_after_failed_resync(s, &group_entry) {
+    match delete_group_from_asic(s, &group_entry, None) {
         Ok(()) => {
             warn!(
                 s.log,
@@ -1477,7 +1607,7 @@ fn reinsert_after_rollback(
             mcast.groups.remove(&group_key);
             mcast.pending_repairs.remove(&group_key);
         }
-        Err(e) => {
+        Err((e, _)) => {
             error!(
                 s.log,
                 "failed to clear multicast group after failed resync; retaining the member union";
@@ -1529,19 +1659,6 @@ fn resync_after_failed_unwind(
             None
         }
     }
-}
-
-fn clear_group_after_failed_resync(
-    s: &Switch,
-    group: &MulticastGroup,
-) -> DpdResult<()> {
-    delete_group_tables(s, group, &mut Vec::new())?;
-    delete_multicast_groups(
-        s,
-        group.ip(),
-        group.external_group_id(),
-        group.underlay_group_id(),
-    )
 }
 
 fn reprogram_underlay_entries<'a>(
@@ -1856,9 +1973,8 @@ fn apply_each(
 /// Restore ASIC source-filter entries from `applied` to the `original`
 /// source filter.
 ///
-/// This operation adds every entry in `original`, then removes entries
-/// present in the `applied` filter but not in the `original` one. The removals
-/// run even if some additions fail.
+/// Remove entries unique to `applied` first to free slots in a full
+/// table. Reinstall the entries in `original` even if a removal fails.
 ///
 /// Existing additions and missing removals are ignored. Failures from both
 /// steps are returned along with their source.
@@ -1871,15 +1987,15 @@ pub(super) fn restore_source_filters(
     let applied: BTreeSet<IpSrc> = applied.iter().collect();
     let original: BTreeSet<IpSrc> = original.iter().collect();
 
-    let added = apply_each(original.iter().cloned(), |source| {
-        set_source_filter(s, group_ip, source)
-    });
     let removed =
         apply_each(applied.difference(&original).cloned(), |source| {
             clear_source_filter(s, group_ip, source)
         });
+    let added = apply_each(original.iter().cloned(), |source| {
+        set_source_filter(s, group_ip, source)
+    });
 
-    match (added, removed) {
+    match (removed, added) {
         (Err(mut failures), Err(more)) => {
             failures.extend(more);
             Err(failures)
@@ -2480,15 +2596,34 @@ fn set_replication_entry(
 }
 
 /// A pending VLAN change to an underlay group's port bitmap.
-///
-/// An external multicast group propagates its VLAN onto the underlay group
-/// mapped by its NAT target. Retargeting the NAT target or modifying the
-/// VLAN yields an update for the new underlay group, and, when that target
-/// is moved, a second update clearing the old one.
 struct BitmapVlanUpdate<'a> {
     group: &'a MulticastGroup,
     old_vlan_id: Option<u16>,
     new_vlan_id: Option<u16>,
+}
+
+fn set_external_sources_and_route(
+    s: &Switch,
+    group: &MulticastGroup,
+    vlan_id: Option<u16>,
+    sources: &SourceFilter,
+) -> DpdResult<()> {
+    let group_ip = group.ip();
+    // Sync sources first
+    remove_unwanted_source_filters(s, group, sources)?;
+    sources
+        .iter()
+        .try_for_each(|source| set_source_filter(s, group_ip, source))?;
+
+    // Route tables use simple dst_addr matching but select forward vs forward_vlan action
+    match group_ip {
+        IpAddr::V4(ipv4) => {
+            table::mcast::mcast_route::set_ipv4_entry(s, ipv4, vlan_id)
+        }
+        IpAddr::V6(ipv6) => {
+            table::mcast::mcast_route::set_ipv6_entry(s, ipv6, vlan_id)
+        }
+    }
 }
 
 fn update_external_tables(
@@ -2496,59 +2631,49 @@ fn update_external_tables(
     group_entry: &MulticastGroup,
     new_group_info: &MulticastGroupUpdateExternalEntry,
     new_sources: &SourceFilter,
-    bitmap_updates: &[BitmapVlanUpdate<'_>],
-) -> DpdResult<()> {
+    target_bitmap: Option<&BitmapVlanUpdate<'_>>,
+    stale_bitmap: Option<&MulticastGroup>,
+) -> Result<(), (DpdError, Option<UnderlayMulticastIpv6>)> {
     let group_ip = group_entry.ip();
-
-    // Sync sources first
-    apply_each(new_sources.iter(), |source| {
-        set_source_filter(s, group_ip, source)
-    })
-    .map_err(|failures| failures.head.1)?;
-    remove_unwanted_source_filters(s, group_entry, new_sources)?;
-
     let new_vlan_id = new_group_info.external_forwarding.vlan_id;
-
     let new_nat_target = new_group_info.internal_forwarding.nat_target;
+    set_external_sources_and_route(s, group_entry, new_vlan_id, new_sources)
+        .map_err(|err| (err, None))?;
 
-    // Route tables use simple dst_addr matching but select forward vs forward_vlan action
-    match group_ip {
-        IpAddr::V4(ipv4) => {
-            table::mcast::mcast_route::set_ipv4_entry(s, ipv4, new_vlan_id)
-        }
-        IpAddr::V6(ipv6) => {
-            table::mcast::mcast_route::set_ipv6_entry(s, ipv6, new_vlan_id)
-        }
-    }?;
-
-    let mut attempted_bitmaps = 0;
+    let mut attempted_stale = None;
+    let mut original_nat = None;
 
     let res = (|| {
-        for update in bitmap_updates {
-            attempted_bitmaps += 1;
+        if let Some(update) = target_bitmap {
             ensure_bitmap_vlan(s, update.group, update.new_vlan_id)?;
         }
 
         // Update NAT target -> external groups always have NAT targets
+        original_nat =
+            group_entry.nat_target().filter(|old| *old != new_nat_target);
         update_nat_tables(s, group_ip, new_nat_target.into())?;
+
+        if let Some(group) = stale_bitmap {
+            attempted_stale = Some(group);
+            ensure_bitmap_vlan(s, group, None)?;
+        }
         Ok(())
     })();
 
-    match res {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            let rollback_ctx =
-                GroupUpdateRollbackContext::new(s, group_entry, new_vlan_id);
-
-            Err(rollback_ctx.rollback_with_bitmap_restore(
-                e,
-                bitmap_updates[..attempted_bitmaps]
-                    .iter()
-                    .rev()
-                    .map(|update| (update.group, update.old_vlan_id)),
-            ))
-        }
-    }
+    let Err(e) = res else { return Ok(()) };
+    let rollback_ctx =
+        GroupUpdateRollbackContext::new(s, group_entry, new_vlan_id);
+    let (restored, nat_pending) = rollback_ctx.restore_retarget(
+        target_bitmap,
+        original_nat,
+        attempted_stale,
+    );
+    let attempted_tgt = nat_pending
+        .then(|| UnderlayMulticastIpv6::from(new_nat_target))
+        .filter(|new| {
+            original_nat.map(UnderlayMulticastIpv6::from) != Some(*new)
+        });
+    Err((after_unwind(e, restored), attempted_tgt))
 }
 
 /// Delete bitmap entries for a group with replication checks.
@@ -2617,25 +2742,17 @@ fn delete_replication_entries(
     )
 }
 
-fn delete_group_tables(
+fn delete_group_from_asic(
     s: &Switch,
     group: &MulticastGroup,
-    deleted: &mut Vec<DeleteStep>,
-) -> DpdResult<()> {
+    pending: Option<&PendingRepair>,
+) -> Result<(), (DpdError, DeleteStep)> {
     let group_ip = group.ip();
 
     match &group.kind {
         GroupKind::External { sources, .. } => {
-            deleted.push(DeleteStep::SourceFilters);
-            remove_source_filters(s, group_ip, sources)?;
-            match group_ip {
-                IpAddr::V4(ipv4) => {
-                    table::mcast::mcast_src_filter::del_ipv4_entries(s, ipv4)
-                }
-                IpAddr::V6(ipv6) => {
-                    table::mcast::mcast_src_filter::del_ipv6_entries(s, ipv6)
-                }
-            }?;
+            // Clear NAT first to stop external ingress for this group during
+            // cleanup and any rollback.
             match group_ip {
                 IpAddr::V4(ipv4) => {
                     table::mcast::mcast_nat::clear_ipv4_entry(s, ipv4)
@@ -2643,15 +2760,44 @@ fn delete_group_tables(
                 IpAddr::V6(ipv6) => {
                     table::mcast::mcast_nat::clear_ipv6_entry(s, ipv6)
                 }
-            }?;
-            deleted.push(DeleteStep::Nat);
+            }
+            .map_err(|e| (e, DeleteStep::Nat))?;
+
+            if let Some(repair) = pending {
+                clear_unobserved_sources(
+                    s,
+                    group_ip,
+                    &repair.unobserved_srcs,
+                    sources,
+                )
+                .map_err(|_| {
+                    let error = DpdError::McastRepairPending(format!(
+                        "multicast group {group_ip} state is uncertain; retry the request"
+                    ));
+                    (error, DeleteStep::SourceFilters)
+                })?;
+            }
+
+            remove_source_filters(s, group_ip, sources)
+                .and_then(|()| match group_ip {
+                    IpAddr::V4(ipv4) => {
+                        table::mcast::mcast_src_filter::del_ipv4_entries(
+                            s, ipv4,
+                        )
+                    }
+                    IpAddr::V6(ipv6) => {
+                        table::mcast::mcast_src_filter::del_ipv6_entries(
+                            s, ipv6,
+                        )
+                    }
+                })
+                .map_err(|e| (e, DeleteStep::SourceFilters))?;
         }
         GroupKind::Underlay { .. } => {
-            delete_replication_entries(s, group)?;
-            deleted.push(DeleteStep::Replication);
-
-            delete_group_bitmap_entries(s, group)?;
-            deleted.push(DeleteStep::Bitmap);
+            delete_replication_entries(s, group)
+                .map_err(|e| (e, DeleteStep::Replication))?;
+            delete_group_bitmap_entries(s, group)
+                .map_err(|e| (e, DeleteStep::Bitmap))?;
         }
     }
 
@@ -2662,8 +2808,19 @@ fn delete_group_tables(
         IpAddr::V6(ipv6) => {
             table::mcast::mcast_route::clear_ipv6_entry(s, ipv6)
         }
-    }?;
-    deleted.push(DeleteStep::Route);
+    }
+    .map_err(|e| (e, DeleteStep::Route))?;
+
+    // External groups share ASIC resources with their referenced underlay groups.
+    if matches!(group.kind, GroupKind::Underlay { .. }) {
+        delete_multicast_groups(
+            s,
+            group_ip,
+            group.external_group_id(),
+            group.underlay_group_id(),
+        )
+        .map_err(|e| (e, DeleteStep::Domains))?;
+    }
 
     Ok(())
 }

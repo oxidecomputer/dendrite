@@ -217,6 +217,7 @@ parser IngressParser(
 
 	state set_link_local_mcast {
 		meta.is_link_local_mcastv6 = true;
+		meta.bridge_hdr.is_link_local_mcastv6 = true;
 		meta.is_mcast = true;
 		transition goto_proto_ipv6;
 	}
