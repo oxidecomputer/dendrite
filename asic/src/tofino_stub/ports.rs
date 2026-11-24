@@ -26,6 +26,7 @@ use common::ports::PortFec;
 use common::ports::PortMedia;
 use common::ports::PortPrbsMode;
 use common::ports::PortSpeed;
+use common::ports::TxEq;
 
 // This is an arbitrary number, but must be at least as large as
 // tofino_common::ports::CHANNELS_PER_SWITCH_PORT.  In this case, we've chosen a
@@ -45,6 +46,7 @@ pub struct StubPort {
     pub enabled: bool,
     pub kr: bool,
     pub autoneg: bool,
+    pub tx_eq: TxEq,
 }
 
 fn no_port(port_id: PortHdl) -> AsicError {
@@ -103,36 +105,39 @@ pub fn set_enable(
         port.enabled = enabled;
         port.link_up = enabled;
     }
+
     // If dpd has registered a callback handler with us, send updates for both
     // enable and link states.
-    let tx = hdl.update_tx.lock().unwrap();
-    if let Some(tx) = tx.as_ref() {
-        // When a port is enabled in the stub, it automatically comes online.
-        // When switching between enabled and disabled, we send the main body
-        // of dpd the PortUpdate events we would expect to see on real hardware.
-        let present = PortUpdate::Presence { asic_port_id, presence: enabled };
-        let ena = PortUpdate::Enable { asic_port_id, enabled };
-        let fsm_state = match enabled {
-            false => PortFsmState::Idle,
-            true => PortFsmState::LinkUp,
-        };
-        let fsm = PortUpdate::FSM {
-            asic_port_id,
-            fsm: FsmType::Port.into(),
-            state: fsm_state.into(),
-        };
-        let link = PortUpdate::LinkUp { asic_port_id, linkup: enabled };
-        for event in &[present, ena, fsm, link] {
-            if let Err(e) = tx.send(*event) {
-                slog::error!(
-                    hdl.log,
-                    "failed to send port update {event:?}: {e:?}"
-                );
-            }
-        }
-    } else {
+    let Some(tx) = hdl.update_tx.get() else {
         slog::debug!(hdl.log, "no PortUpdate handler registered");
+        return Ok(());
+    };
+
+    // When a port is enabled in the stub, it automatically comes online.
+    // When switching between enabled and disabled, we send the main body
+    // of dpd the PortUpdate events we would expect to see on real hardware.
+    let present = PortUpdate::Presence { asic_port_id, presence: enabled };
+    let ena = PortUpdate::Enable { asic_port_id, enabled };
+    let fsm_state = match enabled {
+        false => PortFsmState::Idle,
+        true => PortFsmState::LinkUp,
+    };
+    let fsm = PortUpdate::FSM {
+        asic_port_id,
+        fsm: FsmType::Port.into(),
+        state: fsm_state.into(),
+    };
+    let link = PortUpdate::LinkUp { asic_port_id, linkup: enabled };
+
+    for event in &[present, ena, fsm, link] {
+        if tx.send(*event).is_err() {
+            return Err(AsicError::Internal(
+                "PortUpdate tx failed. That rx chan should never be dropped."
+                    .to_string(),
+            ));
+        }
     }
+
     Ok(())
 }
 
@@ -171,6 +176,17 @@ pub fn get_autoneg_mode(
     let state = hdl.port_state.lock().unwrap();
     let port = get_port(&state, port_hdl)?;
     Ok(port.autoneg)
+}
+
+pub fn set_tx_eq(
+    hdl: &StubHandle,
+    port_hdl: PortHdl,
+    tx_eq: TxEq,
+) -> AsicResult<()> {
+    let mut state = hdl.port_state.lock().unwrap();
+    let port = self::get_port_mut(&mut state, port_hdl)?;
+    port.tx_eq = tx_eq;
+    Ok(())
 }
 
 /// Look up the port_hdl -> asic_id mapping
@@ -221,7 +237,13 @@ pub fn add_port(
     let mut ports = hdl.port_state.lock().unwrap();
     ports.insert(
         port_hdl,
-        StubPort { link_up: false, enabled: false, kr: false, autoneg: false },
+        StubPort {
+            link_up: false,
+            enabled: false,
+            kr: false,
+            autoneg: false,
+            tx_eq: TxEq::default(),
+        },
     );
     Ok((port_hdl, port_id))
 }

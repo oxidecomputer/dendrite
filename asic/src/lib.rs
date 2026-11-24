@@ -7,10 +7,9 @@
 #[cfg(not(any(
     feature = "tofino_asic",
     feature = "tofino_stub",
-    feature = "softnpu",
-    feature = "chaos"
+    feature = "softnpu"
 )))]
-compile_error! {"must set tofino_asic, tofino_stub, softnpu or chaos feature"}
+compile_error! {"must set tofino_asic, tofino_stub, or softnpu feature"}
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -93,7 +92,7 @@ impl Default for Identifiers {
     fn default() -> Self {
         Identifiers {
             id: Uuid::new_v4(),
-            asic_backend: "chaos".to_string(),
+            asic_backend: "unknown".to_string(),
             fab: None,
             lot: None,
             lotnum: None,
@@ -210,18 +209,6 @@ mod plat {
     pub use crate::softnpu::Handle;
     pub use crate::softnpu::PortFsmState;
     pub use crate::softnpu::table::Table;
-}
-
-#[cfg(feature = "chaos")]
-pub mod chaos;
-#[cfg(feature = "chaos")]
-mod plat {
-    pub use crate::chaos::AsicLinkStats;
-    pub use crate::chaos::FsmState;
-    pub use crate::chaos::FsmType;
-    pub use crate::chaos::Handle;
-    pub use crate::chaos::PortFsmState;
-    pub use crate::chaos::table::Table;
 }
 
 pub use plat::AsicLinkStats;
