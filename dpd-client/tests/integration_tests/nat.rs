@@ -841,13 +841,16 @@ async fn test_userspace_unicast_bypasses_nat() -> TestResult {
         inner_mac: MacAddr::new(0xa8, 0x40, 0x25, 0xf0, 0x00, 0x01).into(),
         vni: Vni::new(100).unwrap().into(),
     };
+    let src =
+        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap();
     let dst =
         Endpoint::parse("a8:40:25:00:00:01", &nat_ip.to_string(), nat_low)
             .unwrap();
+    let pkt = common::gen_udp_packet(src, dst);
 
     switch.client.nat_ipv4_create(&nat_ip, nat_low, nat_high, &tgt).await?;
     let result =
-        common::userspace_unicast_forward_test(switch, dst, sc_egress).await;
+        common::userspace_unicast_forward_test(switch, pkt, sc_egress).await;
     let deleted = switch.client.nat_ipv4_delete(&nat_ip, nat_low).await;
     result?;
     deleted?;

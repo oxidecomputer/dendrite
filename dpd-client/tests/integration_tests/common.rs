@@ -1414,12 +1414,10 @@ pub fn add_sidecar_hdr(
 
 pub async fn userspace_unicast_forward_test(
     switch: &Switch,
-    dst: Endpoint,
+    pkt: Packet,
     sc_egress: PhysPort,
 ) -> TestResult {
-    let src =
-        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap();
-    let mut send = gen_udp_packet(src, dst);
+    let mut send = pkt.clone();
     add_sidecar_hdr(
         switch,
         &mut send,
@@ -1428,7 +1426,7 @@ pub async fn userspace_unicast_forward_test(
         sc_egress,
         None,
     );
-    let mut recv = gen_udp_packet(src, dst);
+    let mut recv = pkt;
     eth::EthHdr::rewrite_smac(&mut recv, switch.get_port_mac(sc_egress)?);
 
     let label = switch.port_label(sc_egress).unwrap();
