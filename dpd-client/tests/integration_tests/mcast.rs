@@ -31,7 +31,8 @@ use packet::{
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
 use crate::integration_tests::counters::{
-    check_counter_incremented, check_counter_unchanged, one_counted_test,
+    check_counter_incremented, check_counter_unchanged,
+    check_counters_unchanged, one_counted_test,
 };
 
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
@@ -2647,6 +2648,18 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
         .await
         .unwrap();
 
+    let userspace_table = Some("multicast_userspace");
+    let mut userspace_baselines = Vec::new();
+    for label in [
+        port_label_egress1.as_str(),
+        port_label_egress2.as_str(),
+        port_label_egress3.as_str(),
+        port_label_egress4.as_str(),
+    ] {
+        let baseline = switch.get_counter(label, userspace_table).await?;
+        userspace_baselines.push((label, baseline));
+    }
+
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
     check_counter_incremented(
@@ -2733,6 +2746,9 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
         ctr_underlay_egress2, ctr_baseline_underlay_egress2,
         "decapped replicas must not hit the underlay counter"
     );
+
+    check_counters_unchanged(switch, &userspace_baselines, userspace_table)
+        .await?;
 
     cleanup_test_group(switch, get_group_ip(&created_group), &TEST_TAG)
         .await
@@ -3455,31 +3471,40 @@ async fn packet_test_userspace_mcast(
         switch.get_counter(&label, Some("multicast_external")).await?;
     let underlay_mcast =
         switch.get_counter(&label, Some("multicast_underlay")).await?;
+    let userspace_mcast =
+        switch.get_counter(&label, Some("multicast_userspace")).await?;
     let ucast = switch.get_counter(&label, Some("unicast")).await?;
+    let fw_from_user =
+        switch.get_counter("fw_from_user", Some("service")).await?;
 
     switch.packet_test(vec![send], expected)?;
 
+    check_counter_incremented(
+        switch,
+        "fw_from_user",
+        fw_from_user,
+        1,
+        Some("service"),
+    )
+    .await?;
     check_counter_incremented(switch, &label, mcast, 1, Some("multicast"))
         .await?;
 
-    if link_local {
-        check_counter_incremented(
-            switch,
-            &label,
-            link_local_mcast,
-            1,
-            Some("multicast_link_local"),
+    let (counted, uncounted) = if link_local {
+        (
+            (link_local_mcast, "multicast_link_local"),
+            (userspace_mcast, "multicast_userspace"),
         )
-        .await?;
     } else {
-        check_counter_unchanged(
-            switch,
-            &label,
-            link_local_mcast,
-            Some("multicast_link_local"),
+        (
+            (userspace_mcast, "multicast_userspace"),
+            (link_local_mcast, "multicast_link_local"),
         )
+    };
+    check_counter_incremented(switch, &label, counted.0, 1, Some(counted.1))
         .await?;
-    }
+    check_counter_unchanged(switch, &label, uncounted.0, Some(uncounted.1))
+        .await?;
     check_counter_unchanged(switch, &label, ucast, Some("unicast")).await?;
     check_counter_unchanged(
         switch,
@@ -3715,6 +3740,7 @@ async fn test_userspace_multicast_mac_and_vlan_forwarded() -> TestResult {
     let switch = &*get_switch().await;
 
     let v4 = IpAddr::V4(MULTICAST_TEST_IPV4);
+    let v4_local_control = IpAddr::V4(Ipv4Addr::new(224, 0, 0, 1));
     let v6 = IpAddr::V6(MULTICAST_TEST_IPV6);
     let ll = IpAddr::V6("ff02::1".parse().unwrap());
     let bad_v4 = MacAddr::new(0x02, 0, 0, 0, 0, 0x01);
@@ -3722,6 +3748,7 @@ async fn test_userspace_multicast_mac_and_vlan_forwarded() -> TestResult {
     let cases = [
         ("ipv4_bad_dst_mac", v4, None, Some(bad_v4)),
         ("link_local_bad_dst_mac", ll, None, Some(bad_ll)),
+        ("ipv4_local_control", v4_local_control, None, None),
         ("ipv4_vlan", v4, Some(10), None),
         ("ipv6_vlan", v6, Some(10), None),
         ("link_local_vlan", ll, Some(10), None),
@@ -3889,12 +3916,57 @@ async fn test_service_port_multicast_ttl_one_dropped() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_multicast_unexpected_sidecar_hdr_dropped() -> TestResult {
+async fn test_unexpected_sidecar_hdr_dropped() -> TestResult {
     let switch = &*get_switch().await;
 
     let ingress = PhysPort(22);
     let port_label_ingress = switch.port_label(ingress).unwrap();
     let src_mac = MacAddr::new(0xe0, 0xd5, 0x5e, 0x67, 0x89, 0xab);
+    let dst_mac = switch.get_port_mac(ingress).unwrap().to_string();
+
+    let drop_mcast_baseline =
+        switch.get_counter(&port_label_ingress, Some("multicast_drop")).await?;
+    for vlan_id in [None, Some(10)] {
+        for (src_ip, dst_ip) in [
+            ("10.10.10.10", "10.20.30.40"),
+            ("fd00:1122:7788:101::4", "2001:db8::1"),
+        ] {
+            let mut unicast = common::gen_udp_packet(
+                Endpoint::parse(&src_mac.to_string(), src_ip, 3333).unwrap(),
+                Endpoint::parse(&dst_mac, dst_ip, 4444).unwrap(),
+            );
+            unicast.hdrs.eth_hdr.as_mut().unwrap().eth_8021q =
+                vlan_id.map(|vlan| eth::EthQHdr {
+                    eth_pcp: 0,
+                    eth_dei: 0,
+                    eth_vlan_tag: vlan,
+                });
+            common::add_sidecar_hdr(
+                switch,
+                &mut unicast,
+                sidecar::SC_FWD_FROM_USERSPACE,
+                NO_PORT,
+                PhysPort(15),
+                None,
+            );
+            one_counted_test(
+                switch,
+                TestPacket { packet: Arc::new(unicast), port: ingress },
+                None,
+                "unexpected_sidecar_hdr",
+                None,
+            )
+            .await
+            .with_context(|| format!("unicast {dst_ip}, vlan {vlan_id:?}"))?;
+        }
+    }
+    check_counter_unchanged(
+        switch,
+        &port_label_ingress,
+        drop_mcast_baseline,
+        Some("multicast_drop"),
+    )
+    .await?;
 
     for vlan_id in [None, Some(10)] {
         let pkts = [
@@ -3947,7 +4019,7 @@ async fn test_multicast_unexpected_sidecar_hdr_dropped() -> TestResult {
                 switch,
                 TestPacket { packet: Arc::new(send), port: ingress },
                 None,
-                "multicast_unexpected_sidecar_hdr",
+                "unexpected_sidecar_hdr",
                 None,
             )
             .await
@@ -3999,9 +4071,19 @@ async fn test_link_local_multicast_inbound_counter_attribution() -> TestResult {
         .await?;
     let ctr_baseline_unicast =
         switch.get_counter(SERVICE_PORT_LABEL, Some("unicast")).await?;
+    let inbound_link_local =
+        switch.get_counter("inbound_link_local", Some("service")).await?;
 
     switch.packet_test(vec![send], expected_pkts)?;
 
+    check_counter_incremented(
+        switch,
+        "inbound_link_local",
+        inbound_link_local,
+        1,
+        Some("service"),
+    )
+    .await?;
     check_counter_incremented(
         switch,
         SERVICE_PORT_LABEL,
@@ -4010,11 +4092,10 @@ async fn test_link_local_multicast_inbound_counter_attribution() -> TestResult {
         Some("multicast_link_local"),
     )
     .await?;
-    check_counter_incremented(
+    check_counter_unchanged(
         switch,
         SERVICE_PORT_LABEL,
         ctr_baseline_unicast,
-        0,
         Some("unicast"),
     )
     .await?;

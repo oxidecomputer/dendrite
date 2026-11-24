@@ -648,3 +648,28 @@ async fn test_ingress_ipv6_icmp() -> TestResult {
     let switch = &*get_switch().await;
     test_ingress_ipv6(switch, L4Protocol::Icmp).await
 }
+
+#[tokio::test]
+#[ignore]
+async fn test_userspace_unicast_bypasses_attached_subnet() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let sc_egress = PhysPort(15);
+    let attached_subnet = "198.51.100.0/24".parse()?;
+    let tgt = types::InstanceTarget {
+        internal_ip: "fd00:1122:7788:101::4".parse().unwrap(),
+        inner_mac: MacAddr::new(0xa8, 0x40, 0x25, 0xf0, 0x00, 0x01).into(),
+        vni: Vni::new(100).unwrap().into(),
+    };
+
+    let dst =
+        Endpoint::parse("a8:40:25:00:00:01", "198.51.100.5", 4444).unwrap();
+
+    switch.client.attached_subnet_create(&attached_subnet, &tgt).await?;
+    let result =
+        common::userspace_unicast_forward_test(switch, dst, sc_egress).await;
+    let deleted = switch.client.attached_subnet_delete(&attached_subnet).await;
+    result?;
+    deleted?;
+    Ok(())
+}

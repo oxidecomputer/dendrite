@@ -122,7 +122,7 @@ control Filter(
 	}
 
 	action drop_unexpected_sidecar_hdr() {
-		meta.drop_reason = DROP_MULTICAST_UNEXPECTED_SIDECAR_HDR;
+		meta.drop_reason = DROP_UNEXPECTED_SIDECAR_HDR;
 		meta.dropped = true;
 	}
 
@@ -175,15 +175,22 @@ control Filter(
 	apply {
 		uplink_ports.apply();
 
-		// Sidecar multicast traffic coming from the service port retains the
-		// host's MACs, bypassing the DMAC and switch address checks below.
-		// Sidecar multicast arriving on any other port is dropped and counted
-		// here.
-		if (meta.is_mcast && hdr.sidecar.isValid()) {
-			if (ig_intr_md.ingress_port != USER_SPACE_SERVICE_PORT) {
-				drop_unexpected_sidecar_hdr();
+		// Sidecar traffic only arrives from the switch zone via the
+		// service port. Anything else encapped with a sidecar header gets
+		// dropped here, and we count the multicast drops per port.
+		if (hdr.sidecar.isValid() &&
+			ig_intr_md.ingress_port != USER_SPACE_SERVICE_PORT) {
+			drop_unexpected_sidecar_hdr();
+
+			if (meta.is_mcast) {
 				drop_mcast_ctr.count(ig_intr_md.ingress_port);
 			}
+			return;
+		}
+
+		// Sidecar multicast traffic coming from the service port retains the
+		// host's MACs, bypassing the DMAC and switch address checks below.
+		if (hdr.sidecar.isValid() && meta.is_mcast) {
 			return;
 		}
 
@@ -2199,7 +2206,11 @@ control Ingress(
 
 		flow_hash.apply(hdr, meta);
 
-		if (!meta.is_mcast || meta.is_link_local_mcastv6) {
+		// Sidecar traffic has already been routed by the host, and its
+		// `sc_egress` is the decision. We skip attached subnets here and NAT
+		// below.
+		if ((!meta.is_mcast || meta.is_link_local_mcastv6) &&
+			!hdr.sidecar.isValid()) {
 			attached_subnet_ingress.apply(hdr, meta);
 		}
 
@@ -2207,11 +2218,11 @@ control Ingress(
 		// that the NAT'd outer address is used for multicast replication
 		// to inbound groups.
 		//
-		// Switch-zone multicast avoids NATing and replication. `Services`
-		// uses the sidecar header to select `sc_egress` and then strips
-		// off the header.
+		// Switch-zone traffic avoids NATing, and switch-zone multicast
+		// avoids replication. `Services` uses the sidecar header to select
+		// `sc_egress` and then strips off the header.
 		if (!meta.dropped && !hdr.geneve.isValid() &&
-			!(meta.is_mcast && hdr.sidecar.isValid())) {
+			!hdr.sidecar.isValid()) {
 			nat_ingress.apply(hdr, meta, ig_intr_md, ig_tm_md);
 		}
 
@@ -2429,6 +2440,7 @@ control Egress(
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) link_local_mcast_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) external_mcast_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) underlay_mcast_ctr;
+	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) userspace_mcast_ctr;
 	Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS) drop_port_ctr;
 	Counter<bit<32>, bit<8>>(DROP_REASON_MAX, CounterType_t.PACKETS) drop_reason_ctr;
 
@@ -2487,10 +2499,10 @@ control Egress(
 				// group is bifurcated, meaning that we can skip an
 				// mcast_tag check.
 				//
-				// Userspace multicast also arrives with egress_rid == 0. The
-				// link-local counter requires is_link_local_ipv6_mcast to be checked,
-				// while other multicast sent from userspace increments mcast_ctr
-				// without a subtype count.
+				// Userspace multicast also arrives with egress_rid == 0.
+				// IPv6 link-local userspace multicast is counted as link-local,
+				// while the rest (including IPv4 224.0.0.0/24) is counted
+				// through userspace_mcast_ctr.
 				//
 				// Scope 2 groups are rejected at the time of creation, meaning that
 				// no PRE replica would carry a link-local outer destination at this
@@ -2502,6 +2514,8 @@ control Egress(
 					external_mcast_ctr.count(eg_intr_md.egress_port);
 				} else if (is_link_local_ipv6_mcast) {
 					link_local_mcast_ctr.count(eg_intr_md.egress_port);
+				} else {
+					userspace_mcast_ctr.count(eg_intr_md.egress_port);
 				}
 			} else {
 				unicast_ctr.count(eg_intr_md.egress_port);

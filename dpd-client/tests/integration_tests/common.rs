@@ -34,6 +34,10 @@ use packet::{Endpoint, L4Endpoint};
 use packet::{L3Endpoint, Packet, geneve};
 use types::PortId;
 
+use crate::integration_tests::counters::{
+    check_counter_incremented, check_counter_unchanged,
+};
+
 const SHOW_VERBOSE: u8 = 0x01;
 const SHOW_HEX: u8 = 0x02;
 
@@ -1406,6 +1410,56 @@ pub fn add_sidecar_hdr(
     pkt.hdrs.sidecar_hdr = Some(s);
     pkt.hdrs.sidecar_vlan_hdr = sidecar_vlan_hdr;
     eth.eth_type = eth::ETHER_SIDECAR;
+}
+
+pub async fn userspace_unicast_forward_test(
+    switch: &Switch,
+    dst: Endpoint,
+    sc_egress: PhysPort,
+) -> TestResult {
+    let src =
+        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap();
+    let mut send = gen_udp_packet(src, dst);
+    add_sidecar_hdr(
+        switch,
+        &mut send,
+        sidecar::SC_FWD_FROM_USERSPACE,
+        NO_PORT,
+        sc_egress,
+        None,
+    );
+    let mut recv = gen_udp_packet(src, dst);
+    eth::EthHdr::rewrite_smac(&mut recv, switch.get_port_mac(sc_egress)?);
+
+    let label = switch.port_label(sc_egress).unwrap();
+    let unicast = switch.get_counter(&label, Some("unicast")).await?;
+    let userspace_mcast =
+        switch.get_counter(&label, Some("multicast_userspace")).await?;
+    let fw_from_user =
+        switch.get_counter("fw_from_user", Some("service")).await?;
+
+    switch.packet_test(
+        vec![TestPacket { packet: Arc::new(send), port: SERVICE_PORT }],
+        vec![TestPacket { packet: Arc::new(recv), port: sc_egress }],
+    )?;
+
+    check_counter_incremented(switch, &label, unicast, 1, Some("unicast"))
+        .await?;
+    check_counter_incremented(
+        switch,
+        "fw_from_user",
+        fw_from_user,
+        1,
+        Some("service"),
+    )
+    .await?;
+    check_counter_unchanged(
+        switch,
+        &label,
+        userspace_mcast,
+        Some("multicast_userspace"),
+    )
+    .await
 }
 
 pub fn set_icmp_needed(

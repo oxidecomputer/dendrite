@@ -74,6 +74,7 @@ pub const COUNTER_IDS: &[CounterId] = &[
     CounterId::EgressPipeline(EgressCounterId::MulticastExt),
     CounterId::EgressPipeline(EgressCounterId::MulticastLL),
     CounterId::EgressPipeline(EgressCounterId::MulticastUL),
+    CounterId::EgressPipeline(EgressCounterId::MulticastUserspace),
     CounterId::EgressPipeline(EgressCounterId::MulticastDrop),
 ];
 
@@ -200,7 +201,7 @@ enum DropReason {
     GeneveOptionUnknown,
     DropSctp,
     MulticastTtlExceeded,
-    MulticastUnexpectedSidecarHdr,
+    UnexpectedSidecarHdr,
 }
 
 impl TryFrom<u8> for DropReason {
@@ -237,7 +238,7 @@ impl TryFrom<u8> for DropReason {
             26 => Ok(DropReason::GeneveOptionUnknown),
             27 => Ok(DropReason::DropSctp),
             28 => Ok(DropReason::MulticastTtlExceeded),
-            29 => Ok(DropReason::MulticastUnexpectedSidecarHdr),
+            29 => Ok(DropReason::UnexpectedSidecarHdr),
             x => Err(format!("Unrecognized drop reason: {x}")),
         }
     }
@@ -288,8 +289,8 @@ fn reason_label(ctr: u8) -> Result<Option<String>, String> {
         DropReason::MulticastTtlExceeded => {
             "multicast_ttl_exceeded".to_string()
         }
-        DropReason::MulticastUnexpectedSidecarHdr => {
-            "multicast_unexpected_sidecar_hdr".to_string()
+        DropReason::UnexpectedSidecarHdr => {
+            "unexpected_sidecar_hdr".to_string()
         }
     };
     Ok(Some(label))
@@ -349,6 +350,7 @@ pub async fn get_values(
             | CounterId::EgressPipeline(EgressCounterId::MulticastExt)
             | CounterId::EgressPipeline(EgressCounterId::MulticastLL)
             | CounterId::EgressPipeline(EgressCounterId::MulticastUL)
+            | CounterId::EgressPipeline(EgressCounterId::MulticastUserspace)
             | CounterId::EgressPipeline(EgressCounterId::MulticastDrop) => {
                 port_label(switch, idx.idx).await
             }
