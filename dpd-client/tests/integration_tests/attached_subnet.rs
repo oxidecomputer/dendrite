@@ -13,10 +13,9 @@ use ::common::network::Vni;
 use anyhow::Context;
 use dpd_client::ClientInfo;
 use dpd_client::types;
-use oxnet::IpNet;
 use packet::Endpoint;
+use packet::L3Endpoint;
 use packet::eth;
-use packet::geneve;
 use packet::ipv6;
 use packet::udp;
 
@@ -85,10 +84,10 @@ struct ExternalTest {
     instance_mac: String,
 
     // local routing info - how OPTE routes client packet to switch logic
-    gimlet_ip: String,        // ip address of the gimlet
-    gimlet_mac: String,       // mac address of the gimlet
+    gimlet_ip: Ipv6Addr,      // ip address of the gimlet
+    gimlet_mac: MacAddr,      // mac address of the gimlet
     backplane_port: PhysPort, // switch port to which the gimlet is attached
-    backplane_ip: String,     // ip address of the gimlet's switch port
+    backplane_ip: Ipv6Addr,   // ip address of the gimlet's switch port
 
     l4_protocol: L4Protocol,
     geneve_vni: u32,
@@ -103,9 +102,8 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
     // set up the switch internals so we can route the packet from the gimlet
     // port to the uplink switch port
     let (port_id, link_id) = switch.link_id(test.backplane_port).unwrap();
-    let backplane_ip = test.backplane_ip.parse::<Ipv6Addr>().unwrap();
     let entry = types::Ipv6Entry {
-        addr: backplane_ip,
+        addr: test.backplane_ip,
         tag: switch.client.inner().tag.clone(),
     };
     switch.client.link_ipv6_create(&port_id, &link_id, &entry).await.unwrap();
@@ -136,7 +134,7 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
     }
 
     let tgt = types::InstanceTarget {
-        internal_ip: test.gimlet_ip.parse().unwrap(),
+        internal_ip: test.gimlet_ip,
         inner_mac: test.instance_mac.parse::<MacAddr>()?.into(),
         vni: test.geneve_vni.try_into().unwrap(),
     };
@@ -157,24 +155,15 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
         L4Protocol::Icmp => common::gen_icmp_packet(src, dst),
     };
 
-    let switch_mac =
-        switch.get_port_mac(test.backplane_port).unwrap().to_string();
+    let switch_mac = switch.get_port_mac(test.backplane_port)?;
     let payload = payload_pkt.deparse().unwrap().to_vec();
     let to_send = common::gen_geneve_packet(
-        Endpoint::parse(&test.gimlet_mac, &test.gimlet_ip, 3333).unwrap(),
-        Endpoint::parse(
-            &switch_mac,
-            &test.backplane_ip,
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        match attached_subnet {
-            IpNet::V4(_) => eth::ETHER_IPV4,
-            IpNet::V6(_) => eth::ETHER_IPV6,
-        },
+        L3Endpoint::new(test.gimlet_mac, test.gimlet_ip.into()),
+        L3Endpoint::new(switch_mac, test.backplane_ip.into()),
+        3333,
         test.geneve_vni,
         &[],
-        &payload[14..],
+        &payload,
     );
 
     let mut to_recv =
@@ -193,25 +182,22 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
 // the correct gimlet.
 async fn test_ingress(switch: &Switch, test: &ExternalTest) -> TestResult {
     let attached_subnet = test.attached_subnet.parse()?;
-    let gimlet_mac = test.gimlet_mac.parse().unwrap();
     let (port_id, link_id) = switch.link_id(test.backplane_port).unwrap();
-    let backplane_ip = test.backplane_ip.parse::<Ipv6Addr>().unwrap();
     let entry = types::Ipv6Entry {
-        addr: backplane_ip,
+        addr: test.backplane_ip,
         tag: switch.client.inner().tag.clone(),
     };
 
     // Create the backplane port on the sidecar, linking to the gimlet
     switch.client.link_ipv6_create(&port_id, &link_id, &entry).await.unwrap();
-    let cidr =
-        oxnet::Ipv6Net::new(test.gimlet_ip.parse().unwrap(), 64).unwrap();
+    let cidr = oxnet::Ipv6Net::new(test.gimlet_ip, 64).unwrap();
     let route = types::Ipv6RouteUpdate {
         cidr,
         target: types::Ipv6Route {
             tag: switch.client.inner().tag.clone(),
             port_id,
             link_id,
-            tgt_ip: test.gimlet_ip.parse().unwrap(),
+            tgt_ip: test.gimlet_ip,
             vlan_id: None,
         },
         replace: false,
@@ -220,11 +206,16 @@ async fn test_ingress(switch: &Switch, test: &ExternalTest) -> TestResult {
     // Add the route to the gimlet over the backplane, and populate the neighbor
     // table with its mac address.
     switch.client.route_ipv6_set(&route).await.unwrap();
-    common::add_neighbor_ipv6(switch, &test.gimlet_ip, gimlet_mac).await?;
+    common::add_neighbor_ipv6(
+        switch,
+        &test.gimlet_ip.to_string(),
+        test.gimlet_mac,
+    )
+    .await?;
 
     // Set up an external subnet owned by an instance on the test gimlet
     let tgt = types::InstanceTarget {
-        internal_ip: test.gimlet_ip.parse().unwrap(),
+        internal_ip: test.gimlet_ip,
         inner_mac: test.instance_mac.parse::<MacAddr>()?.into(),
         vni: test.geneve_vni.try_into().unwrap(),
     };
@@ -273,27 +264,16 @@ async fn test_ingress(switch: &Switch, test: &ExternalTest) -> TestResult {
 
     // build the encapsulated packet for transporting the packet from the
     // switch to OPTE
-    let backplane_port_mac =
-        switch.get_port_mac(test.backplane_port).unwrap().to_string();
+    let backplane_port_mac = switch.get_port_mac(test.backplane_port)?;
 
     // XXX: The switch should be using the switch port IP, but isn't yet.
-    let switch_port_ip = "::0";
+    let switch_port_ip = Ipv6Addr::UNSPECIFIED;
 
     // Build the encapsulated packet we expect to receive from tofino
     let mut forward_pkt = common::gen_external_geneve_packet(
-        Endpoint::parse(
-            &backplane_port_mac,
-            switch_port_ip,
-            common::tofino_flow_hash(src, dst, test.l4_protocol),
-        )
-        .unwrap(),
-        Endpoint::parse(
-            &test.gimlet_mac,
-            &test.gimlet_ip,
-            geneve::GENEVE_UDP_PORT,
-        )
-        .unwrap(),
-        eth::ETHER_ETHER,
+        L3Endpoint::new(backplane_port_mac, switch_port_ip.into()),
+        L3Endpoint::new(test.gimlet_mac, test.gimlet_ip.into()),
+        common::tofino_flow_hash(src, dst, test.l4_protocol),
         test.geneve_vni,
         &ingress_payload,
     );
@@ -370,10 +350,10 @@ async fn test_egress_ipv4(
         uplink_route: "0.0.0.0/0".to_string(),
 
         backplane_port: PhysPort(10),
-        backplane_ip: "fd00:99::1".to_string(),
+        backplane_ip: "fd00:99::1".parse()?,
 
-        gimlet_mac: "e1:e2:e3:e4:e5:e6".to_string(),
-        gimlet_ip: "fd00:1::1".to_string(),
+        gimlet_mac: "e1:e2:e3:e4:e5:e6".parse()?,
+        gimlet_ip: "fd00:1::1".parse()?,
 
         l4_protocol,
         geneve_vni: 32,
@@ -461,10 +441,10 @@ async fn test_ingress_ipv4(
         uplink_route: "0.0.0.0/0".to_string(),
 
         backplane_port: PhysPort(10),
-        backplane_ip: "fd00:99::1".to_string(),
+        backplane_ip: "fd00:99::1".parse()?,
 
-        gimlet_mac: "e1:e2:e3:e4:e5:e6".to_string(),
-        gimlet_ip: "fd00:1::1".to_string(),
+        gimlet_mac: "e1:e2:e3:e4:e5:e6".parse()?,
+        gimlet_ip: "fd00:1::1".parse()?,
 
         l4_protocol,
         geneve_vni: 38,
@@ -546,10 +526,10 @@ async fn test_egress_ipv6(
         uplink_route: "::1/0".to_string(),
 
         backplane_port: PhysPort(10),
-        backplane_ip: "fd00:99::1".to_string(),
+        backplane_ip: "fd00:99::1".parse()?,
 
-        gimlet_mac: "e1:e2:e3:e4:e5:e6".to_string(),
-        gimlet_ip: "fd00:1::1".to_string(),
+        gimlet_mac: "e1:e2:e3:e4:e5:e6".parse()?,
+        gimlet_ip: "fd00:1::1".parse()?,
 
         l4_protocol,
         geneve_vni: 32,
@@ -636,10 +616,10 @@ async fn test_ingress_ipv6(
         uplink_route: "::1/0".to_string(),
 
         backplane_port: PhysPort(10),
-        backplane_ip: "fd00:99::1".to_string(),
+        backplane_ip: "fd00:99::1".parse()?,
 
-        gimlet_mac: "e1:e2:e3:e4:e5:e6".to_string(),
-        gimlet_ip: "fd00:1::1".to_string(),
+        gimlet_mac: "e1:e2:e3:e4:e5:e6".parse()?,
+        gimlet_ip: "fd00:1::1".parse()?,
 
         l4_protocol,
         geneve_vni: 38,
