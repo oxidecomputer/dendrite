@@ -99,5 +99,5 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Check tfportd and uplinkd
-        run: cargo check --locked --all-targets -p tfportd -p uplinkd
+      - name: Check tfportd, uplinkd, and xtask
+        run: cargo check --locked --all-targets -p tfportd -p uplinkd -p xtask

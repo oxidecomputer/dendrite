@@ -27,6 +27,19 @@ mod linux;
 #[cfg(target_os = "linux")]
 use linux as plat;
 
+// There's no native package format elsewhere, but the other xtasks still work.
+#[cfg(not(any(target_os = "illumos", target_os = "linux")))]
+mod plat {
+    pub async fn dist(
+        _features: Option<String>,
+        _names: Vec<String>,
+        _release: bool,
+        _format: crate::DistFormat,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("dist is only supported on illumos and Linux")
+    }
+}
+
 // Possible formats for a bundled dendrite distro.  Currently the two "zone"
 // package formats are helios-only.
 #[derive(PartialEq, Debug, ValueEnum, Copy, Clone)]
@@ -40,13 +53,12 @@ type ParseError = &'static str;
 impl FromStr for DistFormat {
     type Err = ParseError;
     fn from_str(format: &str) -> Result<Self, Self::Err> {
-        #[cfg(target_os = "illumos")]
-        const NATIVE_FORMAT: &str = "p5p";
-        #[cfg(target_os = "linux")]
-        const NATIVE_FORMAT: &str = "deb";
-
         match format {
-            "native" | "n" | NATIVE_FORMAT => Ok(DistFormat::Native),
+            "native" | "n" => Ok(DistFormat::Native),
+            #[cfg(target_os = "illumos")]
+            "p5p" => Ok(DistFormat::Native),
+            #[cfg(target_os = "linux")]
+            "deb" => Ok(DistFormat::Native),
             "omicron" | "o" => Ok(DistFormat::Omicron),
             "global" | "g" => Ok(DistFormat::Global),
             _ => Err("Could not parse distribution format"),
@@ -104,6 +116,11 @@ enum XtaskCommands {
     },
 }
 
+// Only used by `dist`.
+#[cfg_attr(
+    not(any(target_os = "illumos", target_os = "linux")),
+    allow(dead_code)
+)]
 fn collect<T: ToString>(src: &str, dst: &str, files: Vec<T>) -> Result<()> {
     let src_dir = Path::new(src);
     if !src_dir.is_dir() {
@@ -215,6 +232,11 @@ pub fn copydir(src: &str, dst: &str) -> Result<()> {
     copyfiles(src, dst, &files)
 }
 
+// Only used by `dist`.
+#[cfg_attr(
+    not(any(target_os = "illumos", target_os = "linux")),
+    allow(dead_code)
+)]
 fn collect_binaries<T: ToString>(
     names: &[T],
     release: bool,
