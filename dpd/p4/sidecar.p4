@@ -803,7 +803,11 @@ control NatIngress (
 			// from guests and gimlets that arrives on a backplane
 			// port, but prevents us from accepting or forwarding
 			// arbitrary traffic received on an uplink port.
-			meta.drop_reason = DROP_NAT_INGRESS_MISS;
+			if (meta.is_mcast) {
+				meta.drop_reason = DROP_MULTICAST_NO_GROUP;
+			} else {
+				meta.drop_reason = DROP_NAT_INGRESS_MISS;
+			}
 			meta.dropped = true;
 		}
 	}
