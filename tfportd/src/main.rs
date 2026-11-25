@@ -31,6 +31,8 @@ mod arp;
 mod config;
 mod linklocal;
 mod ndp;
+// netsupport talks to the tfport driver and libnet, which only exist on illumos.
+#[cfg_attr(not(target_os = "illumos"), path = "netsupport/dummy.rs")]
 mod netsupport;
 mod oxstats;
 mod packet_queue;

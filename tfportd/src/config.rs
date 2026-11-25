@@ -7,6 +7,7 @@
 //! Configuration for the tfport daemon.
 
 use std::net::SocketAddrV6;
+#[cfg(target_os = "illumos")]
 use std::str::FromStr;
 
 #[cfg(target_os = "illumos")]
@@ -214,7 +215,7 @@ pub(crate) fn update_from_smf(config: &mut Config) -> SmfResult<()> {
 }
 
 #[cfg(not(target_os = "illumos"))]
-pub(crate) fn update_from_smf(config: &mut Config) -> SmfResult<()> {
+pub(crate) fn update_from_smf(_config: &mut Config) -> SmfResult<()> {
     Err(SmfError::NotSupported)
 }
 
