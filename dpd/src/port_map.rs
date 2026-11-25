@@ -52,11 +52,7 @@ pub enum SidecarRevision {
     /// Sidecar hardware revision A
     B,
     /// SoftNPU configuration specifying the number of `front` and `rear` ports.
-    Soft {
-        front: u8,
-        rear: u8,
-    },
-    Chaos,
+    Soft { front: u8, rear: u8 },
 }
 
 impl fmt::Display for SidecarRevision {
@@ -69,7 +65,6 @@ impl fmt::Display for SidecarRevision {
                 SidecarRevision::B => "B".into(),
                 SidecarRevision::Soft { front, rear } =>
                     format!("Soft_{front}_{rear}"),
-                SidecarRevision::Chaos => "chaos".into(),
             }
         )
     }
@@ -82,7 +77,6 @@ impl FromStr for SidecarRevision {
         match s {
             "a" | "A" => Ok(SidecarRevision::A),
             "b" | "B" => Ok(SidecarRevision::B),
-            "chaos" => Ok(SidecarRevision::Chaos),
             s => {
                 let re = regex::Regex::new(r"^Soft_(\d)_(\d)$").unwrap();
                 let caps = re.captures(s).unwrap();
@@ -137,7 +131,6 @@ impl PortMap {
             SidecarRevision::Soft { front, rear } => {
                 rev_softnpu_map(front, rear)
             }
-            SidecarRevision::Chaos => rev_chaos_map(),
         };
         let connector_to_id =
             id_to_connector.iter().map(|(k, v)| (*v, *k)).collect();
@@ -196,23 +189,6 @@ fn rev_softnpu_map(front: u8, rear: u8) -> BTreeMap<PortId, Connector> {
     for i in 0..front {
         let p = PortId::Qsfp(QsfpPort::new(i).unwrap());
         inner.insert(p, Connector::QSFP((i + 1 + rear).into()));
-    }
-    inner
-}
-
-fn rev_chaos_map() -> BTreeMap<PortId, Connector> {
-    let mut inner = BTreeMap::new();
-    inner.insert(
-        PortId::Internal(InternalPort::new(0).unwrap()),
-        Connector::CPU,
-    );
-    for i in 0..32 {
-        let p = PortId::Rear(RearPort::new(i).unwrap());
-        inner.insert(p, Connector::QSFP((i + 1).into()));
-    }
-    for i in 0..32 {
-        let p = PortId::Qsfp(QsfpPort::new(i).unwrap());
-        inner.insert(p, Connector::QSFP((i + 1 + 32).into()));
     }
     inner
 }

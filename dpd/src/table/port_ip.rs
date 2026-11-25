@@ -58,13 +58,13 @@ enum ActionV6 {
 // rather than continue in a known-bad state.
 //
 // If an attempt to repair a failed update also fails, it is very unlikely that
-// a second attempt will have any better luck on real hardware.  On the "chaos"
-// ASIC, where all errors are injected randomly, it is entirely possible that
+// a second attempt will have any better luck on real hardware.  In a chaos config,
+// where all errors are injected randomly, it is entirely possible that
 // retrying the operation will succeed.  This constant determines how many times
 // we will retry before giving up.
-#[cfg(feature = "chaos")]
+#[cfg(feature = "tofino_stub")]
 const REPAIR_ATTEMPTS: usize = 20;
-#[cfg(not(feature = "chaos"))]
+#[cfg(not(feature = "tofino_stub"))]
 const REPAIR_ATTEMPTS: usize = 3;
 
 fn match_keys_ipv4(ipv4: Ipv4Addr, port: u16) -> (Ipv4MatchKey, Ipv4MatchKey) {

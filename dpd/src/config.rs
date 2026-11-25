@@ -14,8 +14,6 @@ use crate::types::DpdResult;
 use common::illumos::smf;
 use common::{SmfError, SmfResult, network::MacAddr};
 
-#[cfg(feature = "chaos")]
-use asic::chaos::AsicConfig;
 #[cfg(feature = "softnpu")]
 use asic::softnpu::AsicConfig;
 #[cfg(feature = "tofino_asic")]
@@ -315,7 +313,7 @@ fn update_from_cli(opts: &crate::Opt, config: &mut Config) -> DpdResult<()> {
         }
     }
 
-    #[cfg(feature = "chaos")]
+    #[cfg(feature = "tofino_stub")]
     {
         if let Some(path) = &opts.chaos_config {
             let txt = std::fs::read_to_string(path)?;
