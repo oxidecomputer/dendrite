@@ -16,6 +16,7 @@ use aal::AsicResult;
 use aal::MatchType;
 use common::counters::CounterId;
 use common::counters::EgressCounterId;
+use common::counters::IngressCounterId;
 use common::table::TableType;
 
 pub mod ports;
@@ -83,18 +84,25 @@ fn table_name(type_: TableType) -> &'static str {
 
 fn counter_table_name(id: CounterId) -> &'static str {
     match id {
-        CounterId::Service => "pipe.Ingress.services.service_ctr",
-        CounterId::Ingress => "pipe.Ingress.ingress_ctr",
-        CounterId::Packet => "pipe.Ingress.packet_ctr",
-        CounterId::Forwarded => "pipe.Egress.forwarded_ctr",
-        CounterId::DropPort => "pipe.Ingress.drop_port_ctr",
-        CounterId::DropReason => "pipe.Ingress.drop_reason_ctr",
+        CounterId::IngressPipeline(id) => ingress_counter_table_name(id),
         CounterId::EgressPipeline(id) => egress_counter_table_name(id),
+    }
+}
+
+fn ingress_counter_table_name(id: IngressCounterId) -> &'static str {
+    match id {
+        IngressCounterId::Service => "pipe.Ingress.services.service_ctr",
+        IngressCounterId::Ingress => "pipe.Ingress.ingress_ctr",
+        IngressCounterId::Packet => "pipe.Ingress.packet_ctr",
+        IngressCounterId::DropPort => "pipe.Ingress.drop_port_ctr",
+        IngressCounterId::DropReason => "pipe.Ingress.drop_reason_ctr",
+        IngressCounterId::MulticastDrop => "pipe.Ingress.filter.drop_mcast_ctr",
     }
 }
 
 fn egress_counter_table_name(id: EgressCounterId) -> &'static str {
     match id {
+        EgressCounterId::Forwarded => "pipe.Egress.forwarded_ctr",
         EgressCounterId::DropPort => "pipe.Egress.drop_port_ctr",
         EgressCounterId::DropReason => "pipe.Egress.drop_reason_ctr",
         EgressCounterId::Unicast => "pipe.Egress.unicast_ctr",
@@ -105,7 +113,6 @@ fn egress_counter_table_name(id: EgressCounterId) -> &'static str {
         EgressCounterId::MulticastUserspace => {
             "pipe.Egress.userspace_mcast_ctr"
         }
-        EgressCounterId::MulticastDrop => "pipe.Ingress.filter.drop_mcast_ctr",
     }
 }
 

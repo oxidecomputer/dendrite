@@ -13,7 +13,6 @@ header bridge_h {
 	bool nat_egress_hit;
 	bool is_link_local_mcastv6;
 	bool is_mcast_from_userspace;
-	bit<4> reserved;
 }
 
 struct sidecar_ingress_meta_t {

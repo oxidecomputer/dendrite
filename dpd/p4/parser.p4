@@ -59,7 +59,6 @@ parser IngressParser(
 		meta.bridge_hdr.nat_egress_hit = false;
 		meta.bridge_hdr.is_link_local_mcastv6 = false;
 		meta.bridge_hdr.is_mcast_from_userspace = false;
-		meta.bridge_hdr.reserved = 0;
 
 		transition port_metadata;
 	}
@@ -640,31 +639,40 @@ parser EgressParser(
 		}
 	}
 
-	// Egress only needs L4 and Geneve for underlay multicast replicas,
-	// which are always IPv6 packets. Stopping at the IPv4 header avoids
-	// misreading options or fragments as UDP.
+	// Egress control should be able to use isValid() to decipher which
+	// supported headers came in on the wire. We keep parsing by IP protocol
+	// regardless of which headers the control reads.
 	state parse_ipv4 {
 		pkt.extract(hdr.ipv4);
-		transition accept;
+
+		transition select(hdr.ipv4.protocol) {
+			IPPROTO_ICMP: parse_icmp;
+			IPPROTO_TCP: parse_tcp;
+			IPPROTO_UDP: parse_udp;
+			default: accept;
+		}
 	}
 
-	// Egress only needs Geneve parsed for underlay multicast replicas. A
-	// non-zero egress_rid means the PRE replicated the packet. Ingress
-	// replicates only when the outer dst hits an internal group (ff04::/64)
-	// in `mcast_replication_ipv6`. NAT ingress traffic gets encapsulated
-	// as well, but the egress pipeline doesn't need to read its Geneve
-	// header, while all other IPv6 stops after the IPv6 header.
-	//
-	// An egress reject doesn't drop the packet (TNA 5.2.1):
-	// https://raw.githubusercontent.com/barefootnetworks/Open-Tofino/2c83863fd6665cf29dcc64381ee2c6ce8e4552d8/PUBLIC_Tofino-Native-Arch.pdf#page=20
 	state parse_ipv6 {
 		pkt.extract(hdr.ipv6);
 
-		transition select(eg_intr_md.egress_rid, hdr.ipv6.next_hdr) {
-			(0, _): accept;
-			(_, IPPROTO_UDP): parse_udp;
+		transition select(hdr.ipv6.next_hdr) {
+			IPPROTO_TCP: parse_tcp;
+			IPPROTO_UDP: parse_udp;
 			default: accept;
 		}
+	}
+
+	state parse_icmp {
+		pkt.extract(hdr.icmp);
+
+		transition accept;
+	}
+
+	state parse_tcp {
+		pkt.extract(hdr.tcp);
+
+		transition accept;
 	}
 
 	state parse_udp {

@@ -24,6 +24,7 @@ use aal_macros::*;
 use asic::Handle;
 use common::counters::CounterId;
 use common::counters::EgressCounterId;
+use common::counters::IngressCounterId;
 use common::counters::SERVICE_PORT_LABEL;
 use common::table::TableType;
 
@@ -61,12 +62,12 @@ pub struct Counter {
 }
 
 pub const COUNTER_IDS: &[CounterId] = &[
-    CounterId::Service,
-    CounterId::Ingress,
-    CounterId::Forwarded,
-    CounterId::Packet,
-    CounterId::DropPort,
-    CounterId::DropReason,
+    CounterId::IngressPipeline(IngressCounterId::Service),
+    CounterId::IngressPipeline(IngressCounterId::Ingress),
+    CounterId::EgressPipeline(EgressCounterId::Forwarded),
+    CounterId::IngressPipeline(IngressCounterId::Packet),
+    CounterId::IngressPipeline(IngressCounterId::DropPort),
+    CounterId::IngressPipeline(IngressCounterId::DropReason),
     CounterId::EgressPipeline(EgressCounterId::DropPort),
     CounterId::EgressPipeline(EgressCounterId::DropReason),
     CounterId::EgressPipeline(EgressCounterId::Unicast),
@@ -75,7 +76,7 @@ pub const COUNTER_IDS: &[CounterId] = &[
     CounterId::EgressPipeline(EgressCounterId::MulticastLL),
     CounterId::EgressPipeline(EgressCounterId::MulticastUL),
     CounterId::EgressPipeline(EgressCounterId::MulticastUserspace),
-    CounterId::EgressPipeline(EgressCounterId::MulticastDrop),
+    CounterId::IngressPipeline(IngressCounterId::MulticastDrop),
 ];
 
 /// Fetch a counter by name from the switch's list of counters.  This call
@@ -338,25 +339,31 @@ pub async fn get_values(
     for (idx, data) in counters {
         // Given the indirect counter index, look up the label.
         let key = match counter_id {
-            CounterId::Packet => packet_label(idx.idx),
-            CounterId::Service => service_label(idx.idx as u8),
-            CounterId::Ingress | CounterId::Forwarded | CounterId::DropPort => {
-                port_label(switch, idx.idx).await
+            CounterId::IngressPipeline(IngressCounterId::Packet) => {
+                packet_label(idx.idx)
             }
-            CounterId::DropReason => reason_label(idx.idx as u8)?,
-            CounterId::EgressPipeline(EgressCounterId::DropPort)
-            | CounterId::EgressPipeline(EgressCounterId::Unicast)
-            | CounterId::EgressPipeline(EgressCounterId::Multicast)
-            | CounterId::EgressPipeline(EgressCounterId::MulticastExt)
-            | CounterId::EgressPipeline(EgressCounterId::MulticastLL)
-            | CounterId::EgressPipeline(EgressCounterId::MulticastUL)
-            | CounterId::EgressPipeline(EgressCounterId::MulticastUserspace)
-            | CounterId::EgressPipeline(EgressCounterId::MulticastDrop) => {
-                port_label(switch, idx.idx).await
+            CounterId::IngressPipeline(IngressCounterId::Service) => {
+                service_label(idx.idx as u8)
             }
-            CounterId::EgressPipeline(EgressCounterId::DropReason) => {
+            CounterId::IngressPipeline(IngressCounterId::DropReason)
+            | CounterId::EgressPipeline(EgressCounterId::DropReason) => {
                 reason_label(idx.idx as u8)?
             }
+            CounterId::IngressPipeline(
+                IngressCounterId::Ingress
+                | IngressCounterId::DropPort
+                | IngressCounterId::MulticastDrop,
+            )
+            | CounterId::EgressPipeline(
+                EgressCounterId::Forwarded
+                | EgressCounterId::DropPort
+                | EgressCounterId::Unicast
+                | EgressCounterId::Multicast
+                | EgressCounterId::MulticastExt
+                | EgressCounterId::MulticastLL
+                | EgressCounterId::MulticastUL
+                | EgressCounterId::MulticastUserspace,
+            ) => port_label(switch, idx.idx).await,
         };
 
         if let Some(key) = key {
@@ -364,7 +371,10 @@ pub async fn get_values(
             // we will never see, many of which (e.g. an icmp packet that is
             // neither IPv4 nor IPv6) are even possible.  We don't record
             // combinations with 0 hits.
-            if counter_id == CounterId::Packet && data.pkts == Some(0) {
+            if counter_id
+                == CounterId::IngressPipeline(IngressCounterId::Packet)
+                && data.pkts == Some(0)
+            {
                 continue;
             }
 
