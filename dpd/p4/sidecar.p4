@@ -923,12 +923,21 @@ control RouterLookupIndex6(
 	 * capacity from dpd's perspective, and the "default" entry consumes a
 	 * slot in the lookup table.
 	 *
-	 * Note: we annotate @ways here, increasing cuckoo placement choices to 8
-	 * candidate buckets per key. Full occupancy of the route-target table
-	 * was measured on this build; the compiler does not guarantee it.
+	 * Note: we annotate @ways(8) here. For an exact-match table, each "way"
+	 * indexes a separate set of RAMs using its own bits of the hash. A
+	 * given key can then be placed into any one of the possible 8 candidate
+	 * spots. On lookup, all 8 hashes are computed against the lookup key in
+	 * parallel, and a hit is then checked as a full key match (because
+	 * hashes can collide). Given more candidate spots per key (than the
+	 * lower bound of 4), cuckoo hashing gets greater placement flexibility
+	 * as the table fills up, and an entry is less likely to find all of its
+	 * spots consumed. By default, without this pragma, p4c computes the
+	 * way count from the table's RAM depth, raising the depth to at least 4
+	 * (the driver's standard minimum), which comes out to 4 ways for a
+	 * table this size.
 	 *
-	 * By default, without this pragma, p4c computes the way count, bumping
-	 * it up to 4 independent ways when it comes out lower.
+	 * Full occupancy of the route-target table was measured on this build;
+	 * the compiler does not guarantee it.
 	 *
 	 * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/mau/resource_estimate.cpp#L570-L620
 	 */
@@ -1054,14 +1063,8 @@ control RouterLookupIndex4(
 	 * capacity from dpd's perspective, and the "default" entry consumes a
 	 * slot in the lookup table.
 	 *
-	 * Note: we annotate @ways here, increasing cuckoo placement choices to 8
-	 * candidate buckets per key. Full occupancy of the route-target table
-	 * was measured on this build; the compiler does not guarantee it.
-	 *
-	 * By default, without this pragma, p4c computes the way count, bumping
-	 * it up to 4 independent ways when it comes out lower.
-	 *
-	 * See https://github.com/p4lang/p4c/blob/a19f1c3d85a867a6288fd983f7bad505ac47d728/backends/tofino/bf-p4c/mau/resource_estimate.cpp#L570-L620
+	 * Note: we annotate @ways(8) here as well; see the route table comment
+	 * in RouterLookupIndex6 above.
 	 */
 	@ways(8)
 	table route {
@@ -1665,7 +1668,7 @@ control MulticastIngress (
 		mcast_ipv4_ssm_ctr.count();
 	}
 
-	// Drop action for IPv6 ulticast packets with no source-specific multicast
+	// Drop action for IPv6 multicast packets with no source-specific multicast
 	// group.
 	action drop_mcastv6_filtered_source() {
 		meta.drop_reason = DROP_MULTICAST_SOURCE_FILTERED;
@@ -1685,9 +1688,6 @@ control MulticastIngress (
 		mcast_ipv6_ssm_ctr.count();
 	}
 
-	// Level 2 (LAG) multicast hash, combining the flow hash and ingress port.
-	Hash<bit<13>>(HashAlgorithm_t.CRC16) mcast_hashv6_level2;
-
 	// Configure IPv6 multicast replication with bifurcated design:
 	// mcast_grp_a: external/customer replication group
 	// mcast_grp_b: underlay/infrastructure replication group
@@ -1706,29 +1706,16 @@ control MulticastIngress (
 
 		// Multicast hashes for the PRE (Packet Replication Engine).
 		//
-		// A multicast group is a list of level 1 nodes (the networks a packet
-		// is replicated to), and each level 1 node fans out to level 2 nodes
-		// (ports or LAGs) (TNA 5.7.3.1, 5.7.3.2). level1_mcast_hash selects
-		// one node within an ECMP level 1 node, while level2_mcast_hash
-		// selects one port within a LAG level 2 node:
+		// A multicast group is a list of level 1 nodes (each with its
+		// own RID), and each level 1 node fans out to level 2 nodes
+		// (ports or LAGs) (TNA 5.7.3.1, 5.7.3.2). level1_mcast_hash
+		// selects one node within an ECMP level 1 node, while
+		// level2_mcast_hash selects one port within a LAG level 2 node:
 		// https://raw.githubusercontent.com/barefootnetworks/Open-Tofino/2c83863fd6665cf29dcc64381ee2c6ce8e4552d8/PUBLIC_Tofino-Native-Arch.pdf#page=27
 		//
-		// Both hashes derive from the flow hash and include entropy from the
-		// inner flow (see FlowHash).
-		//
-		// We configure neither ECMP level 1 nodes nor LAG level 2 nodes.
-		// Multicast fan-out delivers to every member subscriber. The hashes
-        // have no effect for now. See
-		// https://github.com/oxidecomputer/dendrite/pull/398#discussion_r4300397421
-		ig_tm_md.level1_mcast_hash = meta.flow_hash[12:0];
-
-		// level2 is a separate hash, and not a shifted slice of flow_hash
-		// (e.g. [15:3]). That copy pushes flow_hash into a 32b container, and
-		// the egress decap bitmap no longer fits in PHV.
-		ig_tm_md.level2_mcast_hash = mcast_hashv6_level2.get({
-			meta.flow_hash,
-			ig_intr_md.ingress_port
-		});
+		// Dendrite's Tofino backend creates one node per physical port.
+		// If we eventually add ECMP nodes or LAGs, set the
+		// corresponding hash here.
 
 		mcast_ipv6_ctr.count();
 	}
