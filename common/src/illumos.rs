@@ -2,9 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Illumos-specific common modules and operations.
+//!
+//! This module builds on every platform so that its callers do too, but the
+//! commands it runs only exist on illumos. Elsewhere they fail with
+//! `IllumosError::Exec`.
 
 use std::convert::Into;
 
@@ -268,7 +272,8 @@ pub async fn tfport_exists(tfport: &str) -> Result<bool> {
     }
 }
 
-#[cfg(test)]
+// These run the real illumos commands.
+#[cfg(all(test, target_os = "illumos"))]
 mod test {
     use super::address_exists;
 
