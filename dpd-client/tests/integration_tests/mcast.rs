@@ -5159,12 +5159,32 @@ async fn test_multicast_multiple_packets() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_multicast_no_group_configured() -> TestResult {
+async fn test_multicast_no_group() -> TestResult {
     let switch = &*get_switch().await;
+    multicast_no_group(switch, PhysPort(10)).await
+}
 
-    // Define test ports
+#[tokio::test]
+#[ignore]
+async fn test_multicast_no_group_on_uplink() -> TestResult {
+    let switch = &*get_switch().await;
     let ingress = PhysPort(10);
+    let nat_miss_baseline =
+        switch.get_counter("nat_ingress_miss", None).await?;
 
+    switch.set_uplink(ingress, true).await;
+    let result = multicast_no_group(switch, ingress).await;
+    switch.set_uplink(ingress, false).await;
+    result?;
+
+    assert_eq!(
+        switch.get_counter("nat_ingress_miss", None).await?,
+        nat_miss_baseline
+    );
+    Ok(())
+}
+
+async fn multicast_no_group(switch: &Switch, ingress: PhysPort) -> TestResult {
     // Use unique multicast IP addresses that we will not configure any group for
     let unconfigured_multicast_ipv4 = IpAddr::V4(Ipv4Addr::new(224, 1, 255, 1)); // Unique IPv4 multicast
     let unconfigured_multicast_ipv6 =
@@ -5174,7 +5194,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
 
     // Get baseline counter before any test packets
     let initial_ctr_baseline =
-        switch.get_counter("multicast_no_group", None).await.unwrap();
+        switch.get_counter("multicast_no_group", None).await?;
 
     // Test IPv4 multicast with no configured group
     {
@@ -5191,9 +5211,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
 
         let expected_pkts = vec![];
 
-        switch
-            .packet_test(vec![test_pkt], expected_pkts)
-            .expect("No packets should be sent");
+        switch.packet_test(vec![test_pkt], expected_pkts)?;
 
         // Verify counter incremented for IPv4
         check_counter_incremented(
@@ -5203,8 +5221,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
             1,
             None,
         )
-        .await
-        .unwrap();
+        .await?;
     }
 
     // Test IPv6 multicast with no configured group
@@ -5223,9 +5240,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
         // Expect no output packets - should be dropped
         let expected_pkts = vec![];
 
-        switch
-            .packet_test(vec![test_pkt], expected_pkts)
-            .expect("No packets should be sent");
+        switch.packet_test(vec![test_pkt], expected_pkts)?;
 
         // Verify counter incremented for IPv6 - expect 2 total drops now
         check_counter_incremented(
@@ -5235,8 +5250,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
             2,
             None,
         )
-        .await
-        .unwrap();
+        .await?;
     }
 
     Ok(())
