@@ -85,3 +85,19 @@ jobs:
             target/release/dpd
             target/release/swadm
           if-no-files-found: error
+
+  # illumos-only daemons should still compile elsewhere for local development.
+  # This is a separate job so it doesn't delay the artifacts above.
+  check:
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Check tfportd and uplinkd
+        run: cargo check --locked --all-targets -p tfportd -p uplinkd

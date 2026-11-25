@@ -50,6 +50,10 @@ banner "Build"
 cargo build --features=tofino_asic --bin dpd
 cargo build --release --features=tofino_stub --bin dpd --bin swadm
 
+banner "Check"
+# illumos-only daemons should still compile elsewhere for local development
+cargo check --all-targets -p tfportd -p uplinkd
+
 cp target/release/dpd /work
 digest /work/dpd > /work/dpd.sha256.txt
 
