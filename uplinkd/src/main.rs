@@ -161,6 +161,11 @@ fn is_link_local(cidr: &IpNet) -> bool {
 // Update our in-memory list of the uplink interfaces that have been configured
 // in the smf database.
 fn refresh_smf_config(g: &mut Global) -> Result<()> {
+    // The smf crate builds everywhere, but panics if used off illumos.
+    if cfg!(not(target_os = "illumos")) {
+        return Err(common::SmfError::NotSupported.into());
+    }
+
     // Create an SMF context and take a snapshot of the current settings
     let scf = smf::Scf::new().context("creating scf handle")?;
     let instance = scf.get_self_instance().context("getting smf instance")?;
