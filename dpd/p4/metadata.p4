@@ -12,7 +12,6 @@ header bridge_h {
 	PortId_t ingress_port;
 	bool nat_egress_hit;
 	bool is_link_local_mcastv6;
-	bit<5> reserved;
 }
 
 struct sidecar_ingress_meta_t {
