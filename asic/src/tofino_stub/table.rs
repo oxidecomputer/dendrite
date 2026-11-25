@@ -58,15 +58,11 @@ impl TableOps<StubHandle> for Table {
         key: &M,
         data: &A,
     ) -> AsicResult<()> {
-        chaos::table_unfurl!(hdl, self.table_type, table_entry_add);
-        let key = key.key_to_ir()?;
-        let value = data.action_to_ir()?;
-
-        let mut lock = self.entries.write().unwrap();
-        match lock.entry(key) {
+        match self.entries.write().unwrap().entry(key.key_to_ir()?) {
             hash_map::Entry::Occupied(_) => Err(AsicError::Exists),
             hash_map::Entry::Vacant(slot) => {
-                slot.insert(value);
+                chaos::table_unfurl!(hdl, self.table_type, table_entry_add);
+                slot.insert(data.action_to_ir()?);
                 Ok(())
             }
         }
@@ -78,14 +74,10 @@ impl TableOps<StubHandle> for Table {
         key: &M,
         data: &A,
     ) -> AsicResult<()> {
-        chaos::table_unfurl!(hdl, self.table_type, table_entry_add);
-        let key = key.key_to_ir()?;
-        let value = data.action_to_ir()?;
-
-        let mut lock = self.entries.write().unwrap();
-        match lock.entry(key) {
+        match self.entries.write().unwrap().entry(key.key_to_ir()?) {
             hash_map::Entry::Occupied(mut slot) => {
-                slot.insert(value);
+                chaos::table_unfurl!(hdl, self.table_type, table_entry_update);
+                slot.insert(data.action_to_ir()?);
                 Ok(())
             }
             hash_map::Entry::Vacant(slot) => Err(AsicError::Missing(format!(
@@ -100,14 +92,17 @@ impl TableOps<StubHandle> for Table {
         hdl: &StubHandle,
         key: &M,
     ) -> AsicResult<()> {
-        chaos::table_unfurl!(hdl, self.table_type, table_entry_del);
-        let key = key.key_to_ir()?;
-        if self.entries.write().unwrap().remove(&key).is_none() {
-            return Err(AsicError::Missing(format!(
-                "Key does not exist: {key:?}",
-            )));
+        match self.entries.write().unwrap().entry(key.key_to_ir()?) {
+            hash_map::Entry::Occupied(slot) => {
+                chaos::table_unfurl!(hdl, self.table_type, table_entry_del);
+                slot.remove();
+                Ok(())
+            }
+            hash_map::Entry::Vacant(slot) => Err(AsicError::Missing(format!(
+                "Key does not exist: {:?}",
+                slot.key()
+            ))),
         }
-        Ok(())
     }
 
     fn get_entries<M: MatchParse, A: ActionParse>(

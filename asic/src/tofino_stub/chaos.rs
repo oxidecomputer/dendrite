@@ -161,7 +161,6 @@ pub struct AsicMulticastConfig {
 /// The chaos ASIC config contains chaos values for each ASIC operation.
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct AsicConfig {
-    pub radix: usize,
     pub port_get_media: Chaos,
     pub port_get_link_up: Chaos,
     pub port_to_asic_id: Chaos,
@@ -175,7 +174,6 @@ pub struct AsicConfig {
     pub port_enable_set: Chaos,
     pub port_prbs_set: Chaos,
     pub port_prbs_get_err: Chaos,
-    pub port_tx_eq_get: Chaos,
     pub port_tx_eq_set: Chaos,
     pub port_add: Chaos,
     pub port_delete: Chaos,
@@ -196,9 +194,8 @@ pub struct AsicConfig {
 impl AsicConfig {
     /// The uniform chaos config applies a uniform underlying probability to each
     /// chaos value.
-    pub fn uniform(radix: usize, v: f64) -> Self {
+    pub fn uniform(v: f64) -> Self {
         Self {
-            radix,
             port_get_media: Chaos::new(v),
             port_get_link_up: Chaos::new(v),
             port_to_asic_id: Chaos::new(v),
@@ -212,7 +209,6 @@ impl AsicConfig {
             port_enable_set: Chaos::new(v),
             port_prbs_set: Chaos::new(v),
             port_prbs_get_err: Chaos::new(v),
-            port_tx_eq_get: Chaos::new(v),
             port_tx_eq_set: Chaos::new(v),
             port_add: Chaos::new(v),
             port_delete: Chaos::new(v),
@@ -242,9 +238,8 @@ impl AsicConfig {
     /// The uniform get chaos config applies a uniform underlying probability to
     /// each ASIC getter function. Setter functions are initialized with a
     /// default Chaos config that fails with probability zero.
-    pub fn uniform_get(radix: usize, v: f64) -> Self {
+    pub fn uniform_get(v: f64) -> Self {
         Self {
-            radix,
             port_get_media: Chaos::new(v),
             port_get_link_up: Chaos::new(v),
             port_to_asic_id: Chaos::new(v),
@@ -268,14 +263,14 @@ impl AsicConfig {
     /// The uniform get chaos config applies a uniform underlying probability to
     /// each ASIC setter function. Getter functions are initialized with a
     /// default Chaos config that fails with probability zero.
-    pub fn uniform_set(radix: usize, v: f64) -> Self {
+    pub fn uniform_set(v: f64) -> Self {
         Self {
-            radix,
             port_kr_set: Chaos::new(v),
             port_autoneg_set: Chaos::new(v),
             port_enable_set: Chaos::new(v),
             port_prbs_set: Chaos::new(v),
             port_prbs_get_err: Chaos::new(v),
+            port_tx_eq_set: Chaos::new(v),
             port_add: Chaos::new(v),
             port_delete: Chaos::new(v),
             // TODO this can cause dpd to fail to start

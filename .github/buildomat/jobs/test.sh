@@ -29,7 +29,7 @@ banner "fmt"
 cargo fmt -- --check
 
 banner "codegen"
-PATH=/opt/gcc-14/bin:$PATH cargo xtask codegen --stages $TOFINO_STAGES
+PATH=/opt/gcc-14/bin:$PATH cargo xtask codegen --stages "$TOFINO_STAGES"
 
 banner "test"
 for feat in tofino_stub tofino_asic softnpu
