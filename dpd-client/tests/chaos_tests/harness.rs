@@ -4,7 +4,7 @@
 //
 // Copyright 2026 Oxide Computer Company
 
-use asic::chaos::AsicConfig;
+use asic::tofino_stub::AsicConfig;
 use dpd_client::{Client, ClientState};
 use slog::Drain;
 use std::fs::File;
@@ -97,8 +97,6 @@ pub(crate) fn run_dpd(
         .arg(format!("127.0.0.1:{port}"))
         .arg("--chaos-config")
         .arg(&chaos_config_path)
-        .arg("--sidecar-revision")
-        .arg("chaos")
         .stderr(Stdio::from(stderr))
         .stdout(Stdio::from(stdout))
         .spawn()

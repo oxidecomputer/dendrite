@@ -30,7 +30,7 @@ cargo fmt -- --check
 
 cargo build --bin swadm --bin tfportd
 
-for feature in tofino_stub tofino_asic softnpu chaos
+for feature in tofino_stub tofino_asic softnpu
 do
     NAME=`echo $feature | sed "s/tofino_//"`
 

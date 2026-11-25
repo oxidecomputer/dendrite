@@ -143,7 +143,7 @@ pub(crate) struct Opt {
     device_path: Option<String>,
 
     /// path to the the chaos testing configuration
-    #[cfg(feature = "chaos")]
+    #[cfg(feature = "tofino_stub")]
     #[clap(long)]
     chaos_config: Option<String>,
 
@@ -247,13 +247,6 @@ fn get_sidecar_revision(
         front: config.asic_config.front_ports,
         rear: config.asic_config.rear_ports,
     })
-}
-
-#[cfg(feature = "chaos")]
-fn get_sidecar_revision(
-    _config: &config::Config,
-) -> anyhow::Result<SidecarRevision> {
-    Ok(SidecarRevision::Chaos)
 }
 
 impl Switch {

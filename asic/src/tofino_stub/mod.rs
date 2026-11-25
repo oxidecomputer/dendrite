@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use slog::{info, o};
 use tokio::sync::mpsc;
@@ -24,13 +25,13 @@ pub use crate::faux_fsm::FsmState;
 pub use crate::faux_fsm::FsmType;
 pub use crate::faux_fsm::PortFsmState;
 
+pub mod chaos;
 #[cfg(feature = "multicast")]
 pub mod mcast;
 pub mod ports;
 pub mod table;
 
-#[derive(Debug, Default)]
-pub struct AsicConfig {}
+pub use chaos::AsicConfig;
 
 // Statistics collected for a single port for Oximeter
 #[derive(Clone, Copy, Debug)]
@@ -70,17 +71,16 @@ impl AsicLinkStats {
 
 #[cfg(feature = "multicast")]
 impl AsicMulticastOps for StubHandle {
-    #[cfg(feature = "multicast")]
     fn mc_domains(&self) -> Vec<u16> {
-        let mc_data = self.mc_data.lock().unwrap();
-        mc_data.domains()
+        self.mc_data.lock().unwrap().domains()
     }
-    #[cfg(feature = "multicast")]
+
     fn mc_port_count(&self, group_id: u16) -> AsicResult<usize> {
+        chaos::unfurl_mc!(self, mc_port_count);
         let mc_data = self.mc_data.lock().unwrap();
         mc_data.domain_port_count(group_id)
     }
-    #[cfg(feature = "multicast")]
+
     fn mc_port_add(
         &self,
         group_id: u16,
@@ -89,40 +89,42 @@ impl AsicMulticastOps for StubHandle {
         level1_excl_id: u16,
     ) -> AsicResult<()> {
         info!(self.log, "adding port {} to multicast group {}", port, group_id);
+        chaos::unfurl_mc!(self, mc_port_add);
         let mut mc_data = self.mc_data.lock().unwrap();
         mc_data.domain_port_add(group_id, port, rid, level1_excl_id)
     }
-    #[cfg(feature = "multicast")]
+
     fn mc_port_remove(&self, group_id: u16, port: u16) -> AsicResult<()> {
         info!(
             self.log,
             "remvoing port {} from multicast group {}", port, group_id
         );
+        chaos::unfurl_mc!(self, mc_port_remove);
         let mut mc_data = self.mc_data.lock().unwrap();
         mc_data.domain_port_remove(group_id, port)
     }
-    #[cfg(feature = "multicast")]
+
     fn mc_group_create(&self, group_id: u16) -> AsicResult<()> {
         info!(self.log, "creating multicast group {}", group_id);
+        chaos::unfurl_mc!(self, mc_group_create);
         let mut mc_data = self.mc_data.lock().unwrap();
         mc_data.domain_create(group_id)
     }
 
-    #[cfg(feature = "multicast")]
     fn mc_group_destroy(&self, group_id: u16) -> AsicResult<()> {
         info!(self.log, "destroying multicast group {}", group_id);
+        chaos::unfurl_mc!(self, mc_group_destroy);
         let mut mc_data = self.mc_data.lock().unwrap();
         mc_data.domain_destroy(group_id)
     }
 
-    #[cfg(feature = "multicast")]
     fn mc_groups_count(&self) -> AsicResult<usize> {
         info!(self.log, "number of multicast groups");
+        chaos::unfurl_mc!(self, mc_groups_count);
         let mc_data = self.mc_data.lock().unwrap();
         Ok(mc_data.domains().len())
     }
 
-    #[cfg(feature = "multicast")]
     fn mc_set_max_nodes(
         &self,
         max_nodes: u32,
@@ -134,6 +136,7 @@ impl AsicMulticastOps for StubHandle {
             max_nodes,
             max_link_aggregated_nodes
         );
+        chaos::unfurl_mc!(self, mc_set_max_nodes);
         let mut mc_data = self.mc_data.lock().unwrap();
         mc_data.set_max_nodes(max_nodes, max_link_aggregated_nodes)
     }
@@ -141,57 +144,69 @@ impl AsicMulticastOps for StubHandle {
 
 impl AsicOps for StubHandle {
     fn port_get_media(&self, port_hdl: PortHdl) -> AsicResult<PortMedia> {
+        chaos::unfurl!(self, port_get_media);
         ports::get_media(self, port_hdl)
     }
 
     fn port_get_lane_cnt(&self, port_hdl: PortHdl) -> AsicResult<u8> {
+        chaos::unfurl!(self, port_get_lane_cnt);
         ports::get_lane_cnt(self, port_hdl)
     }
 
     fn port_get_link_up(&self, port_hdl: PortHdl) -> AsicResult<bool> {
+        chaos::unfurl!(self, port_get_link_up);
         ports::get_link_up(self, port_hdl)
     }
 
     fn port_to_asic_id(&self, port_hdl: PortHdl) -> AsicResult<u16> {
+        chaos::unfurl!(self, port_to_asic_id);
         ports::to_asic_id(self, port_hdl)
     }
 
     fn asic_id_to_port(&self, asic_id: u16) -> AsicResult<PortHdl> {
+        chaos::unfurl!(self, asic_id_to_port);
         ports::from_asic_id(self, asic_id)
     }
 
     fn port_enable_get(&self, port_hdl: PortHdl) -> AsicResult<bool> {
+        chaos::unfurl!(self, port_enable_get);
         ports::get_enable(self, port_hdl)
     }
 
     fn port_enable_set(&self, port_hdl: PortHdl, val: bool) -> AsicResult<()> {
+        chaos::unfurl!(self, port_enable_set);
         ports::set_enable(self, port_hdl, val)
     }
 
     fn port_kr_get(&self, port_hdl: PortHdl) -> AsicResult<bool> {
+        chaos::unfurl!(self, port_kr_get);
         ports::get_kr_mode(self, port_hdl)
     }
 
     fn port_kr_set(&self, port_hdl: PortHdl, kr: bool) -> AsicResult<()> {
         info!(self.log, "setting kr on port {} to {}", port_hdl, kr);
+        chaos::unfurl!(self, port_kr_set);
         ports::set_kr_mode(self, port_hdl, kr)
     }
 
     fn port_autoneg_get(&self, port_hdl: PortHdl) -> AsicResult<bool> {
+        chaos::unfurl!(self, port_autoneg_get);
         ports::get_autoneg_mode(self, port_hdl)
     }
 
     fn port_autoneg_set(&self, port_hdl: PortHdl, an: bool) -> AsicResult<()> {
         info!(self.log, "setting autoneg on port {} to {}", port_hdl, an);
+        chaos::unfurl!(self, port_autoneg_set);
         ports::set_autoneg_mode(self, port_hdl, an)
     }
 
     fn port_tx_eq_set(
         &self,
-        _port_hdl: PortHdl,
-        _settings: &common::ports::TxEq,
+        port_hdl: PortHdl,
+        settings: &common::ports::TxEq,
     ) -> AsicResult<()> {
-        Ok(())
+        chaos::unfurl!(self, port_tx_eq_set);
+        ports::set_tx_eq(self, port_hdl, *settings)
     }
 
     fn port_prbs_set(
@@ -199,6 +214,7 @@ impl AsicOps for StubHandle {
         _port_hdl: PortHdl,
         _mode: PortPrbsMode,
     ) -> AsicResult<()> {
+        chaos::unfurl!(self, port_prbs_set);
         Err(AsicError::OperationUnsupported)
     }
 
@@ -207,6 +223,7 @@ impl AsicOps for StubHandle {
         _port_hdl: PortHdl,
         _ms: u32,
     ) -> AsicResult<Vec<u32>> {
+        chaos::unfurl!(self, port_prbs_get_err);
         Err(AsicError::OperationUnsupported)
     }
 
@@ -218,11 +235,13 @@ impl AsicOps for StubHandle {
         fec: PortFec,
     ) -> AsicResult<(PortHdl, u16)> {
         info!(self.log, "adding port in connector {:?}", connector);
+        chaos::unfurl!(self, port_add);
         ports::add_port(self, connector, lane, speed, fec)
     }
 
     fn port_delete(&self, port_hdl: PortHdl) -> AsicResult<()> {
         info!(self.log, "deleting port {}", port_hdl);
+        chaos::unfurl!(self, port_delete);
         ports::delete_port(self, port_hdl)
     }
 
@@ -235,6 +254,7 @@ impl AsicOps for StubHandle {
         &self,
         connector: Connector,
     ) -> AsicResult<Vec<u8>> {
+        chaos::unfurl!(self, connector_avail_channels);
         let phys_ports = self.phys_ports.lock().unwrap();
         match phys_ports.connectors.get(&connector) {
             Some(connector) => Ok(connector.get_available_channels()),
@@ -243,6 +263,7 @@ impl AsicOps for StubHandle {
     }
 
     fn get_sidecar_identifiers(&self) -> AsicResult<impl SidecarIdentifiers> {
+        chaos::unfurl!(self, get_sidecar_identifiers);
         Ok(Identifiers {
             id: uuid::Uuid::parse_str(SIDECAR_UUID).unwrap(),
             asic_backend: "tofino_stub".to_string(),
@@ -259,8 +280,10 @@ impl AsicOps for StubHandle {
         &self,
         tx_channel: mpsc::UnboundedSender<PortUpdate>,
     ) -> AsicResult<()> {
-        let mut tx = self.update_tx.lock().unwrap();
-        *tx = Some(tx_channel);
+        chaos::unfurl!(self, register_port_update_handler);
+        if self.update_tx.set(tx_channel).is_err() {
+            return Err(AsicError::Exists);
+        }
         Ok(())
     }
 }
@@ -272,11 +295,15 @@ pub struct StubHandle {
     port_state: Mutex<BTreeMap<PortHdl, ports::StubPort>>,
     #[cfg(feature = "multicast")]
     mc_data: Mutex<mcast::McGroupData>,
-    update_tx: Mutex<Option<mpsc::UnboundedSender<PortUpdate>>>,
+    update_tx: OnceLock<mpsc::UnboundedSender<PortUpdate>>,
+    chaos_config: chaos::AsicConfig,
 }
 
 impl StubHandle {
-    pub fn new(log: &slog::Logger, _config: &AsicConfig) -> AsicResult<Self> {
+    pub fn new(
+        log: &slog::Logger,
+        chaos_config: &AsicConfig,
+    ) -> AsicResult<Self> {
         let p4_dir = get_p4_dir()?;
         let rt = BfRt::init(&p4_dir)?;
         let phys_ports = Mutex::new(ports::init()?);
@@ -292,7 +319,8 @@ impl StubHandle {
             port_state,
             #[cfg(feature = "multicast")]
             mc_data,
-            update_tx: Mutex::new(None),
+            update_tx: OnceLock::new(),
+            chaos_config: chaos_config.clone(),
         })
     }
 

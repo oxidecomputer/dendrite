@@ -13,5 +13,5 @@
 #[cfg(target_os = "linux")]
 mod integration_tests;
 
-#[cfg(feature = "chaos")]
+#[cfg(feature = "tofino_stub")]
 mod chaos_tests;

@@ -45,14 +45,14 @@ use crate::AsicError;
 use crate::AsicResult;
 
 /// The intermediate representation of a single field in a Match key
-#[derive(Debug, Hash)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub struct MatchEntryField {
     pub name: String,
     pub value: MatchEntryValue,
 }
 
 /// The intermediate representation of a Match key
-#[derive(Debug, Hash)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub struct MatchData {
     pub fields: Vec<MatchEntryField>,
 }
@@ -138,7 +138,7 @@ pub enum MatchType {
 }
 
 /// The contents of a single field in a Match key
-#[derive(Debug, Hash)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub enum MatchEntryValue {
     Value(ValueTypes),
     Lpm(MatchLpm),
@@ -473,13 +473,13 @@ impl TryFrom<&ValueTypes> for bool {
 
 unwrap_value_entry!(bool);
 
-#[derive(Debug, Hash, Clone)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
 pub enum ValueTypes {
     U64(u64),
     Ptr(Vec<u8>),
 }
 
-#[derive(Debug, Clone, Copy, Hash)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct MatchRange {
     pub low: u64,
     pub high: u64,
@@ -491,7 +491,7 @@ impl std::fmt::Display for MatchRange {
     }
 }
 
-#[derive(Debug, Hash, Clone, Copy)]
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct MatchMask {
     pub val: u64,
     pub mask: u64,
@@ -527,7 +527,7 @@ impl TryFrom<&MatchEntryValue> for MatchRange {
     }
 }
 
-#[derive(Debug, Hash)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub struct MatchLpm {
     pub prefix: ValueTypes,
     pub len: u16,

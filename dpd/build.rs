@@ -16,16 +16,13 @@ const ASIC_FEATURE: &str = "tofino_asic";
 const ASIC_FEATURE: &str = "tofino_stub";
 #[cfg(feature = "softnpu")]
 const ASIC_FEATURE: &str = "softnpu";
-#[cfg(feature = "chaos")]
-const ASIC_FEATURE: &str = "chaos";
 #[cfg(not(any(
     feature = "tofino_asic",
     feature = "tofino_stub",
-    feature = "softnpu",
-    feature = "chaos"
+    feature = "softnpu"
 )))]
 compile_error!(
-    "One of `tofino_asic`, `tofino_stub`, `softnpu` or `chaos` \
+    "One of `tofino_asic`, `tofino_stub`, or `softnpu` \
     features must be specified"
 );
 

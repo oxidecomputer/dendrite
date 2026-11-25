@@ -20,7 +20,7 @@ banner "copyrights"
 ./tools/check_copyrights.sh || exit 1
 
 banner "clippy"
-for feat in tofino_stub tofino_asic softnpu chaos
+for feat in tofino_stub tofino_asic softnpu
 do
 	cargo clippy --features $feat -- --deny warnings
 done
@@ -28,8 +28,11 @@ done
 banner "fmt"
 cargo fmt -- --check
 
+banner "codegen"
+PATH=/opt/gcc-14/bin:$PATH cargo xtask codegen --stages "$TOFINO_STAGES"
+
 banner "test"
-for feat in tofino_stub tofino_asic softnpu chaos
+for feat in tofino_stub tofino_asic softnpu
 do
     RUST_BACKTRACE=full cargo test --features $feat --no-fail-fast
 done

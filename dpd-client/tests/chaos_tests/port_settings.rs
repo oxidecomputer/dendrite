@@ -12,8 +12,10 @@ use crate::chaos_tests::harness;
 use crate::chaos_tests::util::HttpResponseCheck;
 
 use anyhow::Context;
-use asic::chaos::{AsicConfig, Chaos, TableChaos};
 use asic::table_chaos;
+use asic::tofino_stub::AsicConfig;
+use asic::tofino_stub::chaos::Chaos;
+use asic::tofino_stub::chaos::TableChaos;
 use common::addr::IpAddrLike;
 use common::table::TableType;
 use common::test_utils::IpRng;
@@ -32,13 +34,13 @@ use pretty_assertions::{Comparison, assert_eq};
 use rand::{Rng, RngCore};
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
+use std::fmt::Display;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroU32;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use tokio::time::Duration;
 
-const TESTING_RADIX: usize = 33;
 // For tests that may need to be retried multiple times before the server has
 // reached a stable state, how frequently should they be retried and when should
 // we give up?
@@ -67,11 +69,8 @@ static QSFP0: LazyLock<PortId> =
 // here.
 #[tokio::test]
 async fn test_basic_autoneg_chaos() -> anyhow::Result<()> {
-    let config = AsicConfig {
-        radix: TESTING_RADIX,
-        port_to_asic_id: Chaos::new(1.0),
-        ..Default::default()
-    };
+    let config =
+        AsicConfig { port_to_asic_id: Chaos::new(1.0), ..Default::default() };
 
     let (_guard, client) = init_harness(fname!(), &config);
 
@@ -92,7 +91,6 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
     // Define an ASIC config that results in tables failures 100% of the time
     // for the switch IPv4 address table.
     let config = AsicConfig {
-        radix: TESTING_RADIX,
         table_entry_add: table_chaos!((TableType::PortAddrIpv4, 1.0)),
         ..Default::default()
     };
@@ -125,8 +123,7 @@ async fn test_port_settings_addr_fail_1() -> anyhow::Result<()> {
 // Test a simple successful port settings transaction.
 #[tokio::test]
 async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
-    let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
-
+    let config = AsicConfig::default();
     let (_guard, client) = init_harness(fname!(), &config);
 
     let mut settings = PortSettings { links: HashMap::new() };
@@ -151,7 +148,7 @@ async fn test_port_settings_addr_success_1() -> anyhow::Result<()> {
 // Test multiple port settings transactions in sequence.
 #[tokio::test]
 async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
-    let config = AsicConfig { radix: TESTING_RADIX, ..Default::default() };
+    let config = AsicConfig::default();
     let (_guard, client) = init_harness(fname!(), &config);
 
     // Start with a link that has one IPv4 address.
@@ -244,9 +241,64 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     .await
 }
 
-// 10% is chosen based on observation with the intent to produce a similar
-// number of transaction failures and successes.
-const OPERATION_FAILURE_RATE: f64 = 0.1;
+// Failure rate is chosen based on observation with the intent to
+// produce a similar number of transaction failures and successes.
+//
+// If this gets too high, leftover addresses from rollback failures
+// cause table capacity to fill up.
+const OPERATION_FAILURE_RATE: f64 = 0.03;
+
+/// A helper struct for counting the results of a port settings
+/// transaction test.
+#[derive(Default)]
+struct TxnCounters {
+    success: AtomicUsize,
+
+    /// Failed because of a "chaos" asic error.
+    fail_asic: AtomicUsize,
+
+    /// Both the command and command rollback failed.
+    fail_rollback: AtomicUsize,
+
+    /// The table operation failed because it ran out of space.
+    fail_capacity: AtomicUsize,
+}
+
+impl Display for TxnCounters {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "SUCCESS: {}", self.success.load(Ordering::Relaxed))?;
+        writeln!(f, "ASIC FAIL: {}", self.fail_asic.load(Ordering::Relaxed))?;
+        writeln!(
+            f,
+            "CAPACITY FAIL: {}",
+            self.fail_capacity.load(Ordering::Relaxed)
+        )?;
+        writeln!(
+            f,
+            "ROLLBACK FAIL: {}",
+            self.fail_rollback.load(Ordering::Relaxed)
+        )?;
+        Ok(())
+    }
+}
+
+impl TxnCounters {
+    fn count_success(&self) {
+        self.success.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Panics if the error is not an expected txn test failure mode.
+    fn count_failure(&self, e: &dpd_client::Error<dpd_client::types::Error>) {
+        if is_rollback_error(e) {
+            self.fail_rollback.fetch_add(1, Ordering::Relaxed);
+        } else if e.status() == Some(StatusCode::INSUFFICIENT_STORAGE) {
+            self.fail_capacity.fetch_add(1, Ordering::Relaxed);
+        } else {
+            expect_random_chaos!(e);
+            self.fail_asic.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
 
 // This is a transaction sweep test. We create a test loop where each time
 // through the loop we do the following.
@@ -269,13 +321,10 @@ const OPERATION_FAILURE_RATE: f64 = 0.1;
 //  this test.
 #[tokio::test]
 async fn test_port_settings_txn_sweep() -> anyhow::Result<()> {
-    let config = AsicConfig::uniform_set(TESTING_RADIX, OPERATION_FAILURE_RATE);
+    let config = AsicConfig::uniform_set(OPERATION_FAILURE_RATE);
     let (_guard, client) = init_harness(fname!(), &config);
 
-    let mut success = 0;
-    let mut fail = 0;
-    let mut rollback_fail = 0;
-
+    let counters = TxnCounters::default();
     for _ in 0..1000 {
         let current = current_port_settings(&client, &QSFP0).await?;
         let target = random_port_settings();
@@ -302,25 +351,21 @@ current settings: {new:#?}"
             })
             .await?;
             print!("operation succeeded, settings changed as expected");
-            success += 1;
+            counters.count_success();
             continue;
         };
 
-        if is_rollback_error(&e) {
-            rollback_fail += 1;
+        counters.count_failure(&e);
+        if self::is_rollback_error(&e) {
             continue;
         }
-        expect_random_chaos!(e);
+
         let new = current_port_settings(&client, &QSFP0).await?;
         assert_eq!(new, current);
         print!("operation failed, settings remained as expected");
-        fail += 1;
     }
 
-    println!("SUCCESS: {}", success);
-    println!("FAIL: {}", fail);
-    println!("ROLLBACK FAIL: {}", rollback_fail);
-
+    println!("\n{counters}");
     Ok(())
 }
 
@@ -331,38 +376,27 @@ current settings: {new:#?}"
 // requests cannot corrupt link settings.
 #[tokio::test]
 async fn test_port_settings_txn_par_sweep() -> anyhow::Result<()> {
-    let config = AsicConfig::uniform_set(TESTING_RADIX, OPERATION_FAILURE_RATE);
+    let config = AsicConfig::uniform_set(OPERATION_FAILURE_RATE);
     let (_guard, client) = init_harness(fname!(), &config);
 
-    let success = Arc::new(AtomicU8::new(0));
-    let fail = Arc::new(AtomicU8::new(0));
-    let rollback_fail = Arc::new(AtomicU8::new(0));
-
+    let counters = Arc::new(TxnCounters::default());
     let mut joins = Vec::new();
 
     for _ in 0..100 {
-        let success = success.clone();
-        let fail = fail.clone();
-        let rollback_fail = rollback_fail.clone();
-
+        let counters = counters.clone();
         let client = client.clone();
         let j = tokio::spawn(async move {
-            let target = random_port_settings();
+            for _ in 0..10 {
+                let target = random_port_settings();
 
-            let Err(e) =
-                client.port_settings_apply(&QSFP0, "chaos", &target).await
-            else {
-                success.fetch_add(1, Ordering::Relaxed);
-                return;
-            };
-
-            // TODO return current state on error so we can check
-            // transaction properties here?
-            if is_rollback_error(&e) {
-                rollback_fail.fetch_add(1, Ordering::Relaxed);
-                return;
+                if let Err(e) =
+                    client.port_settings_apply(&QSFP0, "chaos", &target).await
+                {
+                    counters.count_failure(&e);
+                    continue;
+                };
+                counters.count_success();
             }
-            fail.fetch_add(1, Ordering::Relaxed);
         });
         joins.push(j);
     }
@@ -411,10 +445,7 @@ current settings: {settings:#?}"
     .await
     .context("final_port_settings_get")?;
 
-    println!("SUCCESS: {}", success.load(Ordering::Relaxed));
-    println!("FAIL: {}", fail.load(Ordering::Relaxed));
-    println!("ROLLBACK FAIL: {}", rollback_fail.load(Ordering::Relaxed));
-
+    println!("\n{counters}");
     Ok(())
 }
 
@@ -494,7 +525,7 @@ fn random_port_settings() -> PortSettings {
 /// functions can succeed after partial failures.
 #[tokio::test]
 async fn settings_eventually_reconcile() -> anyhow::Result<()> {
-    let config = AsicConfig::uniform_set(TESTING_RADIX, 0.4);
+    let config = AsicConfig::uniform_set(0.4);
     let (_guard, client) = harness::init_harness(fname!(), &config);
     let mut rng = IpRng::new(fname_hash!());
 
@@ -578,7 +609,7 @@ Reconciliation retries:
 /// resources from other tags.
 #[tokio::test]
 async fn settings_apply_respects_tags() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let mut rng = IpRng::new(fname_hash!());
@@ -616,7 +647,6 @@ async fn settings_rollback_respects_tags() -> anyhow::Result<()> {
     let (_guard, client) = harness::init_harness(
         fname!(),
         &AsicConfig {
-            radix: TESTING_RADIX,
             table_entry_add: table_fail.clone(),
             table_entry_del: table_fail,
             ..Default::default()
@@ -747,7 +777,7 @@ impl AddrCheck {
 /// resources under different tags.
 #[tokio::test]
 async fn address_cmds_respect_tags() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let mut rng = IpRng::new(fname_hash!());
@@ -860,7 +890,7 @@ async fn address_cmds_respect_tags() -> anyhow::Result<()> {
 /// is a larger project with its own surface area.
 #[tokio::test]
 async fn loopback_respects_tags() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.);
+    let no_failures = AsicConfig::default();
     let (_guard, client) =
         harness::init_harness("loopback_respects_tags", &no_failures);
 
@@ -1008,7 +1038,7 @@ async fn loopback_respects_tags() -> anyhow::Result<()> {
 /// property of the link itself.
 #[tokio::test]
 async fn settings_clear_ignores_tags() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let mut rng = IpRng::new(fname_hash!());
@@ -1041,13 +1071,22 @@ async fn settings_clear_ignores_tags() -> anyhow::Result<()> {
 /// address has already been registered on a different interface.
 #[tokio::test]
 async fn create_addr_rejects_theft() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
-    let link_id =
-        client.link_create(&QSFP0, &TEST_LINK_CONF).await?.into_inner();
+    client
+        .link_create(
+            &QSFP0,
+            &LinkCreate {
+                lane: Some(LINK0),
+                speed: PortSpeed::Speed25G,
+                ..TEST_LINK_CONF
+            },
+        )
+        .await?
+        .into_inner();
 
-    let cxt = TestContext::new(&client, QSFP0.clone(), link_id);
+    let cxt = TestContext::new(&client, QSFP0.clone(), LINK0);
 
     let tag1 = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
     let mut tag2 = TestAddrs::new(&cxt, &mut rng, TAG2.to_string());
@@ -1057,13 +1096,13 @@ async fn create_addr_rejects_theft() -> anyhow::Result<()> {
     tag1.apply_addrs().await?;
 
     client
-        .link_ipv4_create(&QSFP0, &link_id, &tag1.v4_entry)
+        .link_ipv4_create(&QSFP0, &LINK0, &tag1.v4_entry)
         .await
         .expect_err("Duplicate ipv4 registration fails")
         .expect_status(StatusCode::CONFLICT);
 
     client
-        .link_ipv6_create(&QSFP0, &link_id, &tag1.v6_entry)
+        .link_ipv6_create(&QSFP0, &LINK0, &tag1.v6_entry)
         .await
         .expect_err("Duplicate ipv6 registration fails")
         .expect_status(StatusCode::CONFLICT);
@@ -1071,25 +1110,29 @@ async fn create_addr_rejects_theft() -> anyhow::Result<()> {
     tag2.create_addrs().await?;
     tag1.apply_addrs().await?;
 
-    let link4 = LinkId(4);
+    let link3 = LinkId(3);
     client
         .link_create(
             &QSFP0,
-            &LinkCreate { lane: Some(link4), ..TEST_LINK_CONF },
+            &LinkCreate {
+                lane: Some(link3),
+                speed: PortSpeed::Speed25G,
+                ..TEST_LINK_CONF
+            },
         )
         .await?;
     client
-        .link_ipv4_create(&QSFP0, &link4, &tag1.v4_entry)
+        .link_ipv4_create(&QSFP0, &link3, &tag1.v4_entry)
         .await
         .expect_err("v4 should fail because already registered on another link")
         .expect_status(StatusCode::CONFLICT);
     client
-        .link_ipv6_create(&QSFP0, &link4, &tag1.v6_entry)
+        .link_ipv6_create(&QSFP0, &link3, &tag1.v6_entry)
         .await
         .expect_err("v6 should fail because already registered on another link")
         .expect_status(StatusCode::CONFLICT);
 
-    let cxt_port2 = TestContext::new(&client, "qsfp2".parse()?, link_id);
+    let cxt_port2 = TestContext::new(&client, "qsfp2".parse()?, LINK0);
     let tag1_port2 = TestAddrs {
         v4_entry: tag1.v4_entry.clone(),
         v6_entry: tag1.v6_entry.clone(),
@@ -1110,7 +1153,7 @@ async fn create_addr_rejects_theft() -> anyhow::Result<()> {
 /// Verifies deletion fails when the address does not exist.
 #[tokio::test]
 async fn deleted_address_must_exist() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
 
@@ -1163,7 +1206,7 @@ async fn deleted_address_must_exist() -> anyhow::Result<()> {
 /// and observes if this ever changes.
 #[tokio::test]
 async fn apply_implicit_delete() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
 
@@ -1191,7 +1234,7 @@ async fn apply_implicit_delete() -> anyhow::Result<()> {
 /// tag is released.
 #[tokio::test]
 async fn apply_allows_multiple_tags() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
 
@@ -1264,7 +1307,6 @@ async fn apply_allows_multiple_tags() -> anyhow::Result<()> {
 #[tokio::test]
 async fn partial_failures_are_recoverable() -> anyhow::Result<()> {
     let conf = AsicConfig {
-        radix: TESTING_RADIX,
         table_entry_add: table_chaos!((TableType::PortAddrIpv6, 1.0)),
         table_entry_del: table_chaos!((TableType::PortAddrIpv4, 1.0)),
         ..Default::default()
@@ -1328,7 +1370,6 @@ async fn partial_failures_are_recoverable() -> anyhow::Result<()> {
 #[cfg(feature = "multicast")]
 async fn link_init_recovers() -> anyhow::Result<()> {
     let conf = AsicConfig {
-        radix: TESTING_RADIX,
         table_entry_add: table_chaos!((TableType::McastEgressPortMapping, 0.8)),
         ..Default::default()
     };
@@ -1371,7 +1412,7 @@ async fn link_init_recovers() -> anyhow::Result<()> {
 /// This tests the order where link registration wins.
 #[tokio::test]
 async fn link_addrs_are_isolated() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
 
@@ -1401,7 +1442,7 @@ async fn link_addrs_are_isolated() -> anyhow::Result<()> {
 /// Reverse of [`addrs_are_isolated`]. Now loopback registration wins.
 #[tokio::test]
 async fn loopback_addrs_are_isolated() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
 
@@ -1452,7 +1493,6 @@ async fn loopback_addrs_are_isolated() -> anyhow::Result<()> {
 #[tokio::test]
 async fn deletion_doesnt_leak_table_entries() -> anyhow::Result<()> {
     let config = AsicConfig {
-        radix: TESTING_RADIX,
         table_entry_del: table_chaos!((TableType::PortAddrIpv4, 1.0)),
         ..Default::default()
     };
@@ -1486,7 +1526,6 @@ async fn deletion_doesnt_leak_table_entries() -> anyhow::Result<()> {
 #[tokio::test]
 async fn deletion_prevails() -> anyhow::Result<()> {
     let config = AsicConfig {
-        radix: TESTING_RADIX,
         table_entry_del: table_chaos![
             (TableType::PortAddrIpv4, 0.7),
             (TableType::PortAddrIpv6, 0.7)
@@ -1578,7 +1617,7 @@ async fn try_steal(
 /// link/loopback source.
 #[tokio::test]
 async fn loopback_cannot_steal_addrs() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let port1: PortId = "qsfp0".parse()?;
@@ -1649,7 +1688,7 @@ async fn loopback_cannot_steal_addrs() -> anyhow::Result<()> {
 /// Verifies CRUD actions with multiple tags on a single address.
 #[tokio::test]
 async fn basic_multiple_tag_crud() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let mut rng = IpRng::new(fname_hash!());
@@ -1720,7 +1759,7 @@ async fn basic_multiple_tag_crud() -> anyhow::Result<()> {
 /// address belonging to another link with another tag.
 #[tokio::test]
 async fn links_cannot_steal_addrs_across_tags() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let port1: PortId = "qsfp0".parse()?;
@@ -1747,11 +1786,8 @@ async fn links_cannot_steal_addrs_across_tags() -> anyhow::Result<()> {
 /// link creation.
 #[tokio::test]
 async fn link_state_sanity_check_err() -> anyhow::Result<()> {
-    let fail_enable = AsicConfig {
-        radix: TESTING_RADIX,
-        port_enable_set: Chaos::new(1.0),
-        ..Default::default()
-    };
+    let fail_enable =
+        AsicConfig { port_enable_set: Chaos::new(1.0), ..Default::default() };
     let (_guard, client) = harness::init_harness(fname!(), &fail_enable);
 
     self::link_state_sanity_check(&client, |state| match state {
@@ -1769,7 +1805,7 @@ async fn link_state_sanity_check_err() -> anyhow::Result<()> {
 /// Link reaches `LinkState::Up` under a good config with no failures.
 #[tokio::test]
 async fn link_state_sanity_check_ok() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     self::link_state_sanity_check(&client, |state| match state {
@@ -1818,7 +1854,7 @@ async fn link_state_sanity_check(
 
 #[tokio::test]
 async fn link_local_crud() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let mut rng = IpRng::new(fname_hash!());
@@ -1883,7 +1919,7 @@ async fn link_local_crud() -> anyhow::Result<()> {
 ///    addresses.
 #[tokio::test]
 async fn port_settings_disallows_link_local() -> anyhow::Result<()> {
-    let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
+    let no_failures = AsicConfig::default();
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
 
     let mut rng = IpRng::new(fname_hash!());
