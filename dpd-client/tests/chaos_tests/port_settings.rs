@@ -12,8 +12,10 @@ use crate::chaos_tests::harness;
 use crate::chaos_tests::util::HttpResponseCheck;
 
 use anyhow::Context;
-use asic::chaos::{AsicConfig, Chaos, TableChaos};
 use asic::table_chaos;
+use asic::tofino_stub::AsicConfig;
+use asic::tofino_stub::chaos::Chaos;
+use asic::tofino_stub::chaos::TableChaos;
 use common::addr::IpAddrLike;
 use common::table::TableType;
 use common::test_utils::IpRng;
@@ -32,9 +34,10 @@ use pretty_assertions::{Comparison, assert_eq};
 use rand::{Rng, RngCore};
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
+use std::fmt::Display;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroU32;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use tokio::time::Duration;
 
@@ -244,9 +247,64 @@ async fn test_port_settings_addr_success_multi() -> anyhow::Result<()> {
     .await
 }
 
-// 10% is chosen based on observation with the intent to produce a similar
-// number of transaction failures and successes.
-const OPERATION_FAILURE_RATE: f64 = 0.1;
+// Failure rate is chosen based on observation with the intent to
+// produce a similar number of transaction failures and successes.
+//
+// If this gets too high, leftover addresses from rollback failures
+// cause table capacity to fill up.
+const OPERATION_FAILURE_RATE: f64 = 0.03;
+
+/// A helper struct for counting the results of a port settings
+/// transaction test.
+#[derive(Default)]
+struct TxnCounters {
+    success: AtomicUsize,
+
+    /// Failed because of a "chaos" asic error.
+    fail_asic: AtomicUsize,
+
+    /// Both the command and command rollback failed.
+    fail_rollback: AtomicUsize,
+
+    /// The table operation failed because it ran out of space.
+    fail_capacity: AtomicUsize,
+}
+
+impl Display for TxnCounters {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "SUCCESS: {}", self.success.load(Ordering::Relaxed))?;
+        writeln!(f, "ASIC FAIL: {}", self.fail_asic.load(Ordering::Relaxed))?;
+        writeln!(
+            f,
+            "CAPACITY FAIL: {}",
+            self.fail_capacity.load(Ordering::Relaxed)
+        )?;
+        writeln!(
+            f,
+            "ROLLBACK FAIL: {}",
+            self.fail_rollback.load(Ordering::Relaxed)
+        )?;
+        Ok(())
+    }
+}
+
+impl TxnCounters {
+    fn count_success(&self) {
+        self.success.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Panics if the error is not an expected txn test failure mode.
+    fn count_failure(&self, e: &dpd_client::Error<dpd_client::types::Error>) {
+        if is_rollback_error(e) {
+            self.fail_rollback.fetch_add(1, Ordering::Relaxed);
+        } else if e.status() == Some(StatusCode::INSUFFICIENT_STORAGE) {
+            self.fail_capacity.fetch_add(1, Ordering::Relaxed);
+        } else {
+            expect_random_chaos!(e);
+            self.fail_asic.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
 
 // This is a transaction sweep test. We create a test loop where each time
 // through the loop we do the following.
@@ -272,10 +330,7 @@ async fn test_port_settings_txn_sweep() -> anyhow::Result<()> {
     let config = AsicConfig::uniform_set(TESTING_RADIX, OPERATION_FAILURE_RATE);
     let (_guard, client) = init_harness(fname!(), &config);
 
-    let mut success = 0;
-    let mut fail = 0;
-    let mut rollback_fail = 0;
-
+    let counters = TxnCounters::default();
     for _ in 0..1000 {
         let current = current_port_settings(&client, &QSFP0).await?;
         let target = random_port_settings();
@@ -302,25 +357,21 @@ current settings: {new:#?}"
             })
             .await?;
             print!("operation succeeded, settings changed as expected");
-            success += 1;
+            counters.count_success();
             continue;
         };
 
-        if is_rollback_error(&e) {
-            rollback_fail += 1;
+        counters.count_failure(&e);
+        if self::is_rollback_error(&e) {
             continue;
         }
-        expect_random_chaos!(e);
+
         let new = current_port_settings(&client, &QSFP0).await?;
         assert_eq!(new, current);
         print!("operation failed, settings remained as expected");
-        fail += 1;
     }
 
-    println!("SUCCESS: {}", success);
-    println!("FAIL: {}", fail);
-    println!("ROLLBACK FAIL: {}", rollback_fail);
-
+    println!("\n{counters}");
     Ok(())
 }
 
@@ -334,35 +385,24 @@ async fn test_port_settings_txn_par_sweep() -> anyhow::Result<()> {
     let config = AsicConfig::uniform_set(TESTING_RADIX, OPERATION_FAILURE_RATE);
     let (_guard, client) = init_harness(fname!(), &config);
 
-    let success = Arc::new(AtomicU8::new(0));
-    let fail = Arc::new(AtomicU8::new(0));
-    let rollback_fail = Arc::new(AtomicU8::new(0));
-
+    let counters = Arc::new(TxnCounters::default());
     let mut joins = Vec::new();
 
     for _ in 0..100 {
-        let success = success.clone();
-        let fail = fail.clone();
-        let rollback_fail = rollback_fail.clone();
-
+        let counters = counters.clone();
         let client = client.clone();
         let j = tokio::spawn(async move {
-            let target = random_port_settings();
+            for _ in 0..10 {
+                let target = random_port_settings();
 
-            let Err(e) =
-                client.port_settings_apply(&QSFP0, "chaos", &target).await
-            else {
-                success.fetch_add(1, Ordering::Relaxed);
-                return;
-            };
-
-            // TODO return current state on error so we can check
-            // transaction properties here?
-            if is_rollback_error(&e) {
-                rollback_fail.fetch_add(1, Ordering::Relaxed);
-                return;
+                if let Err(e) =
+                    client.port_settings_apply(&QSFP0, "chaos", &target).await
+                {
+                    counters.count_failure(&e);
+                    continue;
+                };
+                counters.count_success();
             }
-            fail.fetch_add(1, Ordering::Relaxed);
         });
         joins.push(j);
     }
@@ -411,10 +451,7 @@ current settings: {settings:#?}"
     .await
     .context("final_port_settings_get")?;
 
-    println!("SUCCESS: {}", success.load(Ordering::Relaxed));
-    println!("FAIL: {}", fail.load(Ordering::Relaxed));
-    println!("ROLLBACK FAIL: {}", rollback_fail.load(Ordering::Relaxed));
-
+    println!("\n{counters}");
     Ok(())
 }
 
@@ -1044,10 +1081,19 @@ async fn create_addr_rejects_theft() -> anyhow::Result<()> {
     let no_failures = AsicConfig::uniform_set(TESTING_RADIX, 0.0);
     let (_guard, client) = harness::init_harness(fname!(), &no_failures);
     let mut rng = IpRng::new(fname_hash!());
-    let link_id =
-        client.link_create(&QSFP0, &TEST_LINK_CONF).await?.into_inner();
+    client
+        .link_create(
+            &QSFP0,
+            &LinkCreate {
+                lane: Some(LINK0),
+                speed: PortSpeed::Speed25G,
+                ..TEST_LINK_CONF
+            },
+        )
+        .await?
+        .into_inner();
 
-    let cxt = TestContext::new(&client, QSFP0.clone(), link_id);
+    let cxt = TestContext::new(&client, QSFP0.clone(), LINK0);
 
     let tag1 = TestAddrs::new(&cxt, &mut rng, TAG1.to_string());
     let mut tag2 = TestAddrs::new(&cxt, &mut rng, TAG2.to_string());
@@ -1057,13 +1103,13 @@ async fn create_addr_rejects_theft() -> anyhow::Result<()> {
     tag1.apply_addrs().await?;
 
     client
-        .link_ipv4_create(&QSFP0, &link_id, &tag1.v4_entry)
+        .link_ipv4_create(&QSFP0, &LINK0, &tag1.v4_entry)
         .await
         .expect_err("Duplicate ipv4 registration fails")
         .expect_status(StatusCode::CONFLICT);
 
     client
-        .link_ipv6_create(&QSFP0, &link_id, &tag1.v6_entry)
+        .link_ipv6_create(&QSFP0, &LINK0, &tag1.v6_entry)
         .await
         .expect_err("Duplicate ipv6 registration fails")
         .expect_status(StatusCode::CONFLICT);
@@ -1071,25 +1117,25 @@ async fn create_addr_rejects_theft() -> anyhow::Result<()> {
     tag2.create_addrs().await?;
     tag1.apply_addrs().await?;
 
-    let link4 = LinkId(4);
+    let link3 = LinkId(3);
     client
         .link_create(
             &QSFP0,
-            &LinkCreate { lane: Some(link4), ..TEST_LINK_CONF },
+            &LinkCreate { lane: Some(link3), ..TEST_LINK_CONF },
         )
         .await?;
     client
-        .link_ipv4_create(&QSFP0, &link4, &tag1.v4_entry)
+        .link_ipv4_create(&QSFP0, &link3, &tag1.v4_entry)
         .await
         .expect_err("v4 should fail because already registered on another link")
         .expect_status(StatusCode::CONFLICT);
     client
-        .link_ipv6_create(&QSFP0, &link4, &tag1.v6_entry)
+        .link_ipv6_create(&QSFP0, &link3, &tag1.v6_entry)
         .await
         .expect_err("v6 should fail because already registered on another link")
         .expect_status(StatusCode::CONFLICT);
 
-    let cxt_port2 = TestContext::new(&client, "qsfp2".parse()?, link_id);
+    let cxt_port2 = TestContext::new(&client, "qsfp2".parse()?, LINK0);
     let tag1_port2 = TestAddrs {
         v4_entry: tag1.v4_entry.clone(),
         v6_entry: tag1.v6_entry.clone(),
