@@ -117,7 +117,7 @@ where
     for i in 0..table_size {
         T::insert_entry(switch, i)
             .await
-            .expect(&format!("failed to insert entry {i}"));
+            .unwrap_or_else(|e| panic!("failed to insert entry {i}: {e:?}"));
     }
 
     // Add another entry, which we expect to fail as we overflow the table
@@ -138,7 +138,7 @@ where
     for i in 0..table_size {
         T::delete_entry(switch, i)
             .await
-            .expect(&format!("failed to delete entry {i}"));
+            .unwrap_or_else(|e| panic!("failed to delete entry {i}: {e:?}"));
     }
 
     // Verify that the table is now empty
@@ -394,7 +394,7 @@ impl TableTest for RouteV4 {
                 tag: switch.client.inner().tag.clone(),
                 port_id,
                 link_id,
-                tgt_ip: "10.10.10.1".parse::<Ipv4Addr>().unwrap().into(),
+                tgt_ip: "10.10.10.1".parse::<Ipv4Addr>().unwrap(),
                 vlan_id: None,
             }),
             replace: false,
@@ -435,10 +435,7 @@ impl TableTest for RouteV6 {
                 tag: switch.client.inner().tag.clone(),
                 port_id,
                 link_id,
-                tgt_ip: "fd00:1122:1122:0101::4"
-                    .parse::<Ipv6Addr>()
-                    .unwrap()
-                    .into(),
+                tgt_ip: "fd00:1122:1122:0101::4".parse::<Ipv6Addr>().unwrap(),
                 vlan_id: None,
             },
             replace: false,

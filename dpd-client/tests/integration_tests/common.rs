@@ -516,9 +516,7 @@ impl Switch {
                 Err(e) => {
                     panic!(
                         "failed to get mac for port {}/{}: {:?}",
-                        port.port_id.to_string(),
-                        *port.link_id,
-                        e,
+                        port.port_id, *port.link_id, e,
                     )
                 }
             }
@@ -1118,7 +1116,7 @@ async fn set_route_ipv6_common(
         cidr,
         target: types::Ipv6Route {
             port_id: port_id.clone(),
-            link_id: link_id.clone(),
+            link_id,
             tgt_ip,
             tag: switch.client.inner().tag.clone(),
             vlan_id,
@@ -1212,7 +1210,7 @@ async fn set_route_ipv4_common(
         cidr,
         target: types::RouteTarget::V4(types::Ipv4Route {
             port_id: port_id.clone(),
-            link_id: link_id.clone(),
+            link_id,
             tgt_ip,
             tag: switch.client.inner().tag.clone(),
             vlan_id,
@@ -1267,7 +1265,7 @@ async fn set_route_ipv4_over_ipv6_common(
         cidr,
         target: types::RouteTarget::V6(types::Ipv6Route {
             port_id: port_id.clone(),
-            link_id: link_id.clone(),
+            link_id,
             tgt_ip,
             tag: switch.client.inner().tag.clone(),
             vlan_id,
