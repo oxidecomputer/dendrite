@@ -31,11 +31,8 @@ async fn test_api() -> TestResult {
     let inner_mac = MacAddr::new(2, 4, 6, 8, 10, 12);
     let vni = Vni::new(222).unwrap();
     let internal_ip = "fd00:1122:7788:0101::4".parse::<Ipv6Addr>().unwrap();
-    let tgt = types::InstanceTarget {
-        internal_ip,
-        inner_mac: inner_mac.into(),
-        vni: vni.into(),
-    };
+    let tgt =
+        types::InstanceTarget { internal_ip, inner_mac: inner_mac.into(), vni };
 
     switch
         .client
