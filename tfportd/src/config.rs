@@ -7,6 +7,7 @@
 //! Configuration for the tfport daemon.
 
 use std::net::SocketAddrV6;
+#[cfg(target_os = "illumos")]
 use std::str::FromStr;
 
 #[cfg(target_os = "illumos")]
@@ -214,7 +215,7 @@ pub(crate) fn update_from_smf(config: &mut Config) -> SmfResult<()> {
 }
 
 #[cfg(not(target_os = "illumos"))]
-pub(crate) fn update_from_smf(config: &mut Config) -> SmfResult<()> {
+pub(crate) fn update_from_smf(_config: &mut Config) -> SmfResult<()> {
     Err(SmfError::NotSupported)
 }
 
@@ -310,15 +311,20 @@ mod tests {
             ..Opt::default()
         };
 
-        let opts2 = Opt::default();
-
         unsafe { std::env::remove_var("SMF_FMRI") };
         let config1 = build_config(&opts1).unwrap();
         assert_eq!(config1.log_file, Some("test.log".to_string()));
 
-        unsafe { std::env::set_var("SMF_FMRI", "svc:/network/tfport:default") };
-        let config2 = build_config(&opts2);
-        // This should fail because SMF is not running for tests.
-        assert!(config2.is_err());
+        // SMF only exists on illumos; elsewhere SMF_FMRI is ignored.
+        #[cfg(target_os = "illumos")]
+        {
+            let opts2 = Opt::default();
+            unsafe {
+                std::env::set_var("SMF_FMRI", "svc:/network/tfport:default")
+            };
+            let config2 = build_config(&opts2);
+            // This should fail because SMF is not running for tests.
+            assert!(config2.is_err());
+        }
     }
 }
