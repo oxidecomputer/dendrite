@@ -14,12 +14,15 @@ use std::{
 use crate::integration_tests::common;
 use crate::integration_tests::common::prelude::*;
 use crate::integration_tests::counters::check_counter_incremented;
+use ::common::counters::SERVICE_PORT_LABEL;
 use ::common::network::MacAddr;
 use anyhow::anyhow;
 use dpd_client::{Error, types};
 use futures::TryStreamExt;
 use oxnet::MulticastMac;
-use packet::{Endpoint, L3Endpoint, Packet, eth, geneve, ipv4, ipv6, udp};
+use packet::{
+    Endpoint, L3Endpoint, Packet, eth, geneve, ipv4, ipv6, sidecar, udp,
+};
 
 const MULTICAST_TEST_IPV4: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 0);
 const MULTICAST_TEST_IPV6: Ipv6Addr =
@@ -425,9 +428,9 @@ fn prepare_expected_pkt(
             // For non-NAT case, just forward the packet with proper TTL/hop limit adjustment
             let mut recv_pkt = send_pkt.clone();
 
-            if let Some(_) = recv_pkt.hdrs.ipv4_hdr.as_mut() {
+            if recv_pkt.hdrs.ipv4_hdr.is_some() {
                 ipv4::Ipv4Hdr::adjust_ttl(&mut recv_pkt, -1);
-            } else if let Some(_) = recv_pkt.hdrs.ipv6_hdr.as_mut() {
+            } else if recv_pkt.hdrs.ipv6_hdr.is_some() {
                 ipv6::Ipv6Hdr::adjust_hlim(&mut recv_pkt, -1);
             }
 
@@ -445,8 +448,7 @@ fn prepare_expected_pkt(
             // Rewrite src mac
             if let Some(port) = switch_port {
                 let port_mac = switch.get_port_mac(port).unwrap();
-                recv_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_smac =
-                    port_mac.clone();
+                recv_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_smac = port_mac;
             }
 
             recv_pkt
@@ -978,7 +980,7 @@ async fn test_group_api_lifecycle() {
 
     // Update the group
     let updated_nat_target = types::NatTarget {
-        internal_ip: MULTICAST_NAT_IP.into(),
+        internal_ip: MULTICAST_NAT_IP,
         inner_mac: MacAddr::from(MULTICAST_NAT_IP.derive_multicast_mac())
             .into(),
         vni: 200.into(),
@@ -1276,7 +1278,7 @@ async fn test_multicast_tagged_groups_management() {
     assert_eq!(tagged_groups.len(), 2, "Should find 2 groups with the tag");
 
     let group_ips: HashSet<_> =
-        tagged_groups.iter().map(|g| get_group_ip(g)).collect();
+        tagged_groups.iter().map(get_group_ip).collect();
     assert!(group_ips.contains(&created1.group_ip));
     assert!(group_ips.contains(&created2.group_ip));
     assert!(!group_ips.contains(&created3.group_ip));
@@ -1297,7 +1299,7 @@ async fn test_multicast_tagged_groups_management() {
         .expect("Should list remaining groups");
 
     let remaining_ips: HashSet<_> =
-        remaining_groups.iter().map(|g| get_group_ip(g)).collect();
+        remaining_groups.iter().map(get_group_ip).collect();
     assert!(!remaining_ips.contains(&created1.group_ip));
     assert!(!remaining_ips.contains(&created2.group_ip));
     assert!(remaining_ips.contains(&created3.group_ip));
@@ -2117,9 +2119,27 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
     ];
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
+    let port_label_egress1 = switch.port_label(egress1).unwrap();
+    let port_label_egress2 = switch.port_label(egress2).unwrap();
 
     let ctr_baseline_ingress =
         switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
+    let ctr_baseline_external_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast_underlay"))
+        .await
+        .unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
@@ -2132,6 +2152,44 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_external_members()
     )
     .await
     .unwrap();
+
+    // Decapped replicas to external members must be attributed to the
+    // external counter, not the underlay one.
+    check_counter_incremented(
+        switch,
+        &port_label_egress1,
+        ctr_baseline_external_egress1,
+        1,
+        Some("multicast_external"),
+    )
+    .await
+    .unwrap();
+    check_counter_incremented(
+        switch,
+        &port_label_egress2,
+        ctr_baseline_external_egress2,
+        1,
+        Some("multicast_external"),
+    )
+    .await
+    .unwrap();
+
+    let ctr_underlay_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_underlay_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    assert_eq!(
+        ctr_underlay_egress1, ctr_baseline_underlay_egress1,
+        "decapped replicas must not hit the underlay counter"
+    );
+    assert_eq!(
+        ctr_underlay_egress2, ctr_baseline_underlay_egress2,
+        "decapped replicas must not hit the underlay counter"
+    );
 
     cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
         .await
@@ -2235,9 +2293,27 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
     ];
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
+    let port_label_egress3 = switch.port_label(egress3).unwrap();
+    let port_label_egress4 = switch.port_label(egress4).unwrap();
 
     let ctr_baseline_ingress =
         switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
+    let ctr_baseline_underlay_egress3 = switch
+        .get_counter(&port_label_egress3, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay_egress4 = switch
+        .get_counter(&port_label_egress4, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress3 = switch
+        .get_counter(&port_label_egress3, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress4 = switch
+        .get_counter(&port_label_egress4, Some("multicast_external"))
+        .await
+        .unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
@@ -2250,6 +2326,43 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_members()
     )
     .await
     .unwrap();
+
+    // Encapped replicas to underlay members increment the underlay counter.
+    check_counter_incremented(
+        switch,
+        &port_label_egress3,
+        ctr_baseline_underlay_egress3,
+        1,
+        Some("multicast_underlay"),
+    )
+    .await
+    .unwrap();
+    check_counter_incremented(
+        switch,
+        &port_label_egress4,
+        ctr_baseline_underlay_egress4,
+        1,
+        Some("multicast_underlay"),
+    )
+    .await
+    .unwrap();
+
+    let ctr_external_egress3 = switch
+        .get_counter(&port_label_egress3, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_external_egress4 = switch
+        .get_counter(&port_label_egress4, Some("multicast_external"))
+        .await
+        .unwrap();
+    assert_eq!(
+        ctr_external_egress3, ctr_baseline_external_egress3,
+        "underlay-tagged replicas must not hit the external counter"
+    );
+    assert_eq!(
+        ctr_external_egress4, ctr_baseline_external_egress4,
+        "underlay-tagged replicas must not hit the external counter"
+    );
 
     cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
         .await
@@ -2366,9 +2479,45 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     ];
 
     let port_label_ingress = switch.port_label(ingress).unwrap();
+    let port_label_egress1 = switch.port_label(egress1).unwrap();
+    let port_label_egress2 = switch.port_label(egress2).unwrap();
+    let port_label_egress3 = switch.port_label(egress3).unwrap();
+    let port_label_egress4 = switch.port_label(egress4).unwrap();
 
     let ctr_baseline_ingress =
         switch.get_counter(&port_label_ingress, Some("ingress")).await.unwrap();
+    let ctr_baseline_underlay_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay_egress3 = switch
+        .get_counter(&port_label_egress3, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay_egress4 = switch
+        .get_counter(&port_label_egress4, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress3 = switch
+        .get_counter(&port_label_egress3, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_external_egress4 = switch
+        .get_counter(&port_label_egress4, Some("multicast_external"))
+        .await
+        .unwrap();
 
     switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
 
@@ -2382,10 +2531,221 @@ async fn test_encapped_multicast_geneve_mcast_tag_to_underlay_and_external_membe
     .await
     .unwrap();
 
+    // Still-encapsulated replicas to underlay members count as underlay,
+    // not external, for UNDERLAY_EXTERNAL tagged groups.
+    check_counter_incremented(
+        switch,
+        &port_label_egress3,
+        ctr_baseline_underlay_egress3,
+        1,
+        Some("multicast_underlay"),
+    )
+    .await
+    .unwrap();
+    check_counter_incremented(
+        switch,
+        &port_label_egress4,
+        ctr_baseline_underlay_egress4,
+        1,
+        Some("multicast_underlay"),
+    )
+    .await
+    .unwrap();
+
+    // Decapped replicas to external members count as external.
+    check_counter_incremented(
+        switch,
+        &port_label_egress1,
+        ctr_baseline_external_egress1,
+        1,
+        Some("multicast_external"),
+    )
+    .await
+    .unwrap();
+    check_counter_incremented(
+        switch,
+        &port_label_egress2,
+        ctr_baseline_external_egress2,
+        1,
+        Some("multicast_external"),
+    )
+    .await
+    .unwrap();
+
+    let ctr_external_egress3 = switch
+        .get_counter(&port_label_egress3, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_external_egress4 = switch
+        .get_counter(&port_label_egress4, Some("multicast_external"))
+        .await
+        .unwrap();
+    assert_eq!(
+        ctr_external_egress3, ctr_baseline_external_egress3,
+        "underlay replicas must not hit the external counter"
+    );
+    assert_eq!(
+        ctr_external_egress4, ctr_baseline_external_egress4,
+        "underlay replicas must not hit the external counter"
+    );
+
+    let ctr_underlay_egress1 = switch
+        .get_counter(&port_label_egress1, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    let ctr_underlay_egress2 = switch
+        .get_counter(&port_label_egress2, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    assert_eq!(
+        ctr_underlay_egress1, ctr_baseline_underlay_egress1,
+        "decapped replicas must not hit the underlay counter"
+    );
+    assert_eq!(
+        ctr_underlay_egress2, ctr_baseline_underlay_egress2,
+        "decapped replicas must not hit the underlay counter"
+    );
+
     cleanup_test_group(switch, get_group_ip(&created_group), TEST_TAG)
         .await
         .unwrap();
     cleanup_test_group(switch, MULTICAST_NAT_IP.into(), TEST_TAG).await
+}
+
+/// Link-local replicas reach egress with a zero replication id, so the
+/// counter block reaches them through `is_link_local_ipv6_mcast` rather
+/// than `egress_rid`. Both the underlay and external conditions exclude
+/// that case, and this checks the exclusion remains after compilation.
+#[tokio::test]
+#[ignore]
+async fn test_link_local_multicast_counter_attribution() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let egress = PhysPort(10);
+
+    let src =
+        Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0101::4", 3333)
+            .unwrap();
+    let dst = Endpoint::parse("33:33:00:00:00:01", "ff02::1", 4444).unwrap();
+
+    // Sourced from userspace so the packet egresses without replication,
+    // mirroring test_link_local_multicast_outbound in route_ipv6.
+    let mut send = common::gen_udp_packet(src, dst);
+    common::add_sidecar_hdr(
+        switch,
+        &mut send,
+        sidecar::SC_FWD_FROM_USERSPACE,
+        NO_PORT,
+        egress,
+        None,
+    );
+    let test_pkt = TestPacket { packet: Arc::new(send), port: SERVICE_PORT };
+    let expected_pkts = vec![TestPacket {
+        packet: Arc::new(common::gen_udp_packet(src, dst)),
+        port: egress,
+    }];
+
+    let port_label_egress = switch.port_label(egress).unwrap();
+
+    let ctr_baseline_link_local = switch
+        .get_counter(&port_label_egress, Some("multicast_link_local"))
+        .await
+        .unwrap();
+    let ctr_baseline_external = switch
+        .get_counter(&port_label_egress, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_baseline_underlay = switch
+        .get_counter(&port_label_egress, Some("multicast_underlay"))
+        .await
+        .unwrap();
+
+    switch.packet_test(vec![test_pkt], expected_pkts).unwrap();
+
+    check_counter_incremented(
+        switch,
+        &port_label_egress,
+        ctr_baseline_link_local,
+        1,
+        Some("multicast_link_local"),
+    )
+    .await
+    .unwrap();
+
+    let ctr_external = switch
+        .get_counter(&port_label_egress, Some("multicast_external"))
+        .await
+        .unwrap();
+    let ctr_underlay = switch
+        .get_counter(&port_label_egress, Some("multicast_underlay"))
+        .await
+        .unwrap();
+    assert_eq!(
+        ctr_external, ctr_baseline_external,
+        "link-local replicas must not hit the external counter"
+    );
+    assert_eq!(
+        ctr_underlay, ctr_baseline_underlay,
+        "link-local replicas must not hit the underlay counter"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_link_local_multicast_inbound_counter_attribution() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let ingress = PhysPort(10);
+
+    let src =
+        Endpoint::parse("e0:d5:5e:67:89:ab", "fd00:1122:7788:0101::4", 3333)
+            .unwrap();
+    let dst = Endpoint::parse("33:33:00:00:00:01", "ff02::1", 4444).unwrap();
+
+    let send = TestPacket {
+        packet: Arc::new(common::gen_udp_packet(src, dst)),
+        port: ingress,
+    };
+    let mut recv = common::gen_udp_packet(src, dst);
+    common::add_sidecar_hdr(
+        switch,
+        &mut recv,
+        sidecar::SC_FWD_TO_USERSPACE,
+        ingress,
+        NO_PORT,
+        None,
+    );
+    let expected_pkts =
+        vec![TestPacket { packet: Arc::new(recv), port: SERVICE_PORT }];
+
+    let ctr_baseline_link_local = switch
+        .get_counter(SERVICE_PORT_LABEL, Some("multicast_link_local"))
+        .await?;
+    let ctr_baseline_unicast =
+        switch.get_counter(SERVICE_PORT_LABEL, Some("unicast")).await?;
+
+    switch.packet_test(vec![send], expected_pkts)?;
+
+    check_counter_incremented(
+        switch,
+        SERVICE_PORT_LABEL,
+        ctr_baseline_link_local,
+        1,
+        Some("multicast_link_local"),
+    )
+    .await?;
+    check_counter_incremented(
+        switch,
+        SERVICE_PORT_LABEL,
+        ctr_baseline_unicast,
+        0,
+        Some("unicast"),
+    )
+    .await?;
+
+    Ok(())
 }
 
 #[tokio::test]
@@ -3954,12 +4314,32 @@ async fn test_multicast_multiple_packets() -> TestResult {
 
 #[tokio::test]
 #[ignore]
-async fn test_multicast_no_group_configured() -> TestResult {
+async fn test_multicast_no_group() -> TestResult {
     let switch = &*get_switch().await;
+    multicast_no_group(switch, PhysPort(10)).await
+}
 
-    // Define test ports
+#[tokio::test]
+#[ignore]
+async fn test_multicast_no_group_on_uplink() -> TestResult {
+    let switch = &*get_switch().await;
     let ingress = PhysPort(10);
+    let nat_miss_baseline =
+        switch.get_counter("nat_ingress_miss", None).await?;
 
+    switch.set_uplink(ingress, true).await;
+    let result = multicast_no_group(switch, ingress).await;
+    switch.set_uplink(ingress, false).await;
+    result?;
+
+    assert_eq!(
+        switch.get_counter("nat_ingress_miss", None).await?,
+        nat_miss_baseline
+    );
+    Ok(())
+}
+
+async fn multicast_no_group(switch: &Switch, ingress: PhysPort) -> TestResult {
     // Use unique multicast IP addresses that we will not configure any group for
     let unconfigured_multicast_ipv4 = IpAddr::V4(Ipv4Addr::new(224, 1, 255, 1)); // Unique IPv4 multicast
     let unconfigured_multicast_ipv6 =
@@ -3969,7 +4349,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
 
     // Get baseline counter before any test packets
     let initial_ctr_baseline =
-        switch.get_counter("multicast_no_group", None).await.unwrap();
+        switch.get_counter("multicast_no_group", None).await?;
 
     // Test IPv4 multicast with no configured group
     {
@@ -3986,9 +4366,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
 
         let expected_pkts = vec![];
 
-        switch
-            .packet_test(vec![test_pkt], expected_pkts)
-            .expect("No packets should be sent");
+        switch.packet_test(vec![test_pkt], expected_pkts)?;
 
         // Verify counter incremented for IPv4
         check_counter_incremented(
@@ -3998,8 +4376,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
             1,
             None,
         )
-        .await
-        .unwrap();
+        .await?;
     }
 
     // Test IPv6 multicast with no configured group
@@ -4018,9 +4395,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
         // Expect no output packets - should be dropped
         let expected_pkts = vec![];
 
-        switch
-            .packet_test(vec![test_pkt], expected_pkts)
-            .expect("No packets should be sent");
+        switch.packet_test(vec![test_pkt], expected_pkts)?;
 
         // Verify counter incremented for IPv6 - expect 2 total drops now
         check_counter_incremented(
@@ -4030,8 +4405,7 @@ async fn test_multicast_no_group_configured() -> TestResult {
             2,
             None,
         )
-        .await
-        .unwrap();
+        .await?;
     }
 
     Ok(())
@@ -4483,7 +4857,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
 
     // Create internal admin-scoped group (empty, no members)
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[], // No members (Omicron setup)
@@ -4840,8 +5214,8 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         "Internal group should have 3 members after re-add"
     );
 
-    cleanup_test_group(&switch, external_group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -4863,7 +5237,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
 
     // Create internal admin-scoped group (empty, no members)
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[], // No members
@@ -5177,8 +5551,8 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
 
     switch.packet_test(vec![send_final], expected_final)?;
 
-    cleanup_test_group(&switch, external_group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -5201,7 +5575,7 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
 
     // Create internal group with members first
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[
@@ -5353,7 +5727,7 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
         "Source filter table should be unchanged after rollback"
     );
 
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -5374,7 +5748,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
 
     // Create internal group with initial members
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[
@@ -5440,7 +5814,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
         "Member count should be unchanged after rollback"
     );
 
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -5462,7 +5836,7 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
 
     // Create internal group
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[(PhysPort(15), types::Direction::External)],
@@ -5584,8 +5958,8 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
         "NAT table should be unchanged after rollback"
     );
 
-    cleanup_test_group(&switch, external_group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -5607,7 +5981,7 @@ async fn test_multicast_rollback_vlan_propagation_consistency() {
 
     // Create internal group with members (so bitmap entry get created)
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[
@@ -5628,7 +6002,7 @@ async fn test_multicast_rollback_vlan_propagation_consistency() {
         .expect("Should be able to dump bitmap table");
 
     // First, delete the internal group to break the NAT target reference
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG)
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG)
         .await
         .expect("Should cleanup internal group");
 
@@ -5737,7 +6111,7 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
     // Create IPv4 SSM group that supports source filters
     let group_ip = IpAddr::V4(Ipv4Addr::new(232, 1, 1, 100)); // SSM range
     let nat_target = types::NatTarget {
-        internal_ip: MULTICAST_NAT_IP.into(),
+        internal_ip: MULTICAST_NAT_IP,
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x01, 0x64).into(),
         vni: 100.into(),
     };
@@ -5830,8 +6204,8 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
     );
 
     // Clean up external group first (it references internal group via NAT target)
-    cleanup_test_group(&switch, group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, group_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -5852,7 +6226,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
 
     // Create internal group with initial members
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[
@@ -5937,7 +6311,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
         "Member count should be unchanged after partial addition rollback"
     );
 
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -5959,7 +6333,7 @@ async fn test_multicast_rollback_table_operation_failure() {
 
     // Create internal group first
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[
@@ -5973,7 +6347,7 @@ async fn test_multicast_rollback_table_operation_failure() {
     .await;
 
     // Delete the internal group to break the NAT target reference
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG)
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG)
         .await
         .expect("Should cleanup internal group");
 
@@ -6099,7 +6473,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
 
     // Create an internal/underlay group
     let _created_group = create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[
@@ -6160,7 +6534,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
             );
         }
     }
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 const SOURCE_FILTER_IPV4_TABLE: &str =
@@ -6751,8 +7125,7 @@ async fn test_update_nonexistent_group_returns_404() -> TestResult {
     // Case: Update non-existent underlay group
     let nonexistent_underlay: types::UnderlayMulticastIpv6 =
         Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 0xdead)
-            .try_into()
-            .unwrap();
+            .into();
 
     let (port_id, link_id) = switch.link_id(PhysPort(15)).unwrap();
     let underlay_update = types::MulticastGroupUpdateUnderlayEntry {
@@ -6850,8 +7223,7 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
 
     let group_ip: types::UnderlayMulticastIpv6 =
         Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 0x501)
-            .try_into()
-            .unwrap();
+            .into();
     let tag = "recovery_flow_test";
 
     // Case: Create underlay group with initial member

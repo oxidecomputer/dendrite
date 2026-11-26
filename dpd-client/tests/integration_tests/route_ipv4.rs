@@ -9,6 +9,7 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use anyhow::anyhow;
+use anyhow::bail;
 use oxnet::Ipv4Net;
 use packet::eth;
 use reqwest::StatusCode;
@@ -16,6 +17,7 @@ use reqwest::StatusCode;
 use crate::integration_tests::common;
 use crate::integration_tests::common::PktCallbacks;
 use crate::integration_tests::common::prelude::*;
+use crate::integration_tests::counters::check_counter_incremented;
 use crate::integration_tests::counters::one_counted_test;
 use packet::Endpoint;
 use packet::eth::EthQHdr;
@@ -92,9 +94,7 @@ async fn validate_routes(
 ) -> TestResult {
     if expected.is_empty() {
         match client.route_ipv4_get(cidr).await {
-            Ok(f) => {
-                Err(anyhow!("found {} targets - expected no route", f.len()))
-            }
+            Ok(f) => bail!("found {} targets - expected no route", f.len()),
             Err(_) => Ok(()),
         }
     } else {
@@ -163,14 +163,44 @@ async fn test_route_ipv4_unicast_impl(
         vec![TestPacket { packet: Arc::new(to_recv), port: conf.egress }];
     (conf.ctrl.modify_exchange)(&mut send, &mut expected)?;
 
-    switch.packet_test(send, expected)
+    let label = switch.port_label(conf.egress).unwrap();
+    let forwarded = u64::try_from(
+        expected.iter().filter(|p| p.port == conf.egress).count(),
+    )?;
+    let old = switch.get_counter(&label, Some("unicast")).await?;
+
+    switch.packet_test(send, expected)?;
+
+    check_counter_incremented(switch, &label, old, forwarded, Some("unicast"))
+        .await?;
+
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore]
 async fn test_route_ipv4_unicast() -> TestResult {
     let switch = &*get_switch().await;
-    test_route_ipv4_unicast_impl(switch, RouteTest::default()).await
+    let conf = RouteTest::default();
+    let label = switch.port_label(conf.egress).unwrap();
+
+    let mcast = switch.get_counter(&label, Some("multicast")).await?;
+    let link_local =
+        switch.get_counter(&label, Some("multicast_link_local")).await?;
+
+    test_route_ipv4_unicast_impl(switch, conf).await?;
+
+    check_counter_incremented(switch, &label, mcast, 0, Some("multicast"))
+        .await?;
+    check_counter_incremented(
+        switch,
+        &label,
+        link_local,
+        0,
+        Some("multicast_link_local"),
+    )
+    .await?;
+    Ok(())
 }
 
 async fn test_deleted_route_ipv4_impl(switch: &Switch) -> TestResult {
@@ -198,8 +228,14 @@ async fn test_deleted_route_ipv4_impl(switch: &Switch) -> TestResult {
     let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
 
     assert!(
-        one_counted_test(switch, send, Some(expected), "ipv4_unrouteable")
-            .await?
+        one_counted_test(
+            switch,
+            send,
+            Some(expected),
+            "ipv4_unrouteable",
+            None,
+        )
+        .await?
     );
 
     Ok(())
@@ -306,8 +342,14 @@ async fn test_route_ipv4_unrouteable() -> TestResult {
     let expected = TestPacket { packet: Arc::new(to_recv), port: egress };
 
     assert!(
-        one_counted_test(switch, send, Some(expected), "ipv4_unrouteable")
-            .await?
+        one_counted_test(
+            switch,
+            send,
+            Some(expected),
+            "ipv4_unrouteable",
+            None,
+        )
+        .await?
     );
 
     Ok(())
@@ -630,7 +672,8 @@ async fn fill_until_ipv4_filler_alloc_unavailable(
             Err(e) if e.status() == Some(StatusCode::INSUFFICIENT_STORAGE) => {
                 assert!(
                     i > 0,
-                    "alloc({SHRINK_TEST_FILLER_TARGETS}) failed before any IPv4 fillers"
+                    "alloc({SHRINK_TEST_FILLER_TARGETS}) failed before any \
+                     IPv4 fillers"
                 );
                 validate_routes(
                     client,
@@ -640,20 +683,19 @@ async fn fill_until_ipv4_filler_alloc_unavailable(
                 .await?;
                 return Ok(fillers);
             }
-            Err(e) => {
-                return Err(anyhow!(
-                    "unexpected error probing IPv4 \
-                     alloc({SHRINK_TEST_FILLER_TARGETS}) availability at \
-                     filler prefix {cidr}: {e:?}"
-                ));
-            }
+            Err(e) => bail!(
+                "unexpected error probing IPv4 \
+                 alloc({SHRINK_TEST_FILLER_TARGETS}) availability at \
+                 filler prefix {cidr}: {e:?}"
+            ),
         }
     }
 
-    Err(anyhow!(
-        "IPv4 route target allocation of size {SHRINK_TEST_FILLER_TARGETS} did not fail after \
+    bail!(
+        "IPv4 route target allocation of size \
+         {SHRINK_TEST_FILLER_TARGETS} did not fail after \
          {MAX_ROUTE_TARGET_FILLERS} filler prefixes"
-    ))
+    )
 }
 
 #[tokio::test]
@@ -993,8 +1035,14 @@ async fn test_v4_over_v6() -> TestResult {
     let expected = TestPacket { packet: Arc::new(to_recv), port: SERVICE_PORT };
 
     assert!(
-        one_counted_test(switch, send, Some(expected), "ipv4_unrouteable")
-            .await?
+        one_counted_test(
+            switch,
+            send,
+            Some(expected),
+            "ipv4_unrouteable",
+            None,
+        )
+        .await?
     );
 
     // Re-add the route and verify forwarding works again.
@@ -1032,8 +1080,14 @@ async fn test_v4_over_v6() -> TestResult {
     let send = TestPacket { packet: Arc::new(to_send), port: ingress };
     let expected = TestPacket { packet: Arc::new(to_recv), port: SERVICE_PORT };
     assert!(
-        one_counted_test(switch, send, Some(expected), "ipv4_unrouteable")
-            .await?
+        one_counted_test(
+            switch,
+            send,
+            Some(expected),
+            "ipv4_unrouteable",
+            None,
+        )
+        .await?
     );
 
     Ok(())

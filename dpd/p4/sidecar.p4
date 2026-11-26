@@ -748,7 +748,11 @@ control NatIngress (
 			// from guests and gimlets that arrives on a backplane
 			// port, but prevents us from accepting or forwarding
 			// arbitrary traffic received on an uplink port.
-			meta.drop_reason = DROP_NAT_INGRESS_MISS;
+			if (meta.is_mcast) {
+				meta.drop_reason = DROP_MULTICAST_NO_GROUP;
+			} else {
+				meta.drop_reason = DROP_NAT_INGRESS_MISS;
+			}
 			meta.dropped = true;
 		}
 	}
@@ -1819,7 +1823,7 @@ control MulticastIngress (
 		} else if (hdr.geneve.isValid() && hdr.inner_ipv6.isValid()) {
 			// Check if the inner destination address is an IPv6 multicast
 			// address (ff00::/8). Apply source filtering for both SSM
-			// (ff3x::/16) and ASM ranges.
+			// (ff3x::/32) and ASM ranges.
 			if (hdr.inner_ipv6.dst_addr[127:120] == 8w0xff) {
 				mcast_source_filter_ipv6.apply();
 			} else {
@@ -2398,6 +2402,30 @@ control Egress(
 
 			if (is_mcast == true) {
 				mcast_ctr.count(eg_intr_md.egress_port);
+
+				// Per-type counters:
+				//
+				// - link-local (ff02::/16 outer dst) -> ingress sets the
+				//   bridge header flag. Packets arrive with egress_rid == 0
+				//   and without PRE (Packet Replication Engine) replication.
+				// - egress_rid > 0 with a valid Geneve header -> an
+				//   underlay replica, still encapsulated.
+				// - egress_rid > 0 without a valid Geneve header -> an
+				//   external replica, decapped at ingress (external-only
+				//   groups) or by mcast_egress above (bifurcated groups).
+				//
+				// Geneve validity separates the two replica cases.
+				// Underlay replicas stay encapsulated whether or not the
+				// group is bifurcated, meaning that we can skip an
+				// mcast_tag check.
+				//
+				// This chain branches on egress_rid first. Within
+				// the scope of is_mcast, a zero rid already implies
+				// link-local, making the last branch avoid a test of
+				// is_link_local_ipv6_mcast. Scope 2 groups are rejected
+				// at the time of creation, meaning that no PRE replica
+				// would carry a link-local outer destination at this
+				// point.
 
 				if (is_egress_rid_mcast && hdr.geneve.isValid()) {
 					underlay_mcast_ctr.count(eg_intr_md.egress_port);
