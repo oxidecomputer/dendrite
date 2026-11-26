@@ -288,7 +288,7 @@ async fn nat_ingress_ttl_zero_impl(vlan: Option<u16>) -> TestResult {
     let tgt = NatTarget {
         internal_ip: "fd00:1122:7788:0101::4".parse().unwrap(),
         inner_mac: "04:01:01:01:01:01".parse::<MacAddr>()?.into(),
-        vni: Vni::new(7654).unwrap().into(),
+        vni: Vni::new(7654).unwrap(),
     };
     switch
         .client

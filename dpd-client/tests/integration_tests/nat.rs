@@ -41,11 +41,8 @@ async fn test_api() -> TestResult {
     let ext0 = Ipv4Addr::new(10, 10, 10, 10);
     let ext1 = Ipv4Addr::new(10, 10, 10, 11);
     let internal_ip = "fd00:1122:7788:0101::4".parse::<Ipv6Addr>().unwrap();
-    let tgt = types::NatTarget {
-        internal_ip,
-        inner_mac: inner_mac.into(),
-        vni: vni.into(),
-    };
+    let tgt =
+        types::NatTarget { internal_ip, inner_mac: inner_mac.into(), vni };
 
     switch
         .client
@@ -260,8 +257,7 @@ impl NatTest {
             internal_ip: self.gimlet_ip,
             inner_mac: self.vpc_dst_mac.parse::<MacAddr>()?.into(),
             vni: Vni::new(self.geneve_vni)
-                .map_err(|_| anyhow!("Invalid VNI: {:?}", self.geneve_vni))?
-                .into(),
+                .map_err(|_| anyhow!("Invalid VNI: {:?}", self.geneve_vni))?,
         };
 
         let nat_low = 1024;
@@ -797,7 +793,7 @@ async fn test_ingress_ipv6(
     let tgt = types::NatTarget {
         internal_ip: test.gimlet_ip,
         inner_mac: test.vpc_dst_mac.parse::<MacAddr>()?.into(),
-        vni: Vni::new(test.geneve_vni).unwrap().into(),
+        vni: Vni::new(test.geneve_vni).unwrap(),
     };
     switch
         .client
@@ -839,7 +835,7 @@ async fn test_userspace_unicast_bypasses_nat() -> TestResult {
     let tgt = types::NatTarget {
         internal_ip: "fd00:1122:7788:101::4".parse().unwrap(),
         inner_mac: MacAddr::new(0xa8, 0x40, 0x25, 0xf0, 0x00, 0x01).into(),
-        vni: Vni::new(100).unwrap().into(),
+        vni: Vni::new(100).unwrap(),
     };
     let src =
         Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap();

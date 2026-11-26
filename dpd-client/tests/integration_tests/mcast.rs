@@ -444,9 +444,9 @@ fn prepare_expected_pkt(
             // For non-NAT case, just forward the packet with proper TTL/hop limit adjustment
             let mut recv_pkt = send_pkt.clone();
 
-            if let Some(_) = recv_pkt.hdrs.ipv4_hdr.as_mut() {
+            if recv_pkt.hdrs.ipv4_hdr.is_some() {
                 ipv4::Ipv4Hdr::adjust_ttl(&mut recv_pkt, -1);
-            } else if let Some(_) = recv_pkt.hdrs.ipv6_hdr.as_mut() {
+            } else if recv_pkt.hdrs.ipv6_hdr.is_some() {
                 ipv6::Ipv6Hdr::adjust_hlim(&mut recv_pkt, -1);
             }
 
@@ -463,7 +463,7 @@ fn prepare_expected_pkt(
 
             // Rewrite src mac
             let port_mac = switch.get_port_mac(switch_port).unwrap();
-            recv_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_smac = port_mac.clone();
+            recv_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_smac = port_mac;
 
             recv_pkt
         }
@@ -762,9 +762,7 @@ async fn test_vlan_propagation_to_internal() -> TestResult {
     let external_group = types::MulticastGroupCreateExternalEntry {
         group_ip: "224.1.2.3".parse().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::ExternalInternalForwarding {
-            nat_target: nat_target,
-        },
+        internal_forwarding: types::ExternalInternalForwarding { nat_target },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(42) }, // This VLAN should be used by admin-scoped group
         sources: None,
     };
@@ -1420,7 +1418,7 @@ async fn test_multicast_tagged_groups_management() {
     assert_eq!(tagged_groups.len(), 2, "Should find 2 groups with the tag");
 
     let group_ips: HashSet<_> =
-        tagged_groups.iter().map(|g| get_group_ip(g)).collect();
+        tagged_groups.iter().map(get_group_ip).collect();
     assert!(group_ips.contains(&IpAddr::from(created1.group_ip)));
     assert!(group_ips.contains(&IpAddr::from(created2.group_ip)));
     assert!(!group_ips.contains(&IpAddr::from(created3.group_ip)));
@@ -1441,7 +1439,7 @@ async fn test_multicast_tagged_groups_management() {
         .expect("Should list remaining groups");
 
     let remaining_ips: HashSet<_> =
-        remaining_groups.iter().map(|g| get_group_ip(g)).collect();
+        remaining_groups.iter().map(get_group_ip).collect();
     assert!(!remaining_ips.contains(&IpAddr::from(created1.group_ip)));
     assert!(!remaining_ips.contains(&IpAddr::from(created2.group_ip)));
     assert!(remaining_ips.contains(&IpAddr::from(created3.group_ip)));
@@ -3701,7 +3699,7 @@ async fn userspace_mcast_forward_case(
     };
 
     if let Some(dst_mac) = dst_mac {
-        to_send.hdrs.eth_hdr.as_mut().unwrap().eth_dmac = dst_mac.into();
+        to_send.hdrs.eth_hdr.as_mut().unwrap().eth_dmac = dst_mac;
     }
     if to_send.hdrs.ipv4_hdr.is_some() {
         ipv4::Ipv4Hdr::update_checksum(&mut to_send);
@@ -6257,7 +6255,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
 
     // Create internal admin-scoped group (empty, no members)
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(&TEST_TAG),
         &[], // No members (Omicron setup)
@@ -6614,8 +6612,8 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         "Internal group should have 3 members after re-add"
     );
 
-    cleanup_test_group(&switch, external_group_ip, &TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
+    cleanup_test_group(switch, external_group_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_group_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -6637,7 +6635,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
 
     // Create internal admin-scoped group (empty, no members)
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(&TEST_TAG),
         &[], // No members
@@ -6955,8 +6953,8 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
 
     switch.packet_test(vec![send_final], expected_final)?;
 
-    cleanup_test_group(&switch, external_group_ip, &TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
+    cleanup_test_group(switch, external_group_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_group_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -6979,7 +6977,7 @@ async fn test_multicast_create_missing_nat_target_preserves_state() -> TestResul
 
     // Create internal group with members first
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(&TEST_TAG),
         &[
@@ -7042,9 +7040,7 @@ async fn test_multicast_create_missing_nat_target_preserves_state() -> TestResul
     let external_entry = types::MulticastGroupCreateExternalEntry {
         group_ip: external_group_ip.try_into().unwrap(),
         tag: None,
-        internal_forwarding: types::ExternalInternalForwarding {
-            nat_target: nat_target,
-        },
+        internal_forwarding: types::ExternalInternalForwarding { nat_target },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: None,
     };
@@ -7131,7 +7127,7 @@ async fn test_multicast_create_missing_nat_target_preserves_state() -> TestResul
         "Source filter table should be unchanged after rollback"
     );
 
-    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -7152,7 +7148,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
 
     // Create internal group with initial members
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(&TEST_TAG),
         &[
@@ -7220,7 +7216,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
         "Member count should be unchanged after rollback"
     );
 
-    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -7242,7 +7238,7 @@ async fn test_multicast_update_invalid_nat_mac_preserves_state() -> TestResult {
 
     // Create internal group
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(&TEST_TAG),
         &[(PhysPort(15), types::Direction::External)],
@@ -7364,8 +7360,8 @@ async fn test_multicast_update_invalid_nat_mac_preserves_state() -> TestResult {
         "NAT table should be unchanged after rollback"
     );
 
-    cleanup_test_group(&switch, external_group_ip, &TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
+    cleanup_test_group(switch, external_group_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_group_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -7404,9 +7400,7 @@ async fn test_multicast_update_invalid_source_preserves_state() -> TestResult {
     let external_group = types::MulticastGroupCreateExternalEntry {
         group_ip: group_ip.try_into().unwrap(),
         tag: Some(TEST_TAG.to_string()),
-        internal_forwarding: types::ExternalInternalForwarding {
-            nat_target: nat_target,
-        },
+        internal_forwarding: types::ExternalInternalForwarding { nat_target },
         external_forwarding: types::ExternalForwarding { vlan_id: Some(10) },
         sources: Some(initial_sources.clone()),
     };
@@ -7483,8 +7477,8 @@ async fn test_multicast_update_invalid_source_preserves_state() -> TestResult {
     );
 
     // Clean up external group first (it references internal group via NAT target)
-    cleanup_test_group(&switch, group_ip, &TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_multicast_ip, &TEST_TAG).await
+    cleanup_test_group(switch, group_ip, &TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_multicast_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -7505,7 +7499,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
 
     // Create internal group with initial members
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(&TEST_TAG),
         &[
@@ -7592,7 +7586,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
         "Member count should be unchanged after partial addition rollback"
     );
 
-    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, &TEST_TAG).await
 }
 
 #[tokio::test]
@@ -7614,7 +7608,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
 
     // Create an internal/underlay group
     let _created_group = create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(&TEST_TAG),
         &[
@@ -7677,7 +7671,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
             );
         }
     }
-    cleanup_test_group(&switch, internal_group_ip, &TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, &TEST_TAG).await
 }
 
 const SOURCE_FILTER_IPV4_TABLE: &str =
@@ -8462,7 +8456,7 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
     // Case: Create underlay group with initial member
     let (port_id_1, link_id_1) = switch.link_id(PhysPort(15)).unwrap();
     let create_entry = types::MulticastGroupCreateUnderlayEntry {
-        group_ip: group_ip.clone(),
+        group_ip,
         members: vec![types::MulticastGroupMember {
             port_id: port_id_1.clone(),
             link_id: link_id_1,
@@ -8498,7 +8492,7 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
     // Case: Recreate with updated members
     let (port_id_2, link_id_2) = switch.link_id(PhysPort(17)).unwrap();
     let recreate_entry = types::MulticastGroupCreateUnderlayEntry {
-        group_ip: group_ip.clone(),
+        group_ip,
         members: vec![
             types::MulticastGroupMember {
                 port_id: port_id_1.clone(),

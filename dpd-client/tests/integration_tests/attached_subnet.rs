@@ -32,11 +32,8 @@ async fn test_api() -> TestResult {
     let inner_mac = MacAddr::new(2, 4, 6, 8, 10, 12);
     let vni = Vni::new(222).unwrap();
     let internal_ip = "fd00:1122:7788:0101::4".parse::<Ipv6Addr>().unwrap();
-    let tgt = types::InstanceTarget {
-        internal_ip,
-        inner_mac: inner_mac.into(),
-        vni: vni.into(),
-    };
+    let tgt =
+        types::InstanceTarget { internal_ip, inner_mac: inner_mac.into(), vni };
 
     switch
         .client
@@ -682,7 +679,7 @@ async fn userspace_unicast_attached_subnet_test(
     let tgt = types::InstanceTarget {
         internal_ip: "fd00:1122:7788:101::4".parse().unwrap(),
         inner_mac: MacAddr::new(0xa8, 0x40, 0x25, 0xf0, 0x00, 0x01).into(),
-        vni: Vni::new(100).unwrap().into(),
+        vni: Vni::new(100).unwrap(),
     };
 
     switch.client.attached_subnet_create(&attached_subnet, &tgt).await?;
@@ -732,7 +729,7 @@ async fn test_userspace_geneve_bypasses_attached_subnet() -> TestResult {
         3333,
         100,
         &[],
-        &inner.deparse()?.to_vec(),
+        &inner.deparse()?,
     );
 
     userspace_unicast_attached_subnet_test(switch, pkt).await

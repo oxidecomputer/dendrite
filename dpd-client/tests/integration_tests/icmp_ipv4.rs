@@ -76,10 +76,8 @@ async fn execute_ping_reply_test(
     if add_vlan {
         let vlan_hdr =
             eth::EthQHdr { eth_pcp: 0, eth_dei: 0, eth_vlan_tag: 200 };
-        send_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_8021q =
-            Some(vlan_hdr.clone());
-        recv_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_8021q =
-            Some(vlan_hdr.clone());
+        send_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_8021q = Some(vlan_hdr);
+        recv_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_8021q = Some(vlan_hdr);
     }
 
     let send = TestPacket { packet: Arc::new(send_pkt), port };
