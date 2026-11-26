@@ -18,6 +18,7 @@ use crate::integration_tests::common;
 use crate::integration_tests::common::PktCallbacks;
 use crate::integration_tests::common::prelude::*;
 use crate::integration_tests::counters::check_counter_incremented;
+use crate::integration_tests::counters::check_counter_unchanged;
 use crate::integration_tests::counters::one_counted_test;
 use packet::Endpoint;
 use packet::eth::EthQHdr;
@@ -190,13 +191,11 @@ async fn test_route_ipv4_unicast() -> TestResult {
 
     test_route_ipv4_unicast_impl(switch, conf).await?;
 
-    check_counter_incremented(switch, &label, mcast, 0, Some("multicast"))
-        .await?;
-    check_counter_incremented(
+    check_counter_unchanged(switch, &label, mcast, Some("multicast")).await?;
+    check_counter_unchanged(
         switch,
         &label,
         link_local,
-        0,
         Some("multicast_link_local"),
     )
     .await?;
