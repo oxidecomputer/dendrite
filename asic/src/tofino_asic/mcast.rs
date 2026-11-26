@@ -256,6 +256,8 @@ pub fn domain_add_port(
 
     let bf = hdl.bf_get();
 
+    // If we add LAG members (via lagmap) here, or ECMP nodes elsewhere, set
+    // the corresponding PRE hash in configure_mcastv6 (see dpd/p4/sidecar.p4).
     let mut mc = MulticastState {
         node_hdl: 0,
         portmap: vec![0u8; BF_MC_PORT_ARRAY_SIZE],

@@ -56,6 +56,8 @@ parser IngressParser(
 
 		meta.bridge_hdr.setValid();
 		meta.bridge_hdr.ingress_port = ig_intr_md.ingress_port;
+		meta.bridge_hdr.nat_egress_hit = false;
+		meta.bridge_hdr.is_link_local_mcastv6 = false;
 
 		transition port_metadata;
 	}
@@ -142,7 +144,7 @@ parser IngressParser(
 		});
 
 		transition select(hdr.ipv4.dst_addr[31:28]) {
-			4w0xe: validate_ipv4_mcast1_2;
+			4w0xe: set_mcast_ipv4;
 			default: validate_ttl;
 		}
 	}
@@ -151,46 +153,6 @@ parser IngressParser(
 		transition select(hdr.ipv4.ttl) {
 			8w0: invalidate_ttl;
 			default: goto_proto_ipv4;
-		}
-	}
-
-	// IPv4 Multicast Address Validation (RFC 1112, RFC 7042).
-	//
-	// This validates that IPv4 multicast packets (224.0.0.0/4) use the proper
-	// MAC address format:
-	//
-	// - First byte:  Must be 0x01 (IANA-assigned OUI format)
-	// - Second byte: Must be 0x00 (with first bit of second byte being 0)
-	// - Third byte:  Must be 0x5e
-	// - Last 3 bytes: Must contain the lower 23 bits of the IPv4 multicast
-	//   address (with the 24th bit set to 0)
-	state validate_ipv4_mcast1_2 {
-		// Extract the first byte of the MAC address
-		bit<8> mac_byte1 = hdr.ethernet.dst_mac[47:40]; // First byte must be 0x01
-		// Extract the second byte of the MAC address
-		bit<8> mac_byte2 = hdr.ethernet.dst_mac[39:32]; // Second byte must be 0x00
-
-		transition select(mac_byte1, mac_byte2) {
-			(8w0x01, 8w0x00): validate_ipv4_mcast_3;
-			default: invalidate_ipv4_mcast;
-		}
-	}
-
-	// IPv4 Multicast Third Byte Validation
-	//
-	// Following the IANA mapping rules for IPv4 multicast MAC addresses:
-	//
-	// - The third byte must always be 0x5e
-	// - This completes the IANA OUI prefix (01:00:5e)
-	// - After this validation, the remaining 23 bits of the MAC will be
-	//   verified against the multicast IPv4 address in the `Filter` control
-	state validate_ipv4_mcast_3 {
-		// Extract the 3rd byte of the MAC address
-		bit<8> mac_byte3 = hdr.ethernet.dst_mac[31:24]; // Third byte must be 0x5e
-
-		transition select(mac_byte3) {
-			8w0x5e: set_mcast_ipv4;
-			default: invalidate_ipv4_mcast;
 		}
 	}
 
@@ -209,15 +171,6 @@ parser IngressParser(
 
 	state invalidate_ttl {
 		meta.drop_reason = DROP_IPV4_TTL_INVALID;
-		meta.dropped = true;
-
-		// We don't reject here because we want to update our stats and reason
-		transition accept;
-	}
-
-	state invalidate_ipv4_mcast {
-		meta.is_mcast = true;
-		meta.drop_reason = DROP_MULTICAST_INVALID_MAC;
 		meta.dropped = true;
 
 		// We don't reject here because we want to update our stats and reason
@@ -247,8 +200,8 @@ parser IngressParser(
 		});
 
 		transition select(hdr.ipv6.dst_addr[127:112]) {
-			16w0xff01: drop_interface_local_mcast;
-			16w0xff02: set_link_local_mcast;
+			IPV6_INTERFACE_LOCAL_16: drop_interface_local_mcast;
+			IPV6_LINK_LOCAL_16: set_link_local_mcast;
 			default: check_ipv6_mcast;
 		}
 	}
@@ -264,6 +217,7 @@ parser IngressParser(
 
 	state set_link_local_mcast {
 		meta.is_link_local_mcastv6 = true;
+		meta.bridge_hdr.is_link_local_mcastv6 = true;
 		meta.is_mcast = true;
 		transition validate_mcast_link_local_hop_limit;
 	}
@@ -572,7 +526,6 @@ parser EgressParser(
 
 	state meta_init {
 		meta.drop_reason = 0;
-		meta.bridge_hdr.setInvalid();
 
 		meta.decap_ports_0 = 0;
 		meta.decap_ports_1 = 0;
@@ -595,9 +548,11 @@ parser EgressParser(
 	state parse_bridge_hdr {
 		pkt.extract(bridge_hdr);
 		meta.bridge_hdr = bridge_hdr;
-		meta.bridge_hdr.setValid();
 
-		transition parse_ethernet;
+		transition select(bridge_hdr.nat_egress_hit) {
+			true: accept;
+			default: parse_ethernet;
+		}
 	}
 
 	state parse_ethernet {
@@ -621,6 +576,9 @@ parser EgressParser(
 		}
 	}
 
+	// Egress control should be able to use isValid() to decipher which
+	// supported headers came in on the wire. We keep parsing by IP protocol
+	// regardless of which headers the control reads.
 	state parse_ipv4 {
 		pkt.extract(hdr.ipv4);
 
@@ -649,7 +607,7 @@ parser EgressParser(
 	}
 
 	state parse_tcp {
-		pkt.extract<tcp_h>(_);
+		pkt.extract(hdr.tcp);
 
 		transition accept;
 	}

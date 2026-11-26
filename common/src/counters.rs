@@ -27,14 +27,8 @@ pub use dpd_types::counters::{
     Deserialize,
 )]
 pub enum CounterId {
-    Service,
-    Ingress,
-    Egress,
-    Packet,
-    DropPort,
-    DropReason,
-    #[cfg(feature = "multicast")]
-    Multicast(MulticastCounterId),
+    IngressPipeline(IngressCounterId),
+    EgressPipeline(EgressCounterId),
 }
 
 #[derive(
@@ -49,34 +43,44 @@ pub enum CounterId {
     Serialize,
     Deserialize,
 )]
-#[cfg(feature = "multicast")]
-pub enum MulticastCounterId {
-    EgressDropPort,
-    EgressDropReason,
+pub enum IngressCounterId {
+    Service,
+    Ingress,
+    Packet,
+    DropPort,
+    DropReason,
+    MulticastDrop,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+)]
+pub enum EgressCounterId {
+    Forwarded,
+    DropPort,
+    DropReason,
     Unicast,
     Multicast,
     MulticastExt,
     MulticastLL,
     MulticastUL,
-    MulticastDrop,
 }
 
 impl fmt::Display for CounterId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                CounterId::Service => "Service".to_string(),
-                CounterId::Ingress => "Ingress".to_string(),
-                CounterId::Egress => "Egress".to_string(),
-                CounterId::Packet => "Packet".to_string(),
-                CounterId::DropPort => "Ingress_Drop_Port".to_string(),
-                CounterId::DropReason => "Ingress_Drop_Reason".to_string(),
-                #[cfg(feature = "multicast")]
-                CounterId::Multicast(id) => id.to_string(),
-            }
-        )
+        match self {
+            CounterId::IngressPipeline(id) => fmt::Display::fmt(id, f),
+            CounterId::EgressPipeline(id) => fmt::Display::fmt(id, f),
+        }
     }
 }
 
@@ -84,62 +88,60 @@ impl std::str::FromStr for CounterId {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().replace(['_'], "").as_str() {
-            "service" => Ok(CounterId::Service),
-            "ingress" => Ok(CounterId::Ingress),
-            "egress" => Ok(CounterId::Egress),
-            "packet" => Ok(CounterId::Packet),
-            "ingressdropport" => Ok(CounterId::DropPort),
-            "ingressdropreason" => Ok(CounterId::DropReason),
-            #[cfg(feature = "multicast")]
-            x => match x {
-                "egressdropport" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::EgressDropPort))
-                }
-                "egressdropreason" => Ok(CounterId::Multicast(
-                    MulticastCounterId::EgressDropReason,
-                )),
-                "unicast" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::Unicast))
-                }
-                "multicast" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::Multicast))
-                }
-                "multicastext" | "multicastexternal" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::MulticastExt))
-                }
-                "multicastll" | "multicastlinklocal" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::MulticastLL))
-                }
-                "multicastul" | "multicastunderlay" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::MulticastUL))
-                }
-                "multicastdrop" => {
-                    Ok(CounterId::Multicast(MulticastCounterId::MulticastDrop))
-                }
-                x => Err(format!("No such counter: {x}")),
-            },
-            #[cfg(not(feature = "multicast"))]
-            x => Err(format!("No such counter: {x}")),
-        }
+        use EgressCounterId as E;
+        use IngressCounterId as I;
+
+        let id = match s.to_lowercase().replace(['_'], "").as_str() {
+            "service" => CounterId::IngressPipeline(I::Service),
+            "ingress" => CounterId::IngressPipeline(I::Ingress),
+            "packet" => CounterId::IngressPipeline(I::Packet),
+            "ingressdropport" => CounterId::IngressPipeline(I::DropPort),
+            "ingressdropreason" => CounterId::IngressPipeline(I::DropReason),
+            "multicastdrop" => CounterId::IngressPipeline(I::MulticastDrop),
+            "forwarded" => CounterId::EgressPipeline(E::Forwarded),
+            "egressdropport" => CounterId::EgressPipeline(E::DropPort),
+            "egressdropreason" => CounterId::EgressPipeline(E::DropReason),
+            "unicast" => CounterId::EgressPipeline(E::Unicast),
+            "multicast" => CounterId::EgressPipeline(E::Multicast),
+            "multicastext" | "multicastexternal" => {
+                CounterId::EgressPipeline(E::MulticastExt)
+            }
+            "multicastll" | "multicastlinklocal" => {
+                CounterId::EgressPipeline(E::MulticastLL)
+            }
+            "multicastul" | "multicastunderlay" => {
+                CounterId::EgressPipeline(E::MulticastUL)
+            }
+            x => return Err(format!("No such counter: {x}")),
+        };
+        Ok(id)
     }
 }
-#[cfg(feature = "multicast")]
-impl fmt::Display for MulticastCounterId {
+
+impl fmt::Display for IngressCounterId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                MulticastCounterId::EgressDropPort => "Egress_Drop_Port",
-                MulticastCounterId::EgressDropReason => "Egress_Drop_Reason",
-                MulticastCounterId::Unicast => "Unicast",
-                MulticastCounterId::Multicast => "Multicast",
-                MulticastCounterId::MulticastExt => "Multicast_External",
-                MulticastCounterId::MulticastLL => "Multicast_Link_Local",
-                MulticastCounterId::MulticastUL => "Multicast_Underlay",
-                MulticastCounterId::MulticastDrop => "Multicast_Drop",
-            }
-        )
+        f.write_str(match self {
+            IngressCounterId::Service => "Service",
+            IngressCounterId::Ingress => "Ingress",
+            IngressCounterId::Packet => "Packet",
+            IngressCounterId::DropPort => "Ingress_Drop_Port",
+            IngressCounterId::DropReason => "Ingress_Drop_Reason",
+            IngressCounterId::MulticastDrop => "Multicast_Drop",
+        })
+    }
+}
+
+impl fmt::Display for EgressCounterId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(match self {
+            EgressCounterId::Forwarded => "Forwarded",
+            EgressCounterId::DropPort => "Egress_Drop_Port",
+            EgressCounterId::DropReason => "Egress_Drop_Reason",
+            EgressCounterId::Unicast => "Unicast",
+            EgressCounterId::Multicast => "Multicast",
+            EgressCounterId::MulticastExt => "Multicast_External",
+            EgressCounterId::MulticastLL => "Multicast_Link_Local",
+            EgressCounterId::MulticastUL => "Multicast_Underlay",
+        })
     }
 }

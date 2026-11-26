@@ -23,8 +23,8 @@ use aal::MatchParse;
 use aal_macros::*;
 use asic::Handle;
 use common::counters::CounterId;
-#[cfg(feature = "multicast")]
-use common::counters::MulticastCounterId;
+use common::counters::EgressCounterId;
+use common::counters::IngressCounterId;
 use common::table::TableType;
 
 use anyhow::Context;
@@ -46,36 +46,22 @@ pub struct Counter {
     table: table::Table,
 }
 
-pub fn get_counter_ids() -> Vec<CounterId> {
-    let mut base = vec![
-        CounterId::Service,
-        CounterId::Ingress,
-        CounterId::Egress,
-        CounterId::Packet,
-        CounterId::DropPort,
-        CounterId::DropReason,
-    ];
-    let mut multicast;
-    #[cfg(feature = "multicast")]
-    {
-        multicast = vec![
-            CounterId::Multicast(MulticastCounterId::EgressDropPort),
-            CounterId::Multicast(MulticastCounterId::EgressDropReason),
-            CounterId::Multicast(MulticastCounterId::Unicast),
-            CounterId::Multicast(MulticastCounterId::Multicast),
-            CounterId::Multicast(MulticastCounterId::MulticastExt),
-            CounterId::Multicast(MulticastCounterId::MulticastLL),
-            CounterId::Multicast(MulticastCounterId::MulticastUL),
-            CounterId::Multicast(MulticastCounterId::MulticastDrop),
-        ];
-    }
-    #[cfg(not(feature = "multicast"))]
-    {
-        multicast = Vec::new();
-    }
-    base.append(&mut multicast);
-    base
-}
+pub const COUNTER_IDS: &[CounterId] = &[
+    CounterId::IngressPipeline(IngressCounterId::Service),
+    CounterId::IngressPipeline(IngressCounterId::Ingress),
+    CounterId::EgressPipeline(EgressCounterId::Forwarded),
+    CounterId::IngressPipeline(IngressCounterId::Packet),
+    CounterId::IngressPipeline(IngressCounterId::DropPort),
+    CounterId::IngressPipeline(IngressCounterId::DropReason),
+    CounterId::EgressPipeline(EgressCounterId::DropPort),
+    CounterId::EgressPipeline(EgressCounterId::DropReason),
+    CounterId::EgressPipeline(EgressCounterId::Unicast),
+    CounterId::EgressPipeline(EgressCounterId::Multicast),
+    CounterId::EgressPipeline(EgressCounterId::MulticastExt),
+    CounterId::EgressPipeline(EgressCounterId::MulticastLL),
+    CounterId::EgressPipeline(EgressCounterId::MulticastUL),
+    CounterId::IngressPipeline(IngressCounterId::MulticastDrop),
+];
 
 /// Fetch a counter by name from the switch's list of counters.  This call
 /// returns a pointer to the mutex that controls access to the counter, and the
@@ -87,7 +73,7 @@ fn get_counter(
     switch
         .counters
         .get(&counter)
-        .ok_or(DpdError::Invalid("no such counter".to_string()))
+        .ok_or(DpdError::Other("no such counter".to_string()))
 }
 
 /// Given an index into the Packet table, convert it from a bitmap of parsed
@@ -301,7 +287,8 @@ pub async fn get_values(
     force_sync: bool,
     counter_name: String,
 ) -> DpdResult<Vec<TableCounterEntry>> {
-    let counter_id = counter_name.parse::<CounterId>()?;
+    let counter_id =
+        counter_name.parse::<CounterId>().map_err(DpdError::Missing)?;
 
     let counters = {
         let switch = switch.clone();
@@ -323,26 +310,30 @@ pub async fn get_values(
     for (idx, data) in counters {
         // Given the indirect counter index, look up the label.
         let key = match counter_id {
-            CounterId::Packet => packet_label(idx.idx),
-            CounterId::Service => service_label(idx.idx as u8),
-            CounterId::Ingress | CounterId::Egress | CounterId::DropPort => {
-                port_label(switch, idx.idx).await
+            CounterId::IngressPipeline(IngressCounterId::Packet) => {
+                packet_label(idx.idx)
             }
-            CounterId::DropReason => reason_label(idx.idx as u8)?,
-            #[cfg(feature = "multicast")]
-            CounterId::Multicast(MulticastCounterId::EgressDropPort)
-            | CounterId::Multicast(MulticastCounterId::Unicast)
-            | CounterId::Multicast(MulticastCounterId::Multicast)
-            | CounterId::Multicast(MulticastCounterId::MulticastExt)
-            | CounterId::Multicast(MulticastCounterId::MulticastLL)
-            | CounterId::Multicast(MulticastCounterId::MulticastUL)
-            | CounterId::Multicast(MulticastCounterId::MulticastDrop) => {
-                port_label(switch, idx.idx).await
+            CounterId::IngressPipeline(IngressCounterId::Service) => {
+                service_label(idx.idx as u8)
             }
-            #[cfg(feature = "multicast")]
-            CounterId::Multicast(MulticastCounterId::EgressDropReason) => {
+            CounterId::IngressPipeline(IngressCounterId::DropReason)
+            | CounterId::EgressPipeline(EgressCounterId::DropReason) => {
                 reason_label(idx.idx as u8)?
             }
+            CounterId::IngressPipeline(
+                IngressCounterId::Ingress
+                | IngressCounterId::DropPort
+                | IngressCounterId::MulticastDrop,
+            )
+            | CounterId::EgressPipeline(
+                EgressCounterId::Forwarded
+                | EgressCounterId::DropPort
+                | EgressCounterId::Unicast
+                | EgressCounterId::Multicast
+                | EgressCounterId::MulticastExt
+                | EgressCounterId::MulticastLL
+                | EgressCounterId::MulticastUL,
+            ) => port_label(switch, idx.idx).await,
         };
 
         if let Some(key) = key {
@@ -350,7 +341,10 @@ pub async fn get_values(
             // we will never see, many of which (e.g. an icmp packet that is
             // neither IPv4 nor IPv6) are even possible.  We don't record
             // combinations with 0 hits.
-            if counter_id == CounterId::Packet && data.pkts == Some(0) {
+            if counter_id
+                == CounterId::IngressPipeline(IngressCounterId::Packet)
+                && data.pkts == Some(0)
+            {
                 continue;
             }
 
@@ -367,7 +361,7 @@ pub async fn get_values(
 }
 
 pub fn reset(switch: &Switch, counter_name: String) -> DpdResult<()> {
-    let id = counter_name.parse::<CounterId>()?;
+    let id = counter_name.parse::<CounterId>().map_err(DpdError::Missing)?;
     let mut counter = get_counter(switch, id)?.lock().unwrap();
     counter.table.clear(&switch.asic_hdl)
 }
@@ -378,7 +372,7 @@ pub fn init(
 ) -> anyhow::Result<BTreeMap<CounterId, Mutex<Counter>>> {
     let mut counters = BTreeMap::new();
 
-    for id in get_counter_ids() {
+    for &id in COUNTER_IDS {
         let name = id.to_string();
         counters.insert(
             id,
