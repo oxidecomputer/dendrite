@@ -100,7 +100,7 @@ fn build_route_add(
     target: &types::Ipv6Route,
 ) -> types::Ipv6RouteUpdate {
     types::Ipv6RouteUpdate {
-        cidr: subnet.into(),
+        cidr: subnet,
         target: target.clone(),
         replace: false,
     }
@@ -705,19 +705,23 @@ async fn fill_until_ipv6_filler_alloc_unavailable(
     switch: &Switch,
 ) -> Result<Vec<Ipv6Net>, anyhow::Error> {
     let client = &switch.client;
-    assert!(
-        SHRINK_TEST_VICTIM_TARGETS > SHRINK_TEST_FILLER_TARGETS,
-        "victim route must be wider than filler routes"
-    );
+    const {
+        assert!(
+            SHRINK_TEST_VICTIM_TARGETS > SHRINK_TEST_FILLER_TARGETS,
+            "victim route must be wider than filler routes"
+        )
+    };
     assert_eq!(
         SHRINK_TEST_VICTIM_TARGETS - 1,
         SHRINK_TEST_FILLER_TARGETS,
         "filler width must match the victim's post-shrink width"
     );
-    assert!(
-        SHRINK_TEST_FILLER_TARGETS > SHRINK_TEST_PROBE_TARGETS,
-        "filler route must be wider than its setup probe"
-    );
+    const {
+        assert!(
+            SHRINK_TEST_FILLER_TARGETS > SHRINK_TEST_PROBE_TARGETS,
+            "filler route must be wider than its setup probe"
+        )
+    };
 
     let mut fillers = Vec::new();
     for i in 0..MAX_ROUTE_TARGET_FILLERS {

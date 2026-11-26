@@ -726,7 +726,7 @@ async fn test_set_mac_on_new_link_succeeds() -> TestResult {
         .unwrap()
         .into_inner()
         .first()
-        .map(Clone::clone)
+        .cloned()
         .unwrap();
     switch.client.link_delete(&link.port_id, &link.link_id).await.unwrap();
 
