@@ -31,6 +31,7 @@ use signal_hook_tokio::Signals;
 use slog::debug;
 use slog::error;
 use slog::info;
+use slog::warn;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::time::Duration;
 use tokio::time::sleep;
@@ -346,6 +347,16 @@ impl Switch {
         key: &M,
         data: &A,
     ) -> DpdResult<()> {
+        self.try_table_entry_add(table_type, key, data)
+            .inspect_err(|e| self.log_entry_conflict("add", table_type, e))
+    }
+
+    fn try_table_entry_add<M: MatchParse + Hash, A: ActionParse>(
+        &self,
+        table_type: TableType,
+        key: &M,
+        data: &A,
+    ) -> DpdResult<()> {
         let mut t = self.table_get(table_type)?;
         t.entry_add(&self.asic_hdl, key, data).map_err(|e| {
             debug!(
@@ -363,6 +374,16 @@ impl Switch {
         key: &M,
         data: &A,
     ) -> DpdResult<()> {
+        self.try_table_entry_update(table_type, key, data)
+            .inspect_err(|e| self.log_entry_conflict("update", table_type, e))
+    }
+
+    fn try_table_entry_update<M: MatchParse + Hash, A: ActionParse>(
+        &self,
+        table_type: TableType,
+        key: &M,
+        data: &A,
+    ) -> DpdResult<()> {
         let mut t = self.table_get(table_type)?;
         t.entry_update(&self.asic_hdl, key, data).map_err(|e| {
             debug!(
@@ -373,20 +394,98 @@ impl Switch {
         })
     }
 
+    fn log_entry_conflict(
+        &self,
+        op: &str,
+        table_type: TableType,
+        e: &DpdError,
+    ) {
+        if let DpdError::Switch(AsicError::Exists(_) | AsicError::Missing(_)) =
+            e
+        {
+            error!(
+                self.log,
+                "failed to {op} table entry";
+                "table" => %table_type,
+                "error" => ?e,
+            );
+        }
+    }
+
+    /// Executes [`Self::table_entry_add`].
+    ///
+    /// If an add fails due to conflict, this tries
+    /// [`Self::table_entry_update`] instead.
+    ///
+    /// Returns an error if the first failure is fatal or both calls fail.
+    pub fn table_entry_set<M: MatchParse + Hash, A: ActionParse>(
+        &self,
+        table_type: TableType,
+        key: &M,
+        data: &A,
+    ) -> DpdResult<()> {
+        match self.try_table_entry_add(table_type, key, data) {
+            Err(DpdError::Switch(aal::AsicError::Exists(_))) => {
+                self.try_table_entry_update(table_type, key, data)
+            }
+            Err(full @ DpdError::TableFull(_)) => {
+                // If the table is full and this key does not exist,
+                // a "does not exist" error is just distracting.
+                self.try_table_entry_update(table_type, key, data)
+                    .map_err(|_| full)
+            }
+            other => other,
+        }
+    }
+
     /// Delete a single table entry.
     pub fn table_entry_del<M: MatchParse + Hash>(
         &self,
         table_type: TableType,
         key: &M,
     ) -> DpdResult<()> {
+        self.try_table_entry_del(table_type, key)
+            .inspect_err(|e| self.log_entry_conflict("delete", table_type, e))
+    }
+
+    fn try_table_entry_del<M: MatchParse + Hash>(
+        &self,
+        table_type: TableType,
+        key: &M,
+    ) -> DpdResult<()> {
         let mut t = self.table_get(table_type)?;
-        t.entry_del(&self.asic_hdl, key).map_err(|e| {
-            debug!(
-                self.log,
-                "failed to delete entry from {:?}: {:?}", table_type, e
-            );
-            e
-        })
+        let untracked = t.usage.occupancy == 0;
+
+        t.entry_del(&self.asic_hdl, key)
+            .inspect(|()| {
+                if untracked {
+                    warn!(
+                        self.log,
+                        "deleted entry from table with no tracked entries";
+                        "table" => %table_type,
+                    );
+                }
+            })
+            .map_err(|e| {
+                debug!(
+                    self.log,
+                    "failed to delete entry from {table_type:?}: {e:?}"
+                );
+                e
+            })
+    }
+
+    /// A variant of [`Self::table_entry_del`] that returns a successful
+    /// result if the deleted resource already does not exist.
+    pub fn table_entry_clear<M: MatchParse + Hash>(
+        &self,
+        table_type: TableType,
+        key: &M,
+    ) -> DpdResult<()> {
+        match self.try_table_entry_del(table_type, key) {
+            Err(DpdError::Switch(aal::AsicError::Missing(_))) => Ok(()),
+            other => other,
+        }
     }
 
     /// Fetch all of the entries in a P4 table and return them

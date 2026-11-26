@@ -31,11 +31,8 @@ async fn test_api() -> TestResult {
     let inner_mac = MacAddr::new(2, 4, 6, 8, 10, 12);
     let vni = Vni::new(222).unwrap();
     let internal_ip = "fd00:1122:7788:0101::4".parse::<Ipv6Addr>().unwrap();
-    let tgt = types::InstanceTarget {
-        internal_ip,
-        inner_mac: inner_mac.into(),
-        vni: vni.into(),
-    };
+    let tgt =
+        types::InstanceTarget { internal_ip, inner_mac: inner_mac.into(), vni };
 
     switch
         .client
@@ -136,7 +133,7 @@ async fn test_egress(switch: &Switch, test: &ExternalTest) -> TestResult {
     let tgt = types::InstanceTarget {
         internal_ip: test.gimlet_ip,
         inner_mac: test.instance_mac.parse::<MacAddr>()?.into(),
-        vni: test.geneve_vni.into(),
+        vni: test.geneve_vni.try_into().unwrap(),
     };
     switch.client.attached_subnet_create(&attached_subnet, &tgt).await.unwrap();
 
@@ -217,7 +214,7 @@ async fn test_ingress(switch: &Switch, test: &ExternalTest) -> TestResult {
     let tgt = types::InstanceTarget {
         internal_ip: test.gimlet_ip,
         inner_mac: test.instance_mac.parse::<MacAddr>()?.into(),
-        vni: test.geneve_vni.into(),
+        vni: test.geneve_vni.try_into().unwrap(),
     };
     switch
         .client

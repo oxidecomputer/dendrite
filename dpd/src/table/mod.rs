@@ -124,7 +124,7 @@ impl Table {
             self.asic_data
                 .entry_add(hdl, key, data)
                 .map_err(|e| {
-                    if let aal::AsicError::Exists = e {
+                    if let aal::AsicError::Exists(_) = e {
                         self.usage.collisions += 1;
                     }
                     e.into()
@@ -169,7 +169,7 @@ impl Table {
                 e.into()
             })
             .map(|()| {
-                self.usage.occupancy -= 1;
+                self.usage.occupancy = self.usage.occupancy.saturating_sub(1);
                 self.usage.deletes += 1;
             })
     }

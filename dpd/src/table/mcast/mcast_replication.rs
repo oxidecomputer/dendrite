@@ -32,7 +32,7 @@ enum Ipv6Action {
     },
 }
 
-/// Add an IPv6 multicast entries to the replication table:
+/// Set an IPv6 multicast entry in the replication table:
 /// `dst_addr -> underlay_mcast_grp && external_mcast_grp, replication_id,
 /// level1_excl_id, level2_excl_id`.
 ///
@@ -41,42 +41,7 @@ enum Ipv6Action {
 /// - underlay_mcast_grp: for replication to underlay/infrastructure ports (mcast_grp_b)
 ///
 /// Both groups are always allocated.
-pub(crate) fn add_ipv6_entry(
-    s: &Switch,
-    dst_addr: Ipv6Addr,
-    underlay_mcast_grp: MulticastGroupId,
-    external_mcast_grp: MulticastGroupId,
-    replication_id: u16,
-    level1_excl_id: u16,
-    level2_excl_id: u16,
-) -> DpdResult<()> {
-    if level2_excl_id > 511 {
-        return Err(DpdError::Invalid(
-            "`level2 exclusion id` exceeds 9-bit range".to_string(),
-        ));
-    }
-
-    let match_key = Ipv6MatchKey::new(dst_addr);
-
-    let action_data = Ipv6Action::ConfigureIpv6 {
-        mcast_grp_a: external_mcast_grp,
-        mcast_grp_b: underlay_mcast_grp,
-        rid: replication_id,
-        level1_excl_id,
-        level2_excl_id,
-    };
-
-    debug!(s.log, "add mcast_ipv6 entry {dst_addr} -> {action_data:?}");
-
-    s.table_entry_add(TableType::McastIpv6, &match_key, &action_data)
-}
-
-/// Update an IPv6 multicast entries in the replication table.
-///
-/// Updates the bifurcated replication configuration:
-/// - external_mcast_grp: for replication to external/customer ports (mcast_grp_a)
-/// - underlay_mcast_grp: for replication to underlay/infrastructure ports (mcast_grp_b)
-pub(crate) fn update_ipv6_entry(
+pub(crate) fn set_ipv6_entry(
     s: &Switch,
     dst_addr: Ipv6Addr,
     underlay_mcast_grp: MulticastGroupId,
@@ -103,17 +68,17 @@ pub(crate) fn update_ipv6_entry(
 
     debug!(s.log, "update mcast_ipv6 entry {dst_addr} -> {action_data:?}");
 
-    s.table_entry_update(TableType::McastIpv6, &match_key, &action_data)
+    s.table_entry_set(TableType::McastIpv6, &match_key, &action_data)
 }
 
-/// Delete an IPv6 multicast entries from replication table, keyed on
+/// Clear an IPv6 multicast entry from the replication table, keyed on
 /// `dst_addr`.
-pub(crate) fn del_ipv6_entry(s: &Switch, dst_addr: Ipv6Addr) -> DpdResult<()> {
+pub(crate) fn clear_ipv6_entry(
+    s: &Switch,
+    dst_addr: Ipv6Addr,
+) -> DpdResult<()> {
     let match_key = Ipv6MatchKey::new(dst_addr);
-
-    debug!(s.log, "delete mcast_ipv6 entry {match_key}");
-
-    s.table_entry_del(TableType::McastIpv6, &match_key)
+    s.table_entry_clear(TableType::McastIpv6, &match_key)
 }
 
 /// Dump the IPv6 multicast table's contents.
