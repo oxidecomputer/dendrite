@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/
 //
-// Copyright 2025 Oxide Computer Company
+// Copyright 2026 Oxide Computer Company
 
 //! Configuration for `dpd`.
 
@@ -380,19 +380,22 @@ mod tests {
             ..Opt::default()
         };
 
-        let opts2 = Opt::default();
-
         unsafe { std::env::remove_var("SMF_FMRI") };
         let config1 = build_config(&opts1).unwrap();
         assert_eq!(config1.log_file, Some("test.log".to_string()));
         assert_eq!(config1.listen_addresses.len(), 1);
 
-        unsafe {
-            std::env::set_var("SMF_FMRI", "svc:/network/dendrite:default")
-        };
+        // SMF only exists on illumos; elsewhere SMF_FMRI is ignored.
+        #[cfg(target_os = "illumos")]
+        {
+            let opts2 = Opt::default();
+            unsafe {
+                std::env::set_var("SMF_FMRI", "svc:/network/dendrite:default")
+            };
 
-        let config2 = build_config(&opts2);
-        // This should fail because SMF is not running for tests.
-        assert!(config2.is_err());
+            let config2 = build_config(&opts2);
+            // This should fail because SMF is not running for tests.
+            assert!(config2.is_err());
+        }
     }
 }

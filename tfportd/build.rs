@@ -7,6 +7,11 @@
 extern crate cc;
 
 fn main() {
+    // non illumos platforms use src/netsupport/dummy.rs instead of netsupport.c
+    if std::env::var("CARGO_CFG_TARGET_OS").unwrap() != "illumos" {
+        return;
+    }
+
     println!("cargo:rustc-link-lib=socket");
 
     cc::Build::new().file("src/netsupport.c").compile("netsupport");
