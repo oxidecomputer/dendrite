@@ -86,9 +86,11 @@ jobs:
             target/release/swadm
           if-no-files-found: error
 
-  # illumos-only daemons should still compile elsewhere for local development.
-  # This is a separate job so it doesn't delay the artifacts above.
-  check:
+  # Lint the whole workspace with each feature that builds on macOS, as the
+  # illumos test job does. tofino_asic needs the Tofino SDE and softnpu does not
+  # build on macOS. This is a separate job so it doesn't delay the artifacts
+  # above.
+  clippy:
     runs-on: macos-15
     timeout-minutes: 35
     env:
@@ -99,5 +101,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Check tfportd, uplinkd, and xtask
-        run: cargo check --locked --all-targets -p tfportd -p uplinkd -p xtask
+      - name: Clippy
+        run: |
+          for feat in tofino_stub chaos; do
+            cargo clippy --locked --all-targets --features "${feat}" -- --deny warnings
+          done

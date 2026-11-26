@@ -50,9 +50,12 @@ banner "Build"
 cargo build --features=tofino_asic --bin dpd
 cargo build --release --features=tofino_stub --bin dpd --bin swadm
 
-banner "Check"
-# illumos-only daemons should still compile elsewhere for local development
-cargo check --all-targets -p tfportd -p uplinkd
+banner "Clippy"
+# Lint the whole workspace with each feature, as the illumos test job does.
+for feat in tofino_stub tofino_asic softnpu chaos
+do
+	cargo clippy --all-targets --features $feat -- --deny warnings
+done
 
 cp target/release/dpd /work
 digest /work/dpd > /work/dpd.sha256.txt

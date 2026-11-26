@@ -35,6 +35,7 @@ use std::net::Ipv6Addr;
 use std::sync::mpsc;
 use std::time::Duration;
 
+#[cfg(target_os = "illumos")]
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -131,6 +132,7 @@ fn interface_vlan_id(iface: &str) -> (String, Option<u16>) {
     (fields[0].to_string(), rval)
 }
 
+#[cfg(target_os = "illumos")]
 fn parse_uplink_property(
     prop: &str,
 ) -> Result<(UplinkNet, Option<u16>), anyhow::Error> {
@@ -158,14 +160,16 @@ fn is_link_local(cidr: &IpNet) -> bool {
     }
 }
 
+// The smf crate builds everywhere, but panics if used off illumos.
+#[cfg(not(target_os = "illumos"))]
+fn refresh_smf_config(_g: &mut Global) -> Result<()> {
+    Err(common::SmfError::NotSupported.into())
+}
+
 // Update our in-memory list of the uplink interfaces that have been configured
 // in the smf database.
+#[cfg(target_os = "illumos")]
 fn refresh_smf_config(g: &mut Global) -> Result<()> {
-    // The smf crate builds everywhere, but panics if used off illumos.
-    if cfg!(not(target_os = "illumos")) {
-        return Err(common::SmfError::NotSupported.into());
-    }
-
     // Create an SMF context and take a snapshot of the current settings
     let scf = smf::Scf::new().context("creating scf handle")?;
     let instance = scf.get_self_instance().context("getting smf instance")?;
