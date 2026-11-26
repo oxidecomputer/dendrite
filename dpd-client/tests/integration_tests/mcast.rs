@@ -428,9 +428,9 @@ fn prepare_expected_pkt(
             // For non-NAT case, just forward the packet with proper TTL/hop limit adjustment
             let mut recv_pkt = send_pkt.clone();
 
-            if let Some(_) = recv_pkt.hdrs.ipv4_hdr.as_mut() {
+            if recv_pkt.hdrs.ipv4_hdr.is_some() {
                 ipv4::Ipv4Hdr::adjust_ttl(&mut recv_pkt, -1);
-            } else if let Some(_) = recv_pkt.hdrs.ipv6_hdr.as_mut() {
+            } else if recv_pkt.hdrs.ipv6_hdr.is_some() {
                 ipv6::Ipv6Hdr::adjust_hlim(&mut recv_pkt, -1);
             }
 
@@ -448,8 +448,7 @@ fn prepare_expected_pkt(
             // Rewrite src mac
             if let Some(port) = switch_port {
                 let port_mac = switch.get_port_mac(port).unwrap();
-                recv_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_smac =
-                    port_mac.clone();
+                recv_pkt.hdrs.eth_hdr.as_mut().unwrap().eth_smac = port_mac;
             }
 
             recv_pkt
@@ -981,7 +980,7 @@ async fn test_group_api_lifecycle() {
 
     // Update the group
     let updated_nat_target = types::NatTarget {
-        internal_ip: MULTICAST_NAT_IP.into(),
+        internal_ip: MULTICAST_NAT_IP,
         inner_mac: MacAddr::from(MULTICAST_NAT_IP.derive_multicast_mac())
             .into(),
         vni: 200.into(),
@@ -1279,7 +1278,7 @@ async fn test_multicast_tagged_groups_management() {
     assert_eq!(tagged_groups.len(), 2, "Should find 2 groups with the tag");
 
     let group_ips: HashSet<_> =
-        tagged_groups.iter().map(|g| get_group_ip(g)).collect();
+        tagged_groups.iter().map(get_group_ip).collect();
     assert!(group_ips.contains(&created1.group_ip));
     assert!(group_ips.contains(&created2.group_ip));
     assert!(!group_ips.contains(&created3.group_ip));
@@ -1300,7 +1299,7 @@ async fn test_multicast_tagged_groups_management() {
         .expect("Should list remaining groups");
 
     let remaining_ips: HashSet<_> =
-        remaining_groups.iter().map(|g| get_group_ip(g)).collect();
+        remaining_groups.iter().map(get_group_ip).collect();
     assert!(!remaining_ips.contains(&created1.group_ip));
     assert!(!remaining_ips.contains(&created2.group_ip));
     assert!(remaining_ips.contains(&created3.group_ip));
@@ -4858,7 +4857,7 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
 
     // Create internal admin-scoped group (empty, no members)
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[], // No members (Omicron setup)
@@ -5215,8 +5214,8 @@ async fn test_multicast_empty_then_add_members_ipv6() -> TestResult {
         "Internal group should have 3 members after re-add"
     );
 
-    cleanup_test_group(&switch, external_group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -5238,7 +5237,7 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
 
     // Create internal admin-scoped group (empty, no members)
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[], // No members
@@ -5552,8 +5551,8 @@ async fn test_multicast_empty_then_add_members_ipv4() -> TestResult {
 
     switch.packet_test(vec![send_final], expected_final)?;
 
-    cleanup_test_group(&switch, external_group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -5576,7 +5575,7 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
 
     // Create internal group with members first
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[
@@ -5728,7 +5727,7 @@ async fn test_multicast_rollback_external_group_creation_failure() -> TestResult
         "Source filter table should be unchanged after rollback"
     );
 
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -5749,7 +5748,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
 
     // Create internal group with initial members
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[
@@ -5815,7 +5814,7 @@ async fn test_multicast_rollback_member_update_failure() -> TestResult {
         "Member count should be unchanged after rollback"
     );
 
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -5837,7 +5836,7 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
 
     // Create internal group
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[(PhysPort(15), types::Direction::External)],
@@ -5959,8 +5958,8 @@ async fn test_multicast_rollback_nat_transition_failure() -> TestResult {
         "NAT table should be unchanged after rollback"
     );
 
-    cleanup_test_group(&switch, external_group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, external_group_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -5982,7 +5981,7 @@ async fn test_multicast_rollback_vlan_propagation_consistency() {
 
     // Create internal group with members (so bitmap entry get created)
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[
@@ -6003,7 +6002,7 @@ async fn test_multicast_rollback_vlan_propagation_consistency() {
         .expect("Should be able to dump bitmap table");
 
     // First, delete the internal group to break the NAT target reference
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG)
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG)
         .await
         .expect("Should cleanup internal group");
 
@@ -6112,7 +6111,7 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
     // Create IPv4 SSM group that supports source filters
     let group_ip = IpAddr::V4(Ipv4Addr::new(232, 1, 1, 100)); // SSM range
     let nat_target = types::NatTarget {
-        internal_ip: MULTICAST_NAT_IP.into(),
+        internal_ip: MULTICAST_NAT_IP,
         inner_mac: MacAddr::new(0x01, 0x00, 0x5e, 0x01, 0x01, 0x64).into(),
         vni: 100.into(),
     };
@@ -6205,8 +6204,8 @@ async fn test_multicast_rollback_source_filter_update() -> TestResult {
     );
 
     // Clean up external group first (it references internal group via NAT target)
-    cleanup_test_group(&switch, group_ip, TEST_TAG).await.unwrap();
-    cleanup_test_group(&switch, internal_multicast_ip, TEST_TAG).await
+    cleanup_test_group(switch, group_ip, TEST_TAG).await.unwrap();
+    cleanup_test_group(switch, internal_multicast_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -6227,7 +6226,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
 
     // Create internal group with initial members
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[
@@ -6312,7 +6311,7 @@ async fn test_multicast_rollback_partial_member_addition() -> TestResult {
         "Member count should be unchanged after partial addition rollback"
     );
 
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 #[tokio::test]
@@ -6334,7 +6333,7 @@ async fn test_multicast_rollback_table_operation_failure() {
 
     // Create internal group first
     create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[
@@ -6348,7 +6347,7 @@ async fn test_multicast_rollback_table_operation_failure() {
     .await;
 
     // Delete the internal group to break the NAT target reference
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG)
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG)
         .await
         .expect("Should cleanup internal group");
 
@@ -6474,7 +6473,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
 
     // Create an internal/underlay group
     let _created_group = create_test_multicast_group(
-        &switch,
+        switch,
         internal_group_ip,
         Some(TEST_TAG),
         &[
@@ -6535,7 +6534,7 @@ async fn test_multicast_group_get_underlay() -> TestResult {
             );
         }
     }
-    cleanup_test_group(&switch, internal_group_ip, TEST_TAG).await
+    cleanup_test_group(switch, internal_group_ip, TEST_TAG).await
 }
 
 const SOURCE_FILTER_IPV4_TABLE: &str =
@@ -7126,8 +7125,7 @@ async fn test_update_nonexistent_group_returns_404() -> TestResult {
     // Case: Update non-existent underlay group
     let nonexistent_underlay: types::UnderlayMulticastIpv6 =
         Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 0xdead)
-            .try_into()
-            .unwrap();
+            .into();
 
     let (port_id, link_id) = switch.link_id(PhysPort(15)).unwrap();
     let underlay_update = types::MulticastGroupUpdateUnderlayEntry {
@@ -7225,8 +7223,7 @@ async fn test_underlay_delete_recreate_recovery_flow() -> TestResult {
 
     let group_ip: types::UnderlayMulticastIpv6 =
         Ipv6Addr::new(ADMIN_LOCAL_MULTICAST_PREFIX, 0, 0, 0, 0, 0, 0, 0x501)
-            .try_into()
-            .unwrap();
+            .into();
     let tag = "recovery_flow_test";
 
     // Case: Create underlay group with initial member
