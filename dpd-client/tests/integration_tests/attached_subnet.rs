@@ -15,6 +15,7 @@ use dpd_client::ClientInfo;
 use dpd_client::types;
 use packet::Endpoint;
 use packet::L3Endpoint;
+use packet::Packet;
 use packet::eth;
 use packet::ipv6;
 use packet::udp;
@@ -644,4 +645,92 @@ async fn test_ingress_ipv6_tcp() -> TestResult {
 async fn test_ingress_ipv6_icmp() -> TestResult {
     let switch = &*get_switch().await;
     test_ingress_ipv6(switch, L4Protocol::Icmp).await
+}
+
+async fn attached_subnet_v4_pkts(
+    switch: &Switch,
+    subnet: oxnet::IpNet,
+) -> anyhow::Result<u64> {
+    let entries = switch
+        .client
+        .table_counters(
+            "Ingress.attached_subnet_ingress.attached_subnets_v4",
+            true,
+        )
+        .await?
+        .into_inner();
+    entries
+        .iter()
+        .find(|e| {
+            e.keys.get("subnet").and_then(|s| s.parse().ok()) == Some(subnet)
+        })
+        .with_context(|| format!("no attached_subnets_v4 entry for {subnet}"))?
+        .data
+        .pkts
+        .with_context(|| format!("no packet count for {subnet}"))
+}
+
+async fn userspace_unicast_attached_subnet_test(
+    switch: &Switch,
+    pkt: Packet,
+) -> TestResult {
+    let sc_egress = PhysPort(15);
+    let attached_subnet: oxnet::IpNet = "198.51.100.0/24".parse()?;
+    let tgt = types::InstanceTarget {
+        internal_ip: "fd00:1122:7788:101::4".parse().unwrap(),
+        inner_mac: MacAddr::new(0xa8, 0x40, 0x25, 0xf0, 0x00, 0x01).into(),
+        vni: Vni::new(100).unwrap(),
+    };
+
+    switch.client.attached_subnet_create(&attached_subnet, &tgt).await?;
+    let result: TestResult = async {
+        let baseline = attached_subnet_v4_pkts(switch, attached_subnet).await?;
+        common::userspace_unicast_forward_test(switch, pkt, sc_egress).await?;
+        let after = attached_subnet_v4_pkts(switch, attached_subnet).await?;
+        anyhow::ensure!(
+            after == baseline,
+            "sidecar-tagged frame hit attached_subnets_v4 entry \
+             {attached_subnet} (pkts {baseline} -> {after}); is the \
+             !hdr.sidecar.isValid() gate on attached_subnet_ingress missing?"
+        );
+        Ok(())
+    }
+    .await;
+    let deleted = switch.client.attached_subnet_delete(&attached_subnet).await;
+    result?;
+    deleted?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_userspace_unicast_bypasses_attached_subnet() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let src = Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333)?;
+    let dst = Endpoint::parse("a8:40:25:00:00:01", "198.51.100.5", 4444)?;
+    let pkt = common::gen_udp_packet(src, dst);
+
+    userspace_unicast_attached_subnet_test(switch, pkt).await
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_userspace_geneve_bypasses_attached_subnet() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let inner = common::gen_udp_packet(
+        Endpoint::parse("02:00:00:00:00:01", "172.30.0.5", 5555)?,
+        Endpoint::parse("02:00:00:00:00:02", "172.30.0.6", 6666)?,
+    );
+    let pkt = common::gen_geneve_packet(
+        L3Endpoint::new("e0:d5:5e:67:89:ab".parse()?, "10.10.10.10".parse()?),
+        L3Endpoint::new("a8:40:25:00:00:01".parse()?, "198.51.100.5".parse()?),
+        3333,
+        100,
+        &[],
+        &inner.deparse()?,
+    );
+
+    userspace_unicast_attached_subnet_test(switch, pkt).await
 }

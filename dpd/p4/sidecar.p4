@@ -121,6 +121,11 @@ control Filter(
 		meta.dropped = true;
 	}
 
+	action drop_unexpected_sidecar_hdr() {
+		meta.drop_reason = DROP_UNEXPECTED_SIDECAR_HDR;
+		meta.dropped = true;
+	}
+
 	action claimv4() {
 		meta.is_switch_address = true;
 		ipv4_ctr.count();
@@ -169,6 +174,25 @@ control Filter(
 
 	apply {
 		uplink_ports.apply();
+
+		// Sidecar traffic only arrives from the switch zone via the
+		// service port. Anything else encapped with a sidecar header gets
+		// dropped here, and we count the multicast drops per port.
+		if (hdr.sidecar.isValid() &&
+			ig_intr_md.ingress_port != USER_SPACE_SERVICE_PORT) {
+			drop_unexpected_sidecar_hdr();
+
+			if (meta.is_mcast) {
+				drop_mcast_ctr.count(ig_intr_md.ingress_port);
+			}
+			return;
+		}
+
+		// Sidecar multicast traffic coming from the service port retains the
+		// host's MACs, bypassing the DMAC and switch address checks below.
+		if (hdr.sidecar.isValid() && meta.is_mcast) {
+			return;
+		}
 
 		if (hdr.arp.isValid()) {
 			switch_ipv4_addr.apply();
@@ -351,6 +375,10 @@ control Services(
 		hdr.ethernet.ether_type = hdr.sidecar.sc_ether_type;
 		hdr.sidecar.setInvalid();
 		meta.service_routed = true;
+		// Userspace multicast traffic is sent through `sc_egress` without
+		// replication (rid 0) and, outside ff02, without the link-local bit.
+		// Otherwise, egress would count it as unicast.
+		meta.bridge_hdr.is_mcast_from_userspace = meta.is_mcast;
 		service_ctr.count(SVC_COUNTER_FW_FROM_USER);
 	}
 
@@ -425,7 +453,7 @@ control Services(
 			( false, false, _, true, _, _, false, true, false, true, ICMP6_ECHO, 0 ) : ping6_reply;
 			( false, false, _, true, _, _, false, true, false, true, ICMP6_ECHO, _ ) : drop_bad_ping;
 			( false, false, _, _, USER_SPACE_SERVICE_PORT, true, _, _, _, _, _, _ ) : forward_from_userspace;
-			( false, true, true, _, USER_SPACE_SERVICE_PORT, true, _, _, _, _, _, _ ) : forward_from_userspace;
+			( false, true, _, _, USER_SPACE_SERVICE_PORT, true, _, _, _, _, _, _ ) : forward_from_userspace;
 			( false, false, _, _, _, false, true, _, _, _, _, _ ) : forward_to_userspace;
 			( false, false, _, true, _, _, _, _, _, _, _, _ ) : forward_to_userspace;
 			// Link-local multicast
@@ -2169,19 +2197,29 @@ control Ingress(
 
 		flow_hash.apply(hdr, meta);
 
-		if (!meta.is_mcast || meta.is_link_local_mcastv6) {
+		// Sidecar traffic has already been routed by the host, and its
+		// `sc_egress` is the decision. We skip attached subnets here and NAT
+		// below.
+		if ((!meta.is_mcast || meta.is_link_local_mcastv6) &&
+			!hdr.sidecar.isValid()) {
 			attached_subnet_ingress.apply(hdr, meta);
 		}
 
 		// We perform NAT ingress before multicast replication to ensure
-		// that the NAT'd outer address is used for multicast
-		// replication to inbound groups
-		if (!meta.dropped && !hdr.geneve.isValid()) {
+		// that the NAT'd outer address is used for multicast replication
+		// to inbound groups.
+		//
+		// Switch-zone traffic avoids NATing, and switch-zone multicast
+		// avoids replication. `Services` uses the sidecar header to select
+		// `sc_egress` and then strips off the header.
+		if (!meta.dropped && !hdr.geneve.isValid() &&
+			!hdr.sidecar.isValid()) {
 			nat_ingress.apply(hdr, meta, ig_intr_md, ig_tm_md);
 		}
 
 		if (!meta.dropped) {
-			if (!meta.is_mcast || meta.is_link_local_mcastv6) {
+			if (!meta.is_mcast || meta.is_link_local_mcastv6 ||
+				hdr.sidecar.isValid()) {
 				services.apply(hdr, meta, ig_intr_md, ig_tm_md);
 			} else if (meta.is_mcast && !meta.is_link_local_mcastv6) {
 				mcast_ingress.apply(hdr, meta, ig_intr_md, ig_tm_md);
@@ -2393,6 +2431,7 @@ control Egress(
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) link_local_mcast_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) external_mcast_ctr;
 	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) underlay_mcast_ctr;
+	Counter<bit<64>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) userspace_mcast_ctr;
 	Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS) drop_port_ctr;
 	Counter<bit<32>, bit<8>>(DROP_REASON_MAX, CounterType_t.PACKETS) drop_reason_ctr;
 
@@ -2402,7 +2441,8 @@ control Egress(
 		// We track IPv6 multicast packets separately for counters.
 		bool is_link_local_ipv6_mcast =
 		    meta.bridge_hdr.is_link_local_mcastv6;
-		bool is_mcast = is_egress_rid_mcast || is_link_local_ipv6_mcast;
+		bool is_mcast = is_egress_rid_mcast || is_link_local_ipv6_mcast ||
+		    meta.bridge_hdr.is_mcast_from_userspace;
 
 		if (is_egress_rid_mcast == true) {
 			if (meta.bridge_hdr.ingress_port == eg_intr_md.egress_port) {
@@ -2450,20 +2490,23 @@ control Egress(
 				// group is bifurcated, meaning that we can skip an
 				// mcast_tag check.
 				//
-				// This chain branches on egress_rid first. Within
-				// the scope of is_mcast, a zero rid already implies
-				// link-local, making the last branch avoid a test of
-				// is_link_local_ipv6_mcast. Scope 2 groups are rejected
-				// at the time of creation, meaning that no PRE replica
-				// would carry a link-local outer destination at this
+				// Userspace multicast also arrives with egress_rid == 0.
+				// IPv6 link-local userspace multicast is counted as link-local,
+				// while the rest (including IPv4 224.0.0.0/24) is counted
+				// through userspace_mcast_ctr.
+				//
+				// Scope 2 groups are rejected at the time of creation, meaning that
+				// no PRE replica would carry a link-local outer destination at this
 				// point.
 
 				if (is_egress_rid_mcast && hdr.geneve.isValid()) {
 					underlay_mcast_ctr.count(eg_intr_md.egress_port);
 				} else if (is_egress_rid_mcast) {
 					external_mcast_ctr.count(eg_intr_md.egress_port);
-				} else {
+				} else if (is_link_local_ipv6_mcast) {
 					link_local_mcast_ctr.count(eg_intr_md.egress_port);
+				} else {
+					userspace_mcast_ctr.count(eg_intr_md.egress_port);
 				}
 			} else {
 				unicast_ctr.count(eg_intr_md.egress_port);

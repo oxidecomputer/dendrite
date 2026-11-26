@@ -110,6 +110,9 @@ fn egress_counter_table_name(id: EgressCounterId) -> &'static str {
         EgressCounterId::MulticastExt => "pipe.Egress.external_mcast_ctr",
         EgressCounterId::MulticastLL => "pipe.Egress.link_local_mcast_ctr",
         EgressCounterId::MulticastUL => "pipe.Egress.underlay_mcast_ctr",
+        EgressCounterId::MulticastUserspace => {
+            "pipe.Egress.userspace_mcast_ctr"
+        }
     }
 }
 

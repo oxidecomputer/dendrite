@@ -77,6 +77,12 @@ pub enum EgressCounterId {
     MulticastExt,
     MulticastLL,
     MulticastUL,
+    /// Multicast traffic sent from the switch zone through to `sc_egress`
+    /// (that's not IPv6 link-local, i.e., outside of `ff02::/16`). IPv6
+    /// link-local switch-zone multicast packets count through `MulticastLL`,
+    /// whereas any IPv4 local network control (`224.0.0.0/24`) packets still
+    /// count here.
+    MulticastUserspace,
 }
 
 impl fmt::Display for CounterId {
@@ -116,6 +122,9 @@ impl std::str::FromStr for CounterId {
             "multicastul" | "multicastunderlay" => {
                 CounterId::EgressPipeline(E::MulticastUL)
             }
+            "multicastuserspace" => {
+                CounterId::EgressPipeline(E::MulticastUserspace)
+            }
             x => return Err(format!("No such counter: {x}")),
         };
         Ok(id)
@@ -146,6 +155,7 @@ impl fmt::Display for EgressCounterId {
             EgressCounterId::MulticastExt => "Multicast_External",
             EgressCounterId::MulticastLL => "Multicast_Link_Local",
             EgressCounterId::MulticastUL => "Multicast_Underlay",
+            EgressCounterId::MulticastUserspace => "Multicast_Userspace",
         })
     }
 }

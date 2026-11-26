@@ -823,3 +823,32 @@ async fn test_ingress_ipv6_icmp() -> TestResult {
     let switch = &*get_switch().await;
     test_ingress_ipv6(switch, L4Protocol::Icmp).await
 }
+
+#[tokio::test]
+#[ignore]
+async fn test_userspace_unicast_bypasses_nat() -> TestResult {
+    let switch = &*get_switch().await;
+
+    let sc_egress = PhysPort(15);
+    let nat_ip: Ipv4Addr = "10.20.30.40".parse().unwrap();
+    let (nat_low, nat_high) = (1024, 2047);
+    let tgt = types::NatTarget {
+        internal_ip: "fd00:1122:7788:101::4".parse().unwrap(),
+        inner_mac: MacAddr::new(0xa8, 0x40, 0x25, 0xf0, 0x00, 0x01).into(),
+        vni: Vni::new(100).unwrap(),
+    };
+    let src =
+        Endpoint::parse("e0:d5:5e:67:89:ab", "10.10.10.10", 3333).unwrap();
+    let dst =
+        Endpoint::parse("a8:40:25:00:00:01", &nat_ip.to_string(), nat_low)
+            .unwrap();
+    let pkt = common::gen_udp_packet(src, dst);
+
+    switch.client.nat_ipv4_create(&nat_ip, nat_low, nat_high, &tgt).await?;
+    let result =
+        common::userspace_unicast_forward_test(switch, pkt, sc_egress).await;
+    let deleted = switch.client.nat_ipv4_delete(&nat_ip, nat_low).await;
+    result?;
+    deleted?;
+    Ok(())
+}
