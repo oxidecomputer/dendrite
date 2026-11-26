@@ -94,7 +94,7 @@ async fn validate_routes(
     expected: &[types::Ipv4Route],
 ) -> TestResult {
     if expected.is_empty() {
-        match client.route_ipv4_get(&cidr).await {
+        match client.route_ipv4_get(cidr).await {
             Ok(f) => bail!("found {} targets - expected no route", f.len()),
             Err(_) => Ok(()),
         }
