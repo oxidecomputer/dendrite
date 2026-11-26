@@ -20,7 +20,6 @@ internet-checksum.workspace = true
 ispf.workspace = true
 libc.workspace = true
 kstat-rs.workspace = true
-libnet.workspace = true
 rand.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -39,6 +38,9 @@ oximeter.workspace = true
 oximeter-instruments.workspace = true
 oximeter-producer.workspace = true
 oxnet.workspace = true
+
+[target.'cfg(target_os = "illumos")'.dependencies]
+libnet.workspace = true
 
 [build-dependencies]
 cc = "1.2"
