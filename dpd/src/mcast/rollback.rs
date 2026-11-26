@@ -20,10 +20,10 @@ use super::{
     BitmapVlanUpdate, Direction, ExternalMulticastIp, ExternalNatTarget,
     GroupKind, IpSrc, MulticastGroup, MulticastGroupId, MulticastGroupMember,
     MulticastReplicationInfo, Replication, SourceFilter, UnderlayMulticastIpv6,
-    clear_source_filter, mc_group_clear, mc_group_set, mc_port_clear,
-    mc_port_set, restore_source_filters, set_group_bitmap_entries,
-    set_replication_entry, set_source_filter, update_fwding_tables,
-    update_nat_tables,
+    clear_source_filter, create_port_bitmap, mc_group_clear, mc_group_set,
+    mc_port_clear, mc_port_set, restore_source_filters,
+    set_group_bitmap_entries, set_replication_entry, set_source_filter,
+    update_fwding_tables, update_nat_tables,
 };
 use crate::{
     Switch, table,
@@ -410,7 +410,23 @@ impl<'a> GroupCreateRollbackContext<'a> {
             return Ok(());
         };
 
-        unwind_outcome([
+        self.log_rollback_error(
+            "delete IPv6 replication entry",
+            &format!("for group {ipv6}"),
+            table::mcast::mcast_replication::clear_ipv6_entry(
+                self.switch,
+                ipv6,
+            ),
+        )
+        .inspect_err(|_| {
+            warn!(
+                self.switch.log,
+                "replication entry delete failed, skipping decap bitmap delete";
+                "group" => %ipv6,
+                "external_group_id" => %self.external_id,
+            );
+        })
+        .and_then(|_| {
             self.log_rollback_error(
                 "delete IPv6 egress bitmap entry",
                 &format!("for external group {}", self.external_id),
@@ -418,16 +434,8 @@ impl<'a> GroupCreateRollbackContext<'a> {
                     self.switch,
                     self.external_id,
                 ),
-            ),
-            self.log_rollback_error(
-                "delete IPv6 replication entry",
-                &format!("for group {ipv6}"),
-                table::mcast::mcast_replication::clear_ipv6_entry(
-                    self.switch,
-                    ipv6,
-                ),
-            ),
-        ])
+            )
+        })
     }
 
     fn remove_external_entries(&self) -> DpdResult<()> {
@@ -531,15 +539,58 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         Self { switch, original_group, table_vlan_id }
     }
 
-    /// Restore table entries to original state.
-    fn restore_tables(&self) -> DpdResult<()> {
+    fn restore_union_bitmap(
+        &self,
+        added_ports: &[MulticastGroupMember],
+    ) -> DpdResult<()> {
+        if !matches!(
+            self.original_group.kind,
+            GroupKind::Underlay { replication: Replication::Active { .. }, .. }
+        ) {
+            return Ok(());
+        }
+
+        // Port rollback can immediately enable replicas on Tofino for example.
+        //
+        // This restores decapsulation for the original and added members before
+        // modifying any ports.
+        let union_bitmap = create_port_bitmap(
+            self.original_group.members().chain(added_ports),
+            Direction::External,
+        );
+        self.log_rollback_error(
+            "restore decap bitmap",
+            &format!("for group {}", self.group_ip()),
+            table::mcast::mcast_egress::set_bitmap_entry(
+                self.switch,
+                self.external_group_id(),
+                &union_bitmap,
+                self.table_vlan_id,
+            ),
+        )
+    }
+
+    fn restore_tables(
+        &self,
+        added_ports: &[MulticastGroupMember],
+        ports_restored: bool,
+    ) -> DpdResult<()> {
         match &self.original_group.kind {
             GroupKind::Underlay {
                 replication: Replication::Active { .. },
                 ..
-            } => self
-                .restore_fwding_tables()
-                .and_then(|()| self.restore_replication()),
+            } => {
+                self.restore_replication()?;
+                if ports_restored
+                    && added_ports
+                        .iter()
+                        .any(|member| member.direction == Direction::External)
+                {
+                    self.restore_fwding_tables()
+                } else {
+                    Ok(())
+                }
+            }
             GroupKind::Underlay { replication: Replication::Empty, .. } => {
                 unwind_outcome([
                     self.remove_added_bitmap(),
@@ -651,6 +702,10 @@ impl<'a> GroupUpdateRollbackContext<'a> {
 
     /// Undo an underlay group's port changes, restore its tables, and report
     /// the result with the failure that originally triggered the rollback.
+    ///
+    /// If the decap bitmap can't be restored to cover both original
+    /// and added members, rollback removes the added ports and avoids re-adding
+    /// removed ports.
     pub(crate) fn rollback_underlay_and_restore(
         &self,
         err: DpdError,
@@ -658,11 +713,23 @@ impl<'a> GroupUpdateRollbackContext<'a> {
         added_ports: &[MulticastGroupMember],
         removed_ports: &[MulticastGroupMember],
     ) -> DpdError {
-        after_unwind(
-            err,
-            self.rollback_underlay_update(added_ports, removed_ports, repl)
-                .and(self.restore_tables()),
-        )
+        if let Err(unwind) = self.restore_union_bitmap(added_ports) {
+            if !removed_ports.is_empty() {
+                warn!(
+                    self.switch.log,
+                    "decap bitmap restore failed, leaving removed ports out \
+                     of the group";
+                    "group" => %self.group_ip(),
+                    "skipped_ports" => removed_ports.len(),
+                );
+            }
+            let ports = self.rollback_underlay_update(added_ports, &[], repl);
+            return after_unwind(err, unwind_outcome([Err(unwind), ports]));
+        }
+        let ports =
+            self.rollback_underlay_update(added_ports, removed_ports, repl);
+        let tables = self.restore_tables(added_ports, ports.is_ok());
+        after_unwind(err, ports.and(tables))
     }
 }
 
@@ -672,11 +739,11 @@ impl<'a> GroupUpdateRollbackContext<'a> {
 /// failed (compared by position in the sequence).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum DeleteStep {
+    /// The external group's NAT ingress entry.
+    Nat,
     /// The external group's source filter entries. Removal is per entry and
     /// can stop partway, which is why rollback re-adds every source.
     SourceFilters,
-    /// The external group's NAT ingress entry.
-    Nat,
     /// The underlay group's replication entry.
     Replication,
     /// The underlay group's egress decap bitmap entry.
@@ -728,11 +795,12 @@ impl<'a> GroupDeleteRollbackContext<'a> {
     fn restore_tables(&self, failed_at: DeleteStep) -> DpdResult<()> {
         match &self.group.kind {
             GroupKind::External { sources, nat_target, .. } => {
-                let restored = self.readd_source_filters(sources);
+                // Keep NAT detached until all stored source filters are back.
                 if failed_at > DeleteStep::Nat {
-                    restored.and(self.readd_nat(*nat_target))
+                    self.readd_source_filters(sources)
+                        .and_then(|()| self.readd_nat(*nat_target))
                 } else {
-                    restored
+                    Ok(())
                 }
             }
             GroupKind::Underlay {
@@ -933,6 +1001,7 @@ mod tests {
 #[cfg(all(test, feature = "chaos"))]
 mod chaos_tests {
     use std::{
+        borrow::Borrow,
         collections::BTreeMap,
         convert::Infallible,
         sync::{Arc, Mutex},
@@ -954,6 +1023,20 @@ mod chaos_tests {
         Switch, config::Config, mcast::*, table::mcast::mcast_nat,
         types::DpdError,
     };
+
+    impl PendingRepairs {
+        fn is_empty(&self) -> bool {
+            self.0.is_empty()
+        }
+
+        fn attempted_tgt<Q>(&self, key: &Q) -> Option<UnderlayMulticastIpv6>
+        where
+            GroupKey: Borrow<Q>,
+            Q: Ord + ?Sized,
+        {
+            self.0.get(key).and_then(|repair| repair.attempted_tgt)
+        }
+    }
 
     /// Captures the fields of each [`ROLLBACK_FAILURE_MSG`] record.
     #[derive(Clone, Default)]
@@ -1409,7 +1492,7 @@ mod chaos_tests {
         );
         assert_eq!(groups.nat_target_refs.is_empty(), !source_removal_fails);
         assert_eq!(
-            groups.pending_repairs.contains_key(&external_ip),
+            groups.pending_repairs.contains(&external_ip),
             source_removal_fails
         );
 
@@ -1518,8 +1601,8 @@ mod chaos_tests {
         assert_eq!(groups.groups.len(), 2);
         assert!(groups.groups.contains_key(&external_ip));
         assert!(!groups.nat_target_refs.is_empty());
-        assert!(groups.pending_repairs.contains_key(&external_ip));
-        assert!(groups.pending_repairs.contains_key(&underlay_key));
+        assert!(groups.pending_repairs.contains(&external_ip));
+        assert!(groups.pending_repairs.contains(&underlay_key));
         assert_eq!(
             serde_json::to_value(
                 MulticastGroupUnderlayResponse::try_from(
@@ -1585,12 +1668,14 @@ mod chaos_tests {
                 TableType::McastEgressDecapPorts,
                 TableOp::EntryUpdate,
                 CallRange::nth(2),
+                AsicError::Synthetic,
             );
         } else {
             switch.asic_hdl.inject_table_faults(
                 nat_table,
                 TableOp::EntryUpdate,
                 CallRange::nth(1),
+                AsicError::Synthetic,
             );
         }
         let before_route_action = route_action(&switch, external_ip);
@@ -1766,6 +1851,7 @@ mod chaos_tests {
                 source_table,
                 TableOp::EntryAdd,
                 CallRange::starting_at(1),
+                AsicError::Synthetic,
             );
             let update = || MulticastGroupUpdateExternalEntry {
                 internal_forwarding: ExternalInternalForwarding {
@@ -1792,12 +1878,13 @@ mod chaos_tests {
             );
             {
                 let mcast = switch.mcast.lock().unwrap();
+                assert!(mcast.pending_repairs.contains(&external_ip));
                 assert_eq!(
-                    mcast.pending_repairs.get(&external_ip),
-                    Some(&None)
+                    mcast.pending_repairs.attempted_tgt(&external_ip),
+                    None
                 );
-                assert!(!mcast.pending_repairs.contains_key(&underlay_key));
-                assert!(!mcast.pending_repairs.contains_key(&target_key));
+                assert!(!mcast.pending_repairs.contains(&underlay_key));
+                assert!(!mcast.pending_repairs.contains(&target_key));
             }
 
             let res = get_group(&switch, external_ip);
@@ -1827,6 +1914,144 @@ mod chaos_tests {
 
             get_group(&switch, underlay_key.ip()).unwrap();
             assert!(switch.mcast.lock().unwrap().pending_repairs.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_external_cleanup_without_listing() {
+        for (group_ip, source_ip, del) in [
+            ("224.1.2.3", "192.0.2.1", false),
+            ("ff0e::1", "2001:db8::1", false),
+            ("224.1.2.3", "192.0.2.1", true),
+            ("ff0e::1", "2001:db8::1", true),
+        ] {
+            let external_ip: IpAddr = group_ip.parse().unwrap();
+            let (route_table, source_table, _) = external_tables(external_ip);
+            let (switch, _logs) = chaos_switch(Config::default());
+            let (underlay_ip, _) = install_underlay_group(&switch);
+            let nat_target = external_nat_target(external_ip, underlay_ip);
+            let tag = "external-unlisted-cleanup-test";
+            add_group_external(
+                &switch,
+                external_entry(
+                    external_ip,
+                    tag,
+                    nat_target,
+                    None,
+                    serde_json::json!([
+                        { "type": "exact", "value": source_ip }
+                    ]),
+                ),
+            )
+            .unwrap();
+            let stored =
+                serde_json::to_value(get_group(&switch, external_ip).unwrap())
+                    .unwrap();
+            let stored_sources = source_filter_prefixes(&switch, external_ip);
+
+            switch.asic_hdl.inject_table_faults(
+                source_table,
+                TableOp::EntryList,
+                CallRange::starting_at(1),
+                |_| AsicError::OperationUnsupported,
+            );
+            switch.asic_hdl.inject_table_faults(
+                source_table,
+                TableOp::EntryDel,
+                CallRange::starting_at(2),
+                AsicError::Synthetic,
+            );
+            switch.asic_hdl.inject_table_faults(
+                route_table,
+                TableOp::EntryUpdate,
+                CallRange::nth(1),
+                AsicError::Synthetic,
+            );
+            let err = modify_group_external(
+                &switch,
+                ExternalMulticastIp::new(external_ip).unwrap(),
+                tag,
+                MulticastGroupUpdateExternalEntry {
+                    internal_forwarding: ExternalInternalForwarding {
+                        nat_target: nat_target.try_into().unwrap(),
+                    },
+                    external_forwarding: ExternalForwarding { vlan_id: None },
+                    sources: Some(vec![SourceEntry::Any]),
+                },
+            )
+            .unwrap_err();
+            assert!(matches!(err, DpdError::Unwind { .. }), "{err:?}");
+            assert_eq!(table_usage(&switch, source_table).0, 2);
+
+            let res = if del {
+                del_group(&switch, external_ip, tag)
+            } else {
+                get_group(&switch, external_ip).map(|_| ())
+            };
+            assert!(
+                matches!(res, Err(DpdError::McastRepairPending(_))),
+                "{res:?}"
+            );
+            assert_eq!(
+                nat_target_addr(&switch, external_ip),
+                (!del).then(|| Ipv6Addr::from(underlay_ip).to_string()),
+            );
+            assert_eq!(table_usage(&switch, source_table).0, 2);
+            {
+                let mcast = switch.mcast.lock().unwrap();
+                assert!(mcast.pending_repairs.contains(&external_ip));
+                assert_eq!(
+                    mcast.pending_repairs.sources(&external_ip),
+                    BTreeSet::from([IpSrc::Any])
+                );
+                assert_eq!(
+                    serde_json::to_value(MulticastGroupResponse::from(
+                        &mcast.groups[&external_ip]
+                    ))
+                    .unwrap(),
+                    stored,
+                );
+                assert_eq!(
+                    mcast.nat_target_refs.get(&underlay_ip).map(GroupKey::ip),
+                    Some(external_ip)
+                );
+            }
+
+            switch.asic_hdl.clear_table_faults(source_table, TableOp::EntryDel);
+            if del {
+                del_group(&switch, external_ip, tag).unwrap();
+                assert_eq!(table_usage(&switch, source_table).0, 0);
+                assert!(route_action(&switch, external_ip).is_none());
+                assert!(nat_target_addr(&switch, external_ip).is_none());
+                let mcast = switch.mcast.lock().unwrap();
+                assert!(!mcast.groups.contains_key(&external_ip));
+                assert!(!mcast.nat_target_refs.contains_key(&underlay_ip));
+            } else {
+                assert_eq!(
+                    serde_json::to_value(
+                        get_group(&switch, external_ip).unwrap()
+                    )
+                    .unwrap(),
+                    stored,
+                );
+                assert_eq!(table_usage(&switch, source_table).0, 1);
+            }
+            assert!(
+                !switch
+                    .mcast
+                    .lock()
+                    .unwrap()
+                    .pending_repairs
+                    .contains(&external_ip)
+            );
+
+            switch
+                .asic_hdl
+                .clear_table_faults(source_table, TableOp::EntryList);
+            assert_eq!(
+                source_filter_prefixes(&switch, external_ip),
+                if del { BTreeSet::new() } else { stored_sources }
+            );
         }
     }
 
@@ -1866,6 +2091,60 @@ mod chaos_tests {
         }
     }
 
+    // Without per-table dumps (e.g., SoftNPU), only the group's stored
+    // sources get removed; the untracked entries remain in place.
+    #[test]
+    fn test_delete_unlisted_source_filters() {
+        for (group_ip, first_source, second_source, stray_ip) in [
+            ("224.1.2.3", "192.0.2.1", "192.0.2.2", "192.0.2.3"),
+            ("ff0e::1", "2001:db8::1", "2001:db8::2", "2001:db8::3"),
+        ] {
+            let external_ip: IpAddr = group_ip.parse().unwrap();
+            let (_, source_table, _) = external_tables(external_ip);
+            let (switch, _logs) = chaos_switch(Config::default());
+            let (underlay_ip, _) = install_underlay_group(&switch);
+            let tag = "external-delete-unlisted-test";
+            add_group_external(
+                &switch,
+                external_entry(
+                    external_ip,
+                    tag,
+                    external_nat_target(external_ip, underlay_ip),
+                    None,
+                    serde_json::json!([
+                        { "type": "exact", "value": first_source },
+                        { "type": "exact", "value": second_source },
+                    ]),
+                ),
+            )
+            .unwrap();
+            set_source_filter(
+                &switch,
+                external_ip,
+                IpSrc::Exact(stray_ip.parse().unwrap()),
+            )
+            .unwrap();
+            assert_eq!(source_filter_prefixes(&switch, external_ip).len(), 3);
+
+            switch.asic_hdl.inject_table_faults(
+                source_table,
+                TableOp::EntryList,
+                CallRange::starting_at(1),
+                |_| AsicError::OperationUnsupported,
+            );
+            del_group(&switch, external_ip, tag).unwrap();
+            switch
+                .asic_hdl
+                .clear_table_faults(source_table, TableOp::EntryList);
+
+            let prefix_len = if external_ip.is_ipv4() { 32 } else { 128 };
+            assert_eq!(
+                source_filter_prefixes(&switch, external_ip),
+                BTreeSet::from([format!("{stray_ip}/{prefix_len}")])
+            );
+        }
+    }
+
     #[test]
     fn test_external_delete_vlan_cleanup_failure_marks_group() {
         for group_ip in ["224.1.2.3", "ff0e::1"] {
@@ -1892,6 +2171,7 @@ mod chaos_tests {
                 TableType::McastEgressDecapPorts,
                 TableOp::EntryUpdate,
                 CallRange::starting_at(1),
+                AsicError::Synthetic,
             );
             del_group(&switch, external_ip, tag).unwrap();
             assert!(source_filter_prefixes(&switch, external_ip).is_empty());
@@ -1903,8 +2183,8 @@ mod chaos_tests {
             {
                 let mcast = switch.mcast.lock().unwrap();
                 assert!(!mcast.groups.contains_key(&external_ip));
-                assert!(!mcast.pending_repairs.contains_key(&external_ip));
-                assert!(mcast.pending_repairs.contains_key(&underlay_key));
+                assert!(!mcast.pending_repairs.contains(&external_ip));
+                assert!(mcast.pending_repairs.contains(&underlay_key));
             }
 
             switch.asic_hdl.clear_table_faults(
@@ -1933,11 +2213,13 @@ mod chaos_tests {
             TableType::RouteIpv6Mcast,
             TableOp::EntryAdd,
             CallRange::nth(1),
+            AsicError::Synthetic,
         );
         switch.asic_hdl.inject_table_faults(
             TableType::McastIpv6,
             TableOp::EntryDel,
             CallRange::nth(1),
+            AsicError::Synthetic,
         );
 
         let err = add_group_underlay(&switch, create()).unwrap_err();
@@ -1947,7 +2229,7 @@ mod chaos_tests {
         let key = GroupKey::underlay(membership_group_ip());
         let retained = {
             let mcast = switch.mcast.lock().unwrap();
-            assert!(mcast.pending_repairs.contains_key(&key));
+            assert!(mcast.pending_repairs.contains(&key));
             let group = &mcast.groups[&key];
             [group.external_group_id(), group.underlay_group_id()]
         };
@@ -1971,13 +2253,14 @@ mod chaos_tests {
             TableType::RouteIpv6Mcast,
             TableOp::EntryAdd,
             CallRange::starting_at(1),
+            AsicError::Synthetic,
         );
         let err =
             get_group_underlay(&switch, membership_group_ip()).unwrap_err();
         assert!(matches!(err, DpdError::McastRepairPending(_)), "{err:?}");
         {
             let mcast = switch.mcast.lock().unwrap();
-            assert!(mcast.pending_repairs.contains_key(&key));
+            assert!(mcast.pending_repairs.contains(&key));
             let group = &mcast.groups[&key];
             assert_eq!(
                 [group.external_group_id(), group.underlay_group_id()],
@@ -2028,7 +2311,7 @@ mod chaos_tests {
         let (switch, _logs) = chaos_switch(Config::default());
         create_membership_group(&switch, &members[..2]);
         let key = GroupKey::underlay(membership_group_ip());
-        switch.mcast.lock().unwrap().pending_repairs.insert(key, None);
+        switch.mcast.lock().unwrap().pending_repairs.insert(key);
         switch
             .asic_hdl
             .inject_mc_faults(McOp::McPortList, CallRange::starting_at(1));
@@ -2083,7 +2366,7 @@ mod chaos_tests {
         let key = GroupKey::underlay(membership_group_ip());
         let [external_id, underlay_id] = {
             let mcast = switch.mcast.lock().unwrap();
-            assert!(mcast.pending_repairs.contains_key(&key));
+            assert!(mcast.pending_repairs.contains(&key));
             let group = &mcast.groups[&key];
             [group.external_group_id(), group.underlay_group_id()]
         };
@@ -2126,11 +2409,13 @@ mod chaos_tests {
                 route_table,
                 TableOp::EntryAdd,
                 CallRange::nth(1),
+                AsicError::Synthetic,
             );
             switch.asic_hdl.inject_table_faults(
                 nat_table,
                 TableOp::EntryDel,
                 CallRange::nth(1),
+                AsicError::Synthetic,
             );
 
             let err = add_group_external(&switch, create()).unwrap_err();
@@ -2138,8 +2423,8 @@ mod chaos_tests {
             assert_eq!(table_usage(&switch, nat_table).0, 1);
             let retained = {
                 let mcast = switch.mcast.lock().unwrap();
-                assert!(mcast.pending_repairs.contains_key(&external_ip));
-                assert!(mcast.pending_repairs.contains_key(&underlay_key));
+                assert!(mcast.pending_repairs.contains(&external_ip));
+                assert!(mcast.pending_repairs.contains(&underlay_key));
                 assert_eq!(
                     mcast.nat_target_refs.get(&underlay_ip).map(GroupKey::ip),
                     Some(external_ip),
@@ -2183,12 +2468,13 @@ mod chaos_tests {
                 route_table,
                 TableOp::EntryAdd,
                 CallRange::starting_at(1),
+                AsicError::Synthetic,
             );
             let err = get_group(&switch, external_ip).unwrap_err();
             assert!(matches!(err, DpdError::McastRepairPending(_)), "{err:?}");
             {
                 let mcast = switch.mcast.lock().unwrap();
-                assert!(mcast.pending_repairs.contains_key(&external_ip));
+                assert!(mcast.pending_repairs.contains(&external_ip));
                 assert_eq!(
                     mcast.nat_target_refs.get(&underlay_ip).map(GroupKey::ip),
                     Some(external_ip),
@@ -2243,11 +2529,13 @@ mod chaos_tests {
             TableType::McastIpv6,
             TableOp::EntryUpdate,
             CallRange::nth(1),
+            AsicError::Synthetic,
         );
         switch.asic_hdl.inject_table_faults(
             TableType::McastEgressDecapPorts,
             TableOp::EntryUpdate,
             CallRange::nth(1),
+            AsicError::Synthetic,
         );
 
         let tag = "external-create-vlan-test";
@@ -2270,8 +2558,8 @@ mod chaos_tests {
         );
         {
             let mcast = switch.mcast.lock().unwrap();
-            assert!(mcast.pending_repairs.contains_key(&underlay_key));
-            assert!(mcast.pending_repairs.contains_key(&external_ip));
+            assert!(mcast.pending_repairs.contains(&underlay_key));
+            assert!(mcast.pending_repairs.contains(&external_ip));
         }
 
         switch
@@ -2317,12 +2605,7 @@ mod chaos_tests {
                 underlay_ip.into(),
             )
             .unwrap();
-            switch
-                .mcast
-                .lock()
-                .unwrap()
-                .pending_repairs
-                .insert(underlay_key, None);
+            switch.mcast.lock().unwrap().pending_repairs.insert(underlay_key);
             switch
                 .asic_hdl
                 .inject_mc_faults(McOp::McPortList, CallRange::starting_at(1));
@@ -2331,7 +2614,7 @@ mod chaos_tests {
             assert!(matches!(err, DpdError::McastRepairPending(_)), "{err:?}");
             {
                 let mcast = switch.mcast.lock().unwrap();
-                assert!(mcast.pending_repairs.contains_key(&underlay_key));
+                assert!(mcast.pending_repairs.contains(&underlay_key));
                 assert!(!mcast.groups.contains_key(&external_ip));
                 assert!(!mcast.nat_target_refs.contains_key(&underlay_ip));
             }
@@ -2382,12 +2665,7 @@ mod chaos_tests {
                 ),
             )
             .unwrap();
-            switch
-                .mcast
-                .lock()
-                .unwrap()
-                .pending_repairs
-                .insert(target_key, None);
+            switch.mcast.lock().unwrap().pending_repairs.insert(target_key);
 
             let retarget = || MulticastGroupUpdateExternalEntry {
                 internal_forwarding: ExternalInternalForwarding {
@@ -2411,7 +2689,7 @@ mod chaos_tests {
             assert!(matches!(err, DpdError::McastRepairPending(_)), "{err:?}");
             {
                 let mcast = switch.mcast.lock().unwrap();
-                assert!(mcast.pending_repairs.contains_key(&target_key));
+                assert!(mcast.pending_repairs.contains(&target_key));
                 assert_eq!(
                     mcast.nat_target_refs.get(&underlay_ip).map(GroupKey::ip),
                     Some(external_ip),
@@ -2471,7 +2749,7 @@ mod chaos_tests {
 
             let target_group_id = {
                 let mut mcast = switch.mcast.lock().unwrap();
-                mcast.pending_repairs.insert(unrelated_key, None);
+                mcast.pending_repairs.insert(unrelated_key);
                 mcast.groups[&fixture.target_key].external_group_id()
             };
             assert_eq!(
@@ -2610,12 +2888,14 @@ mod chaos_tests {
             TableType::McastEgressDecapPorts,
             TableOp::EntryUpdate,
             decap_faults,
+            AsicError::Synthetic,
         );
         if let Some(range) = nat_faults {
             switch.asic_hdl.inject_table_faults(
                 nat_table,
                 TableOp::EntryUpdate,
                 range,
+                AsicError::Synthetic,
             );
         }
 
@@ -2639,8 +2919,8 @@ mod chaos_tests {
             GroupKey::external(ExternalMulticastIp::new(external_ip).unwrap());
         let mcast = fixture.switch.mcast.lock().unwrap();
         assert_eq!(
-            mcast.pending_repairs.get(&group_key),
-            Some(&Some(target_ip)),
+            mcast.pending_repairs.attempted_tgt(&group_key),
+            Some(target_ip),
         );
         drop(mcast);
         fixture
@@ -2760,15 +3040,77 @@ mod chaos_tests {
             route_table,
             TableOp::EntryDel,
             CallRange::nth(1),
+            AsicError::Synthetic,
+        );
+
+        del_group(switch, external_ip, fixture.tag).unwrap_err();
+        assert_eq!(nat_target_addr(switch, external_ip), None);
+        assert_eq!(fixture.bitmap_vlan(fixture.target_key), Some(None));
+
+        del_group(switch, external_ip, fixture.tag).unwrap();
+        assert_eq!(nat_target_addr(switch, external_ip), None);
+        assert_eq!(fixture.bitmap_vlan(fixture.target_key), Some(None));
+        fixture.assert_settled();
+    }
+
+    #[test]
+    fn test_failed_retarget_delete_defers_repair() {
+        let external_ip = "239.1.2.3".parse().unwrap();
+        let fixture = failed_retarget(
+            external_ip,
+            CallRange::nth(2),
+            Some(CallRange::starting_at(2)),
+        );
+        let switch = &fixture.switch;
+        let (route_table, _, _) = external_tables(external_ip);
+        let external_key =
+            GroupKey::external(ExternalMulticastIp::new(external_ip).unwrap());
+        switch.asic_hdl.inject_table_faults(
+            route_table,
+            TableOp::EntryDel,
+            CallRange::nth(1),
+            AsicError::Synthetic,
+        );
+        switch.asic_hdl.inject_table_faults(
+            TableType::McastEgressDecapPorts,
+            TableOp::EntryUpdate,
+            CallRange::starting_at(1),
+            AsicError::Synthetic,
         );
 
         del_group(switch, external_ip, fixture.tag).unwrap_err();
         assert_eq!(nat_target_addr(switch, external_ip), None);
         assert_eq!(fixture.bitmap_vlan(fixture.target_key), Some(Some(10)));
+        {
+            let mcast = switch.mcast.lock().unwrap();
+            assert!(mcast.pending_repairs.contains(&fixture.target_key));
+            assert_eq!(
+                mcast.pending_repairs.attempted_tgt(&external_key),
+                None
+            );
+        }
+
+        let err = get_group(switch, fixture.target_key.ip()).unwrap_err();
+        assert!(matches!(err, DpdError::McastRepairPending(_)), "{err:?}");
+
+        switch.asic_hdl.clear_table_faults(
+            TableType::McastEgressDecapPorts,
+            TableOp::EntryUpdate,
+        );
+        get_group(switch, fixture.target_key.ip()).unwrap();
+        assert_eq!(fixture.bitmap_vlan(fixture.target_key), Some(None));
+        assert!(
+            !switch
+                .mcast
+                .lock()
+                .unwrap()
+                .pending_repairs
+                .contains(&fixture.target_key)
+        );
 
         del_group(switch, external_ip, fixture.tag).unwrap();
         assert_eq!(nat_target_addr(switch, external_ip), None);
-        get_group(switch, fixture.target_key.ip()).unwrap();
+        assert_eq!(fixture.bitmap_vlan(fixture.underlay_key), Some(None));
         assert_eq!(fixture.bitmap_vlan(fixture.target_key), Some(None));
         fixture.assert_settled();
     }
@@ -2786,6 +3128,7 @@ mod chaos_tests {
             TableType::McastEgressDecapPorts,
             TableOp::EntryUpdate,
             CallRange::starting_at(3),
+            AsicError::Synthetic,
         );
 
         get_group(switch, external_ip).unwrap();
@@ -2817,6 +3160,7 @@ mod chaos_tests {
     fn external_update_readds_missing_bitmap(
         external_ip: IpAddr,
         target_changed: bool,
+        old_vlan_id: Option<u16>,
     ) {
         let (switch, logs) = chaos_switch(Config::default());
         let (underlay_ip, underlay_key) = install_underlay_group(&switch);
@@ -2834,7 +3178,7 @@ mod chaos_tests {
                     "group_ip": external_ip,
                     "tag": tag,
                     "internal_forwarding": { "nat_target": nat_target },
-                    "external_forwarding": { "vlan_id": 10 },
+                    "external_forwarding": { "vlan_id": old_vlan_id },
                     "sources": null,
                 }),
             )
@@ -2863,7 +3207,11 @@ mod chaos_tests {
                     .unwrap(),
                 },
                 external_forwarding: ExternalForwarding {
-                    vlan_id: Some(if target_changed { 10 } else { 20 }),
+                    vlan_id: if target_changed {
+                        old_vlan_id
+                    } else {
+                        Some(20)
+                    },
                 },
                 sources: None,
             },
@@ -2885,7 +3233,7 @@ mod chaos_tests {
         };
         if target_changed {
             assert_eq!(bitmap_vlan(underlay_key), Some(None));
-            assert_eq!(bitmap_vlan(target_key), Some(Some(10)));
+            assert_eq!(bitmap_vlan(target_key), Some(old_vlan_id));
         } else {
             assert_eq!(bitmap_vlan(underlay_key), Some(Some(20)));
         }
@@ -2898,6 +3246,7 @@ mod chaos_tests {
             external_update_readds_missing_bitmap(
                 group_ip.parse().unwrap(),
                 false,
+                Some(10),
             );
         }
     }
@@ -2905,10 +3254,14 @@ mod chaos_tests {
     #[test]
     fn test_external_retarget_readds_missing_bitmap() {
         for group_ip in ["224.1.2.3", "ff0e::1"] {
-            external_update_readds_missing_bitmap(
-                group_ip.parse().unwrap(),
-                true,
-            );
+            let external_ip = group_ip.parse().unwrap();
+            for vlan_id in [None, Some(10)] {
+                external_update_readds_missing_bitmap(
+                    external_ip,
+                    true,
+                    vlan_id,
+                );
+            }
         }
     }
 
@@ -3190,7 +3543,6 @@ mod chaos_tests {
                     u32::from(!bitmap_missing),
                     "{context}"
                 );
-
                 let requested_members = if membership_changed {
                     let kept: Vec<_> = members
                         .iter()
@@ -3227,6 +3579,10 @@ mod chaos_tests {
 
                 let groups = switch.mcast.lock().unwrap();
                 assert!(groups.groups.contains_key(&underlay_key));
+                assert!(
+                    !groups.pending_repairs.contains(&underlay_key),
+                    "{context}"
+                );
                 assert_eq!(
                     groups.free_group_ids.lock().unwrap().len(),
                     free_ids - 2,
@@ -3409,6 +3765,7 @@ mod chaos_tests {
                     TableType::McastEgressDecapPorts,
                     TableOp::EntryDel,
                     CallRange::nth(1),
+                    AsicError::Synthetic,
                 );
             }
         }
@@ -3821,8 +4178,8 @@ mod chaos_tests {
         assert_eq!(table_usage(&switch, nat_table), (1, 1, 0, 0));
         assert_eq!(
             table_usage(&switch, source_table),
-            (1, 2, 1, 0),
-            "source filters were not restored"
+            before_filters,
+            "source filters changed despite the NAT delete failure"
         );
 
         let external_key =
@@ -4060,39 +4417,32 @@ mod chaos_tests {
         let external_ip: IpAddr = "239.1.2.3".parse().unwrap();
         let (route_table, source_table, nat_table) =
             external_tables(external_ip);
-        let mut config = Config::default();
-        config.asic_config.table_entry_del.values.insert(nat_table, 1.0);
-        config.asic_config.table_entry_add.values.insert(source_table, 1.0);
-
-        let (switch, logs) = chaos_switch(config);
+        let (switch, logs) = chaos_switch(Config::default());
         let (underlay_ip, underlay_key) = install_underlay_group(&switch);
-        let nat_target = external_nat_target(external_ip, underlay_ip);
-        let IpAddr::V4(ipv4) = external_ip else { unreachable!() };
-        mcast_nat::set_ipv4_entry(&switch, ipv4, nat_target).unwrap();
-        table::mcast::mcast_route::set_ipv4_entry(&switch, ipv4, None).unwrap();
-
         let tag = "external-del-restore-failure-test";
-        let group_ip = ExternalMulticastIp::new(external_ip).unwrap();
-        let external_key = GroupKey::external(group_ip);
-        {
-            let mut groups = switch.mcast.lock().unwrap();
-            let underlay = &groups.groups[&underlay_key];
-            let external = MulticastGroup {
-                external_scoped_group: underlay.external_scoped_group.clone(),
-                underlay_scoped_group: underlay.underlay_scoped_group.clone(),
-                tag: tag.to_string(),
-                kind: GroupKind::External {
-                    group_ip,
-                    nat_target: nat_target.try_into().unwrap(),
-                    vlan_id: None,
-                    sources: SourceFilter::from_exact(["192.0.2.1"
-                        .parse::<ExactSource>()
-                        .unwrap()]),
-                },
-            };
-            groups.groups.insert(external_key, external);
-            groups.add_forwarding_refs(external_key, underlay_ip);
-        }
+        add_group_external(
+            &switch,
+            external_entry(
+                external_ip,
+                tag,
+                external_nat_target(external_ip, underlay_ip),
+                None,
+                serde_json::json!([{ "type": "exact", "value": "192.0.2.1" }]),
+            ),
+        )
+        .unwrap();
+        switch.asic_hdl.inject_table_faults(
+            route_table,
+            TableOp::EntryDel,
+            CallRange::nth(1),
+            AsicError::Synthetic,
+        );
+        switch.asic_hdl.inject_table_faults(
+            source_table,
+            TableOp::EntryAdd,
+            CallRange::nth(1),
+            AsicError::Synthetic,
+        );
 
         let before_route = table_usage(&switch, route_table);
 
@@ -4114,7 +4464,7 @@ mod chaos_tests {
             Some(common::ROLLBACK_FAILURE_ERROR_CODE)
         );
 
-        assert_eq!(table_usage(&switch, nat_table), (1, 1, 0, 0));
+        assert_eq!(table_usage(&switch, nat_table), (0, 1, 1, 0));
         assert_eq!(table_usage(&switch, route_table), before_route);
         assert_eq!(table_usage(&switch, source_table).0, 0);
 
@@ -4126,8 +4476,12 @@ mod chaos_tests {
             assert!(errs[0]["error"].contains("table_entry_add"));
         }
 
+        let external_key =
+            GroupKey::external(ExternalMulticastIp::new(external_ip).unwrap());
         let groups = switch.mcast.lock().unwrap();
         assert!(groups.groups.contains_key(&external_key));
+        assert!(groups.pending_repairs.contains(&external_key));
+        assert!(groups.pending_repairs.contains(&underlay_key));
         assert_eq!(
             groups.nat_target_refs.get(&underlay_ip),
             Some(&external_key)
@@ -4256,9 +4610,10 @@ mod chaos_tests {
             let (tag, members) =
                 underlay_tag_and_members(&switch, underlay_key);
             switch.asic_hdl.inject_table_faults(
-                TableType::McastEgressDecapPorts,
-                TableOp::EntryUpdate,
-                CallRange::between(2, 3),
+                TableType::McastIpv6,
+                TableOp::EntryAdd,
+                CallRange::between(1, 2),
+                AsicError::Synthetic,
             );
 
             table::mcast::mcast_replication::clear_ipv6_entry(
@@ -4289,7 +4644,7 @@ mod chaos_tests {
             let rollback_op = if port_remove_fails {
                 "mc_port_remove"
             } else {
-                "table_entry_update"
+                "table_entry_add"
             };
             assert!(
                 matches!(
@@ -4299,7 +4654,7 @@ mod chaos_tests {
                             init.as_ref(),
                             DpdError::Switch(
                                 aal::AsicError::Synthetic(op)
-                            ) if op == "table_entry_update"
+                            ) if op == "table_entry_add"
                         ) && unwind.len() == 1
                             && matches!(
                                 &unwind.head,
@@ -4320,10 +4675,10 @@ mod chaos_tests {
             let expected: &[(&str, &str)] = if port_remove_fails {
                 &[
                     ("port changes", "mc_port_remove"),
-                    ("restore VLAN settings", "table_entry_update"),
+                    ("restore replication settings", "table_entry_add"),
                 ]
             } else {
-                &[("restore VLAN settings", "table_entry_update")]
+                &[("restore replication settings", "table_entry_add")]
             };
             {
                 let errs = logs.entries.lock().unwrap();
@@ -4418,7 +4773,7 @@ mod chaos_tests {
         let groups = switch.mcast.lock().unwrap();
         assert!(!groups.groups.contains_key(&external_key));
         assert!(groups.nat_target_refs.is_empty());
-        assert!(groups.pending_repairs.contains_key(&underlay_key));
+        assert!(groups.pending_repairs.contains(&underlay_key));
     }
 
     fn underlay_tag_and_members(
@@ -4575,8 +4930,9 @@ mod chaos_tests {
         switch
             .asic_hdl
             .inject_mc_faults(McOp::McPortAdd, CallRange::starting_at(1));
-        let tables = [TableType::McastIpv6, TableType::McastEgressDecapPorts];
-        let before = tables.map(|table| table_usage(&switch, table));
+        let decap_table = TableType::McastEgressDecapPorts;
+        let repl_before = table_usage(&switch, TableType::McastIpv6);
+        let decap_before = forwarding_table_snapshot(&switch, decap_table);
 
         let err = modify_group_underlay(
             &switch,
@@ -4595,7 +4951,11 @@ mod chaos_tests {
         );
 
         assert_eq!(underlay_tag_and_members(&switch, underlay_key).1, members);
-        assert_eq!(tables.map(|table| table_usage(&switch, table)), before);
+        assert_eq!(table_usage(&switch, TableType::McastIpv6), repl_before);
+        assert_eq!(
+            forwarding_table_snapshot(&switch, decap_table),
+            decap_before
+        );
         assert!(logs.entries.lock().unwrap().is_empty());
 
         switch.asic_hdl.clear_mc_faults(McOp::McPortAdd);
@@ -4852,12 +5212,7 @@ mod chaos_tests {
             )
             .unwrap();
             assert_eq!(table_usage(&switch, TableType::RouteIpv6Mcast).0, 0);
-            switch
-                .mcast
-                .lock()
-                .unwrap()
-                .pending_repairs
-                .insert(underlay_key, None);
+            switch.mcast.lock().unwrap().pending_repairs.insert(underlay_key);
 
             for _ in 0..2 {
                 let response = modify_group_underlay(
@@ -5027,51 +5382,38 @@ mod chaos_tests {
         let mut with_dup = unsorted.to_vec();
         with_dup.push(unsorted[1].clone());
 
-        for readback in [true, false] {
-            let mut config = Config::default();
-            if !readback {
-                config
-                    .asic_config
-                    .mc_config
-                    .unsupported
-                    .insert(McOp::McPortList);
-            }
-            let (switch, _logs) = chaos_switch(config);
+        let (switch, _logs) = chaos_switch(Config::default());
 
-            let created = add_group_underlay(
-                &switch,
-                MulticastGroupCreateUnderlayEntry {
-                    group_ip: membership_group_ip(),
-                    tag: Some(MEMBERSHIP_TEST_TAG.to_string()),
-                    members: unsorted.to_vec(),
-                },
-            )
-            .unwrap();
-            assert_eq!(created.members, sorted, "readback={readback}");
-            assert_consistent_membership(&switch, &sorted, readback);
+        let created = add_group_underlay(
+            &switch,
+            MulticastGroupCreateUnderlayEntry {
+                group_ip: membership_group_ip(),
+                tag: Some(MEMBERSHIP_TEST_TAG.to_string()),
+                members: unsorted.to_vec(),
+            },
+        )
+        .unwrap();
+        assert_eq!(created.members, sorted);
+        assert_consistent_membership(&switch, &sorted);
 
-            let updated = put_membership(&switch, &with_dup).unwrap();
-            assert_eq!(updated.members, sorted, "readback={readback}");
-            assert_consistent_membership(&switch, &sorted, readback);
-        }
+        let updated = put_membership(&switch, &with_dup).unwrap();
+        assert_eq!(updated.members, sorted);
+        assert_consistent_membership(&switch, &sorted);
     }
 
     fn assert_consistent_membership(
         switch: &Switch,
         expected: &[MulticastGroupMember],
-        readback: bool,
     ) {
-        assert_eq!(stored_membership(switch), expected, "readback={readback}");
+        assert_eq!(stored_membership(switch), expected);
         for (reader, read) in READERS.into_iter().zip(read_memberships(switch))
         {
-            assert_eq!(read, expected, "{reader:?} readback={readback}");
+            assert_eq!(read, expected, "{reader:?}");
         }
-        if readback {
-            assert_eq!(
-                asic_membership(switch),
-                expected_membership(switch, expected)
-            );
-        }
+        assert_eq!(
+            asic_membership(switch),
+            expected_membership(switch, expected)
+        );
     }
 
     #[test]
@@ -5103,12 +5445,13 @@ mod chaos_tests {
             );
             mcast
                 .pending_repairs
-                .insert(GroupKey::underlay(membership_group_ip()), None);
+                .insert(GroupKey::underlay(membership_group_ip()));
         }
         switch.asic_hdl.inject_table_faults(
             TableType::McastIpv6,
             TableOp::EntryUpdate,
             CallRange::starting_at(1),
+            AsicError::Synthetic,
         );
 
         assert_uncertain_reads(&switch);
@@ -5143,6 +5486,7 @@ mod chaos_tests {
             TableType::McastIpv6,
             TableOp::EntryUpdate,
             CallRange::starting_at(1),
+            AsicError::Synthetic,
         );
         for read in read_memberships(&switch) {
             assert_eq!(read, members[..2]);
@@ -5181,7 +5525,7 @@ mod chaos_tests {
             .lock()
             .unwrap()
             .pending_repairs
-            .insert(GroupKey::underlay(membership_group_ip()), None);
+            .insert(GroupKey::underlay(membership_group_ip()));
 
         get_group_underlay(&switch, membership_group_ip()).unwrap();
         for group_id in group_ids {
@@ -5198,24 +5542,13 @@ mod chaos_tests {
     }
 
     fn underlay_read_restores_tables(reader: Reader) {
-        for (failed_table, readback) in [
-            (TableType::McastIpv6, true),
-            (TableType::McastEgressDecapPorts, true),
-            (TableType::RouteIpv6Mcast, true),
-            (TableType::McastIpv6, false),
-            (TableType::McastEgressDecapPorts, false),
-            (TableType::RouteIpv6Mcast, false),
+        for failed_table in [
+            TableType::McastIpv6,
+            TableType::McastEgressDecapPorts,
+            TableType::RouteIpv6Mcast,
         ] {
             let members = membership_members();
-            let mut config = Config::default();
-            if !readback {
-                config
-                    .asic_config
-                    .mc_config
-                    .unsupported
-                    .insert(McOp::McPortList);
-            }
-            let (switch, _logs) = chaos_switch(config);
+            let (switch, _logs) = chaos_switch(Config::default());
             create_membership_group(&switch, &members);
             let external_ip: IpAddr = "239.1.2.3".parse().unwrap();
             add_group_external(
@@ -5259,11 +5592,12 @@ mod chaos_tests {
                 .lock()
                 .unwrap()
                 .pending_repairs
-                .insert(GroupKey::underlay(membership_group_ip()), None);
+                .insert(GroupKey::underlay(membership_group_ip()));
             switch.asic_hdl.inject_table_faults(
                 failed_table,
                 TableOp::EntryAdd,
                 CallRange::starting_at(1),
+                AsicError::Synthetic,
             );
 
             assert_uncertain_reads(&switch);
@@ -5273,17 +5607,15 @@ mod chaos_tests {
                     .lock()
                     .unwrap()
                     .pending_repairs
-                    .contains_key(&GroupKey::underlay(membership_group_ip()))
+                    .contains(&GroupKey::underlay(membership_group_ip()))
             );
-            if readback {
-                assert_eq!(
-                    asic_membership(&switch),
-                    expected_membership(&switch, &members),
-                );
-            }
+            assert_eq!(
+                asic_membership(&switch),
+                expected_membership(&switch, &members),
+            );
 
             switch.asic_hdl.clear_table_faults(failed_table, TableOp::EntryAdd);
-            let context = format!("{reader:?}, {failed_table}, {readback}");
+            let context = format!("{reader:?}, {failed_table}");
             let expected = members.iter().cloned().collect::<HashSet<_>>();
             assert_eq!(
                 read_membership(&switch, reader)
@@ -5383,7 +5715,7 @@ mod chaos_tests {
             .lock()
             .unwrap()
             .pending_repairs
-            .insert(GroupKey::underlay(membership_group_ip()), None);
+            .insert(GroupKey::underlay(membership_group_ip()));
 
         put_membership(&switch, &members).unwrap();
 
@@ -5491,6 +5823,473 @@ mod chaos_tests {
                 );
             }
             assert!(logs.entries.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_underlay_narrow_failure_restores_group() {
+        let members = membership_members();
+        for replacement in [None, Some(rear_member(3, Direction::External))] {
+            let context = format!("replacement={replacement:?}");
+            let mut new_members = members[..2].to_vec();
+            new_members.extend(replacement);
+            let (switch, logs) = chaos_switch(Config::default());
+            create_membership_group(&switch, &members);
+
+            let external_id = membership_group_id(&switch, Direction::External);
+            let bitmap_before = bitmap_entry(&switch, external_id);
+            let repl_before =
+                forwarding_table_snapshot(&switch, TableType::McastIpv6);
+            let repl_updates = table_usage(&switch, TableType::McastIpv6).3;
+            let group_before = {
+                let groups = switch.mcast.lock().unwrap();
+                format!(
+                    "{:?}",
+                    groups.groups[&GroupKey::underlay(membership_group_ip())]
+                )
+            };
+
+            switch.asic_hdl.inject_table_faults(
+                TableType::McastEgressDecapPorts,
+                TableOp::EntryUpdate,
+                CallRange::nth(2),
+                AsicError::Synthetic,
+            );
+            let err = put_membership(&switch, &new_members).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    DpdError::Switch(AsicError::Synthetic(op))
+                        if op == "table_entry_update"
+                ),
+                "{context}: {err:?}"
+            );
+            switch.asic_hdl.clear_table_faults(
+                TableType::McastEgressDecapPorts,
+                TableOp::EntryUpdate,
+            );
+
+            assert_eq!(
+                bitmap_entry(&switch, external_id),
+                bitmap_before,
+                "{context}"
+            );
+            assert_eq!(
+                forwarding_table_snapshot(&switch, TableType::McastIpv6),
+                repl_before,
+                "{context}"
+            );
+            assert_eq!(
+                table_usage(&switch, TableType::McastIpv6).3,
+                repl_updates + 2,
+                "{context}"
+            );
+            assert_eq!(
+                asic_membership(&switch),
+                expected_membership(&switch, &members),
+                "{context}"
+            );
+            let groups = switch.mcast.lock().unwrap();
+            let key = GroupKey::underlay(membership_group_ip());
+            assert_eq!(
+                format!("{:?}", groups.groups[&key]),
+                group_before,
+                "{context}"
+            );
+            assert!(!groups.pending_repairs.contains(&key), "{context}");
+            assert!(logs.entries.lock().unwrap().is_empty(), "{context}");
+        }
+    }
+
+    fn create_vlan_membership_grp(switch: &Switch) -> MulticastGroupId {
+        let external_ip: IpAddr = "239.1.2.3".parse().unwrap();
+        create_membership_group(switch, &membership_members());
+        add_group_external(
+            switch,
+            external_entry(
+                external_ip,
+                MEMBERSHIP_TEST_TAG,
+                external_nat_target(external_ip, membership_group_ip()),
+                Some(10),
+                serde_json::Value::Null,
+            ),
+        )
+        .unwrap();
+        membership_group_id(switch, Direction::External)
+    }
+
+    fn assert_membership_unchanged(
+        switch: &Switch,
+        group_before: &str,
+        bitmap_before: &Option<(
+            table::mcast::mcast_egress::PortBitmap,
+            Option<u16>,
+        )>,
+        repl_before: &serde_json::Value,
+    ) {
+        let members = membership_members();
+        let external_id = membership_group_id(switch, Direction::External);
+        assert_eq!(&bitmap_entry(switch, external_id), bitmap_before);
+        assert_eq!(
+            &forwarding_table_snapshot(switch, TableType::McastIpv6),
+            repl_before
+        );
+        assert_eq!(
+            asic_membership(switch),
+            expected_membership(switch, &members)
+        );
+        let groups = switch.mcast.lock().unwrap();
+        let key = GroupKey::underlay(membership_group_ip());
+        assert_eq!(format!("{:?}", groups.groups[&key]), group_before);
+        assert!(!groups.pending_repairs.contains(&key));
+    }
+
+    #[test]
+    fn test_underlay_narrow_readds_missing_bitmap_vlan() {
+        let (switch, logs) = chaos_switch(Config::default());
+        let external_id = create_vlan_membership_grp(&switch);
+        let members = membership_members();
+        let new_members = &members[..2];
+
+        table::mcast::mcast_egress::clear_bitmap_entry(&switch, external_id)
+            .unwrap();
+        assert_eq!(bitmap_entry(&switch, external_id), None);
+
+        put_membership(&switch, new_members).unwrap();
+
+        assert_eq!(
+            bitmap_entry(&switch, external_id),
+            Some((
+                create_port_bitmap(new_members, Direction::External),
+                Some(10),
+            )),
+        );
+        assert_eq!(stored_membership(&switch), new_members.to_vec());
+        assert_eq!(
+            asic_membership(&switch),
+            expected_membership(&switch, new_members)
+        );
+        assert!(
+            !switch
+                .mcast
+                .lock()
+                .unwrap()
+                .pending_repairs
+                .contains(&GroupKey::underlay(membership_group_ip()))
+        );
+        assert!(logs.entries.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_underlay_narrow_repl_failure_keeps_readded_bitmap() {
+        let (switch, logs) = chaos_switch(Config::default());
+        let external_id = create_vlan_membership_grp(&switch);
+        let members = membership_members();
+        let bitmap_before = bitmap_entry(&switch, external_id);
+        assert_eq!(
+            bitmap_before,
+            Some(
+                (create_port_bitmap(&members, Direction::External), Some(10),)
+            ),
+        );
+        let repl_before =
+            forwarding_table_snapshot(&switch, TableType::McastIpv6);
+        let key = GroupKey::underlay(membership_group_ip());
+        let group_before =
+            format!("{:?}", switch.mcast.lock().unwrap().groups[&key]);
+
+        table::mcast::mcast_egress::clear_bitmap_entry(&switch, external_id)
+            .unwrap();
+        switch.asic_hdl.inject_table_faults(
+            TableType::McastIpv6,
+            TableOp::EntryUpdate,
+            CallRange::nth(1),
+            AsicError::Synthetic,
+        );
+        let err = put_membership(&switch, &members[..2]).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                DpdError::Switch(AsicError::Synthetic(op))
+                    if op == "table_entry_update"
+            ),
+            "{err:?}"
+        );
+        switch
+            .asic_hdl
+            .clear_table_faults(TableType::McastIpv6, TableOp::EntryUpdate);
+
+        assert_membership_unchanged(
+            &switch,
+            &group_before,
+            &bitmap_before,
+            &repl_before,
+        );
+        assert!(logs.entries.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_underlay_unchanged_update_bitmap_failure_restores_group() {
+        let (switch, logs) = chaos_switch(Config::default());
+        let external_id = create_vlan_membership_grp(&switch);
+        let members = membership_members();
+        let bitmap_before = bitmap_entry(&switch, external_id);
+        let repl_before =
+            forwarding_table_snapshot(&switch, TableType::McastIpv6);
+        let key = GroupKey::underlay(membership_group_ip());
+        let group_before =
+            format!("{:?}", switch.mcast.lock().unwrap().groups[&key]);
+
+        switch.asic_hdl.inject_table_faults(
+            TableType::McastEgressDecapPorts,
+            TableOp::EntryUpdate,
+            CallRange::nth(1),
+            AsicError::Synthetic,
+        );
+        let err = put_membership(&switch, &members).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                DpdError::Switch(AsicError::Synthetic(op))
+                    if op == "table_entry_update"
+            ),
+            "{err:?}"
+        );
+        switch.asic_hdl.clear_table_faults(
+            TableType::McastEgressDecapPorts,
+            TableOp::EntryUpdate,
+        );
+
+        assert_membership_unchanged(
+            &switch,
+            &group_before,
+            &bitmap_before,
+            &repl_before,
+        );
+        assert!(logs.entries.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_underlay_narrow_members_fail_readds_missing_bitmap() {
+        let (switch, logs) = chaos_switch(Config::default());
+        let external_id = create_vlan_membership_grp(&switch);
+        let members = membership_members();
+        let bitmap_before = bitmap_entry(&switch, external_id);
+        assert_eq!(
+            bitmap_before,
+            Some(
+                (create_port_bitmap(&members, Direction::External), Some(10),)
+            ),
+        );
+        let repl_before =
+            forwarding_table_snapshot(&switch, TableType::McastIpv6);
+        let key = GroupKey::underlay(membership_group_ip());
+        let group_before =
+            format!("{:?}", switch.mcast.lock().unwrap().groups[&key]);
+
+        table::mcast::mcast_egress::clear_bitmap_entry(&switch, external_id)
+            .unwrap();
+        switch.asic_hdl.inject_mc_faults(McOp::McPortRemove, CallRange::nth(1));
+        let err = put_membership(&switch, &members[..2]).unwrap_err();
+        assert!(is_synthetic(&err, McOp::McPortRemove), "{err:?}");
+        switch.asic_hdl.clear_mc_faults(McOp::McPortRemove);
+
+        assert_membership_unchanged(
+            &switch,
+            &group_before,
+            &bitmap_before,
+            &repl_before,
+        );
+        assert!(logs.entries.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_underlay_rollback_keeps_decap() {
+        #[derive(Clone, Copy, Debug)]
+        enum RestoreFailure {
+            Bitmap,
+            Ports,
+            Replication,
+        }
+
+        for (narrow_applied, failure) in [
+            (false, RestoreFailure::Replication),
+            (true, RestoreFailure::Replication),
+            (true, RestoreFailure::Ports),
+            (true, RestoreFailure::Bitmap),
+        ] {
+            let context =
+                format!("narrow_applied={narrow_applied}, failure={failure:?}");
+            let [removed, underlay, added] = membership_members();
+            let members = [removed, underlay.clone()];
+            let new_members = [underlay, added];
+            let (switch, logs) = chaos_switch(Config::default());
+            create_membership_group(&switch, &members);
+            let original = switch.mcast.lock().unwrap().groups
+                [&GroupKey::underlay(membership_group_ip())]
+                .clone();
+            let repl = original.replication_info().unwrap();
+            let external_id = original.external_group_id();
+            let union_bitmap = create_port_bitmap(
+                members.iter().chain(&new_members),
+                Direction::External,
+            );
+            let new_bitmap =
+                create_port_bitmap(&new_members, Direction::External);
+
+            table::mcast::mcast_egress::set_bitmap_entry(
+                &switch,
+                external_id,
+                &union_bitmap,
+                None,
+            )
+            .unwrap();
+            let mut added_ports = Vec::new();
+            let mut removed_ports = Vec::new();
+            process_membership_changes(
+                &switch,
+                &new_members,
+                &original,
+                repl,
+                &mut added_ports,
+                &mut removed_ports,
+            )
+            .unwrap();
+
+            set_replication_entry(&switch, &original, repl).unwrap();
+            if narrow_applied {
+                table::mcast::mcast_egress::set_bitmap_entry(
+                    &switch,
+                    external_id,
+                    &new_bitmap,
+                    None,
+                )
+                .unwrap();
+            }
+
+            let repl_before = table_usage(&switch, TableType::McastIpv6);
+            let (op, failed_call) = match failure {
+                RestoreFailure::Bitmap => {
+                    switch.asic_hdl.inject_table_faults(
+                        TableType::McastEgressDecapPorts,
+                        TableOp::EntryUpdate,
+                        CallRange::nth(1),
+                        AsicError::Synthetic,
+                    );
+                    ("restore decap bitmap", "table_entry_update")
+                }
+                RestoreFailure::Ports => {
+                    switch.asic_hdl.inject_mc_faults(
+                        McOp::McPortRemove,
+                        CallRange::nth(1),
+                    );
+                    ("port changes", "mc_port_remove")
+                }
+                RestoreFailure::Replication => {
+                    switch.asic_hdl.inject_table_faults(
+                        TableType::McastIpv6,
+                        TableOp::EntryUpdate,
+                        CallRange::nth(1),
+                        AsicError::Synthetic,
+                    );
+                    ("restore replication settings", "table_entry_update")
+                }
+            };
+
+            let err = GroupUpdateRollbackContext::new(&switch, &original, None)
+                .rollback_underlay_and_restore(
+                    DpdError::Switch(AsicError::Synthetic(
+                        "table_entry_update".to_string(),
+                    )),
+                    repl,
+                    &added_ports,
+                    &removed_ports,
+                );
+            let DpdError::Unwind { initial, unwind } = &err else {
+                panic!("{context}: expected a failed unwind: {err:?}");
+            };
+            assert!(
+                matches!(
+                    initial.as_ref(),
+                    DpdError::Switch(AsicError::Synthetic(op))
+                        if op == "table_entry_update"
+                ),
+                "{context}: {err:?}"
+            );
+            assert_eq!(unwind.len(), 1, "{context}: {err:?}");
+            assert!(
+                matches!(
+                    &unwind.head,
+                    DpdError::Switch(AsicError::Synthetic(op))
+                        if op == failed_call
+                ),
+                "{context}: {err:?}"
+            );
+
+            let expected_bitmap = match failure {
+                RestoreFailure::Bitmap => new_bitmap,
+                _ => union_bitmap.clone(),
+            };
+            assert_eq!(
+                bitmap_entry(&switch, external_id),
+                Some((expected_bitmap, None)),
+                "{context}"
+            );
+            let expected_members: Vec<_> = match failure {
+                RestoreFailure::Bitmap => new_members[..1].to_vec(),
+                RestoreFailure::Ports => {
+                    members.iter().chain(&new_members[1..]).cloned().collect()
+                }
+                RestoreFailure::Replication => members.to_vec(),
+            };
+            assert_eq!(
+                asic_membership(&switch),
+                expected_membership(&switch, &expected_members),
+                "{context}"
+            );
+            let repl_updates =
+                u64::from(matches!(failure, RestoreFailure::Ports));
+            assert_eq!(
+                table_usage(&switch, TableType::McastIpv6),
+                (
+                    repl_before.0,
+                    repl_before.1,
+                    repl_before.2,
+                    repl_before.3 + repl_updates,
+                ),
+                "{context}"
+            );
+            {
+                let errors = logs.entries.lock().unwrap();
+                assert_eq!(errors.len(), 1, "{context}: {errors:?}");
+                assert_eq!(errors[0]["operation"], op, "{context}");
+                assert!(
+                    errors[0]["error"].contains(failed_call),
+                    "{context}: {errors:?}"
+                );
+            }
+
+            let mut pending = original.clone();
+            let GroupKind::Underlay { replication, .. } = &mut pending.kind
+            else {
+                panic!("expected an underlay group");
+            };
+            replication.add_members(repl.clone(), &new_members);
+            switch.asic_hdl.inject_table_faults(
+                TableType::McastIpv6,
+                TableOp::EntryUpdate,
+                CallRange::nth(1),
+                AsicError::Synthetic,
+            );
+            assert!(
+                resync_after_failed_unwind(&switch, &pending, None).is_none(),
+                "{context}"
+            );
+            assert_eq!(
+                bitmap_entry(&switch, external_id),
+                Some((union_bitmap, None)),
+                "{context}"
+            );
         }
     }
 
@@ -5760,6 +6559,7 @@ mod chaos_tests {
                 failed_table,
                 TableOp::EntryDel,
                 CallRange::starting_at(1),
+                AsicError::Synthetic,
             );
 
             fail_unwind_to_empty_group(&switch);
@@ -5800,16 +6600,17 @@ mod chaos_tests {
     fn external_member_put_with_failed_unwind(
         init_members: &[MulticastGroupMember],
         tgt_members: &[MulticastGroupMember],
-        decap_update_failures: CallRange,
+        update_failures: CallRange,
         before_put: impl FnOnce(&Switch),
     ) -> (Switch, RollbackLog) {
         let (switch, logs) = chaos_switch(Config::default());
         create_membership_group(&switch, init_members);
         before_put(&switch);
         switch.asic_hdl.inject_table_faults(
-            TableType::McastEgressDecapPorts,
+            TableType::McastIpv6,
             TableOp::EntryUpdate,
-            decap_update_failures,
+            update_failures,
+            AsicError::Synthetic,
         );
         let removals = init_members
             .iter()
@@ -5854,7 +6655,7 @@ mod chaos_tests {
         let (switch, logs) = external_member_put_with_failed_unwind(
             &init_members,
             &tgt_members,
-            CallRange::nth(2),
+            CallRange::nth(1),
             |_| {},
         );
         let external_id = membership_group_id(&switch, Direction::External);
@@ -5878,10 +6679,9 @@ mod chaos_tests {
     }
 
     fn clear_external_member_put_faults(switch: &Switch) {
-        switch.asic_hdl.clear_table_faults(
-            TableType::McastEgressDecapPorts,
-            TableOp::EntryUpdate,
-        );
+        switch
+            .asic_hdl
+            .clear_table_faults(TableType::McastIpv6, TableOp::EntryUpdate);
         clear_membership_faults(switch);
     }
 
@@ -5891,7 +6691,7 @@ mod chaos_tests {
         let (switch, logs) = external_member_put_with_failed_unwind(
             &init_members,
             &tgt_members,
-            CallRange::starting_at(2),
+            CallRange::starting_at(1),
             |_| {},
         );
 
@@ -5910,7 +6710,7 @@ mod chaos_tests {
         let (switch, logs) = external_member_put_with_failed_unwind(
             &init_members,
             &tgt_members,
-            CallRange::starting_at(2),
+            CallRange::starting_at(1),
             |switch| {
                 add_group_external(
                     switch,
@@ -5956,7 +6756,7 @@ mod chaos_tests {
             let (switch, logs) = external_member_put_with_failed_unwind(
                 &init_members,
                 &tgt_members,
-                CallRange::starting_at(2),
+                CallRange::starting_at(1),
                 |switch| {
                     if group_destroy_fails {
                         switch.asic_hdl.inject_mc_faults(
@@ -5968,6 +6768,7 @@ mod chaos_tests {
                             TableType::RouteIpv6Mcast,
                             TableOp::EntryDel,
                             CallRange::nth(1),
+                            AsicError::Synthetic,
                         );
                     }
                 },
@@ -6012,73 +6813,45 @@ mod chaos_tests {
         let [kept_member, _, _] = membership_members();
         let tgt_members = [kept_member];
 
-        for readback in [true, false] {
-            let mut config = Config::default();
-            if !readback {
-                config
-                    .asic_config
-                    .mc_config
-                    .unsupported
-                    .insert(McOp::McPortList);
-            }
-            let (switch, logs) = chaos_switch(config);
-            create_membership_group(&switch, &[]);
-            let external_id = membership_group_id(&switch, Direction::External);
-            assert_eq!(table_usage(&switch, TableType::McastIpv6).0, 0);
+        let (switch, logs) = chaos_switch(Config::default());
+        create_membership_group(&switch, &[]);
+        let external_id = membership_group_id(&switch, Direction::External);
+        assert_eq!(table_usage(&switch, TableType::McastIpv6).0, 0);
 
-            switch.asic_hdl.inject_table_faults(
-                TableType::McastIpv6,
-                TableOp::EntryAdd,
-                CallRange::nth(1),
-            );
-            switch
-                .asic_hdl
-                .inject_mc_faults(McOp::McPortRemove, CallRange::nth(1));
-            let err = put_membership(&switch, &tgt_members).unwrap_err();
-            let DpdError::Unwind { initial, unwind } = &err else {
-                panic!("expected a failed unwind: {err:?}");
-            };
-            assert!(
-                matches!(
-                    initial.as_ref(),
-                    DpdError::Switch(AsicError::Synthetic(op))
-                        if op == "table_entry_add"
-                ),
-                "{err:?}"
-            );
-            assert!(is_synthetic(&unwind.head, McOp::McPortRemove), "{err:?}");
+        switch.asic_hdl.inject_table_faults(
+            TableType::McastIpv6,
+            TableOp::EntryAdd,
+            CallRange::nth(1),
+            AsicError::Synthetic,
+        );
+        switch.asic_hdl.inject_mc_faults(McOp::McPortRemove, CallRange::nth(1));
+        let err = put_membership(&switch, &tgt_members).unwrap_err();
 
-            if readback {
-                assert_eq!(
-                    asic_membership(&switch),
-                    expected_membership(&switch, &tgt_members),
-                );
-            } else {
-                assert_eq!(
-                    [Direction::External, Direction::Underlay].map(
-                        |direction| switch
-                            .asic_hdl
-                            .mc_port_count(membership_group_id(
-                                &switch, direction,
-                            ))
-                            .unwrap(),
-                    ),
-                    expected_membership(&switch, &tgt_members)
-                        .map(|members| members.len()),
-                );
-            }
-            assert_eq!(stored_membership(&switch), tgt_members.to_vec());
-            assert!(switch.mcast.lock().unwrap().pending_repairs.is_empty());
-            assert_eq!(table_usage(&switch, TableType::McastIpv6).0, 1);
-            assert_eq!(
-                bitmap_entry(&switch, external_id),
-                Some((
-                    create_port_bitmap(&tgt_members, Direction::External),
-                    None,
-                )),
-            );
-            assert_eq!(logs.entries.lock().unwrap().len(), 1);
-        }
+        assert_eq!(
+            asic_membership(&switch),
+            expected_membership(&switch, &tgt_members),
+        );
+        assert_eq!(stored_membership(&switch), tgt_members.to_vec());
+        assert!(switch.mcast.lock().unwrap().pending_repairs.is_empty());
+        assert_eq!(table_usage(&switch, TableType::McastIpv6).0, 1);
+        assert_eq!(
+            bitmap_entry(&switch, external_id),
+            Some((create_port_bitmap(&tgt_members, Direction::External), None)),
+        );
+        assert_eq!(logs.entries.lock().unwrap().len(), 1);
+
+        let DpdError::Unwind { initial, unwind } = &err else {
+            panic!("expected a failed unwind: {err:?}");
+        };
+        assert!(
+            matches!(
+                initial.as_ref(),
+                DpdError::Switch(AsicError::Synthetic(op))
+                    if op == "table_entry_add"
+            ),
+            "{err:?}"
+        );
+        assert!(is_synthetic(&unwind.head, McOp::McPortRemove), "{err:?}");
     }
 
     #[test]
@@ -6146,7 +6919,7 @@ mod chaos_tests {
                     .lock()
                     .unwrap()
                     .pending_repairs
-                    .contains_key(&GroupKey::underlay(membership_group_ip()))
+                    .contains(&GroupKey::underlay(membership_group_ip()))
             );
 
             switch

@@ -5,9 +5,11 @@
 // Copyright 2026 Oxide Computer Company
 
 use std::fs::OpenOptions;
+use std::io;
 use std::io::Read;
 use std::io::Write;
 
+use aal::{AsicError, AsicResult};
 use propolis::hw::virtio::softnpu::{MANAGEMENT_MESSAGE_PREAMBLE, SOFTNPU_TTY};
 use softnpu_lib::ManagementRequest;
 use std::os::unix::net::UnixDatagram;
@@ -49,11 +51,18 @@ impl std::str::FromStr for SoftnpuManagement {
 }
 
 /// Send a management request to a SoftNPU asic.
-pub fn write(msg: ManagementRequest, config: &ManagementConfig) {
+pub fn write(
+    msg: ManagementRequest,
+    config: &ManagementConfig,
+) -> AsicResult<()> {
     match config {
         ManagementConfig::UART => write_uart(msg),
         ManagementConfig::UDS { socket_path } => write_uds(msg, socket_path),
     }
+    .map_err(|err| AsicError::Io {
+        ctx: "SoftNPU management write".to_string(),
+        err,
+    })
 }
 
 /// Read a management request response from a SoftNPU asic.
@@ -64,27 +73,28 @@ pub fn read(msg: ManagementRequest, config: &ManagementConfig) -> String {
     }
 }
 
-fn write_uart(msg: ManagementRequest) {
+fn write_uart(msg: ManagementRequest) -> io::Result<()> {
     let mut buf = Vec::new();
     buf.push(MANAGEMENT_MESSAGE_PREAMBLE);
-    let mut js = serde_json::to_vec(&msg).unwrap();
+    let mut js = serde_json::to_vec(&msg)?;
     js.retain(|x| *x != b'\n');
     buf.extend_from_slice(&js);
     buf.push(b'\n');
 
-    let mut f = OpenOptions::new().write(true).open(SOFTNPU_TTY).unwrap();
+    let mut f = OpenOptions::new().write(true).open(SOFTNPU_TTY)?;
 
-    f.write_all(&buf).unwrap();
-    f.sync_all().unwrap();
+    f.write_all(&buf)?;
+    f.sync_all()
 }
 
-fn write_uds(msg: ManagementRequest, socket_path: &str) {
-    let uds = UnixDatagram::unbound().unwrap();
+fn write_uds(msg: ManagementRequest, socket_path: &str) -> io::Result<()> {
+    let uds = UnixDatagram::unbound()?;
 
-    let buf = serde_json::to_vec(&msg).unwrap();
+    let buf = serde_json::to_vec(&msg)?;
     let mut server_handle = socket_path.to_owned();
     server_handle.push_str(SERVER_PATH);
-    uds.send_to(&buf, server_handle).unwrap();
+    uds.send_to(&buf, server_handle)?;
+    Ok(())
 }
 
 fn read_uart(msg: ManagementRequest) -> String {
@@ -109,7 +119,7 @@ fn read_uart(msg: ManagementRequest) -> String {
 fn read_uds(msg: ManagementRequest, socket_path: &str) -> String {
     let client_uds = bind_uds(socket_path);
 
-    write_uds(msg, socket_path);
+    write_uds(msg, socket_path).unwrap();
 
     let mut buf = vec![0u8; 10240];
     let n = client_uds.recv(&mut buf).unwrap();
